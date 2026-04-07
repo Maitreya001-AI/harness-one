@@ -23,6 +23,36 @@
       "import": "./dist/guardrails/index.js",
       "require": "./dist/cjs/guardrails/index.cjs",
       "types": "./dist/guardrails/index.d.ts"
+    },
+    "./prompt": {
+      "import": "./dist/prompt/index.js",
+      "require": "./dist/cjs/prompt/index.cjs",
+      "types": "./dist/prompt/index.d.ts"
+    },
+    "./observe": {
+      "import": "./dist/observe/index.js",
+      "require": "./dist/cjs/observe/index.cjs",
+      "types": "./dist/observe/index.d.ts"
+    },
+    "./session": {
+      "import": "./dist/session/index.js",
+      "require": "./dist/cjs/session/index.cjs",
+      "types": "./dist/session/index.d.ts"
+    },
+    "./memory": {
+      "import": "./dist/memory/index.js",
+      "require": "./dist/cjs/memory/index.cjs",
+      "types": "./dist/memory/index.d.ts"
+    },
+    "./eval": {
+      "import": "./dist/eval/index.js",
+      "require": "./dist/cjs/eval/index.cjs",
+      "types": "./dist/eval/index.d.ts"
+    },
+    "./evolve": {
+      "import": "./dist/evolve/index.js",
+      "require": "./dist/cjs/evolve/index.cjs",
+      "types": "./dist/evolve/index.d.ts"
     }
   },
   "files": [

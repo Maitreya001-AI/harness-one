@@ -1,0 +1,170 @@
+import { describe, it, expect, vi } from 'vitest';
+import { createCostTracker } from '../cost-tracker.js';
+
+describe('createCostTracker', () => {
+  const pricing = [
+    { model: 'claude-3', inputPer1kTokens: 0.003, outputPer1kTokens: 0.015 },
+    { model: 'gpt-4', inputPer1kTokens: 0.01, outputPer1kTokens: 0.03 },
+  ];
+
+  it('records usage and computes cost', () => {
+    const tracker = createCostTracker({ pricing });
+    const record = tracker.recordUsage({
+      traceId: 't1',
+      model: 'claude-3',
+      inputTokens: 1000,
+      outputTokens: 500,
+    });
+    // 1000/1000 * 0.003 + 500/1000 * 0.015 = 0.003 + 0.0075 = 0.0105
+    expect(record.estimatedCost).toBeCloseTo(0.0105, 4);
+    expect(record.timestamp).toBeGreaterThan(0);
+  });
+
+  it('returns 0 cost for unknown model', () => {
+    const tracker = createCostTracker({ pricing });
+    const record = tracker.recordUsage({
+      traceId: 't1',
+      model: 'unknown',
+      inputTokens: 1000,
+      outputTokens: 500,
+    });
+    expect(record.estimatedCost).toBe(0);
+  });
+
+  it('includes cache token costs', () => {
+    const tracker = createCostTracker({
+      pricing: [{
+        model: 'claude-3',
+        inputPer1kTokens: 0.003,
+        outputPer1kTokens: 0.015,
+        cacheReadPer1kTokens: 0.001,
+        cacheWritePer1kTokens: 0.002,
+      }],
+    });
+    const record = tracker.recordUsage({
+      traceId: 't1',
+      model: 'claude-3',
+      inputTokens: 1000,
+      outputTokens: 500,
+      cacheReadTokens: 2000,
+      cacheWriteTokens: 1000,
+    });
+    // input: 0.003 + output: 0.0075 + cacheRead: 0.002 + cacheWrite: 0.002 = 0.0145
+    expect(record.estimatedCost).toBeCloseTo(0.0145, 4);
+  });
+
+  describe('getTotalCost', () => {
+    it('sums all recorded costs', () => {
+      const tracker = createCostTracker({ pricing });
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      tracker.recordUsage({ traceId: 't2', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      expect(tracker.getTotalCost()).toBeCloseTo(0.006, 4);
+    });
+  });
+
+  describe('getCostByModel', () => {
+    it('breaks down costs by model', () => {
+      const tracker = createCostTracker({ pricing });
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      tracker.recordUsage({ traceId: 't2', model: 'gpt-4', inputTokens: 1000, outputTokens: 0 });
+      const byModel = tracker.getCostByModel();
+      expect(byModel['claude-3']).toBeCloseTo(0.003, 4);
+      expect(byModel['gpt-4']).toBeCloseTo(0.01, 4);
+    });
+  });
+
+  describe('getCostByTrace', () => {
+    it('returns cost for a specific trace', () => {
+      const tracker = createCostTracker({ pricing });
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      tracker.recordUsage({ traceId: 't2', model: 'claude-3', inputTokens: 2000, outputTokens: 0 });
+      expect(tracker.getCostByTrace('t1')).toBeCloseTo(0.003, 4);
+      expect(tracker.getCostByTrace('t2')).toBeCloseTo(0.006, 4);
+    });
+
+    it('returns 0 for unknown trace', () => {
+      const tracker = createCostTracker({ pricing });
+      expect(tracker.getCostByTrace('nope')).toBe(0);
+    });
+  });
+
+  describe('budget alerts', () => {
+    it('returns null when no budget set', () => {
+      const tracker = createCostTracker({ pricing });
+      expect(tracker.checkBudget()).toBeNull();
+    });
+
+    it('returns null when under warning threshold', () => {
+      const tracker = createCostTracker({ pricing, budget: 1.0 });
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      expect(tracker.checkBudget()).toBeNull();
+    });
+
+    it('returns warning when over 80% (default)', () => {
+      const tracker = createCostTracker({ pricing, budget: 0.01 });
+      // 0.003 + 0.0075 = 0.0105 > 80% of 0.01
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 500 });
+      const alert = tracker.checkBudget();
+      expect(alert).not.toBeNull();
+      // cost is 0.0105 which is > budget, so critical
+      expect(alert!.type).toBe('critical');
+    });
+
+    it('returns critical when over 95%', () => {
+      const tracker = createCostTracker({ pricing, budget: 0.004 });
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 500 });
+      const alert = tracker.checkBudget();
+      expect(alert!.type).toBe('critical');
+    });
+
+    it('uses custom thresholds', () => {
+      const tracker = createCostTracker({
+        pricing,
+        budget: 0.01,
+        alertThresholds: { warning: 0.5, critical: 0.9 },
+      });
+      // 0.003 / 0.01 = 30% -> no alert
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      expect(tracker.checkBudget()).toBeNull();
+    });
+
+    it('calls onAlert handler', () => {
+      const handler = vi.fn();
+      const tracker = createCostTracker({ pricing, budget: 0.001 });
+      tracker.onAlert(handler);
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      expect(handler).toHaveBeenCalled();
+      expect(handler.mock.calls[0][0].type).toBe('critical');
+    });
+  });
+
+  describe('setBudget', () => {
+    it('sets budget after creation', () => {
+      const tracker = createCostTracker({ pricing });
+      tracker.setBudget(0.001);
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      const alert = tracker.checkBudget();
+      expect(alert).not.toBeNull();
+    });
+  });
+
+  describe('setPricing', () => {
+    it('adds pricing after creation', () => {
+      const tracker = createCostTracker();
+      tracker.setPricing(pricing);
+      const record = tracker.recordUsage({
+        traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0,
+      });
+      expect(record.estimatedCost).toBeCloseTo(0.003, 4);
+    });
+  });
+
+  describe('reset', () => {
+    it('clears all records', () => {
+      const tracker = createCostTracker({ pricing });
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      tracker.reset();
+      expect(tracker.getTotalCost()).toBe(0);
+    });
+  });
+});
