@@ -1,0 +1,29 @@
+import { defineConfig } from 'tsup';
+export default defineConfig({
+  entry: { index: 'src/index.ts' },
+  format: ['esm', 'cjs'],
+  dts: true,
+  outDir: 'dist',
+  clean: true,
+  target: 'node18',
+  sourcemap: true,
+  external: [
+    'harness-one',
+    '@harness-one/langfuse',
+    '@harness-one/opentelemetry',
+    '@harness-one/tiktoken',
+    '@harness-one/anthropic',
+    '@harness-one/openai',
+    '@harness-one/ajv',
+    '@harness-one/redis',
+    // Peer deps of integration packages
+    'langfuse',
+    '@opentelemetry/api',
+    'tiktoken',
+    '@anthropic-ai/sdk',
+    'openai',
+    'ajv',
+    'ajv-formats',
+    'ioredis',
+  ],
+});

@@ -1,96 +1,15 @@
 {
-  "name": "harness-one",
-  "version": "0.1.0",
-  "description": "Universal primitives for AI agent harness engineering",
-  "type": "module",
-  "bin": {
-    "harness-one": "./dist/cli/index.js"
-  },
-  "exports": {
-    "./core": {
-      "import": "./dist/core/index.js",
-      "require": "./dist/cjs/core/index.cjs",
-      "types": "./dist/core/index.d.ts"
-    },
-    "./context": {
-      "import": "./dist/context/index.js",
-      "require": "./dist/cjs/context/index.cjs",
-      "types": "./dist/context/index.d.ts"
-    },
-    "./tools": {
-      "import": "./dist/tools/index.js",
-      "require": "./dist/cjs/tools/index.cjs",
-      "types": "./dist/tools/index.d.ts"
-    },
-    "./guardrails": {
-      "import": "./dist/guardrails/index.js",
-      "require": "./dist/cjs/guardrails/index.cjs",
-      "types": "./dist/guardrails/index.d.ts"
-    },
-    "./prompt": {
-      "import": "./dist/prompt/index.js",
-      "require": "./dist/cjs/prompt/index.cjs",
-      "types": "./dist/prompt/index.d.ts"
-    },
-    "./observe": {
-      "import": "./dist/observe/index.js",
-      "require": "./dist/cjs/observe/index.cjs",
-      "types": "./dist/observe/index.d.ts"
-    },
-    "./session": {
-      "import": "./dist/session/index.js",
-      "require": "./dist/cjs/session/index.cjs",
-      "types": "./dist/session/index.d.ts"
-    },
-    "./memory": {
-      "import": "./dist/memory/index.js",
-      "require": "./dist/cjs/memory/index.cjs",
-      "types": "./dist/memory/index.d.ts"
-    },
-    "./eval": {
-      "import": "./dist/eval/index.js",
-      "require": "./dist/cjs/eval/index.cjs",
-      "types": "./dist/eval/index.d.ts"
-    },
-    "./evolve": {
-      "import": "./dist/evolve/index.js",
-      "require": "./dist/cjs/evolve/index.cjs",
-      "types": "./dist/evolve/index.d.ts"
-    }
-  },
-  "files": [
-    "dist"
-  ],
-  "engines": {
-    "node": ">=18"
-  },
-  "sideEffects": false,
+  "name": "harness-one-monorepo",
+  "private": true,
   "scripts": {
-    "build": "tsup",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage",
-    "typecheck": "tsc --noEmit",
-    "lint": "eslint src/",
-    "prepublishOnly": "npm run typecheck && npm run test && npm run build"
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint"
   },
   "devDependencies": {
-    "@types/node": "^25.5.2",
-    "@typescript-eslint/eslint-plugin": "^8.0.0",
-    "@typescript-eslint/parser": "^8.0.0",
-    "eslint": "^9.0.0",
-    "tsup": "^8.0.0",
     "typescript": "^5.5.0",
-    "vitest": "^2.0.0"
-  },
-  "license": "MIT",
-  "keywords": [
-    "ai",
-    "agent",
-    "harness",
-    "llm",
-    "context-engineering",
-    "guardrails",
-    "tools"
-  ]
+    "vitest": "^2.0.0",
+    "tsup": "^8.0.0"
+  }
 }
