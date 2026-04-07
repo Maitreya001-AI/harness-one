@@ -9,6 +9,21 @@ import type { Guardrail, GuardrailContext } from './types.js';
 // Zero-width characters to strip before matching
 const ZERO_WIDTH_RE = /[\u200B\u200C\u200D\uFEFF\u00AD\u2060\u180E]/g;
 
+// Cyrillic-to-Latin homoglyph map for common confusables
+const HOMOGLYPH_MAP: Record<string, string> = {
+  '\u0430': 'a', // Cyrillic а → Latin a
+  '\u0435': 'e', // Cyrillic е → Latin e
+  '\u043E': 'o', // Cyrillic о → Latin o
+  '\u0441': 'c', // Cyrillic с → Latin c
+  '\u0440': 'p', // Cyrillic р → Latin p
+  '\u0443': 'y', // Cyrillic у → Latin y
+  '\u0445': 'x', // Cyrillic х → Latin x
+  '\u0456': 'i', // Cyrillic і → Latin i
+};
+
+// Markdown formatting characters to strip
+const MARKDOWN_RE = /[*_~`#>|[\]]/g;
+
 // Base patterns (exact phrases)
 const BASE_PATTERNS: RegExp[] = [
   /ignore previous instructions/i,
@@ -72,7 +87,15 @@ export function createInjectionDetector(config?: {
 
   const guard: Guardrail = (ctx: GuardrailContext) => {
     // Normalize: strip zero-width characters
-    const normalized = ctx.content.replace(ZERO_WIDTH_RE, '');
+    let normalized = ctx.content.replace(ZERO_WIDTH_RE, '');
+    // Normalize Unicode (NFKC collapses many confusables)
+    normalized = normalized.normalize('NFKC');
+    // Apply Cyrillic-to-Latin homoglyph mapping
+    normalized = normalized.replace(/[\u0430\u0435\u043E\u0441\u0440\u0443\u0445\u0456]/g, (ch) => HOMOGLYPH_MAP[ch] ?? ch);
+    // Normalize whitespace (newlines, tabs, multiple spaces → single space)
+    normalized = normalized.replace(/\s+/g, ' ');
+    // Strip markdown formatting characters
+    normalized = normalized.replace(MARKDOWN_RE, '');
 
     for (const pattern of patterns) {
       if (pattern.test(normalized)) {

@@ -82,9 +82,10 @@ describe('createPipeline + runInput', () => {
     const result = await runInput(pipeline, { content: 'hello' });
     expect(result.passed).toBe(true);
     expect(result.verdict).toEqual({ action: 'allow' });
-    // Only the non-throwing guardrail should produce an event
-    expect(result.results).toHaveLength(1);
-    expect(result.results[0].guardrail).toBe('allow');
+    // Both guardrails produce events: the thrower (with allow verdict) and the allow guard
+    expect(result.results).toHaveLength(2);
+    expect(result.results[0].guardrail).toBe('thrower');
+    expect(result.results[1].guardrail).toBe('allow');
   });
 
   it('calls onEvent for each guardrail with timing info', async () => {
@@ -128,5 +129,32 @@ describe('runOutput', () => {
     const result = await runOutput(pipeline, { content: 'hello' });
     expect(result.passed).toBe(true);
     expect(events[0].direction).toBe('output');
+  });
+});
+
+describe('FIX-5: fail-open still emits events for crashed guardrails', () => {
+  it('emits an event via onEvent when failClosed=false and guardrail throws', async () => {
+    const events: GuardrailEvent[] = [];
+    const pipeline = createPipeline({
+      input: [
+        { name: 'thrower', guard: throwGuard },
+        { name: 'allow', guard: allowGuard },
+      ],
+      failClosed: false,
+      onEvent: (e) => events.push(e),
+    });
+    const result = await runInput(pipeline, { content: 'hello' });
+    expect(result.passed).toBe(true);
+    // The thrower guardrail should have emitted an event even though it was skipped
+    const throwerEvent = events.find((e) => e.guardrail === 'thrower');
+    expect(throwerEvent).toBeDefined();
+    expect(throwerEvent!.verdict.action).toBe('allow'); // or some error indicator
+  });
+});
+
+describe('FIX-6: budget.ts throws HarnessError', () => {
+  it('is covered in budget.test.ts', () => {
+    // Placeholder - actual test is in budget.test.ts
+    expect(true).toBe(true);
   });
 });

@@ -116,4 +116,27 @@ describe('createBudget', () => {
       expect(order[0].segment).toBe('history');
     });
   });
+
+  describe('FIX-6: throws HarnessError instead of plain Error', () => {
+    it('throws HarnessError for unknown segment in remaining()', () => {
+      const budget = createBudget(config);
+      try {
+        budget.remaining('unknown');
+        expect.unreachable('should have thrown');
+      } catch (e: unknown) {
+        expect((e as { name: string }).name).toBe('HarnessError');
+        expect((e as { code: string }).code).toBeDefined();
+      }
+    });
+
+    it('throws HarnessError for unknown segment in allocate()', () => {
+      const budget = createBudget(config);
+      try {
+        budget.allocate('unknown', 100);
+        expect.unreachable('should have thrown');
+      } catch (e: unknown) {
+        expect((e as { name: string }).name).toBe('HarnessError');
+      }
+    });
+  });
 });

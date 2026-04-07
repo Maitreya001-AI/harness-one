@@ -78,91 +78,105 @@ export class AgentLoop {
   async *run(messages: Message[]): AsyncGenerator<AgentEvent> {
     const conversation = [...messages];
     let iteration = 0;
+    let yieldedDone = false;
 
-    while (true) {
-      // Check abort
-      if (this.isAborted()) {
-        yield { type: 'error', error: new AbortedError() };
-        yield this.doneEvent('aborted');
-        return;
-      }
-
-      // Check max iterations
-      iteration++;
-      if (iteration > this.maxIterations) {
-        const err = new MaxIterationsError(this.maxIterations);
-        yield { type: 'error', error: err };
-        yield this.doneEvent('max_iterations');
-        return;
-      }
-
-      // Check token budget before calling LLM
-      const totalTokens = this.cumulativeUsage.inputTokens + this.cumulativeUsage.outputTokens;
-      if (totalTokens > this.maxTotalTokens) {
-        const err = new TokenBudgetExceededError(totalTokens, this.maxTotalTokens);
-        yield { type: 'error', error: err };
-        yield this.doneEvent('token_budget');
-        return;
-      }
-
-      yield { type: 'iteration_start', iteration };
-
-      // Call adapter
-      const response = await this.adapter.chat({
-        messages: conversation,
-        signal: this.signal,
-      });
-
-      // Accumulate usage
-      this.cumulativeUsage.inputTokens += response.usage.inputTokens;
-      this.cumulativeUsage.outputTokens += response.usage.outputTokens;
-
-      const assistantMsg = response.message;
-      const toolCalls = assistantMsg.toolCalls;
-
-      // If no tool calls or empty tool calls → end turn
-      if (!toolCalls || toolCalls.length === 0) {
-        yield { type: 'message', message: assistantMsg, usage: response.usage };
-        yield this.doneEvent('end_turn');
-        return;
-      }
-
-      // Process tool calls
-      conversation.push(assistantMsg);
-
-      for (const toolCall of toolCalls) {
-        yield { type: 'tool_call', toolCall, iteration };
-
-        let result: unknown;
-        try {
-          if (this.onToolCall) {
-            result = await this.onToolCall(toolCall);
-          } else {
-            result = { error: `No onToolCall handler registered for tool "${toolCall.name}"` };
-          }
-        } catch (err) {
-          // Errors as Feedback: serialize error and feed back to LLM
-          result = {
-            error: err instanceof Error ? err.message : String(err),
-          };
+    try {
+      while (true) {
+        // Check abort
+        if (this.isAborted()) {
+          yield { type: 'error', error: new AbortedError() };
+          yieldedDone = true;
+          yield this.doneEvent('aborted');
+          return;
         }
 
-        yield { type: 'tool_result', toolCallId: toolCall.id, result };
+        // Check max iterations
+        iteration++;
+        if (iteration > this.maxIterations) {
+          const err = new MaxIterationsError(this.maxIterations);
+          yield { type: 'error', error: err };
+          yieldedDone = true;
+          yield this.doneEvent('max_iterations');
+          return;
+        }
 
-        // Add tool result as a message
-        const toolResultMsg: Message = {
-          role: 'tool',
-          content: typeof result === 'string' ? result : JSON.stringify(result),
-          toolCallId: toolCall.id,
-        };
-        conversation.push(toolResultMsg);
+        // Check token budget before calling LLM
+        const totalTokens = this.cumulativeUsage.inputTokens + this.cumulativeUsage.outputTokens;
+        if (totalTokens > this.maxTotalTokens) {
+          const err = new TokenBudgetExceededError(totalTokens, this.maxTotalTokens);
+          yield { type: 'error', error: err };
+          yieldedDone = true;
+          yield this.doneEvent('token_budget');
+          return;
+        }
+
+        yield { type: 'iteration_start', iteration };
+
+        // Call adapter
+        const response = await this.adapter.chat({
+          messages: conversation,
+          signal: this.signal,
+        });
+
+        // Accumulate usage (clamp to non-negative to prevent underflow bypass)
+        this.cumulativeUsage.inputTokens += Math.max(0, response.usage.inputTokens);
+        this.cumulativeUsage.outputTokens += Math.max(0, response.usage.outputTokens);
+
+        const assistantMsg = response.message;
+        const toolCalls = assistantMsg.toolCalls;
+
+        // If no tool calls or empty tool calls → end turn
+        if (!toolCalls || toolCalls.length === 0) {
+          yield { type: 'message', message: assistantMsg, usage: response.usage };
+          yieldedDone = true;
+          yield this.doneEvent('end_turn');
+          return;
+        }
+
+        // Process tool calls
+        conversation.push(assistantMsg);
+
+        for (const toolCall of toolCalls) {
+          yield { type: 'tool_call', toolCall, iteration };
+
+          let result: unknown;
+          try {
+            if (this.onToolCall) {
+              result = await this.onToolCall(toolCall);
+            } else {
+              result = { error: `No onToolCall handler registered for tool "${toolCall.name}"` };
+            }
+          } catch (err) {
+            // Errors as Feedback: serialize error and feed back to LLM
+            result = {
+              error: err instanceof Error ? err.message : String(err),
+            };
+          }
+
+          yield { type: 'tool_result', toolCallId: toolCall.id, result };
+
+          // Add tool result as a message
+          const toolResultMsg: Message = {
+            role: 'tool',
+            content: typeof result === 'string' ? result : JSON.stringify(result),
+            toolCallId: toolCall.id,
+          };
+          conversation.push(toolResultMsg);
+        }
+
+        // Check abort after tool calls
+        if (this.isAborted()) {
+          yield { type: 'error', error: new AbortedError() };
+          yieldedDone = true;
+          yield this.doneEvent('aborted');
+          return;
+        }
       }
-
-      // Check abort after tool calls
-      if (this.isAborted()) {
-        yield { type: 'error', error: new AbortedError() };
-        yield this.doneEvent('aborted');
-        return;
+    } finally {
+      if (!yieldedDone) {
+        // Generator was closed externally via .return() or .throw()
+        // Mark as aborted for cleanup
+        this.aborted = true;
       }
     }
   }

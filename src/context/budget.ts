@@ -5,6 +5,7 @@
  */
 
 import type { TokenBudget, BudgetConfig } from './types.js';
+import { HarnessError } from '../core/errors.js';
 
 /**
  * Create a token budget tracker with named segments.
@@ -43,7 +44,11 @@ export function createBudget(config: BudgetConfig): TokenBudget {
   function getSegment(name: string) {
     const seg = segmentState.get(name);
     if (!seg) {
-      throw new Error(`Unknown segment: "${name}"`);
+      throw new HarnessError(
+        `Unknown segment: "${name}"`,
+        'UNKNOWN_SEGMENT',
+        `Available segments: ${[...segmentState.keys()].join(', ')}`,
+      );
     }
     return seg;
   }

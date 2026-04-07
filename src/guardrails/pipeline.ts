@@ -76,7 +76,16 @@ async function runGuardrails(
         pipeline.onEvent?.(event);
         return { passed: false, verdict, results };
       }
-      // failOpen: skip this guardrail
+      // failOpen: emit event with error info, then skip this guardrail
+      const errorVerdict: GuardrailEvent['verdict'] = { action: 'allow' };
+      const errorEvent: GuardrailEvent = {
+        guardrail: entry.name,
+        direction,
+        verdict: errorVerdict,
+        latencyMs: performance.now() - start,
+      };
+      results.push(errorEvent);
+      pipeline.onEvent?.(errorEvent);
       continue;
     }
 

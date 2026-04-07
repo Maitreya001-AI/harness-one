@@ -8,6 +8,13 @@
 
 import type { Message } from '../core/types.js';
 import type { CompressionStrategy } from './types.js';
+import { estimateTokens } from '../_internal/token-estimator.js';
+import { HarnessError } from '../core/errors.js';
+
+/** Estimate token count for a single message using the default model heuristic. */
+function msgTokens(msg: Message): number {
+  return estimateTokens('default', msg.content);
+}
 
 /** Options for the compress function. */
 export interface CompressOptions {
@@ -58,7 +65,11 @@ function getBuiltinStrategy(
     case 'preserve-failures':
       return createPreserveFailuresStrategy();
     default:
-      throw new Error(`Unknown compression strategy: "${name}"`);
+      throw new HarnessError(
+        `Unknown compression strategy: "${name}"`,
+        'UNKNOWN_STRATEGY',
+        'Use one of: truncate, sliding-window, summarize, preserve-failures',
+      );
   }
 }
 
@@ -68,19 +79,20 @@ function createTruncateStrategy(): CompressionStrategy {
     async compress(messages, targetTokens, options) {
       const preserve = options?.preserve;
       const result: Message[] = [];
-      let count = 0;
+      let tokenCount = 0;
 
       // Work backwards from the end, keeping messages until we hit targetTokens
       for (let i = messages.length - 1; i >= 0; i--) {
         const msg = messages[i];
+        const tokens = msgTokens(msg);
         if (preserve && preserve(msg)) {
           result.unshift(msg);
-          count++;
+          tokenCount += tokens;
           continue;
         }
-        if (count < targetTokens) {
+        if (tokenCount + tokens <= targetTokens) {
           result.unshift(msg);
-          count++;
+          tokenCount += tokens;
         }
       }
       return result;
@@ -91,7 +103,7 @@ function createTruncateStrategy(): CompressionStrategy {
 function createSlidingWindowStrategy(windowSize: number): CompressionStrategy {
   return {
     name: 'sliding-window',
-    async compress(messages, _targetTokens, options) {
+    async compress(messages, targetTokens, options) {
       const preserve = options?.preserve;
       const preserved: Message[] = [];
       const rest: Message[] = [];
@@ -104,18 +116,28 @@ function createSlidingWindowStrategy(windowSize: number): CompressionStrategy {
         }
       }
 
-      // Keep the last windowSize non-preserved messages
+      // Keep the last windowSize non-preserved messages, then trim to fit token budget
       const windowed = rest.slice(-windowSize);
+      // Trim windowed messages from the front to fit within token budget
+      let tokenCount = preserved.reduce((sum, m) => sum + msgTokens(m), 0);
+      const fittedWindowed: Message[] = [];
+      for (let i = windowed.length - 1; i >= 0; i--) {
+        const tokens = msgTokens(windowed[i]);
+        if (tokenCount + tokens <= targetTokens) {
+          fittedWindowed.unshift(windowed[i]);
+          tokenCount += tokens;
+        }
+      }
+
       // Merge preserved messages back in original order
       const result: Message[] = [];
       let wIdx = 0;
       let pIdx = 0;
-      // Interleave based on original position
       for (const msg of messages) {
         if (preserve && preserve(msg) && pIdx < preserved.length && msg === preserved[pIdx]) {
           result.push(msg);
           pIdx++;
-        } else if (wIdx < windowed.length && msg === windowed[wIdx]) {
+        } else if (wIdx < fittedWindowed.length && msg === fittedWindowed[wIdx]) {
           result.push(msg);
           wIdx++;
         }
@@ -132,19 +154,38 @@ function createSummarizeStrategy(
     name: 'summarize',
     async compress(messages, targetTokens, options) {
       if (!summarizer) {
-        throw new Error('summarize strategy requires a summarizer callback');
+        throw new HarnessError(
+          'summarize strategy requires a summarizer callback',
+          'MISSING_SUMMARIZER',
+          'Pass a summarizer function in CompressOptions',
+        );
       }
       const preserve = options?.preserve;
 
-      if (messages.length <= targetTokens) {
+      // Check if total tokens already fit within budget
+      const totalTokens = messages.reduce((sum, m) => sum + msgTokens(m), 0);
+      if (totalTokens <= targetTokens) {
         return [...messages];
       }
 
-      // Split: messages to keep (tail) vs messages to summarize (head)
-      const toKeep = messages.slice(-targetTokens);
-      const toSummarize: Message[] = [];
+      // Work backwards from the end, keeping messages that fit within budget
+      const toKeep: Message[] = [];
+      let keptTokens = 0;
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const tokens = msgTokens(messages[i]);
+        if (keptTokens + tokens <= targetTokens) {
+          toKeep.unshift(messages[i]);
+          keptTokens += tokens;
+        } else {
+          break;
+        }
+      }
 
-      for (const msg of messages.slice(0, messages.length - targetTokens)) {
+      // Everything not kept gets summarized (unless preserved)
+      const toSummarize: Message[] = [];
+      const keptSet = new Set(toKeep);
+      for (const msg of messages) {
+        if (keptSet.has(msg)) continue;
         if (preserve && preserve(msg)) {
           toKeep.unshift(msg);
         } else {
@@ -182,9 +223,18 @@ function createPreserveFailuresStrategy(): CompressionStrategy {
         }
       }
 
-      // Keep all failures, then fill remaining budget from end of non-failures
-      const remainingBudget = Math.max(0, targetTokens - failures.length);
-      const keptNonFailures = nonFailures.slice(-remainingBudget);
+      // Keep all failures, then fill remaining token budget from end of non-failures
+      const failureTokens = failures.reduce((sum, m) => sum + msgTokens(m), 0);
+      const remainingBudget = Math.max(0, targetTokens - failureTokens);
+      const keptNonFailures: Message[] = [];
+      let nonFailureTokens = 0;
+      for (let i = nonFailures.length - 1; i >= 0; i--) {
+        const tokens = msgTokens(nonFailures[i]);
+        if (nonFailureTokens + tokens <= remainingBudget) {
+          keptNonFailures.unshift(nonFailures[i]);
+          nonFailureTokens += tokens;
+        }
+      }
 
       // Reconstruct in original order
       for (const msg of messages) {
