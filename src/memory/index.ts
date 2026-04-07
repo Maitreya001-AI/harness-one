@@ -12,6 +12,7 @@ export type {
   CompactionPolicy,
   CompactionResult,
   RelayState,
+  VectorSearchOptions,
 } from './types.js';
 
 // Store

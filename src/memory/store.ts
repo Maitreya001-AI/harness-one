@@ -10,6 +10,7 @@ import type {
   MemoryFilter,
   CompactionPolicy,
   CompactionResult,
+  VectorSearchOptions,
 } from './types.js';
 
 /** Interface for memory storage backends. */
@@ -22,6 +23,8 @@ export interface MemoryStore {
   compact(policy: CompactionPolicy): Promise<CompactionResult>;
   count(): Promise<number>;
   clear(): Promise<void>;
+  /** Optional: Vector similarity search for embedding-backed stores. */
+  searchByVector?(options: VectorSearchOptions): Promise<Array<MemoryEntry & { score: number }>>;
 }
 
 let idCounter = 0;
@@ -83,6 +86,10 @@ export function createInMemoryStore(): MemoryStore {
       }
 
       results.sort((a, b) => b.updatedAt - a.updatedAt);
+
+      if (filter.offset !== undefined && filter.offset > 0) {
+        results = results.slice(filter.offset);
+      }
 
       if (filter.limit !== undefined && filter.limit > 0) {
         results = results.slice(0, filter.limit);

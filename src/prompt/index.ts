@@ -10,6 +10,7 @@ export type {
   TransitionCondition,
   TransitionContext,
   AssembledPrompt,
+  PromptBackend,
 } from './types.js';
 
 // Builder
@@ -17,8 +18,8 @@ export type { PromptBuilder } from './builder.js';
 export { createPromptBuilder } from './builder.js';
 
 // Registry
-export type { PromptRegistry } from './registry.js';
-export { createPromptRegistry } from './registry.js';
+export type { PromptRegistry, AsyncPromptRegistry } from './registry.js';
+export { createPromptRegistry, createAsyncPromptRegistry } from './registry.js';
 
 // Skills
 export type { SkillEngine } from './skills.js';

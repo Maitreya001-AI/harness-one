@@ -63,4 +63,12 @@ export interface TraceExporter {
   exportTrace(trace: Trace): Promise<void>;
   exportSpan(span: Span): Promise<void>;
   flush(): Promise<void>;
+  /** Optional: Initialize the exporter (e.g., connect to backend). */
+  initialize?(): Promise<void>;
+  /** Optional: Check if exporter is healthy. */
+  isHealthy?(): boolean;
+  /** Optional: Sampling — return false to skip this trace. */
+  shouldExport?(trace: Trace): boolean;
+  /** Optional: Called when exporter is being shut down. */
+  shutdown?(): Promise<void>;
 }

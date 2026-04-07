@@ -40,6 +40,18 @@ export interface MemoryFilter {
   readonly since?: number;
   readonly limit?: number;
   readonly search?: string;
+  /** Offset for pagination — skip this many results before applying limit. */
+  readonly offset?: number;
+}
+
+/** Options for vector similarity search on embedding-backed stores. */
+export interface VectorSearchOptions {
+  /** The query embedding vector. */
+  readonly embedding: readonly number[];
+  /** Maximum number of results to return. */
+  readonly limit?: number;
+  /** Minimum similarity score threshold (0–1). */
+  readonly minScore?: number;
 }
 
 /** Policy for compacting (pruning) memory entries. */

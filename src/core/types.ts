@@ -68,11 +68,22 @@ export interface AgentAdapter {
   countTokens?(messages: readonly Message[]): Promise<number>;
 }
 
+/** Optional LLM configuration — adapter passes to provider. */
+export interface LLMConfig {
+  readonly temperature?: number;
+  readonly topP?: number;
+  readonly maxTokens?: number;
+  readonly stopSequences?: readonly string[];
+  readonly [key: string]: unknown;
+}
+
 /** Parameters for an LLM chat call. */
 export interface ChatParams {
   readonly messages: readonly Message[];
   readonly tools?: readonly ToolSchema[];
   readonly signal?: AbortSignal;
+  /** Optional LLM configuration — adapter passes to provider. */
+  readonly config?: LLMConfig;
 }
 
 /** Response from an LLM chat call. */

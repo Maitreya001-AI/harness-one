@@ -51,6 +51,8 @@ export interface Scorer {
   readonly name: string;
   readonly description: string;
   score(input: string, output: string, context?: string): Promise<{ score: number; explanation: string }>;
+  /** Optional: Score multiple cases efficiently (e.g., batch LLM call). */
+  scoreBatch?(cases: Array<{ input: string; output: string; context?: string }>): Promise<Array<{ score: number; explanation: string }>>;
 }
 
 /** Configuration for an eval runner. */

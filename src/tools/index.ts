@@ -7,6 +7,7 @@ export type {
   ToolResult,
   ToolCall,
   ValidationError,
+  SchemaValidator,
 } from './types.js';
 
 // Helpers

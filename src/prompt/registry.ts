@@ -5,7 +5,7 @@
  */
 
 import { HarnessError } from '../core/errors.js';
-import type { PromptTemplate } from './types.js';
+import type { PromptTemplate, PromptBackend } from './types.js';
 
 /** Registry for storing and resolving versioned prompt templates. */
 export interface PromptRegistry {
@@ -101,6 +101,111 @@ export function createPromptRegistry(): PromptRegistry {
 
     has(id: string): boolean {
       return store.has(id);
+    },
+  };
+}
+
+/** Async prompt registry that falls back to a remote backend when templates are not cached locally. */
+export interface AsyncPromptRegistry {
+  /** Register a template locally (local override). */
+  register(template: PromptTemplate): void;
+  /** Get a template by ID — checks local cache first, then falls back to backend. */
+  get(id: string, version?: string): Promise<PromptTemplate | undefined>;
+  /** Resolve a template's variables — fetches from backend if not cached locally. */
+  resolve(id: string, variables: Record<string, string>, version?: string): Promise<string>;
+  /** List all templates from both local cache and backend. */
+  list(): Promise<PromptTemplate[]>;
+  /** Check if a template ID exists in local cache only. */
+  has(id: string): boolean;
+  /** Pre-fetch templates from the backend into local cache. */
+  prefetch(ids: string[]): Promise<void>;
+}
+
+/**
+ * Create an async prompt registry backed by a remote PromptBackend.
+ *
+ * Local registrations take priority over backend results.
+ *
+ * @example
+ * ```ts
+ * const registry = createAsyncPromptRegistry(myLangfuseBackend);
+ * const template = await registry.get('greeting');
+ * const result = await registry.resolve('greeting', { name: 'Alice' });
+ * ```
+ */
+export function createAsyncPromptRegistry(backend: PromptBackend): AsyncPromptRegistry {
+  const localRegistry = createPromptRegistry();
+
+  return {
+    register(template: PromptTemplate): void {
+      localRegistry.register(template);
+    },
+
+    async get(id: string, version?: string): Promise<PromptTemplate | undefined> {
+      const local = localRegistry.get(id, version);
+      if (local) return local;
+
+      const remote = await backend.fetch(id, version);
+      if (remote) {
+        localRegistry.register(remote);
+      }
+      return remote;
+    },
+
+    async resolve(id: string, variables: Record<string, string>, version?: string): Promise<string> {
+      const template = await this.get(id, version);
+      if (!template) {
+        throw new HarnessError(
+          `Template not found: ${id}${version ? `@${version}` : ''}`,
+          'TEMPLATE_NOT_FOUND',
+          'Register the template or ensure the backend can provide it',
+        );
+      }
+
+      let content = template.content;
+      for (const varName of template.variables) {
+        if (!(varName in variables)) {
+          throw new HarnessError(
+            `Missing required variable: ${varName} for template ${id}`,
+            'MISSING_VARIABLE',
+            `Provide a value for "{{${varName}}}"`,
+          );
+        }
+        content = content.replaceAll(`{{${varName}}}`, variables[varName]);
+      }
+      return content;
+    },
+
+    async list(): Promise<PromptTemplate[]> {
+      const localTemplates = localRegistry.list();
+      if (!backend.list) return localTemplates;
+
+      const remoteTemplates = await backend.list();
+      const localIds = new Set(localTemplates.map((t) => `${t.id}@${t.version}`));
+      const merged = [...localTemplates];
+      for (const rt of remoteTemplates) {
+        if (!localIds.has(`${rt.id}@${rt.version}`)) {
+          merged.push(rt);
+        }
+      }
+      return merged;
+    },
+
+    has(id: string): boolean {
+      return localRegistry.has(id);
+    },
+
+    async prefetch(ids: string[]): Promise<void> {
+      await Promise.all(
+        ids.map(async (id) => {
+          if (!localRegistry.has(id)) {
+            const remote = await backend.fetch(id);
+            if (remote) {
+              localRegistry.register(remote);
+            }
+          }
+        }),
+      );
     },
   };
 }

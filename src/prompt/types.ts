@@ -62,6 +62,16 @@ export interface TransitionContext {
   readonly history: readonly { role: string; content: string }[];
 }
 
+/** Backend interface for fetching prompt templates from a remote source (e.g., Langfuse). */
+export interface PromptBackend {
+  /** Fetch a template by id and optional version from remote source. */
+  fetch(id: string, version?: string): Promise<PromptTemplate | undefined>;
+  /** List all available templates. */
+  list?(): Promise<PromptTemplate[]>;
+  /** Optional: Push a template to remote. */
+  push?(template: PromptTemplate): Promise<void>;
+}
+
 /** The result of assembling a multi-layer prompt. */
 export interface AssembledPrompt {
   readonly systemPrompt: string;

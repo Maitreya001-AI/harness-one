@@ -5,7 +5,7 @@
  */
 
 import type { ToolCallRequest, ToolSchema } from '../core/types.js';
-import type { ToolDefinition, ToolResult } from './types.js';
+import type { ToolDefinition, ToolResult, SchemaValidator } from './types.js';
 import { toolError } from './types.js';
 import { validateToolCall } from './validate.js';
 import { HarnessError } from '../core/errors.js';
@@ -36,10 +36,13 @@ const TOOL_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_.]*$/;
 export function createRegistry(config?: {
   maxCallsPerTurn?: number;
   maxCallsPerSession?: number;
+  /** Custom schema validator (default: internal json-schema validator). */
+  validator?: SchemaValidator;
 }): ToolRegistry {
   const tools = new Map<string, ToolDefinition>();
   const maxPerTurn = config?.maxCallsPerTurn ?? Infinity;
   const maxPerSession = config?.maxCallsPerSession ?? Infinity;
+  const customValidator = config?.validator;
   let turnCalls = 0;
   let sessionCalls = 0;
 
@@ -120,7 +123,9 @@ export function createRegistry(config?: {
     }
 
     // Validate
-    const validation = validateToolCall(tool.parameters, params);
+    const validation = customValidator
+      ? customValidator.validate(tool.parameters, params)
+      : validateToolCall(tool.parameters, params);
     if (!validation.valid) {
       const messages = validation.errors.map((e) => `${e.path}: ${e.message}`).join('; ');
       return toolError(

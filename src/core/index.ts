@@ -13,6 +13,7 @@ export type {
   StreamChunk,
   ToolSchema,
   JsonSchema,
+  LLMConfig,
 } from './types.js';
 
 // Errors
