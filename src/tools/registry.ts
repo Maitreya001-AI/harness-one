@@ -8,6 +8,7 @@ import type { ToolCallRequest, ToolSchema } from '../core/types.js';
 import type { ToolDefinition, ToolResult } from './types.js';
 import { toolError } from './types.js';
 import { validateToolCall } from './validate.js';
+import { HarnessError } from '../core/errors.js';
 
 /** A registry that manages tool definitions and executes tool calls. */
 export interface ToolRegistry {
@@ -44,12 +45,18 @@ export function createRegistry(config?: {
 
   function register(tool: ToolDefinition): void {
     if (!TOOL_NAME_RE.test(tool.name)) {
-      throw new Error(
+      throw new HarnessError(
         `Invalid tool name "${tool.name}": must match /^[a-zA-Z][a-zA-Z0-9_.]*$/`,
+        'INVALID_TOOL_NAME',
+        'Tool names must start with a letter and contain only letters, digits, dots, or underscores',
       );
     }
     if (tools.has(tool.name)) {
-      throw new Error(`Tool "${tool.name}" is already registered`);
+      throw new HarnessError(
+        `Tool "${tool.name}" is already registered`,
+        'DUPLICATE_TOOL',
+        'Use a unique name or check registry.get() before registering',
+      );
     }
     tools.set(tool.name, tool);
   }
