@@ -7,7 +7,7 @@
  * @module
  */
 
-import { AgentLoop } from 'harness-one/core';
+import { AgentLoop, HarnessError } from 'harness-one/core';
 import type { AgentAdapter, Message, AgentEvent } from 'harness-one/core';
 import { createTraceManager, createConsoleExporter, createCostTracker } from 'harness-one/observe';
 import type { TraceExporter, TraceManager, CostTracker, ModelPricing } from 'harness-one/observe';
@@ -209,7 +209,7 @@ function createAdapter(config: HarnessConfig): AgentAdapter {
       model: config.model,
     });
   }
-  throw new Error(`Unknown provider: ${config.provider}`);
+  throw new HarnessError(`Unknown provider: ${config.provider}`, 'INVALID_CONFIG', 'Use one of: anthropic, openai');
 }
 
 function createExporters(config: HarnessConfig): TraceExporter[] {

@@ -3,6 +3,15 @@
 // This example shows how to implement harness-one's AgentAdapter interface
 // for the OpenAI SDK. The adapter translates between harness-one's unified
 // message format and OpenAI's chat completions API.
+//
+// This adapter also works with any OpenAI-compatible provider:
+// - Groq:       baseURL: 'https://api.groq.com/openai/v1'
+// - DeepSeek:   baseURL: 'https://api.deepseek.com'
+// - Together:   baseURL: 'https://api.together.xyz/v1'
+// - Fireworks:  baseURL: 'https://api.fireworks.ai/inference/v1'
+// - Perplexity: baseURL: 'https://api.perplexity.ai'
+// - Mistral:    baseURL: 'https://api.mistral.ai/v1'
+// - Ollama:     baseURL: 'http://localhost:11434/v1'
 
 import OpenAI from 'openai';
 import type {

@@ -4,10 +4,13 @@
  * Provides a full AgentAdapter implementation backed by the OpenAI SDK,
  * with support for chat, streaming, and tool_calls handling.
  *
+ * Works with any OpenAI-compatible API (Groq, DeepSeek, Together, Fireworks,
+ * Perplexity, Mistral, Ollama, vLLM, LM Studio, etc.) via the baseURL option.
+ *
  * @module
  */
 
-import type OpenAI from 'openai';
+import OpenAI from 'openai';
 import type {
   AgentAdapter,
   ChatParams,
@@ -17,11 +20,35 @@ import type {
   TokenUsage,
   ToolSchema,
 } from 'harness-one/core';
+import { HarnessError } from 'harness-one/core';
+
+/**
+ * Well-known OpenAI-compatible provider base URLs.
+ *
+ * Usage:
+ *   createOpenAIAdapter({ ...providers.groq, apiKey: '...', model: 'llama-3.3-70b-versatile' })
+ */
+export const providers = {
+  openrouter: { baseURL: 'https://openrouter.ai/api/v1' },
+  groq: { baseURL: 'https://api.groq.com/openai/v1' },
+  deepseek: { baseURL: 'https://api.deepseek.com' },
+  together: { baseURL: 'https://api.together.xyz/v1' },
+  fireworks: { baseURL: 'https://api.fireworks.ai/inference/v1' },
+  perplexity: { baseURL: 'https://api.perplexity.ai' },
+  mistral: { baseURL: 'https://api.mistral.ai/v1' },
+  ollama: { baseURL: 'http://localhost:11434/v1' },
+} as const;
 
 /** Configuration for the OpenAI adapter. */
 export interface OpenAIAdapterConfig {
-  /** A pre-configured OpenAI client instance. */
-  readonly client: OpenAI;
+  /** A pre-configured OpenAI client instance. Takes precedence over apiKey/baseURL. */
+  readonly client?: OpenAI;
+  /** API key. Defaults to OPENAI_API_KEY env var. Used when client is not provided. */
+  readonly apiKey?: string;
+  /** Base URL for OpenAI-compatible APIs (e.g. Groq, DeepSeek). Used when client is not provided. */
+  readonly baseURL?: string;
+  /** Default HTTP headers. Used when client is not provided. */
+  readonly defaultHeaders?: Record<string, string>;
   /** Model name. Defaults to 'gpt-4o'. */
   readonly model?: string;
 }
@@ -112,7 +139,11 @@ function toHarnessMessage(
  * Supports chat(), stream(), and tool_calls handling.
  */
 export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
-  const { client } = config;
+  const client: OpenAI = config.client ?? new OpenAI({
+    apiKey: config.apiKey,
+    baseURL: config.baseURL,
+    defaultHeaders: config.defaultHeaders,
+  });
   const model = config.model ?? 'gpt-4o';
 
   return {
@@ -129,7 +160,7 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
 
       const choice = response.choices[0];
       if (!choice) {
-        throw new Error('OpenAI returned no choices');
+        throw new HarnessError('OpenAI returned no choices', 'PROVIDER_ERROR', 'Check if the model and API key are valid');
       }
 
       return {

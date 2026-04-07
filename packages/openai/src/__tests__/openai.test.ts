@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { createOpenAIAdapter } from '../index.js';
+import { createOpenAIAdapter, providers } from '../index.js';
 import type { Message } from 'harness-one/core';
+import { HarnessError } from 'harness-one/core';
 
 // ---------------------------------------------------------------------------
 // Mock OpenAI client
@@ -153,13 +154,16 @@ describe('createOpenAIAdapter', () => {
       });
     });
 
-    it('throws when no choices returned', async () => {
+    it('throws HarnessError when no choices returned', async () => {
       mock.mocks.create.mockResolvedValue({
         choices: [],
         usage: { prompt_tokens: 10, completion_tokens: 0 },
       });
 
       const adapter = createOpenAIAdapter({ client: mock.client });
+      await expect(
+        adapter.chat({ messages: [{ role: 'user', content: 'Hi' }] }),
+      ).rejects.toThrow(HarnessError);
       await expect(
         adapter.chat({ messages: [{ role: 'user', content: 'Hi' }] }),
       ).rejects.toThrow('OpenAI returned no choices');
@@ -221,6 +225,38 @@ describe('createOpenAIAdapter', () => {
       expect(calledMessages[1].role).toBe('assistant');
       expect(calledMessages[1].tool_calls).toHaveLength(1);
       expect(calledMessages[1].tool_calls[0].function.name).toBe('search');
+    });
+  });
+
+  describe('providers', () => {
+    it('contains base URLs for known providers', () => {
+      expect(providers.openrouter.baseURL).toBe('https://openrouter.ai/api/v1');
+      expect(providers.groq.baseURL).toBe('https://api.groq.com/openai/v1');
+      expect(providers.deepseek.baseURL).toBe('https://api.deepseek.com');
+      expect(providers.together.baseURL).toBe('https://api.together.xyz/v1');
+      expect(providers.fireworks.baseURL).toBe('https://api.fireworks.ai/inference/v1');
+      expect(providers.perplexity.baseURL).toBe('https://api.perplexity.ai');
+      expect(providers.mistral.baseURL).toBe('https://api.mistral.ai/v1');
+      expect(providers.ollama.baseURL).toBe('http://localhost:11434/v1');
+    });
+
+    it('can be spread into adapter config', async () => {
+      mock.mocks.create.mockResolvedValue({
+        choices: [{ message: { role: 'assistant', content: 'OK' } }],
+        usage: { prompt_tokens: 5, completion_tokens: 2 },
+      });
+
+      // When client is provided, baseURL from providers is ignored (client takes precedence)
+      const adapter = createOpenAIAdapter({
+        client: mock.client,
+        ...providers.groq,
+        model: 'llama-3.3-70b-versatile',
+      });
+      await adapter.chat({ messages: [{ role: 'user', content: 'Hi' }] });
+
+      expect(mock.mocks.create).toHaveBeenCalledWith(
+        expect.objectContaining({ model: 'llama-3.3-70b-versatile' }),
+      );
     });
   });
 });

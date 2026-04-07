@@ -15,6 +15,7 @@ import type {
   CompactionPolicy,
   CompactionResult,
 } from 'harness-one/memory';
+import { HarnessError } from 'harness-one/core';
 
 /** Configuration for the Redis memory store. */
 export interface RedisStoreConfig {
@@ -132,7 +133,7 @@ export function createRedisStore(config: RedisStoreConfig): MemoryStore {
     async update(id, updates) {
       const existing = await getEntry(id);
       if (!existing) {
-        throw new Error(`Memory entry not found: ${id}`);
+        throw new HarnessError(`Memory entry not found: ${id}`, 'NOT_FOUND');
       }
       const updated: MemoryEntry = {
         ...existing,
