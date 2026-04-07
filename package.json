@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "description": "Universal primitives for AI agent harness engineering",
   "type": "module",
+  "bin": {
+    "harness-one": "./dist/cli/index.js"
+  },
   "exports": {
     "./core": {
       "import": "./dist/core/index.js",

@@ -13,6 +13,7 @@ export default defineConfig([
       'memory/index': 'src/memory/index.ts',
       'eval/index': 'src/eval/index.ts',
       'evolve/index': 'src/evolve/index.ts',
+      'cli/index': 'src/cli/index.ts',
     },
     format: ['esm'],
     dts: true,
