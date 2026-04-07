@@ -26,7 +26,7 @@ eval 模块提供 Agent 输出质量的评估框架：EvalRunner 将测试用例
 | `EvalCase` | 评估用例：id、input、expectedOutput?、context?、tags?、metadata? |
 | `EvalResult` | 单用例结果：caseId、scores (Record)、passed、details、duration |
 | `EvalReport` | 聚合报告：totalCases、passRate、averageScores、results、duration |
-| `Scorer` | 评分器接口：name、description、score(input, output, context?) |
+| `Scorer` | 评分器接口：name、description、score()、scoreBatch?() |
 | `EvalConfig` | Runner 配置：scorers、passThreshold、overallPassRate |
 | `GeneratorEvaluatorConfig` | G-E 配置：generate、evaluate、maxRetries |
 | `FlywheelConfig` | 飞轮配置：scoreThreshold、maxNewCases |
@@ -101,6 +101,7 @@ function extractNewCases(report: EvalReport, config: FlywheelConfig): EvalCase[]
 ## 扩展点
 
 - 实现 `Scorer` 接口自定义评分逻辑（如 LLM-as-judge）
+- 实现可选的 `scoreBatch?(cases)` 方法，支持批量评分（如单次 LLM 调用评估多个用例）。签名：`scoreBatch?(cases: Array<{ input, output, context? }>): Promise<Array<{ score, explanation }>>`
 - `createCustomScorer` 接受任意 scoreFn
 - `GeneratorEvaluatorConfig.evaluate` 可接入外部评估服务
 - 飞轮输出的 EvalCase 可直接回灌到下一轮 runner.run()

@@ -28,7 +28,8 @@ core 模块定义了 harness-one 的共享类型契约（Message、TokenUsage、
 | `ToolCallRequest` | LLM 发起的工具调用请求（id + name + arguments） |
 | `TokenUsage` | 单次 LLM 调用的 token 用量（input/output/cache） |
 | `AgentAdapter` | LLM 适配器接口：chat() 必选，stream()/countTokens() 可选 |
-| `ChatParams` | chat() 入参：messages + tools + signal |
+| `LLMConfig` | 可选 LLM 配置：temperature、topP、maxTokens、stopSequences + 任意扩展字段 |
+| `ChatParams` | chat() 入参：messages + tools + signal + config? (LLMConfig) |
 | `ChatResponse` | chat() 返回：message + usage |
 | `StreamChunk` | 流式响应片段：text_delta / tool_call_delta / done |
 | `ToolSchema` | 工具的 JSON Schema 描述 |
@@ -89,6 +90,7 @@ AgentLoop.run() 是一个 AsyncGenerator，每次迭代：
 ## 扩展点
 
 - 实现 `AgentAdapter` 接口适配任意 LLM 提供商
+- 通过 `ChatParams.config` 传入 `LLMConfig`，由 adapter 转发给底层 LLM（temperature、topP、maxTokens 等）。`LLMConfig` 支持 `[key: string]: unknown` 索引签名，允许 adapter 自定义额外参数
 - 通过 `onToolCall` 回调自定义工具调度逻辑
 - 通过 `signal` (AbortSignal) 实现外部取消控制
 

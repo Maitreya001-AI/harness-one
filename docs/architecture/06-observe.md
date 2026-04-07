@@ -26,7 +26,7 @@ observe 模块提供两个核心能力：TraceManager 管理分布式追踪（Tr
 | `SpanEvent` | 跨度事件：name、timestamp、attributes |
 | `TokenUsageRecord` | token 用量记录：含 estimatedCost 和 timestamp |
 | `CostAlert` | 成本告警：type (warning/critical)、currentCost、budget、percentUsed |
-| `TraceExporter` | 导出器接口：exportTrace、exportSpan、flush |
+| `TraceExporter` | 导出器接口：exportTrace、exportSpan、flush + 可选生命周期方法 |
 | `ModelPricing` | 模型定价：input/output/cacheRead/cacheWrite 每千 token 价格 |
 
 ### 工厂函数
@@ -88,9 +88,22 @@ cost = (inputTokens/1000 * inputPrice) + (outputTokens/1000 * outputPrice)
 - **依赖**: `core/errors.ts`（HarnessError）
 - **被依赖**: 无直接模块依赖
 
+## TraceExporter 生命周期方法
+
+`TraceExporter` 接口除必选的 `exportTrace()`、`exportSpan()`、`flush()` 外，新增四个可选生命周期方法：
+
+| 方法 | 说明 |
+|------|------|
+| `initialize?()` | 初始化导出器（如建立后端连接）。在首次导出前调用 |
+| `isHealthy?()` | 同步健康检查，返回 `false` 时可跳过导出或触发告警 |
+| `shouldExport?(trace)` | 采样控制——返回 `false` 时跳过该 trace 的导出。用于实现概率采样或基于属性的过滤 |
+| `shutdown?()` | 优雅关闭（如刷新缓冲区、断开连接） |
+
+所有方法均为可选，已有的 exporter 实现无需修改。
+
 ## 扩展点
 
-- 实现 `TraceExporter` 接口对接外部 APM（如 Datadog、Jaeger）
+- 实现 `TraceExporter` 接口对接外部 APM（如 Datadog、Jaeger），利用生命周期方法管理连接和采样
 - 通过 `ModelPricing` 配置任意模型的定价
 - `onAlert()` 回调可触发自动降级或切换模型
 

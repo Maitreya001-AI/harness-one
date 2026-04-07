@@ -93,6 +93,22 @@ harness-one 是一个 TypeScript 工具库，为 AI Agent 产品提供 Harness E
 - **包格式**: 单包 `harness-one`，通过 `exports` 字段提供子路径导入
 - **CLI**: `package.json` 的 `bin` 字段注册 `harness-one` 命令
 
+## 扩展与集成
+
+harness-one 的扩展遵循统一的**注入模式**：核心模块定义接口（interface），内置默认实现，外部实现在运行时通过工厂函数参数注入。外部依赖不会泄露到接口文件之外。
+
+| 接口 | 模块 | 用途 | 注入方式 | 示例文件 |
+|------|------|------|---------|---------|
+| `AgentAdapter` | core | 接入 LLM 提供商 | `new AgentLoop({ adapter })` | `examples/adapters/` |
+| `LLMConfig` | core | 自定义 temperature/topP/maxTokens | `ChatParams.config` | — |
+| `TraceExporter` | observe | 对接外部 APM | `createTraceManager({ exporters })` | `examples/observe/` |
+| `MemoryStore` + `searchByVector()` | memory | 自定义存储/向量搜索 | `createRelay({ store })` | `examples/memory/` |
+| `PromptBackend` | prompt | 远程模板源 | `createAsyncPromptRegistry(backend)` | `examples/prompt/` |
+| `SchemaValidator` | tools | 替换参数校验器 | `createRegistry({ validator })` | `examples/tools/` |
+| `Scorer` + `scoreBatch()` | eval | 自定义评分/批量评分 | `createEvalRunner({ scorers })` | `examples/eval/` |
+
+完整的集成示例和使用说明见 [`examples/README.md`](../../examples/README.md)。
+
 ## 文档索引
 
 | 文档 | 内容 |
