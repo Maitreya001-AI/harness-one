@@ -88,11 +88,51 @@ describe('createPromptBuilder', () => {
       const hash2 = builder.getStablePrefixHash();
       expect(hash1).toBe(hash2);
     });
+
+    it('C1: hash must NOT change when variable values change (hashes raw template)', () => {
+      const builder = createPromptBuilder();
+      builder.addLayer({
+        name: 'sys',
+        content: 'You are {{role}} assistant for {{company}}',
+        priority: 0,
+        cacheable: true,
+      });
+
+      builder.setVariable('role', 'a helpful');
+      builder.setVariable('company', 'Acme');
+      const hash1 = builder.getStablePrefixHash();
+
+      builder.setVariable('role', 'a strict');
+      builder.setVariable('company', 'Globex');
+      const hash2 = builder.getStablePrefixHash();
+
+      // The hash must be stable across variable changes — it should hash raw template content
+      expect(hash1).toBe(hash2);
+    });
+
+    it('C1: build().stablePrefixHash must also be stable across variable changes', () => {
+      const builder = createPromptBuilder();
+      builder.addLayer({
+        name: 'sys',
+        content: 'Hello {{name}}',
+        priority: 0,
+        cacheable: true,
+      });
+
+      builder.setVariable('name', 'Alice');
+      const hash1 = builder.build().stablePrefixHash;
+
+      builder.setVariable('name', 'Bob');
+      const hash2 = builder.build().stablePrefixHash;
+
+      expect(hash1).toBe(hash2);
+    });
   });
 
   describe('token budget (maxTokens)', () => {
     it('trims non-cacheable layers when over budget', () => {
-      // Each char ≈ 0.25 tokens, so 100 chars ≈ 25 tokens
+      // 'Short' = 6 tokens, 'A'.repeat(100) = 29 tokens with heuristic estimator
+      // Budget of 10 means 'big' cannot fit alongside 'sys'
       const builder = createPromptBuilder({ maxTokens: 10 });
       builder.addLayer({ name: 'sys', content: 'Short', priority: 0, cacheable: true });
       builder.addLayer({ name: 'big', content: 'A'.repeat(100), priority: 10, cacheable: false });
@@ -102,7 +142,8 @@ describe('createPromptBuilder', () => {
     });
 
     it('keeps cacheable layers even when trimming', () => {
-      const builder = createPromptBuilder({ maxTokens: 5 });
+      // 'Hello' = 6 tokens, 'Extra content here' = 9 tokens; budget 8 only fits cacheable
+      const builder = createPromptBuilder({ maxTokens: 8 });
       builder.addLayer({ name: 'sys', content: 'Hello', priority: 0, cacheable: true });
       builder.addLayer({ name: 'extra', content: 'Extra content here', priority: 5, cacheable: false });
       const result = builder.build();
@@ -110,13 +151,53 @@ describe('createPromptBuilder', () => {
     });
 
     it('trims highest priority number first', () => {
-      const builder = createPromptBuilder({ maxTokens: 10 });
+      // 'AAAA' = 5 tokens each; budget of 11 fits exactly 2 layers
+      // Should keep 'a' (priority 1, most important) and one other
+      const builder = createPromptBuilder({ maxTokens: 11 });
       builder.addLayer({ name: 'a', content: 'AAAA', priority: 1, cacheable: false });
       builder.addLayer({ name: 'b', content: 'BBBB', priority: 100, cacheable: false });
       builder.addLayer({ name: 'c', content: 'CCCC', priority: 50, cacheable: false });
       const result = builder.build();
       // 'a' (priority 1) should survive over 'b' (priority 100)
       expect(result.layers.some(l => l.name === 'a')).toBe(true);
+    });
+
+    it('C2: keeps lowest priority numbers (most important) when trimming under budget', () => {
+      // Each 8-char layer = 6 tokens with heuristic estimator
+      // Budget of 13 fits exactly 2 layers but not 3
+      const builder = createPromptBuilder({ maxTokens: 13 });
+      builder.addLayer({ name: 'important', content: 'AAAAAAAA', priority: 1, cacheable: false });
+      builder.addLayer({ name: 'medium', content: 'BBBBBBBB', priority: 50, cacheable: false });
+      builder.addLayer({ name: 'expendable', content: 'CCCCCCCC', priority: 100, cacheable: false });
+      const result = builder.build();
+      const keptNames = result.layers.map(l => l.name);
+
+      // The most important layer (lowest priority number) MUST be kept
+      expect(keptNames).toContain('important');
+      // The least important layer (highest priority number) should be dropped first
+      // If only 2 fit, 'expendable' should be the first to go
+      if (keptNames.length === 2) {
+        expect(keptNames).toContain('medium');
+        expect(keptNames).not.toContain('expendable');
+      }
+      // Under no circumstances should 'expendable' be kept while 'important' is dropped
+      if (!keptNames.includes('important')) {
+        throw new Error('BUG: important layer was dropped before expendable layer');
+      }
+    });
+
+    it('C2: priority ordering is correct - low priority number = high importance = kept first', () => {
+      // 'AAAA' = 5 tokens each; budget of 6 fits exactly 1 layer
+      const builder = createPromptBuilder({ maxTokens: 6 });
+      builder.addLayer({ name: 'keep_me', content: 'AAAA', priority: 1, cacheable: false });
+      builder.addLayer({ name: 'drop_me', content: 'BBBB', priority: 99, cacheable: false });
+      const result = builder.build();
+      const keptNames = result.layers.map(l => l.name);
+
+      // With budget for ~1 layer, 'keep_me' (priority 1, most important) should be kept
+      // and 'drop_me' (priority 99, least important) should be dropped
+      expect(keptNames).toContain('keep_me');
+      expect(keptNames).not.toContain('drop_me');
     });
   });
 
