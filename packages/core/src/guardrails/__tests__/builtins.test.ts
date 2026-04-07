@@ -67,6 +67,46 @@ describe('createRateLimiter', () => {
     const limiter = createRateLimiter({ max: 1, windowMs: 1000 });
     expect(limiter.name).toBe('rate-limiter');
   });
+
+  describe('H5: efficient key lookup with many keys', () => {
+    it('handles many keys efficiently without O(N) indexOf', () => {
+      const { guard } = createRateLimiter({
+        max: 100,
+        windowMs: 60_000,
+        keyFn: (ctx) => ctx.content,
+        maxKeys: 10_000,
+      });
+      // Insert 1000 distinct keys - should be fast with Map-based lookup
+      const start = performance.now();
+      for (let i = 0; i < 1000; i++) {
+        guard({ content: `key_${i}` });
+      }
+      const elapsed = performance.now() - start;
+      // With O(N) indexOf on every touchKey, 1000 keys would be slow.
+      // With Map-based O(1) lookup, this should be well under 1 second.
+      expect(elapsed).toBeLessThan(1000);
+    });
+
+    it('correctly maintains LRU behavior with Map-backed lookup', () => {
+      const { guard } = createRateLimiter({
+        max: 1,
+        windowMs: 60_000,
+        keyFn: (ctx) => ctx.content,
+        maxKeys: 3,
+      });
+      guard({ content: 'key1' });
+      guard({ content: 'key2' });
+      guard({ content: 'key3' });
+      // All three keys are at their limit
+      expect(guard({ content: 'key1' }).action).toBe('block');
+      expect(guard({ content: 'key2' }).action).toBe('block');
+      expect(guard({ content: 'key3' }).action).toBe('block');
+      // Adding key4 should evict the LRU key (key1, since key2 and key3 were touched more recently)
+      guard({ content: 'key4' });
+      // key1 was evicted and should be allowed again (fresh bucket)
+      expect(guard({ content: 'key1' }).action).toBe('allow');
+    });
+  });
 });
 
 describe('createInjectionDetector', () => {
@@ -146,6 +186,19 @@ describe('createInjectionDetector', () => {
       const { guard } = createInjectionDetector();
       // Cyrillic е (U+0435) for 'e' and а (U+0430) for 'a'
       const result = guard({ content: 'disr\u0435g\u0430rd' });
+      expect(result.action).toBe('block');
+    });
+  });
+
+  describe('C12: BASE64_RE array concatenation in HIGH sensitivity', () => {
+    it('patterns array should contain only RegExp entries (no nested arrays)', () => {
+      const { guard } = createInjectionDetector({ sensitivity: 'high' });
+      // This test checks that the guard function works without type errors.
+      // If BASE64_RE is pushed as a non-spread element, patterns would have
+      // a non-RegExp entry, causing runtime errors or missed detection.
+      const base64Content = Buffer.from('this is a long enough test string to trigger base64 detection').toString('base64');
+      const result = guard({ content: base64Content });
+      // Should detect base64 without throwing a TypeError
       expect(result.action).toBe('block');
     });
   });

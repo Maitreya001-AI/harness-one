@@ -60,6 +60,85 @@ describe('createComponentRegistry', () => {
       const registry = createComponentRegistry();
       expect(() => registry.validate('nope')).toThrow(HarnessError);
     });
+
+    it('returns invalid when retirement condition is met (H1: validate stub fix)', () => {
+      const registry = createComponentRegistry();
+      registry.register(makeMeta({
+        id: 'ctx-packer',
+        retirementCondition: 'contextWindow > 1000000',
+      }));
+      // Provide a context where the retirement condition is met
+      const result = registry.validate('ctx-packer', { contextWindow: 2000000 });
+      expect(result.valid).toBe(false);
+      expect(result.reason).toContain('Retirement condition met');
+    });
+
+    it('returns valid when retirement condition is NOT met', () => {
+      const registry = createComponentRegistry();
+      registry.register(makeMeta({
+        id: 'ctx-packer',
+        retirementCondition: 'contextWindow > 1000000',
+      }));
+      const result = registry.validate('ctx-packer', { contextWindow: 500 });
+      expect(result.valid).toBe(true);
+    });
+
+    it('returns valid when no context is provided (backwards compatible)', () => {
+      const registry = createComponentRegistry();
+      registry.register(makeMeta());
+      const result = registry.validate('comp-1');
+      expect(result.valid).toBe(true);
+    });
+
+    it('handles equality conditions', () => {
+      const registry = createComponentRegistry();
+      registry.register(makeMeta({
+        id: 'c1',
+        retirementCondition: 'modelVersion == 5',
+      }));
+      expect(registry.validate('c1', { modelVersion: 5 }).valid).toBe(false);
+      expect(registry.validate('c1', { modelVersion: 4 }).valid).toBe(true);
+    });
+
+    it('handles less-than conditions', () => {
+      const registry = createComponentRegistry();
+      registry.register(makeMeta({
+        id: 'c1',
+        retirementCondition: 'accuracy < 0.5',
+      }));
+      expect(registry.validate('c1', { accuracy: 0.3 }).valid).toBe(false);
+      expect(registry.validate('c1', { accuracy: 0.8 }).valid).toBe(true);
+    });
+
+    it('handles greater-than-or-equal conditions', () => {
+      const registry = createComponentRegistry();
+      registry.register(makeMeta({
+        id: 'c1',
+        retirementCondition: 'tokens >= 100',
+      }));
+      expect(registry.validate('c1', { tokens: 100 }).valid).toBe(false);
+      expect(registry.validate('c1', { tokens: 99 }).valid).toBe(true);
+    });
+
+    it('handles less-than-or-equal conditions', () => {
+      const registry = createComponentRegistry();
+      registry.register(makeMeta({
+        id: 'c1',
+        retirementCondition: 'latency <= 10',
+      }));
+      expect(registry.validate('c1', { latency: 10 }).valid).toBe(false);
+      expect(registry.validate('c1', { latency: 11 }).valid).toBe(true);
+    });
+
+    it('returns valid when context key is missing for the condition', () => {
+      const registry = createComponentRegistry();
+      registry.register(makeMeta({
+        id: 'c1',
+        retirementCondition: 'missingKey > 100',
+      }));
+      // Key not present in context, condition cannot be evaluated as met
+      expect(registry.validate('c1', { otherKey: 999 }).valid).toBe(true);
+    });
   });
 
   describe('markValidated', () => {

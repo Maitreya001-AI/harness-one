@@ -7,7 +7,7 @@
  * @module
  */
 
-import type { AgentAdapter, Message, TokenUsage, ToolCallRequest } from './types.js';
+import type { AgentAdapter, Message, TokenUsage, ToolCallRequest, ToolSchema } from './types.js';
 import type { AgentEvent, DoneReason } from './events.js';
 import { AbortedError, MaxIterationsError, TokenBudgetExceededError } from './errors.js';
 
@@ -18,6 +18,9 @@ export interface AgentLoopConfig {
   readonly maxTotalTokens?: number;
   readonly signal?: AbortSignal;
   readonly onToolCall?: (call: ToolCallRequest) => Promise<unknown>;
+  readonly tools?: ToolSchema[];
+  readonly maxConversationMessages?: number;
+  readonly streaming?: boolean;
 }
 
 /**
@@ -35,9 +38,13 @@ export class AgentLoop {
   private readonly adapter: AgentAdapter;
   private readonly maxIterations: number;
   private readonly maxTotalTokens: number;
-  private readonly signal?: AbortSignal;
+  private readonly externalSignal?: AbortSignal;
   private readonly onToolCall?: (call: ToolCallRequest) => Promise<unknown>;
+  private readonly tools?: ToolSchema[];
+  private readonly maxConversationMessages?: number;
+  private readonly streaming: boolean;
 
+  private abortController: AbortController;
   private aborted = false;
   private cumulativeUsage: { inputTokens: number; outputTokens: number } = {
     inputTokens: 0,
@@ -48,8 +55,23 @@ export class AgentLoop {
     this.adapter = config.adapter;
     this.maxIterations = config.maxIterations ?? 25;
     this.maxTotalTokens = config.maxTotalTokens ?? Infinity;
-    this.signal = config.signal;
+    this.externalSignal = config.signal;
     this.onToolCall = config.onToolCall;
+    this.tools = config.tools;
+    this.maxConversationMessages = config.maxConversationMessages;
+    this.streaming = config.streaming ?? false;
+
+    // H3: Create internal AbortController; link to external signal if provided
+    this.abortController = new AbortController();
+    if (this.externalSignal) {
+      if (this.externalSignal.aborted) {
+        this.abortController.abort();
+      } else {
+        this.externalSignal.addEventListener('abort', () => {
+          this.abortController.abort();
+        }, { once: true });
+      }
+    }
   }
 
   /** Get cumulative token usage across all iterations. */
@@ -60,9 +82,11 @@ export class AgentLoop {
     };
   }
 
-  /** Abort the loop at the next safe point. */
+  /** Abort the loop at the next safe point and cancel in-flight adapter calls. */
   abort(): void {
     this.aborted = true;
+    // H3: Also abort the internal controller to cancel in-flight adapter.chat() calls
+    this.abortController.abort();
   }
 
   /**
@@ -110,24 +134,79 @@ export class AgentLoop {
           return;
         }
 
+        // H4: Check conversation length and emit warning if exceeded
+        if (this.maxConversationMessages !== undefined && conversation.length > this.maxConversationMessages) {
+          yield {
+            type: 'warning',
+            message: `Conversation length (${conversation.length}) exceeds maxConversationMessages (${this.maxConversationMessages}). Consider summarizing or trimming.`,
+          };
+        }
+
         yield { type: 'iteration_start', iteration };
 
-        // Call adapter
-        const response = await this.adapter.chat({
-          messages: conversation,
-          signal: this.signal,
-        });
+        // C5: Wrap adapter call in try-catch to handle exceptions gracefully
+        let assistantMsg: Message;
+        let responseUsage: TokenUsage;
+
+        if (this.streaming && this.adapter.stream) {
+          // Streaming path: use adapter.stream()
+          const streamResult = yield* this.handleStream(conversation, iteration);
+          if (!streamResult) {
+            // Stream error already handled via error event
+            yieldedDone = true;
+            yield this.doneEvent('error');
+            return;
+          }
+          assistantMsg = streamResult.message;
+          responseUsage = streamResult.usage;
+        } else {
+          // Non-streaming path: use adapter.chat()
+          try {
+            const response = await this.adapter.chat({
+              messages: conversation,
+              signal: this.abortController.signal,
+              tools: this.tools,
+            });
+            assistantMsg = response.message;
+            responseUsage = response.usage;
+          } catch (err) {
+            // C5: Emit error event and break gracefully
+            yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)) };
+            yieldedDone = true;
+            yield this.doneEvent('error');
+            return;
+          }
+        }
+
+        // Check abort after adapter call (abort() may have been called during in-flight request)
+        if (this.isAborted()) {
+          yield { type: 'error', error: new AbortedError() };
+          yieldedDone = true;
+          yield this.doneEvent('aborted');
+          return;
+        }
 
         // Accumulate usage (clamp to non-negative to prevent underflow bypass)
-        this.cumulativeUsage.inputTokens += Math.max(0, response.usage.inputTokens);
-        this.cumulativeUsage.outputTokens += Math.max(0, response.usage.outputTokens);
+        this.cumulativeUsage.inputTokens += Math.max(0, responseUsage.inputTokens);
+        this.cumulativeUsage.outputTokens += Math.max(0, responseUsage.outputTokens);
 
-        const assistantMsg = response.message;
-        const toolCalls = assistantMsg.toolCalls;
+        // H2: Check token budget immediately after accumulating tokens
+        const postCallTokens = this.cumulativeUsage.inputTokens + this.cumulativeUsage.outputTokens;
+        if (postCallTokens > this.maxTotalTokens) {
+          // Budget exceeded after this response; emit message (for content) then stop
+          yield { type: 'message', message: assistantMsg, usage: responseUsage };
+          const err = new TokenBudgetExceededError(postCallTokens, this.maxTotalTokens);
+          yield { type: 'error', error: err };
+          yieldedDone = true;
+          yield this.doneEvent('token_budget');
+          return;
+        }
 
-        // If no tool calls or empty tool calls → end turn
+        const toolCalls = assistantMsg.role === 'assistant' ? assistantMsg.toolCalls : undefined;
+
+        // If no tool calls or empty tool calls -> end turn
         if (!toolCalls || toolCalls.length === 0) {
-          yield { type: 'message', message: assistantMsg, usage: response.usage };
+          yield { type: 'message', message: assistantMsg, usage: responseUsage };
           yieldedDone = true;
           yield this.doneEvent('end_turn');
           return;
@@ -147,10 +226,17 @@ export class AgentLoop {
               result = { error: `No onToolCall handler registered for tool "${toolCall.name}"` };
             }
           } catch (err) {
-            // Errors as Feedback: serialize error and feed back to LLM
-            result = {
-              error: err instanceof Error ? err.message : String(err),
-            };
+            // H1: Preserve stack trace context in error feedback to LLM
+            if (err instanceof Error) {
+              result = {
+                error: err.message,
+                stack: err.stack,
+              };
+            } else {
+              result = {
+                error: String(err),
+              };
+            }
           }
 
           yield { type: 'tool_result', toolCallId: toolCall.id, result };
@@ -181,8 +267,80 @@ export class AgentLoop {
     }
   }
 
+  /**
+   * Handle streaming response from adapter.stream().
+   * Yields text_delta and tool_call_delta events, accumulates the full response.
+   * Returns the accumulated message and usage, or null on error.
+   */
+  private async *handleStream(
+    conversation: Message[],
+    _iteration: number,
+  ): AsyncGenerator<AgentEvent, { message: Message; usage: TokenUsage } | null> {
+    let accumulatedText = '';
+    const accumulatedToolCalls: Map<string, { id: string; name: string; arguments: string }> = new Map();
+    let usage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
+
+    try {
+      const stream = this.adapter.stream!({
+        messages: conversation,
+        signal: this.abortController.signal,
+        tools: this.tools,
+      });
+
+      for await (const chunk of stream) {
+        if (chunk.type === 'text_delta' && chunk.text) {
+          accumulatedText += chunk.text;
+          yield { type: 'text_delta', text: chunk.text };
+        } else if (chunk.type === 'tool_call_delta' && chunk.toolCall) {
+          const partial = chunk.toolCall;
+          yield { type: 'tool_call_delta', toolCall: partial };
+
+          // Accumulate tool call parts
+          if (partial.id) {
+            const existing = accumulatedToolCalls.get(partial.id);
+            if (existing) {
+              if (partial.name) existing.name = partial.name;
+              if (partial.arguments) existing.arguments += partial.arguments;
+            } else {
+              accumulatedToolCalls.set(partial.id, {
+                id: partial.id,
+                name: partial.name ?? '',
+                arguments: partial.arguments ?? '',
+              });
+            }
+          } else {
+            // If no id, try to append to the last tool call
+            const entries = [...accumulatedToolCalls.values()];
+            if (entries.length > 0) {
+              const last = entries[entries.length - 1];
+              if (partial.name) last.name = partial.name;
+              if (partial.arguments) last.arguments += partial.arguments;
+            }
+          }
+        } else if (chunk.type === 'done') {
+          if (chunk.usage) {
+            usage = chunk.usage;
+          }
+        }
+      }
+    } catch (err) {
+      yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)) };
+      return null;
+    }
+
+    const toolCalls: ToolCallRequest[] = [...accumulatedToolCalls.values()];
+
+    const message: Message = {
+      role: 'assistant',
+      content: accumulatedText,
+      ...(toolCalls.length > 0 ? { toolCalls } : {}),
+    };
+
+    return { message, usage };
+  }
+
   private isAborted(): boolean {
-    return this.aborted || (this.signal?.aborted ?? false);
+    return this.aborted || this.abortController.signal.aborted;
   }
 
   private doneEvent(reason: DoneReason): AgentEvent {

@@ -20,7 +20,7 @@ export type { ComponentRegistry } from './component-registry.js';
 export { createComponentRegistry } from './component-registry.js';
 
 // Drift detector
-export type { DriftDetector } from './drift-detector.js';
+export type { DriftDetector, DriftDetectorConfig } from './drift-detector.js';
 export { createDriftDetector } from './drift-detector.js';
 
 // Architecture checker
@@ -28,5 +28,5 @@ export type { ArchitectureChecker } from './architecture-checker.js';
 export { createArchitectureChecker, noCircularDepsRule, layerDependencyRule } from './architecture-checker.js';
 
 // Taste-coding
-export type { TasteCodingRegistry } from './taste-coding.js';
+export type { TasteCodingRegistry, TasteViolation, TasteMetrics } from './taste-coding.js';
 export { createTasteCodingRegistry } from './taste-coding.js';

@@ -154,4 +154,28 @@ describe('createInMemoryStore', () => {
       expect(await store.count()).toBe(0);
     });
   });
+
+  describe('H1: ID uniqueness', () => {
+    it('generates IDs with randomness to avoid cross-process collisions', async () => {
+      const entry = await store.write({ key: 'k1', content: 'a', grade: 'useful' });
+      // ID should contain a random component beyond just timestamp + counter
+      // Format: mem_{timestamp}_{counter}_{random}
+      const parts = entry.id.split('_');
+      // With the fix, IDs have 4 parts: mem, timestamp, counter, random
+      expect(parts.length).toBe(4);
+      expect(parts[0]).toBe('mem');
+      // The random part should be a non-empty alphanumeric string
+      expect(parts[3]).toMatch(/^[a-z0-9]+$/);
+      expect(parts[3].length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('generates distinct IDs even with same timestamp', async () => {
+      const ids = new Set<string>();
+      for (let i = 0; i < 20; i++) {
+        const entry = await store.write({ key: `k${i}`, content: `c${i}`, grade: 'useful' });
+        ids.add(entry.id);
+      }
+      expect(ids.size).toBe(20);
+    });
+  });
 });

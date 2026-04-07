@@ -12,7 +12,7 @@ export interface ComponentRegistry {
   register(meta: ComponentMeta): void;
   get(id: string): ComponentMeta | undefined;
   list(filter?: { tags?: string[] }): ComponentMeta[];
-  validate(id: string): { valid: boolean; reason: string };
+  validate(id: string, context?: Record<string, unknown>): { valid: boolean; reason: string };
   markValidated(id: string): void;
   getStale(maxAgeDays: number): ComponentMeta[];
 }
@@ -62,7 +62,7 @@ export function createComponentRegistry(): ComponentRegistry {
       return results;
     },
 
-    validate(id) {
+    validate(id, context) {
       const component = components.get(id);
       if (!component) {
         throw new HarnessError(
@@ -71,8 +71,13 @@ export function createComponentRegistry(): ComponentRegistry {
           'Register the component before validating',
         );
       }
-      // The actual retirement check is domain-specific; here we return valid
-      // unless the component has never been validated
+      // Evaluate retirement condition against provided context
+      if (context && component.retirementCondition) {
+        const conditionMet = evaluateCondition(component.retirementCondition, context);
+        if (conditionMet) {
+          return { valid: false, reason: `Retirement condition met: ${component.retirementCondition}` };
+        }
+      }
       if (!component.lastValidated) {
         return { valid: true, reason: 'Component has not been validated yet — assumption untested' };
       }
@@ -102,4 +107,44 @@ export function createComponentRegistry(): ComponentRegistry {
       });
     },
   };
+}
+
+/** Supported comparison operators for retirement conditions. */
+const OPERATORS = ['>=', '<=', '==', '!=', '>', '<'] as const;
+
+/**
+ * Evaluate a simple retirement condition string against a context object.
+ *
+ * Supports conditions in the form: `key operator value`
+ * where operator is one of: >, <, >=, <=, ==, !=
+ *
+ * Returns true if the condition is met (component should retire).
+ * Returns false if the condition cannot be parsed or the key is missing from context.
+ */
+function evaluateCondition(condition: string, context: Record<string, unknown>): boolean {
+  for (const op of OPERATORS) {
+    const idx = condition.indexOf(op);
+    if (idx === -1) continue;
+
+    const key = condition.slice(0, idx).trim();
+    const valueStr = condition.slice(idx + op.length).trim();
+
+    if (!key || !(key in context)) return false;
+
+    const contextValue = context[key];
+    const targetValue = Number(valueStr);
+
+    if (typeof contextValue !== 'number' || Number.isNaN(targetValue)) return false;
+
+    switch (op) {
+      case '>':  return contextValue > targetValue;
+      case '<':  return contextValue < targetValue;
+      case '>=': return contextValue >= targetValue;
+      case '<=': return contextValue <= targetValue;
+      case '==': return contextValue === targetValue;
+      case '!=': return contextValue !== targetValue;
+    }
+  }
+
+  return false;
 }

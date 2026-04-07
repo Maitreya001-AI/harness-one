@@ -30,7 +30,7 @@ export interface MemoryStore {
 let idCounter = 0;
 
 function generateId(): string {
-  return `mem_${Date.now()}_${++idCounter}`;
+  return `mem_${Date.now()}_${++idCounter}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
 /**

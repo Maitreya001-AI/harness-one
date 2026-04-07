@@ -13,6 +13,12 @@ export interface DriftDetector {
   checkAll(currentValues: Record<string, Record<string, unknown>>): DriftReport[];
 }
 
+/** Configuration for the drift detector. */
+export interface DriftDetectorConfig {
+  /** Severity thresholds for numeric deviation ratios. Defaults: low=0.1, medium=0.5. */
+  thresholds?: { low: number; medium: number };
+}
+
 /**
  * Create a drift detector that compares current values against baselines.
  *
@@ -23,8 +29,23 @@ export interface DriftDetector {
  * const report = detector.check('comp-1', { latency: 150, accuracy: 0.90 });
  * ```
  */
-export function createDriftDetector(): DriftDetector {
+export function createDriftDetector(config?: DriftDetectorConfig): DriftDetector {
   const baselines = new Map<string, Record<string, unknown>>();
+  const lowThreshold = config?.thresholds?.low ?? 0.1;
+  const mediumThreshold = config?.thresholds?.medium ?? 0.5;
+
+  function classifyWithThresholds(expected: unknown, actual: unknown): 'low' | 'medium' | 'high' {
+    if (expected === undefined || actual === undefined) return 'high';
+    if (typeof expected === 'number' && typeof actual === 'number') {
+      if (expected === 0) return actual === 0 ? 'low' : 'high';
+      const ratio = Math.abs(actual - expected) / Math.abs(expected);
+      if (ratio > mediumThreshold) return 'high';
+      if (ratio > lowThreshold) return 'medium';
+      return 'low';
+    }
+    if (typeof expected !== typeof actual) return 'high';
+    return 'medium';
+  }
 
   return {
     setBaseline(componentId, baseline) {
@@ -56,7 +77,7 @@ export function createDriftDetector(): DriftDetector {
             field: key,
             expected,
             actual,
-            severity: classifySeverity(expected, actual),
+            severity: classifyWithThresholds(expected, actual),
           });
         }
       }
@@ -101,21 +122,5 @@ function deepEqual(a: unknown, b: unknown): boolean {
   return false;
 }
 
-function classifySeverity(expected: unknown, actual: unknown): 'low' | 'medium' | 'high' {
-  // Missing or added field
-  if (expected === undefined || actual === undefined) return 'high';
-
-  // Numeric deviation
-  if (typeof expected === 'number' && typeof actual === 'number') {
-    if (expected === 0) return actual === 0 ? 'low' : 'high';
-    const ratio = Math.abs(actual - expected) / Math.abs(expected);
-    if (ratio > 0.5) return 'high';
-    if (ratio > 0.1) return 'medium';
-    return 'low';
-  }
-
-  // Type change
-  if (typeof expected !== typeof actual) return 'high';
-
-  return 'medium';
-}
+// classifySeverity is now inlined in createDriftDetector as classifyWithThresholds
+// to support configurable thresholds via closure.

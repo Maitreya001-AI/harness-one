@@ -125,4 +125,112 @@ describe('createEvalRunner', () => {
       expect(gate.passed).toBe(false);
     });
   });
+
+  // H2: EvalRunner only supports sequential execution
+  describe('concurrency', () => {
+    it('runs cases concurrently when concurrency is set', async () => {
+      let maxConcurrent = 0;
+      let currentConcurrent = 0;
+
+      const runner = createEvalRunner({
+        scorers: [alwaysPassScorer],
+        concurrency: 3,
+      });
+
+      const cases = Array.from({ length: 6 }, (_, i) => ({
+        id: `c${i}`,
+        input: `input-${i}`,
+      }));
+
+      const report = await runner.run(cases, async (input) => {
+        currentConcurrent++;
+        if (currentConcurrent > maxConcurrent) maxConcurrent = currentConcurrent;
+        await new Promise(r => setTimeout(r, 50));
+        currentConcurrent--;
+        return `output: ${input}`;
+      });
+
+      expect(report.totalCases).toBe(6);
+      expect(report.passedCases).toBe(6);
+      // With concurrency=3, at least 2 should run concurrently
+      expect(maxConcurrent).toBeGreaterThan(1);
+    });
+
+    it('defaults to sequential execution when concurrency not set', async () => {
+      let maxConcurrent = 0;
+      let currentConcurrent = 0;
+
+      const runner = createEvalRunner({
+        scorers: [alwaysPassScorer],
+      });
+
+      const cases = Array.from({ length: 3 }, (_, i) => ({
+        id: `c${i}`,
+        input: `input-${i}`,
+      }));
+
+      const report = await runner.run(cases, async (input) => {
+        currentConcurrent++;
+        if (currentConcurrent > maxConcurrent) maxConcurrent = currentConcurrent;
+        await new Promise(r => setTimeout(r, 10));
+        currentConcurrent--;
+        return `output: ${input}`;
+      });
+
+      expect(report.totalCases).toBe(3);
+      expect(maxConcurrent).toBe(1);
+    });
+  });
+
+  // H3: Eval scorers don't use scoreBatch
+  describe('scoreBatch', () => {
+    it('uses scoreBatch when available on a scorer', async () => {
+      let batchCalled = false;
+      const batchScorer: Scorer = {
+        name: 'batch-scorer',
+        description: 'Scorer with batch support',
+        async score(input, output) {
+          return { score: 0.5, explanation: 'individual' };
+        },
+        async scoreBatch(cases) {
+          batchCalled = true;
+          return cases.map(() => ({ score: 0.9, explanation: 'batched' }));
+        },
+      };
+
+      const runner = createEvalRunner({ scorers: [batchScorer] });
+      const cases = [
+        { id: 'c1', input: 'hello' },
+        { id: 'c2', input: 'world' },
+      ];
+      const report = await runner.run(cases, async (input) => `echo: ${input}`);
+
+      expect(batchCalled).toBe(true);
+      // Batch scorer returns 0.9, individual returns 0.5
+      // If scoreBatch is used, all scores should be 0.9
+      expect(report.results[0].scores['batch-scorer']).toBe(0.9);
+      expect(report.results[1].scores['batch-scorer']).toBe(0.9);
+    });
+
+    it('falls back to individual score when scoreBatch not available', async () => {
+      const individualScorer: Scorer = {
+        name: 'individual-scorer',
+        description: 'Scorer without batch',
+        async score() {
+          return { score: 0.7, explanation: 'individual' };
+        },
+        // No scoreBatch method
+      };
+
+      const runner = createEvalRunner({ scorers: [individualScorer] });
+      const cases = [
+        { id: 'c1', input: 'hello' },
+        { id: 'c2', input: 'world' },
+      ];
+      const report = await runner.run(cases, async (input) => `echo: ${input}`);
+
+      expect(report.results[0].scores['individual-scorer']).toBe(0.7);
+      expect(report.results[1].scores['individual-scorer']).toBe(0.7);
+    });
+  });
 });

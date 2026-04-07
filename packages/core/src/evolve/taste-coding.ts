@@ -7,6 +7,21 @@
 import { HarnessError } from '../core/errors.js';
 import type { TasteCodingRule } from './types.js';
 
+/** A single compliance violation found during checkCompliance. */
+export interface TasteViolation {
+  readonly ruleId: string;
+  readonly rule: string;
+  readonly pattern: string;
+  readonly enforcement: string;
+}
+
+/** Metrics about the taste-coding registry state. */
+export interface TasteMetrics {
+  readonly totalRules: number;
+  readonly byEnforcement: { lint: number; ci: number; manual: number };
+  readonly lastCheckTimestamp: number | null;
+}
+
 /** Registry for managing taste-coding rules. */
 export interface TasteCodingRegistry {
   addRule(rule: TasteCodingRule): void;
@@ -14,6 +29,8 @@ export interface TasteCodingRegistry {
   removeRule(id: string): void;
   exportRules(): string;
   count(): number;
+  checkCompliance(code: string): TasteViolation[];
+  getMetrics(): TasteMetrics;
 }
 
 /**
@@ -34,6 +51,7 @@ export interface TasteCodingRegistry {
  */
 export function createTasteCodingRegistry(): TasteCodingRegistry {
   const rules = new Map<string, TasteCodingRule>();
+  let lastCheckTimestamp: number | null = null;
 
   return {
     addRule(rule) {
@@ -84,6 +102,38 @@ export function createTasteCodingRegistry(): TasteCodingRegistry {
 
     count() {
       return rules.size;
+    },
+
+    checkCompliance(code) {
+      const violations: TasteViolation[] = [];
+      for (const rule of rules.values()) {
+        if (rule.enforcement !== 'lint' && rule.enforcement !== 'ci') continue;
+        if (code.includes(rule.pattern)) {
+          violations.push({
+            ruleId: rule.id,
+            rule: rule.rule,
+            pattern: rule.pattern,
+            enforcement: rule.enforcement,
+          });
+        }
+      }
+      lastCheckTimestamp = Date.now();
+      return violations;
+    },
+
+    getMetrics() {
+      const allRules = Array.from(rules.values());
+      const byEnforcement = { lint: 0, ci: 0, manual: 0 };
+      for (const rule of allRules) {
+        if (rule.enforcement in byEnforcement) {
+          byEnforcement[rule.enforcement]++;
+        }
+      }
+      return {
+        totalRules: allRules.length,
+        byEnforcement,
+        lastCheckTimestamp,
+      };
     },
   };
 }

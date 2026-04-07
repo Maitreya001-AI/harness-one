@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { extractNewCases } from '../flywheel.js';
-import type { EvalReport } from '../types.js';
+import type { EvalReport, EvalCase } from '../types.js';
 
 function makeReport(results: Array<{ caseId: string; scores: Record<string, number> }>): EvalReport {
   return {
@@ -72,5 +72,35 @@ describe('extractNewCases', () => {
     const cases = extractNewCases(report, { scoreThreshold: 0.4 });
     expect(cases).toHaveLength(1);
     expect(cases[0].metadata!.sourceCase).toBe('c2');
+  });
+
+  // C7: Data flywheel uses caseId as input instead of actual content
+  it('uses original case input, not caseId, as the new case input', () => {
+    const originalCases: EvalCase[] = [
+      { id: 'case-abc', input: 'What is machine learning?' },
+      { id: 'case-def', input: 'Explain quantum computing' },
+    ];
+    const report = makeReport([
+      { caseId: 'case-abc', scores: { relevance: 0.1 } },
+      { caseId: 'case-def', scores: { relevance: 0.9 } },
+    ]);
+
+    const newCases = extractNewCases(report, { scoreThreshold: 0.5 }, originalCases);
+
+    // The new case input should be the original input text, NOT the caseId string
+    expect(newCases).toHaveLength(1);
+    expect(newCases[0].input).toBe('What is machine learning?');
+    expect(newCases[0].input).not.toBe('case-abc');
+  });
+
+  it('falls back gracefully when original cases not provided', () => {
+    const report = makeReport([
+      { caseId: 'case-abc', scores: { relevance: 0.1 } },
+    ]);
+
+    // When no original cases provided, input should still be caseId as fallback
+    const newCases = extractNewCases(report, { scoreThreshold: 0.5 });
+    expect(newCases).toHaveLength(1);
+    expect(newCases[0].input).toBe('case-abc');
   });
 });

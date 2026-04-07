@@ -113,4 +113,67 @@ describe('layerDependencyRule', () => {
     });
     expect(result.passed).toBe(true);
   });
+
+  describe('weak module detection fix', () => {
+    it('does NOT match /mycore/ as module "core" (path segment matching)', () => {
+      const rule = layerDependencyRule({
+        core: [],
+        context: ['core'],
+      });
+      // src/mycore/utils.ts should NOT be recognized as belonging to module "core"
+      const result = rule.check({
+        files: ['src/mycore/utils.ts'],
+        imports: {
+          'src/mycore/utils.ts': ['src/context/pack.ts'],
+        },
+      });
+      // If getModule matches 'mycore' as 'core', it would detect a violation
+      // (core importing from context). Since 'mycore' is NOT 'core', no violation.
+      expect(result.passed).toBe(true);
+    });
+
+    it('does NOT match /scorecard/ as module "core"', () => {
+      const rule = layerDependencyRule({
+        core: [],
+        context: ['core'],
+      });
+      const result = rule.check({
+        files: ['src/scorecard/report.ts'],
+        imports: {
+          'src/scorecard/report.ts': ['src/context/pack.ts'],
+        },
+      });
+      expect(result.passed).toBe(true);
+    });
+
+    it('still correctly matches exact /core/ path segment', () => {
+      const rule = layerDependencyRule({
+        core: [],
+        context: ['core'],
+      });
+      const result = rule.check({
+        files: ['src/core/types.ts'],
+        imports: {
+          'src/core/types.ts': ['src/context/pack.ts'],
+        },
+      });
+      // core importing from context IS a violation
+      expect(result.passed).toBe(false);
+    });
+  });
+});
+
+describe('noCircularDepsRule - weak module detection fix', () => {
+  it('does NOT match /mycore/ as module "core"', () => {
+    const rule = noCircularDepsRule(['core', 'context']);
+    const result = rule.check({
+      files: ['src/mycore/utils.ts', 'src/context/pack.ts'],
+      imports: {
+        'src/mycore/utils.ts': ['src/context/pack.ts'],
+        'src/context/pack.ts': ['src/mycore/utils.ts'],
+      },
+    });
+    // mycore should not be matched as core, so no cycle between core and context
+    expect(result.passed).toBe(true);
+  });
 });

@@ -31,7 +31,7 @@ describe('createBudget', () => {
 
     it('floors at 0', () => {
       const budget = createBudget(config);
-      budget.allocate('system', 600);
+      budget.allocate('system', 500); // allocate exactly to max
       expect(budget.remaining('system')).toBe(0);
     });
 
@@ -71,8 +71,23 @@ describe('createBudget', () => {
       const budget = createBudget(config);
       budget.allocate('system', 500);
       budget.allocate('history', 3000);
-      budget.allocate('recent', 597);
-      expect(budget.needsTrimming()).toBe(true);
+      budget.allocate('recent', 596); // allocate to max (596)
+      // 500 + 3000 + 596 = 4096 = totalTokens, not over budget yet
+      // But needsTrimming should work for over-budget scenarios
+      // Use a config with smaller totalTokens to trigger over-total
+      const budget2 = createBudget({
+        totalTokens: 3000,
+        segments: [
+          { name: 'system', maxTokens: 500, reserved: true },
+          { name: 'history', maxTokens: 3000, trimPriority: 2 },
+          { name: 'recent', maxTokens: 596, trimPriority: 1 },
+        ],
+      });
+      budget2.allocate('system', 500);
+      budget2.allocate('history', 2500);
+      budget2.allocate('recent', 596);
+      // 500 + 2500 + 596 = 3596 > 3000
+      expect(budget2.needsTrimming()).toBe(true);
     });
 
     it('accounts for responseReserve', () => {
@@ -137,6 +152,116 @@ describe('createBudget', () => {
       } catch (e: unknown) {
         expect((e as { name: string }).name).toBe('HarnessError');
       }
+    });
+  });
+
+  describe('H1: needsTrimming checks per-segment limits', () => {
+    it('returns true when total usage exceeds totalTokens even if individual segments are within limits', () => {
+      const budget = createBudget({
+        totalTokens: 300,
+        segments: [
+          { name: 'system', maxTokens: 200, reserved: true },
+          { name: 'history', maxTokens: 200, trimPriority: 1 },
+        ],
+      });
+      // Each segment is within its own limit, but total (200+200=400) > 300
+      budget.allocate('system', 200);
+      budget.allocate('history', 200);
+      expect(budget.needsTrimming()).toBe(true);
+    });
+
+    it('returns true when a single segment is at its maxTokens and total is near limit', () => {
+      const budget = createBudget({
+        totalTokens: 500,
+        segments: [
+          { name: 'system', maxTokens: 100, reserved: true },
+          { name: 'history', maxTokens: 200, trimPriority: 1 },
+          { name: 'recent', maxTokens: 200, trimPriority: 0 },
+        ],
+      });
+      // Fill segments to exactly their max
+      budget.allocate('system', 100);
+      budget.allocate('history', 200);
+      budget.allocate('recent', 200);
+      // 100 + 200 + 200 = 500 = totalTokens, so needsTrimming should be false
+      expect(budget.needsTrimming()).toBe(false);
+    });
+
+    it('returns false when all segments are within their maxTokens and total is OK', () => {
+      const budget = createBudget({
+        totalTokens: 10000,
+        segments: [
+          { name: 'system', maxTokens: 100, reserved: true },
+          { name: 'history', maxTokens: 200, trimPriority: 1 },
+        ],
+      });
+      budget.allocate('system', 50);
+      budget.allocate('history', 100);
+      expect(budget.needsTrimming()).toBe(false);
+    });
+  });
+
+  describe('H2: allocate clamps to segment maxTokens', () => {
+    it('throws when allocation would exceed segment maxTokens', () => {
+      const budget = createBudget({
+        totalTokens: 10000,
+        segments: [
+          { name: 'history', maxTokens: 200, trimPriority: 1 },
+        ],
+      });
+      // Allocating 300 to a segment with maxTokens=200 should throw
+      expect(() => budget.allocate('history', 300)).toThrow();
+    });
+
+    it('throws on cumulative overflow of segment maxTokens', () => {
+      const budget = createBudget({
+        totalTokens: 10000,
+        segments: [
+          { name: 'history', maxTokens: 200, trimPriority: 1 },
+        ],
+      });
+      budget.allocate('history', 150);
+      // This would bring total to 250, exceeding maxTokens=200
+      expect(() => budget.allocate('history', 100)).toThrow();
+    });
+
+    it('allows allocation within segment maxTokens', () => {
+      const budget = createBudget({
+        totalTokens: 10000,
+        segments: [
+          { name: 'history', maxTokens: 200, trimPriority: 1 },
+        ],
+      });
+      expect(() => budget.allocate('history', 200)).not.toThrow();
+      expect(budget.remaining('history')).toBe(0);
+    });
+  });
+
+  describe('H3: responseReserve enforced in needsTrimming', () => {
+    it('accounts for responseReserve when checking available space', () => {
+      const budget = createBudget({
+        totalTokens: 1000,
+        segments: [
+          { name: 'history', maxTokens: 900, trimPriority: 1 },
+        ],
+        responseReserve: 200,
+      });
+      // 850 used + 200 reserve = 1050 > 1000 total
+      budget.allocate('history', 850);
+      expect(budget.needsTrimming()).toBe(true);
+    });
+
+    it('returns false when usage + reserve fits within total', () => {
+      const budget = createBudget({
+        totalTokens: 1000,
+        segments: [
+          { name: 'history', maxTokens: 900, trimPriority: 1 },
+        ],
+        responseReserve: 200,
+      });
+      // 700 used + 200 reserve = 900 <= 1000 total
+      budget.allocate('history', 700);
+      expect(budget.needsTrimming()).toBe(false);
     });
   });
 });

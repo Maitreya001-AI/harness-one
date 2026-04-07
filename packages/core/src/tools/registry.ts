@@ -38,11 +38,19 @@ export function createRegistry(config?: {
   maxCallsPerSession?: number;
   /** Custom schema validator (default: internal json-schema validator). */
   validator?: SchemaValidator;
+  /** Optional permission checker called before tool execution. */
+  permissions?: {
+    check: (toolName: string, context?: Record<string, unknown>) => boolean;
+  };
+  /** Optional timeout in milliseconds for tool execution. */
+  timeoutMs?: number;
 }): ToolRegistry {
   const tools = new Map<string, ToolDefinition>();
   const maxPerTurn = config?.maxCallsPerTurn ?? Infinity;
   const maxPerSession = config?.maxCallsPerSession ?? Infinity;
   const customValidator = config?.validator;
+  const permissions = config?.permissions;
+  const timeoutMs = config?.timeoutMs;
   let turnCalls = 0;
   let sessionCalls = 0;
 
@@ -110,6 +118,15 @@ export function createRegistry(config?: {
       );
     }
 
+    // Permission check
+    if (permissions && !permissions.check(call.name, undefined)) {
+      return toolError(
+        `Permission denied for tool "${call.name}"`,
+        'permission',
+        'Check that the caller has access to this tool',
+      );
+    }
+
     // Parse arguments
     let params: unknown;
     try {
@@ -135,9 +152,29 @@ export function createRegistry(config?: {
       );
     }
 
-    // Execute
+    // Execute with optional timeout
     turnCalls++;
     sessionCalls++;
+    if (timeoutMs !== undefined) {
+      const result = await Promise.race([
+        tool.execute(params),
+        new Promise<ToolResult>((resolve) =>
+          setTimeout(
+            () =>
+              resolve(
+                toolError(
+                  `Tool "${call.name}" timed out after ${timeoutMs}ms`,
+                  'timeout',
+                  'Consider increasing the timeout or optimizing the tool',
+                  true,
+                ),
+              ),
+            timeoutMs,
+          ),
+        ),
+      ]);
+      return result;
+    }
     return tool.execute(params);
   }
 

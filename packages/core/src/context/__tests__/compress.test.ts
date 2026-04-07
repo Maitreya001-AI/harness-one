@@ -256,4 +256,108 @@ describe('compress', () => {
       }
     });
   });
+
+  describe('C4: O(N^2) Array.includes in preserve-failures', () => {
+    it('uses Set for keptNonFailures lookup — preserves correct messages with duplicated content', () => {
+      // This test verifies the fix works correctly when messages have
+      // the same content (which would be problematic with Set<string> but not Set<number>)
+      const msgsWithFailure: Message[] = [
+        msg('user', 'Hello'),
+        msg('assistant', 'Fail', { isFailureTrace: true }),
+        msg('user', 'Hello'),  // duplicate content
+        msg('assistant', 'Response'),
+        msg('user', 'Latest'),
+      ];
+
+      const result = compress(msgsWithFailure, {
+        strategy: 'preserve-failures',
+        budget: 500,
+      });
+
+      // All messages should be kept since budget is large
+      return result.then((r) => {
+        expect(r).toHaveLength(5);
+        // Order should be preserved
+        expect(r[0].content).toBe('Hello');
+        expect(r[1].content).toBe('Fail');
+        expect(r[2].content).toBe('Hello');
+        expect(r[3].content).toBe('Response');
+        expect(r[4].content).toBe('Latest');
+      });
+    });
+  });
+
+  describe('H5: reference equality comparison is fragile', () => {
+    it('sliding-window works when messages are reconstructed (not same reference)', () => {
+      // When messages are cloned/reconstructed, === fails.
+      // This simulates a scenario where the messages array contains
+      // structurally identical messages that won't be === to each other.
+      const original: Message[] = [
+        msg('user', 'First'),
+        msg('assistant', 'Response 1'),
+        msg('user', 'Second'),
+        msg('assistant', 'Response 2'),
+        msg('user', 'Third'),
+        msg('assistant', 'Response 3'),
+      ];
+
+      // Clone messages so references differ from the ones stored internally
+      const cloned = original.map((m) => ({ ...m }));
+
+      return compress(cloned, {
+        strategy: 'sliding-window',
+        budget: 500,
+        windowSize: 2,
+      }).then((result) => {
+        // Should keep last 2 non-preserved messages
+        expect(result).toHaveLength(2);
+        expect(result[0].content).toBe('Third');
+        expect(result[1].content).toBe('Response 3');
+      });
+    });
+
+    it('sliding-window with preserve works when messages are cloned', () => {
+      const original: Message[] = [
+        msg('user', 'First'),
+        msg('assistant', 'Response 1'),
+        msg('user', 'Second'),
+        msg('assistant', 'Response 2'),
+      ];
+
+      const cloned = original.map((m) => ({ ...m }));
+
+      return compress(cloned, {
+        strategy: 'sliding-window',
+        budget: 500,
+        windowSize: 1,
+        preserve: (m) => m.content === 'First',
+      }).then((result) => {
+        // Should have the preserved message + 1 windowed message
+        expect(result.some((m) => m.content === 'First')).toBe(true);
+        expect(result.some((m) => m.content === 'Response 2')).toBe(true);
+      });
+    });
+
+    it('preserve-failures works when messages are cloned', () => {
+      const original: Message[] = [
+        msg('user', 'A'),
+        msg('assistant', 'Fail', { isFailureTrace: true }),
+        msg('user', 'B'),
+        msg('assistant', 'C'),
+      ];
+
+      const cloned = original.map((m) => ({ ...m }));
+
+      return compress(cloned, {
+        strategy: 'preserve-failures',
+        budget: 500,
+      }).then((result) => {
+        expect(result).toHaveLength(4);
+        expect(result[0].content).toBe('A');
+        expect(result[1].content).toBe('Fail');
+        expect(result[2].content).toBe('B');
+        expect(result[3].content).toBe('C');
+      });
+    });
+  });
 });

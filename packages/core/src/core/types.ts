@@ -9,22 +9,46 @@
 /** Message role in the conversation. */
 export type Role = 'system' | 'user' | 'assistant' | 'tool';
 
+/** Base properties shared by all message types. */
+interface BaseMessage {
+  readonly content: string;
+  readonly name?: string;
+  readonly meta?: MessageMeta;
+}
+
+/** A system message. */
+export interface SystemMessage extends BaseMessage {
+  readonly role: 'system';
+}
+
+/** A user message. */
+export interface UserMessage extends BaseMessage {
+  readonly role: 'user';
+}
+
+/** An assistant message, optionally containing tool call requests. */
+export interface AssistantMessage extends BaseMessage {
+  readonly role: 'assistant';
+  readonly toolCalls?: readonly ToolCallRequest[];
+}
+
+/** A tool result message, referencing the tool call it responds to. */
+export interface ToolMessage extends BaseMessage {
+  readonly role: 'tool';
+  readonly toolCallId: string;
+}
+
 /**
- * A single message in a conversation.
+ * A single message in a conversation (discriminated union by role).
  *
  * @example
  * ```ts
  * const msg: Message = { role: 'user', content: 'Hello' };
+ * const assistantMsg: Message = { role: 'assistant', content: 'Hi', toolCalls: [] };
+ * const toolMsg: Message = { role: 'tool', content: 'result', toolCallId: 'tc-1' };
  * ```
  */
-export interface Message {
-  readonly role: Role;
-  readonly content: string;
-  readonly name?: string;
-  readonly toolCallId?: string;
-  readonly toolCalls?: ToolCallRequest[];
-  readonly meta?: MessageMeta;
-}
+export type Message = SystemMessage | UserMessage | AssistantMessage | ToolMessage;
 
 /** Metadata attached to a message for context management. */
 export interface MessageMeta {

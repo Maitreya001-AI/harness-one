@@ -1,7 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { packContext } from '../pack.js';
 import { createBudget } from '../budget.js';
 import type { Message } from '../../core/types.js';
+import * as countTokensModule from '../count-tokens.js';
 
 function msg(role: Message['role'], content: string): Message {
   return { role, content };
@@ -83,5 +84,90 @@ describe('packContext', () => {
     expect(result.messages).toHaveLength(2);
     expect(result.truncated).toBe(false);
     expect(result.usage.mid).toBe(0);
+  });
+
+  describe('C3: O(N^2) token recounting fix — uses index-based trimming', () => {
+    it('pre-computes per-message token counts and uses index-based trimming', () => {
+      // The bug: mid.shift() + countTokens([removed]) in a loop is O(N^2) due to
+      // array shifting. The fix should use index-based trimming.
+      //
+      // We verify: the total number of countTokens calls should be exactly N+3
+      // (one per mid message for pre-computation + head + tail + initial mid total).
+      // In the buggy code: it's 3 (head, mid, tail) + N (one per removed message).
+      // With the fix using pre-computed map: it's 3 (head, tail, initial mid) + N (per-message).
+      // The key difference is that with the fix, countTokens is NEVER called inside
+      // the trimming loop because token counts are pre-computed.
+      const midMessages = Array.from({ length: 20 }, (_, i) =>
+        msg('user', `Message ${i} with some content`),
+      );
+
+      const budget = createBudget({
+        totalTokens: 40, // Very small budget forcing heavy trimming
+        segments: [{ name: 'all', maxTokens: 40 }],
+      });
+
+      const spy = vi.spyOn(countTokensModule, 'countTokens');
+
+      const result = packContext({
+        head: [msg('system', 'S')],
+        mid: midMessages,
+        tail: [msg('user', 'T')],
+        budget,
+      });
+
+      // Key assertion: countTokens should only be called for head and tail arrays,
+      // NOT inside the trimming loop. The fixed version uses countMessageTokens
+      // for per-message pre-computation, so countTokens is only called twice
+      // (once for head, once for tail).
+      //
+      // In the buggy version: countTokens is called 3 times for initial counts
+      // (head, mid, tail) + N times for each removed message in the trim loop.
+      // With 20 mid messages and a tiny budget, that's ~22 total calls.
+      //
+      // In the fixed version: countTokens is called only 2 times (head + tail).
+      // Per-message counts are done via countMessageTokens (not spied here).
+      const totalCountTokensCalls = spy.mock.calls.length;
+
+      // Fixed: exactly 2 calls (head + tail). No mid array or trimming calls.
+      // Buggy: 3 + ~18 = ~21 calls
+      expect(totalCountTokensCalls).toBe(2);
+
+      // Verify correctness is maintained
+      expect(result.truncated).toBe(true);
+      expect(result.messages[0].content).toBe('S');
+      expect(result.messages[result.messages.length - 1].content).toBe('T');
+
+      spy.mockRestore();
+    });
+  });
+
+  describe('H6: midBudget can be negative', () => {
+    it('clamps midBudget to 0 when HEAD+TAIL exceed total budget', () => {
+      // HEAD + TAIL > totalTokens
+      const budget = createBudget({
+        totalTokens: 10,
+        segments: [{ name: 'all', maxTokens: 10 }],
+      });
+
+      // These HEAD+TAIL alone will exceed the 10-token budget
+      const result = packContext({
+        head: [msg('system', 'A very long system prompt that uses many tokens')],
+        mid: [msg('user', 'Mid message 1'), msg('assistant', 'Mid message 2')],
+        tail: [msg('user', 'A fairly long tail message as well')],
+        budget,
+      });
+
+      // The result should still succeed (not hang/crash)
+      // MID should be empty because there's no room
+      expect(result.usage.mid).toBe(0);
+      expect(result.truncated).toBe(true);
+      // HEAD and TAIL still included
+      expect(result.messages[0].content).toBe(
+        'A very long system prompt that uses many tokens',
+      );
+      expect(result.messages[result.messages.length - 1].content).toBe(
+        'A fairly long tail message as well',
+      );
+    });
   });
 });

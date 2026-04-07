@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createRegistry } from '../registry.js';
 import { defineTool } from '../define-tool.js';
 import { toolSuccess } from '../types.js';
@@ -189,6 +189,115 @@ describe('createRegistry', () => {
       registry.resetTurn();
       const pass = await registry.execute(call);
       expect(pass.success).toBe(true);
+    });
+  });
+
+  describe('C6: permission validation', () => {
+    it('blocks execution when permissions.check returns false', async () => {
+      const registry = createRegistry({
+        permissions: {
+          check: (toolName: string) => toolName !== 'echo',
+        },
+      });
+      registry.register(makeEchoTool());
+      const result = await registry.execute({
+        id: '1',
+        name: 'echo',
+        arguments: '{"text":"hello"}',
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.category).toBe('permission');
+        expect(result.error.message).toContain('Permission denied');
+      }
+    });
+
+    it('allows execution when permissions.check returns true', async () => {
+      const registry = createRegistry({
+        permissions: {
+          check: () => true,
+        },
+      });
+      registry.register(makeEchoTool());
+      const result = await registry.execute({
+        id: '1',
+        name: 'echo',
+        arguments: '{"text":"hello"}',
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('passes context to permissions.check', async () => {
+      const checkFn = vi.fn().mockReturnValue(true);
+      const registry = createRegistry({
+        permissions: { check: checkFn },
+      });
+      registry.register(makeEchoTool());
+      await registry.execute({
+        id: '1',
+        name: 'echo',
+        arguments: '{"text":"hello"}',
+      });
+      expect(checkFn).toHaveBeenCalledWith('echo', undefined);
+    });
+
+    it('executes without permissions config (backward compatible)', async () => {
+      const registry = createRegistry();
+      registry.register(makeEchoTool());
+      const result = await registry.execute({
+        id: '1',
+        name: 'echo',
+        arguments: '{"text":"hello"}',
+      });
+      expect(result.success).toBe(true);
+    });
+  });
+
+  describe('H1: timeout support', () => {
+    it('times out a slow tool execution', async () => {
+      const slowTool = defineTool({
+        name: 'slow',
+        description: 'Slow tool',
+        parameters: { type: 'object' },
+        execute: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 5000));
+          return toolSuccess('done');
+        },
+      });
+      const registry = createRegistry({ timeoutMs: 50 });
+      registry.register(slowTool);
+      const result = await registry.execute({
+        id: '1',
+        name: 'slow',
+        arguments: '{}',
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.category).toBe('timeout');
+        expect(result.error.message).toContain('timed out');
+      }
+    });
+
+    it('does not time out a fast tool execution', async () => {
+      const registry = createRegistry({ timeoutMs: 5000 });
+      registry.register(makeEchoTool());
+      const result = await registry.execute({
+        id: '1',
+        name: 'echo',
+        arguments: '{"text":"hello"}',
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('works without timeoutMs (backward compatible)', async () => {
+      const registry = createRegistry();
+      registry.register(makeEchoTool());
+      const result = await registry.execute({
+        id: '1',
+        name: 'echo',
+        arguments: '{"text":"hello"}',
+      });
+      expect(result.success).toBe(true);
     });
   });
 

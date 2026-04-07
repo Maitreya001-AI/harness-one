@@ -106,4 +106,49 @@ describe('createRelay', () => {
       expect(await relay.load()).toBeNull();
     });
   });
+
+  describe('H3: stale cache invalidation', () => {
+    it('clears cached ID when entry is deleted externally and re-created', async () => {
+      // Save state to populate the cache
+      await relay.save({
+        progress: { step: 1 },
+        artifacts: [],
+        checkpoint: 'cp1',
+        timestamp: 1000,
+      });
+
+      // Load to confirm it works
+      let loaded = await relay.load();
+      expect(loaded).not.toBeNull();
+      expect(loaded!.progress.step).toBe(1);
+
+      // Delete the relay entry directly from the store (simulating external deletion)
+      const entries = await store.query({});
+      for (const entry of entries) {
+        if (entry.key === '__relay__') {
+          await store.delete(entry.id);
+        }
+      }
+
+      // Now load should return null since the entry was deleted
+      // If cache is stale, it will try to read the old ID, get null,
+      // but without the fix, it won't re-query and will return null forever
+      // even after new data is saved
+      loaded = await relay.load();
+      expect(loaded).toBeNull();
+
+      // Save new state - this should work despite the old cached ID being gone
+      await relay.save({
+        progress: { step: 2 },
+        artifacts: [],
+        checkpoint: 'cp2',
+        timestamp: 2000,
+      });
+
+      // Load should find the new state
+      loaded = await relay.load();
+      expect(loaded).not.toBeNull();
+      expect(loaded!.progress.step).toBe(2);
+    });
+  });
 });

@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { countTokens, registerTokenizer } from '../count-tokens.js';
+import * as tokenEstimator from '../../_internal/token-estimator.js';
 
 describe('countTokens', () => {
   it('returns a positive number for messages with content', () => {
@@ -32,5 +33,51 @@ describe('countTokens', () => {
       { role: 'user', content: 'abc' },
     ]);
     expect(tokens).toBe(3);
+  });
+
+  describe('H7: token counting memoization', () => {
+    it('caches token count for the same message object', () => {
+      const spy = vi.spyOn(tokenEstimator, 'estimateTokens');
+
+      const message = { role: 'user' as const, content: 'Hello world' };
+
+      // Count tokens for the same message object twice
+      const first = countTokens('memo-test', [message]);
+      const second = countTokens('memo-test', [message]);
+
+      expect(first).toBe(second);
+
+      // With memoization, estimateTokens should only be called once for this message
+      // (not twice — the second call should use the cached value)
+      const callsForThisMessage = spy.mock.calls.filter(
+        (call) => call[1] === 'Hello world',
+      );
+      expect(callsForThisMessage).toHaveLength(1);
+
+      spy.mockRestore();
+    });
+
+    it('returns correct results for different messages', () => {
+      const msg1 = { role: 'user' as const, content: 'Short' };
+      const msg2 = { role: 'user' as const, content: 'A much longer message with more tokens' };
+
+      const tokens1 = countTokens('memo-test', [msg1]);
+      const tokens2 = countTokens('memo-test', [msg2]);
+
+      // Different messages should return different token counts
+      expect(tokens1).not.toBe(tokens2);
+    });
+
+    it('does not cache across different message objects with same content', () => {
+      // WeakMap keyed by object identity, so two different objects with same content
+      // should both work correctly (may or may not cache, but results must be correct)
+      const msg1 = { role: 'user' as const, content: 'Same content' };
+      const msg2 = { role: 'user' as const, content: 'Same content' };
+
+      const tokens1 = countTokens('memo-test', [msg1]);
+      const tokens2 = countTokens('memo-test', [msg2]);
+
+      expect(tokens1).toBe(tokens2);
+    });
   });
 });

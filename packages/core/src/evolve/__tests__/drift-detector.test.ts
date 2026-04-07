@@ -95,4 +95,55 @@ describe('createDriftDetector', () => {
       expect(reports.find((r) => r.componentId === 'b')!.driftDetected).toBe(true);
     });
   });
+
+  describe('configurable severity thresholds', () => {
+    it('uses custom thresholds for severity classification', () => {
+      const detector = createDriftDetector({
+        thresholds: { low: 0.2, medium: 0.8 },
+      });
+      detector.setBaseline('comp-1', { value: 100 });
+
+      // 15% change: with default thresholds (0.1, 0.5) this would be medium,
+      // but with custom thresholds (0.2, 0.8) this should be low
+      const report = detector.check('comp-1', { value: 115 });
+      expect(report.deviations[0].severity).toBe('low');
+    });
+
+    it('custom thresholds change medium to high boundary', () => {
+      const detector = createDriftDetector({
+        thresholds: { low: 0.05, medium: 0.3 },
+      });
+      detector.setBaseline('comp-1', { value: 100 });
+
+      // 40% change: with default thresholds (0.1, 0.5) this would be medium,
+      // but with custom (0.05, 0.3) this should be high
+      const report = detector.check('comp-1', { value: 140 });
+      expect(report.deviations[0].severity).toBe('high');
+    });
+
+    it('uses default thresholds when none provided', () => {
+      const detector = createDriftDetector();
+      detector.setBaseline('comp-1', { value: 100 });
+
+      // 5% change: low
+      const low = detector.check('comp-1', { value: 105 });
+      expect(low.deviations[0].severity).toBe('low');
+
+      // 30% change: medium
+      const med = detector.check('comp-1', { value: 130 });
+      expect(med.deviations[0].severity).toBe('medium');
+
+      // 60% change: high
+      const high = detector.check('comp-1', { value: 160 });
+      expect(high.deviations[0].severity).toBe('high');
+    });
+
+    it('accepts empty config object and uses defaults', () => {
+      const detector = createDriftDetector({});
+      detector.setBaseline('comp-1', { value: 100 });
+
+      const report = detector.check('comp-1', { value: 105 });
+      expect(report.deviations[0].severity).toBe('low');
+    });
+  });
 });

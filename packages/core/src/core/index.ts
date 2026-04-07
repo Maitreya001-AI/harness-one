@@ -4,6 +4,10 @@
 export type {
   Role,
   Message,
+  SystemMessage,
+  UserMessage,
+  AssistantMessage,
+  ToolMessage,
   MessageMeta,
   ToolCallRequest,
   TokenUsage,

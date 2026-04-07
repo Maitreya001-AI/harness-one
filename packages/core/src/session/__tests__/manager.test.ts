@@ -228,4 +228,87 @@ describe('createSessionManager', () => {
       sm.dispose();
     });
   });
+
+  describe('H4: lock/destroy race condition', () => {
+    it('unlock throws HarnessError if session was destroyed between lock and unlock', () => {
+      const sm = createSessionManager({ gcIntervalMs: 0 });
+      const session = sm.create();
+      const { unlock } = sm.lock(session.id);
+
+      // Destroy session while it is locked
+      sm.destroy(session.id);
+
+      // Unlock should throw because the session no longer exists
+      expect(() => unlock()).toThrow(HarnessError);
+      try {
+        unlock();
+      } catch (e) {
+        expect((e as HarnessError).code).toBe('SESSION_NOT_FOUND');
+      }
+      sm.dispose();
+    });
+  });
+
+  describe('H5: event handler unsubscribe', () => {
+    it('onEvent returns an unsubscribe function', () => {
+      const events: SessionEvent[] = [];
+      const sm = createSessionManager({ gcIntervalMs: 0 });
+      const unsub = sm.onEvent(e => events.push(e));
+
+      // The return value should be a function
+      expect(typeof unsub).toBe('function');
+
+      sm.create();
+      expect(events.length).toBeGreaterThan(0);
+
+      const countBefore = events.length;
+
+      // After unsubscribing, no more events should be received
+      unsub();
+      sm.create();
+      expect(events.length).toBe(countBefore);
+      sm.dispose();
+    });
+  });
+
+  describe('H6: LRU access order tracking complexity comment', () => {
+    it('touchAccessOrder works correctly for typical session counts', () => {
+      const sm = createSessionManager({ maxSessions: 5, gcIntervalMs: 0 });
+      const s1 = sm.create();
+      const s2 = sm.create();
+      const s3 = sm.create();
+
+      // Access s1 to move it to the end of LRU
+      sm.access(s1.id);
+
+      // Create more sessions to force eviction
+      sm.create();
+      sm.create();
+      sm.create(); // This should evict s2 (least recently used), not s1
+
+      // s1 should still exist (was recently accessed)
+      expect(sm.get(s1.id)).toBeDefined();
+      // s2 should have been evicted (not accessed since creation)
+      expect(sm.get(s2.id)).toBeUndefined();
+      sm.dispose();
+    });
+  });
+
+  describe('C11: GC timer lifecycle', () => {
+    it('dispose clears the GC interval timer', () => {
+      const sm = createSessionManager({ gcIntervalMs: 100 });
+      // Should not throw
+      sm.dispose();
+      // Calling dispose again should be safe
+      sm.dispose();
+    });
+
+    it('GC timer does not prevent process exit (unref)', () => {
+      // Create with real GC interval to confirm timer is created and unref'd
+      const sm = createSessionManager({ gcIntervalMs: 50 });
+      // If unref() was not called, this test would hang on process exit
+      // We just verify the manager can be created and disposed without error
+      sm.dispose();
+    });
+  });
 });

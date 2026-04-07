@@ -67,4 +67,56 @@ describe('analyzeCacheStability', () => {
     expect(report.prefixMatchRatio).toBe(0.5);
     expect(report.recommendations.length).toBeGreaterThan(0);
   });
+
+  describe('H4: JSON.stringify comparison for toolCalls is unstable', () => {
+    it('considers messages equal when toolCalls have same fields in different order', () => {
+      // JSON.stringify is not order-stable. Two objects with same fields in different
+      // order should be considered equal.
+      const v1: Message[] = [
+        {
+          role: 'assistant',
+          content: 'Calling tool',
+          toolCalls: [{ id: 'tc1', name: 'search', arguments: '{"q":"hello"}' }],
+        },
+      ];
+      const v2: Message[] = [
+        {
+          role: 'assistant',
+          content: 'Calling tool',
+          // Same toolCall data, but fields constructed in a potentially different order
+          toolCalls: [
+            Object.assign(
+              Object.create(null),
+              { arguments: '{"q":"hello"}', id: 'tc1', name: 'search' },
+            ) as import('../../core/types.js').ToolCallRequest,
+          ],
+        },
+      ];
+
+      const report = analyzeCacheStability(v1, v2);
+      // These should be considered identical — divergence at -1
+      expect(report.firstDivergenceIndex).toBe(-1);
+      expect(report.prefixMatchRatio).toBe(1);
+    });
+
+    it('detects actually different toolCalls', () => {
+      const v1: Message[] = [
+        {
+          role: 'assistant',
+          content: 'Calling tool',
+          toolCalls: [{ id: 'tc1', name: 'search', arguments: '{"q":"hello"}' }],
+        },
+      ];
+      const v2: Message[] = [
+        {
+          role: 'assistant',
+          content: 'Calling tool',
+          toolCalls: [{ id: 'tc2', name: 'search', arguments: '{"q":"hello"}' }],
+        },
+      ];
+
+      const report = analyzeCacheStability(v1, v2);
+      expect(report.firstDivergenceIndex).toBe(0);
+    });
+  });
 });

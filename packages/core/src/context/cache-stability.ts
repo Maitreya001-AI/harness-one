@@ -91,11 +91,41 @@ export function analyzeCacheStability(
 }
 
 function messagesEqual(a: Message, b: Message): boolean {
-  return (
-    a.role === b.role &&
-    a.content === b.content &&
-    a.name === b.name &&
-    a.toolCallId === b.toolCallId &&
-    JSON.stringify(a.toolCalls) === JSON.stringify(b.toolCalls)
-  );
+  if (a.role !== b.role || a.content !== b.content || a.name !== b.name) {
+    return false;
+  }
+
+  // Compare tool-specific fields using discriminated union narrowing
+  if (a.role === 'tool' && b.role === 'tool') {
+    if (a.toolCallId !== b.toolCallId) return false;
+  }
+
+  if (a.role === 'assistant' && b.role === 'assistant') {
+    if (!toolCallsEqual(a.toolCalls, b.toolCalls)) return false;
+  }
+
+  return true;
+}
+
+/**
+ * Deep structural comparison of toolCalls arrays.
+ * Compares field-by-field instead of relying on JSON.stringify,
+ * which is not stable across different key insertion orders.
+ */
+function toolCallsEqual(
+  a: readonly import('../core/types.js').ToolCallRequest[] | undefined,
+  b: readonly import('../core/types.js').ToolCallRequest[] | undefined,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b) return a === b;
+  if (a.length !== b.length) return false;
+
+  for (let i = 0; i < a.length; i++) {
+    const ca = a[i];
+    const cb = b[i];
+    if (ca.id !== cb.id || ca.name !== cb.name || ca.arguments !== cb.arguments) {
+      return false;
+    }
+  }
+  return true;
 }

@@ -75,4 +75,126 @@ describe('createTasteCodingRegistry', () => {
       expect(md).toContain('No rules defined');
     });
   });
+
+  describe('checkCompliance (H2: enforcement mechanism)', () => {
+    it('detects violations matching lint-level rules', () => {
+      const registry = createTasteCodingRegistry();
+      registry.addRule(makeRule({
+        id: 'tc-001',
+        pattern: 'new Error',
+        rule: 'Use HarnessError instead of plain Error',
+        enforcement: 'lint',
+      }));
+
+      const violations = registry.checkCompliance('throw new Error("something broke")');
+      expect(violations).toHaveLength(1);
+      expect(violations[0].ruleId).toBe('tc-001');
+      expect(violations[0].rule).toBe('Use HarnessError instead of plain Error');
+    });
+
+    it('detects violations matching ci-level rules', () => {
+      const registry = createTasteCodingRegistry();
+      registry.addRule(makeRule({
+        id: 'tc-002',
+        pattern: 'console.log',
+        rule: 'Use structured logging',
+        enforcement: 'ci',
+      }));
+
+      const violations = registry.checkCompliance('console.log("debug info")');
+      expect(violations).toHaveLength(1);
+      expect(violations[0].ruleId).toBe('tc-002');
+    });
+
+    it('skips manual-enforcement rules', () => {
+      const registry = createTasteCodingRegistry();
+      registry.addRule(makeRule({
+        id: 'tc-003',
+        pattern: 'TODO',
+        rule: 'Resolve TODOs before merge',
+        enforcement: 'manual',
+      }));
+
+      const violations = registry.checkCompliance('// TODO: fix this later');
+      expect(violations).toHaveLength(0);
+    });
+
+    it('returns empty array for compliant code', () => {
+      const registry = createTasteCodingRegistry();
+      registry.addRule(makeRule({
+        id: 'tc-001',
+        pattern: 'new Error',
+        rule: 'Use HarnessError',
+        enforcement: 'lint',
+      }));
+
+      const violations = registry.checkCompliance('throw new HarnessError("proper error")');
+      expect(violations).toHaveLength(0);
+    });
+
+    it('detects multiple violations from different rules', () => {
+      const registry = createTasteCodingRegistry();
+      registry.addRule(makeRule({
+        id: 'tc-001',
+        pattern: 'new Error',
+        rule: 'Use HarnessError',
+        enforcement: 'lint',
+      }));
+      registry.addRule(makeRule({
+        id: 'tc-002',
+        pattern: 'console.log',
+        rule: 'Use structured logging',
+        enforcement: 'ci',
+      }));
+
+      const code = 'throw new Error("bad"); console.log("also bad");';
+      const violations = registry.checkCompliance(code);
+      expect(violations).toHaveLength(2);
+    });
+  });
+
+  describe('getMetrics (H2: enforcement metrics)', () => {
+    it('returns total rules count', () => {
+      const registry = createTasteCodingRegistry();
+      registry.addRule(makeRule({ id: 'r1' }));
+      registry.addRule(makeRule({ id: 'r2', enforcement: 'ci' }));
+      registry.addRule(makeRule({ id: 'r3', enforcement: 'manual' }));
+
+      const metrics = registry.getMetrics();
+      expect(metrics.totalRules).toBe(3);
+    });
+
+    it('returns rules grouped by enforcement level', () => {
+      const registry = createTasteCodingRegistry();
+      registry.addRule(makeRule({ id: 'r1', enforcement: 'lint' }));
+      registry.addRule(makeRule({ id: 'r2', enforcement: 'lint' }));
+      registry.addRule(makeRule({ id: 'r3', enforcement: 'ci' }));
+      registry.addRule(makeRule({ id: 'r4', enforcement: 'manual' }));
+
+      const metrics = registry.getMetrics();
+      expect(metrics.byEnforcement.lint).toBe(2);
+      expect(metrics.byEnforcement.ci).toBe(1);
+      expect(metrics.byEnforcement.manual).toBe(1);
+    });
+
+    it('returns zero counts for empty registry', () => {
+      const registry = createTasteCodingRegistry();
+      const metrics = registry.getMetrics();
+      expect(metrics.totalRules).toBe(0);
+      expect(metrics.byEnforcement.lint).toBe(0);
+      expect(metrics.byEnforcement.ci).toBe(0);
+      expect(metrics.byEnforcement.manual).toBe(0);
+    });
+
+    it('returns lastCheckTimestamp (null initially, updated after checkCompliance)', () => {
+      const registry = createTasteCodingRegistry();
+      registry.addRule(makeRule({ id: 'r1', enforcement: 'lint' }));
+
+      expect(registry.getMetrics().lastCheckTimestamp).toBeNull();
+
+      registry.checkCompliance('some code');
+      expect(registry.getMetrics().lastCheckTimestamp).not.toBeNull();
+      expect(typeof registry.getMetrics().lastCheckTimestamp).toBe('number');
+    });
+  });
 });

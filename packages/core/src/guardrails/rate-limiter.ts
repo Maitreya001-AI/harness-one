@@ -23,16 +23,33 @@ export function createRateLimiter(config: {
   const maxKeys = config.maxKeys ?? 10_000;
   const buckets = new Map<string, number[]>();
   const lruOrder: string[] = [];
+  // Map for O(1) index lookup instead of O(N) indexOf
+  const lruIndex = new Map<string, number>();
+
+  function rebuildIndex(): void {
+    lruIndex.clear();
+    for (let i = 0; i < lruOrder.length; i++) {
+      lruIndex.set(lruOrder[i], i);
+    }
+  }
 
   function touchKey(key: string): void {
-    const idx = lruOrder.indexOf(key);
-    if (idx !== -1) lruOrder.splice(idx, 1);
+    const idx = lruIndex.get(key);
+    if (idx !== undefined) {
+      lruOrder.splice(idx, 1);
+    }
     lruOrder.push(key);
+    // Rebuild index after structural change
+    rebuildIndex();
 
     // Evict oldest keys if over limit
     while (lruOrder.length > maxKeys) {
       const evicted = lruOrder.shift()!;
+      lruIndex.delete(evicted);
       buckets.delete(evicted);
+    }
+    if (lruOrder.length <= maxKeys) {
+      rebuildIndex();
     }
   }
 

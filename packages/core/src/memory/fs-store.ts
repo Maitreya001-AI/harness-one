@@ -4,7 +4,7 @@
  * @module
  */
 
-import { readFile, writeFile, mkdir, readdir, unlink } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, readdir, unlink, rename } from 'node:fs/promises';
 import { join } from 'node:path';
 import { HarnessError } from '../core/errors.js';
 import type { MemoryEntry } from './types.js';
@@ -13,7 +13,7 @@ import type { MemoryStore } from './store.js';
 let idCounter = 0;
 
 function generateId(): string {
-  return `mem_${Date.now()}_${++idCounter}`;
+  return `mem_${Date.now()}_${++idCounter}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
 interface Index {
@@ -53,7 +53,11 @@ export function createFileSystemStore(config: {
   }
 
   async function writeIndex(index: Index): Promise<void> {
-    await writeFile(indexPath, JSON.stringify(index, null, 2), 'utf-8');
+    // Write-then-rename for atomicity: ensures the index is either
+    // the old version or the new version, never a partially-written file.
+    const tmpPath = indexPath + '.tmp';
+    await writeFile(tmpPath, JSON.stringify(index, null, 2), 'utf-8');
+    await rename(tmpPath, indexPath);
   }
 
   function entryPath(id: string): string {
@@ -182,7 +186,8 @@ export function createFileSystemStore(config: {
 
     async compact(policy) {
       await ensureDir();
-      const all = await allEntries();
+      // Read all entries once to avoid repeated I/O (was called 3 times before)
+      let all = await allEntries();
       const now = Date.now();
       const weights = policy.gradeWeights ?? {
         critical: 1.0,
@@ -193,42 +198,47 @@ export function createFileSystemStore(config: {
 
       // Remove entries older than maxAge
       if (policy.maxAge !== undefined) {
+        const survivors: MemoryEntry[] = [];
         for (const entry of all) {
           if (now - entry.createdAt > policy.maxAge && weights[entry.grade] < 1.0) {
             await unlink(entryPath(entry.id));
             freed.push(entry.id);
+          } else {
+            survivors.push(entry);
           }
         }
+        all = survivors;
       }
 
       // Trim to maxEntries
-      const remaining = await allEntries();
-      if (policy.maxEntries !== undefined && remaining.length > policy.maxEntries) {
-        const sorted = remaining.sort(
+      if (policy.maxEntries !== undefined && all.length > policy.maxEntries) {
+        const sorted = [...all].sort(
           (a, b) => weights[a.grade] - weights[b.grade] || a.updatedAt - b.updatedAt,
         );
-        let current = remaining.length;
+        let current = all.length;
+        const removedIds = new Set<string>();
         for (const victim of sorted) {
           if (current <= policy.maxEntries) break;
           if (weights[victim.grade] < 1.0) {
             await unlink(entryPath(victim.id));
             freed.push(victim.id);
+            removedIds.add(victim.id);
             current--;
           }
         }
+        all = all.filter((e) => !removedIds.has(e.id));
       }
 
-      // Rebuild index
-      const finalEntries = await allEntries();
+      // Rebuild index from remaining entries (no extra I/O needed)
       const newIndex: Index = { keys: {} };
-      for (const entry of finalEntries) {
+      for (const entry of all) {
         newIndex.keys[entry.key] = entry.id;
       }
       await writeIndex(newIndex);
 
       return {
         removed: freed.length,
-        remaining: finalEntries.length,
+        remaining: all.length,
         freedEntries: freed,
       };
     },

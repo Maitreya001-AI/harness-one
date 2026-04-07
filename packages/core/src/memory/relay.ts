@@ -39,6 +39,8 @@ export function createRelay(config: {
       if (entry) {
         return { id: entry.id, state: JSON.parse(entry.content) as RelayState };
       }
+      // Cache miss: entry was deleted externally. Clear stale cached ID and re-query.
+      currentId = null;
     }
     const results = await store.query({ search: relayKey, limit: 1 });
     // Look for an entry with our relay key

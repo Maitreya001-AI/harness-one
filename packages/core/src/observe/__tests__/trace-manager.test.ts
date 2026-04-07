@@ -213,3 +213,124 @@ describe('createNoOpExporter', () => {
     await expect(exporter.flush()).resolves.toBeUndefined();
   });
 });
+
+// C9: Trace export silently swallows exceptions
+describe('export error handling', () => {
+  it('calls onExportError callback when span export fails', async () => {
+    const errors: Error[] = [];
+    const failingExporter: TraceExporter = {
+      name: 'failing',
+      async exportTrace() { throw new Error('trace export failure'); },
+      async exportSpan() { throw new Error('span export failure'); },
+      async flush() {},
+    };
+    const tm = createTraceManager({
+      exporters: [failingExporter],
+      onExportError: (err) => { errors.push(err as Error); },
+    });
+
+    const traceId = tm.startTrace('t');
+    const spanId = tm.startSpan(traceId, 's');
+    tm.endSpan(spanId);
+
+    // Allow microtask to resolve
+    await new Promise(r => setTimeout(r, 10));
+
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors[0].message).toBe('span export failure');
+  });
+
+  it('calls onExportError callback when trace export fails', async () => {
+    const errors: Error[] = [];
+    const failingExporter: TraceExporter = {
+      name: 'failing',
+      async exportTrace() { throw new Error('trace export failure'); },
+      async exportSpan() {},
+      async flush() {},
+    };
+    const tm = createTraceManager({
+      exporters: [failingExporter],
+      onExportError: (err) => { errors.push(err as Error); },
+    });
+
+    const traceId = tm.startTrace('t');
+    tm.endTrace(traceId);
+
+    await new Promise(r => setTimeout(r, 10));
+
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors[0].message).toBe('trace export failure');
+  });
+
+  it('does not throw when export fails and no onExportError provided', async () => {
+    const failingExporter: TraceExporter = {
+      name: 'failing',
+      async exportTrace() { throw new Error('trace export failure'); },
+      async exportSpan() { throw new Error('span export failure'); },
+      async flush() {},
+    };
+    const tm = createTraceManager({ exporters: [failingExporter] });
+
+    const traceId = tm.startTrace('t');
+    const spanId = tm.startSpan(traceId, 's');
+    // Should not throw
+    expect(() => tm.endSpan(spanId)).not.toThrow();
+    expect(() => tm.endTrace(traceId)).not.toThrow();
+    await new Promise(r => setTimeout(r, 10));
+  });
+});
+
+// C10: Span memory leak - spans not cleaned up on eviction (already tested above
+// in LRU eviction, but let's add a more explicit test)
+describe('span cleanup on eviction', () => {
+  it('cleans up all spans when their parent trace is evicted', () => {
+    const tm = createTraceManager({ maxTraces: 1 });
+
+    // Create a trace with multiple spans
+    const id1 = tm.startTrace('first');
+    const span1 = tm.startSpan(id1, 'span-1');
+    const span2 = tm.startSpan(id1, 'span-2');
+    const span3 = tm.startSpan(id1, 'span-3');
+
+    // Evict trace by adding a new one
+    tm.startTrace('second');
+
+    // All spans of the evicted trace should be cleaned up
+    expect(tm.getTrace(id1)).toBeUndefined();
+    expect(() => tm.endSpan(span1)).toThrow(HarnessError);
+    expect(() => tm.endSpan(span2)).toThrow(HarnessError);
+    expect(() => tm.endSpan(span3)).toThrow(HarnessError);
+  });
+});
+
+// Architecture: TraceManager needs dispose()
+describe('dispose', () => {
+  it('flushes and shuts down all exporters', async () => {
+    const events: string[] = [];
+    const exporter: TraceExporter = {
+      name: 'test',
+      async exportTrace() {},
+      async exportSpan() {},
+      async flush() { events.push('flush'); },
+      async shutdown() { events.push('shutdown'); },
+    };
+    const tm = createTraceManager({ exporters: [exporter] });
+    tm.startTrace('t');
+
+    await tm.dispose();
+
+    expect(events).toContain('flush');
+    expect(events).toContain('shutdown');
+  });
+
+  it('clears internal maps after dispose', async () => {
+    const tm = createTraceManager();
+    const traceId = tm.startTrace('t');
+    tm.startSpan(traceId, 's');
+
+    await tm.dispose();
+
+    // After dispose, traces should be gone
+    expect(tm.getTrace(traceId)).toBeUndefined();
+  });
+});

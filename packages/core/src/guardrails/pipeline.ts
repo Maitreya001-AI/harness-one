@@ -14,6 +14,7 @@ export interface GuardrailPipeline {
 interface PipelineEntry {
   name: string;
   guard: Guardrail;
+  timeoutMs?: number;
 }
 
 interface PipelineInternal extends GuardrailPipeline {
@@ -35,8 +36,8 @@ interface PipelineInternal extends GuardrailPipeline {
  * ```
  */
 export function createPipeline(config: {
-  input?: Array<{ name: string; guard: Guardrail }>;
-  output?: Array<{ name: string; guard: Guardrail }>;
+  input?: Array<{ name: string; guard: Guardrail; timeoutMs?: number }>;
+  output?: Array<{ name: string; guard: Guardrail; timeoutMs?: number }>;
   failClosed?: boolean;
   onEvent?: (event: GuardrailEvent) => void;
 }): GuardrailPipeline {
@@ -61,7 +62,16 @@ async function runGuardrails(
     let verdict: GuardrailEvent['verdict'];
 
     try {
-      verdict = await entry.guard(ctx);
+      if (entry.timeoutMs !== undefined) {
+        verdict = await Promise.race([
+          Promise.resolve(entry.guard(ctx)),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error(`Guardrail "${entry.name}" timed out after ${entry.timeoutMs}ms`)), entry.timeoutMs),
+          ),
+        ]);
+      } else {
+        verdict = await entry.guard(ctx);
+      }
     } catch (err) {
       if (pipeline.failClosed) {
         const message = err instanceof Error ? err.message : String(err);

@@ -29,8 +29,8 @@ export interface SessionManager {
   /** Maximum allowed sessions. */
   readonly maxSessions: number;
 
-  /** Register an event handler. */
-  onEvent(handler: (event: SessionEvent) => void): void;
+  /** Register an event handler. Returns an unsubscribe function. */
+  onEvent(handler: (event: SessionEvent) => void): () => void;
 
   /** Dispose the manager (clears auto-GC interval). */
   dispose(): void;
@@ -85,6 +85,8 @@ export function createSessionManager(config?: {
     return Date.now() - session.lastAccessedAt > ttlMs;
   }
 
+  // O(N) indexOf + splice — acceptable for typical session counts (maxSessions default=100).
+  // If needed for very large session pools, consider switching to a doubly-linked list.
   function touchAccessOrder(id: string): void {
     const idx = accessOrder.indexOf(id);
     if (idx !== -1) accessOrder.splice(idx, 1);
@@ -199,9 +201,15 @@ export function createSessionManager(config?: {
 
       return {
         unlock: () => {
-          // Only unlock if still exists and is locked
           const s = sessions.get(id);
-          if (s && s.status === 'locked') {
+          if (!s) {
+            throw new HarnessError(
+              `Session was destroyed while locked: ${id}`,
+              'SESSION_NOT_FOUND',
+              'Do not destroy a session while it is locked',
+            );
+          }
+          if (s.status === 'locked') {
             s.status = 'active';
             s.lastAccessedAt = Date.now();
             emit('unlocked', id);
@@ -257,8 +265,12 @@ export function createSessionManager(config?: {
       return maxSessions;
     },
 
-    onEvent(handler: (event: SessionEvent) => void): void {
+    onEvent(handler: (event: SessionEvent) => void): () => void {
       eventHandlers.push(handler);
+      return () => {
+        const idx = eventHandlers.indexOf(handler);
+        if (idx >= 0) eventHandlers.splice(idx, 1);
+      };
     },
 
     dispose(): void {

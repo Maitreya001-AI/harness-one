@@ -132,6 +132,40 @@ describe('runOutput', () => {
   });
 });
 
+describe('H2: per-guardrail timeout', () => {
+  it('blocks when a guardrail exceeds its timeout', async () => {
+    const slowGuard: Guardrail = async () => {
+      await new Promise((r) => setTimeout(r, 5000));
+      return { action: 'allow' };
+    };
+    const pipeline = createPipeline({
+      input: [{ name: 'slow', guard: slowGuard, timeoutMs: 50 }],
+    });
+    const result = await runInput(pipeline, { content: 'hello' });
+    expect(result.passed).toBe(false);
+    if (result.verdict.action === 'block') {
+      expect(result.verdict.reason).toContain('timed out');
+    }
+  });
+
+  it('allows fast guardrails with timeout configured', async () => {
+    const fastGuard: Guardrail = () => ({ action: 'allow' });
+    const pipeline = createPipeline({
+      input: [{ name: 'fast', guard: fastGuard, timeoutMs: 5000 }],
+    });
+    const result = await runInput(pipeline, { content: 'hello' });
+    expect(result.passed).toBe(true);
+  });
+
+  it('works without per-guardrail timeout (backward compatible)', async () => {
+    const pipeline = createPipeline({
+      input: [{ name: 'g1', guard: allowGuard }],
+    });
+    const result = await runInput(pipeline, { content: 'hello' });
+    expect(result.passed).toBe(true);
+  });
+});
+
 describe('FIX-5: fail-open still emits events for crashed guardrails', () => {
   it('emits an event via onEvent when failClosed=false and guardrail throws', async () => {
     const events: GuardrailEvent[] = [];

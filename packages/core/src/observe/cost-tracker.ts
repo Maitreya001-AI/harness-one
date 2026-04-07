@@ -35,6 +35,8 @@ export interface CostTracker {
   onAlert(handler: (alert: CostAlert) => void): void;
   /** Reset all usage records. */
   reset(): void;
+  /** Get a prompt-injectable alert message based on budget usage, or null if under threshold. */
+  getAlertMessage(): string | null;
 }
 
 /**
@@ -171,6 +173,20 @@ export function createCostTracker(config?: {
 
     reset(): void {
       records.length = 0;
+    },
+
+    getAlertMessage(): string | null {
+      if (budget === undefined) return null;
+      const currentCost = this.getTotalCost();
+      const percentUsed = currentCost / budget;
+
+      if (percentUsed >= criticalThreshold) {
+        return `[BUDGET CRITICAL] You have used ${(percentUsed * 100).toFixed(0)}% of your token budget. Be extremely concise.`;
+      }
+      if (percentUsed >= warningThreshold) {
+        return `[BUDGET WARNING] You have used ${(percentUsed * 100).toFixed(0)}% of your token budget. Please be concise.`;
+      }
+      return null;
     },
   };
 }

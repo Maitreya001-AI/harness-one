@@ -25,3 +25,4 @@ export { createRateLimiter } from './rate-limiter.js';
 export { createInjectionDetector } from './injection-detector.js';
 export { createSchemaValidator } from './schema-validator.js';
 export { createContentFilter } from './content-filter.js';
+export { createPIIDetector } from './pii-detector.js';

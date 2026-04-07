@@ -63,6 +63,14 @@ export function createBudget(config: BudgetConfig): TokenBudget {
 
     allocate(segmentName: string, tokens: number): void {
       const seg = getSegment(segmentName);
+      // H2: Validate that allocation doesn't exceed segment maxTokens
+      if (seg.used + tokens > seg.maxTokens) {
+        throw new HarnessError(
+          `Allocation of ${tokens} tokens would exceed segment "${segmentName}" maxTokens (${seg.maxTokens}). Current usage: ${seg.used}`,
+          'SEGMENT_OVERFLOW',
+          `Remaining capacity: ${seg.maxTokens - seg.used}`,
+        );
+      }
       seg.used += tokens;
     },
 
@@ -75,7 +83,12 @@ export function createBudget(config: BudgetConfig): TokenBudget {
       let totalUsed = 0;
       for (const seg of segmentState.values()) {
         totalUsed += seg.used;
+        // H1: Check if any segment exceeds its maxTokens
+        if (seg.used > seg.maxTokens) {
+          return true;
+        }
       }
+      // H3: responseReserve is already accounted for here
       return totalUsed + responseReserve > config.totalTokens;
     },
 

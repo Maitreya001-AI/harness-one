@@ -60,6 +60,8 @@ export interface EvalConfig {
   readonly scorers: Scorer[];
   readonly passThreshold?: number;
   readonly overallPassRate?: number;
+  /** Max number of cases to run concurrently. Defaults to 1 (sequential). */
+  readonly concurrency?: number;
 }
 
 /** Configuration for a generator-evaluator loop. */

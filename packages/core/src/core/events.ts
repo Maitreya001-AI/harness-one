@@ -8,7 +8,7 @@ import type { Message, TokenUsage, ToolCallRequest } from './types.js';
 import type { HarnessError } from './errors.js';
 
 /** Reason the agent loop terminated. */
-export type DoneReason = 'end_turn' | 'max_iterations' | 'token_budget' | 'aborted';
+export type DoneReason = 'end_turn' | 'max_iterations' | 'token_budget' | 'aborted' | 'error';
 
 /**
  * Discriminated union of all events yielded by the AgentLoop.
@@ -23,8 +23,10 @@ export type DoneReason = 'end_turn' | 'max_iterations' | 'token_budget' | 'abort
 export type AgentEvent =
   | { type: 'iteration_start'; iteration: number }
   | { type: 'text_delta'; text: string }
+  | { type: 'tool_call_delta'; toolCall: Partial<ToolCallRequest> }
   | { type: 'tool_call'; toolCall: ToolCallRequest; iteration: number }
   | { type: 'tool_result'; toolCallId: string; result: unknown }
   | { type: 'message'; message: Message; usage: TokenUsage }
-  | { type: 'error'; error: HarnessError }
+  | { type: 'warning'; message: string }
+  | { type: 'error'; error: HarnessError | Error }
   | { type: 'done'; reason: DoneReason; totalUsage: TokenUsage };

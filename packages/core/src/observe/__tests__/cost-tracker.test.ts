@@ -167,4 +167,48 @@ describe('createCostTracker', () => {
       expect(tracker.getTotalCost()).toBe(0);
     });
   });
+
+  // Architecture: Cost-aware prompt injection via getAlertMessage
+  describe('getAlertMessage', () => {
+    it('returns null when budget not set', () => {
+      const tracker = createCostTracker({ pricing });
+      expect(tracker.getAlertMessage()).toBeNull();
+    });
+
+    it('returns null when under 80% of budget', () => {
+      const tracker = createCostTracker({ pricing, budget: 1.0 });
+      // 0.003 cost, which is 0.3% of 1.0
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      expect(tracker.getAlertMessage()).toBeNull();
+    });
+
+    it('returns warning message when between 80% and 95% of budget', () => {
+      const tracker = createCostTracker({ pricing, budget: 0.00375 });
+      // 0.003 cost = 80% of 0.00375
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      const msg = tracker.getAlertMessage();
+      expect(msg).not.toBeNull();
+      expect(msg).toContain('BUDGET WARNING');
+      expect(msg).toContain('concise');
+    });
+
+    it('returns critical message when at or above 95% of budget', () => {
+      const tracker = createCostTracker({ pricing, budget: 0.003 });
+      // 0.003 cost = 100% of 0.003
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      const msg = tracker.getAlertMessage();
+      expect(msg).not.toBeNull();
+      expect(msg).toContain('BUDGET CRITICAL');
+      expect(msg).toContain('extremely concise');
+    });
+
+    it('returns a string suitable for prompt injection', () => {
+      const tracker = createCostTracker({ pricing, budget: 0.003 });
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      const msg = tracker.getAlertMessage();
+      expect(typeof msg).toBe('string');
+      // Should be a self-contained instruction string
+      expect(msg!.length).toBeGreaterThan(10);
+    });
+  });
 });

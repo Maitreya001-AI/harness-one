@@ -25,6 +25,8 @@ export interface TraceManager {
   getTrace(traceId: string): Trace | undefined;
   /** Flush all exporters. */
   flush(): Promise<void>;
+  /** Dispose: flush all exporters, shut them down, and clear internal state. */
+  dispose(): Promise<void>;
 }
 
 /**
@@ -42,9 +44,11 @@ export interface TraceManager {
 export function createTraceManager(config?: {
   exporters?: TraceExporter[];
   maxTraces?: number;
+  onExportError?: (error: unknown) => void;
 }): TraceManager {
   const exporters = config?.exporters ?? [];
   const maxTraces = config?.maxTraces ?? 1000;
+  const onExportError = config?.onExportError;
 
   interface MutableSpan {
     id: string;
@@ -186,7 +190,11 @@ export function createTraceManager(config?: {
 
       // Export
       for (const exporter of exporters) {
-        exporter.exportSpan({ ...span, events: [...span.events] }).catch(() => {});
+        exporter.exportSpan({ ...span, events: [...span.events] }).catch((err) => {
+          if (onExportError) {
+            onExportError(err);
+          }
+        });
       }
     },
 
@@ -205,7 +213,11 @@ export function createTraceManager(config?: {
       // Export
       const readonlyTrace = toReadonlyTrace(trace);
       for (const exporter of exporters) {
-        exporter.exportTrace(readonlyTrace).catch(() => {});
+        exporter.exportTrace(readonlyTrace).catch((err) => {
+          if (onExportError) {
+            onExportError(err);
+          }
+        });
       }
     },
 
@@ -217,6 +229,17 @@ export function createTraceManager(config?: {
 
     async flush(): Promise<void> {
       await Promise.all(exporters.map(e => e.flush()));
+    },
+
+    async dispose(): Promise<void> {
+      // 1. Flush all pending exports
+      await Promise.all(exporters.map(e => e.flush()));
+      // 2. Call shutdown() on all exporters that support it
+      await Promise.all(exporters.map(e => e.shutdown ? e.shutdown() : Promise.resolve()));
+      // 3. Clear internal maps
+      traces.clear();
+      spans.clear();
+      traceOrder.length = 0;
     },
   };
 }

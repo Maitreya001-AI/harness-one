@@ -105,41 +105,38 @@ function createSlidingWindowStrategy(windowSize: number): CompressionStrategy {
     name: 'sliding-window',
     async compress(messages, targetTokens, options) {
       const preserve = options?.preserve;
-      const preserved: Message[] = [];
-      const rest: Message[] = [];
+      // H5: Track by index instead of reference identity
+      const preservedIndices: number[] = [];
+      const restIndices: number[] = [];
 
-      for (const msg of messages) {
-        if (preserve && preserve(msg)) {
-          preserved.push(msg);
+      for (let i = 0; i < messages.length; i++) {
+        if (preserve && preserve(messages[i])) {
+          preservedIndices.push(i);
         } else {
-          rest.push(msg);
+          restIndices.push(i);
         }
       }
 
       // Keep the last windowSize non-preserved messages, then trim to fit token budget
-      const windowed = rest.slice(-windowSize);
+      const windowedIndices = restIndices.slice(-windowSize);
       // Trim windowed messages from the front to fit within token budget
-      let tokenCount = preserved.reduce((sum, m) => sum + msgTokens(m), 0);
-      const fittedWindowed: Message[] = [];
-      for (let i = windowed.length - 1; i >= 0; i--) {
-        const tokens = msgTokens(windowed[i]);
+      let tokenCount = preservedIndices.reduce((sum, idx) => sum + msgTokens(messages[idx]), 0);
+      const fittedWindowedIndices: Set<number> = new Set();
+      for (let i = windowedIndices.length - 1; i >= 0; i--) {
+        const idx = windowedIndices[i];
+        const tokens = msgTokens(messages[idx]);
         if (tokenCount + tokens <= targetTokens) {
-          fittedWindowed.unshift(windowed[i]);
+          fittedWindowedIndices.add(idx);
           tokenCount += tokens;
         }
       }
 
-      // Merge preserved messages back in original order
+      // H5: Merge using index-based lookup (Set for O(1)) in original order
+      const preservedSet = new Set(preservedIndices);
       const result: Message[] = [];
-      let wIdx = 0;
-      let pIdx = 0;
-      for (const msg of messages) {
-        if (preserve && preserve(msg) && pIdx < preserved.length && msg === preserved[pIdx]) {
-          result.push(msg);
-          pIdx++;
-        } else if (wIdx < fittedWindowed.length && msg === fittedWindowed[wIdx]) {
-          result.push(msg);
-          wIdx++;
+      for (let i = 0; i < messages.length; i++) {
+        if (preservedSet.has(i) || fittedWindowedIndices.has(i)) {
+          result.push(messages[i]);
         }
       }
       return result;
@@ -211,37 +208,37 @@ function createPreserveFailuresStrategy(): CompressionStrategy {
     name: 'preserve-failures',
     async compress(messages, targetTokens) {
       // Like truncate, but never drop messages with isFailureTrace
-      const result: Message[] = [];
-      const nonFailures: Message[] = [];
-      const failures: Message[] = [];
+      // H5: Track by index instead of reference identity
+      const nonFailureIndices: number[] = [];
+      let failureTokens = 0;
 
-      for (const msg of messages) {
-        if (msg.meta?.isFailureTrace) {
-          failures.push(msg);
+      for (let i = 0; i < messages.length; i++) {
+        if (messages[i].meta?.isFailureTrace) {
+          failureTokens += msgTokens(messages[i]);
         } else {
-          nonFailures.push(msg);
+          nonFailureIndices.push(i);
         }
       }
 
       // Keep all failures, then fill remaining token budget from end of non-failures
-      const failureTokens = failures.reduce((sum, m) => sum + msgTokens(m), 0);
       const remainingBudget = Math.max(0, targetTokens - failureTokens);
-      const keptNonFailures: Message[] = [];
+      // C4: Use a Set<number> for O(1) lookup instead of Array.includes O(N)
+      const keptNonFailureIndices: Set<number> = new Set();
       let nonFailureTokens = 0;
-      for (let i = nonFailures.length - 1; i >= 0; i--) {
-        const tokens = msgTokens(nonFailures[i]);
+      for (let i = nonFailureIndices.length - 1; i >= 0; i--) {
+        const idx = nonFailureIndices[i];
+        const tokens = msgTokens(messages[idx]);
         if (nonFailureTokens + tokens <= remainingBudget) {
-          keptNonFailures.unshift(nonFailures[i]);
+          keptNonFailureIndices.add(idx);
           nonFailureTokens += tokens;
         }
       }
 
-      // Reconstruct in original order
-      for (const msg of messages) {
-        if (msg.meta?.isFailureTrace) {
-          result.push(msg);
-        } else if (keptNonFailures.includes(msg)) {
-          result.push(msg);
+      // Reconstruct in original order using index-based lookup
+      const result: Message[] = [];
+      for (let i = 0; i < messages.length; i++) {
+        if (messages[i].meta?.isFailureTrace || keptNonFailureIndices.has(i)) {
+          result.push(messages[i]);
         }
       }
 

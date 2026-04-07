@@ -55,7 +55,9 @@ const HIGH_PATTERNS: RegExp[] = [
 ];
 
 // Base64 detection: looks for base64 encoded strings of reasonable length
-const BASE64_RE = /(?:[A-Za-z0-9+/]{4}){8,}(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?/;
+const BASE64_PATTERNS: RegExp[] = [
+  /(?:[A-Za-z0-9+/]{4}){8,}(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?/,
+];
 
 /**
  * Create a prompt injection detector guardrail.
@@ -81,7 +83,7 @@ export function createInjectionDetector(config?: {
       patterns = [...BASE_PATTERNS, ...MEDIUM_PATTERNS, ...extraPatterns];
       break;
     case 'high':
-      patterns = [...BASE_PATTERNS, ...MEDIUM_PATTERNS, ...HIGH_PATTERNS, ...extraPatterns, BASE64_RE];
+      patterns = [...BASE_PATTERNS, ...MEDIUM_PATTERNS, ...HIGH_PATTERNS, ...extraPatterns, ...BASE64_PATTERNS];
       break;
   }
 

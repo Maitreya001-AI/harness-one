@@ -25,10 +25,13 @@ export async function withSelfHealing(
     guardrails: Array<{ name: string; guard: Guardrail }>;
     buildRetryPrompt: (content: string, failures: Array<{ reason: string }>) => string;
     regenerate: (prompt: string) => Promise<string>;
+    /** Timeout for regenerate() in milliseconds (default: 30000). */
+    regenerateTimeoutMs?: number;
   },
   initialContent: string,
 ): Promise<{ content: string; attempts: number; passed: boolean }> {
   const maxRetries = config.maxRetries ?? 3;
+  const regenerateTimeoutMs = config.regenerateTimeoutMs ?? 30_000;
   let content = initialContent;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -52,8 +55,25 @@ export async function withSelfHealing(
       return { content, attempts: attempt, passed: false };
     }
 
+    // Exponential backoff: wait min(1000 * 2^(attempt-1), 10000) ms
+    const backoffMs = Math.min(1000 * Math.pow(2, attempt - 1), 10_000);
+    await new Promise((resolve) => setTimeout(resolve, backoffMs));
+
     const retryPrompt = config.buildRetryPrompt(content, failures);
-    content = await config.regenerate(retryPrompt);
+    try {
+      content = await Promise.race([
+        config.regenerate(retryPrompt),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error(`regenerate() timed out after ${regenerateTimeoutMs}ms`)),
+            regenerateTimeoutMs,
+          ),
+        ),
+      ]);
+    } catch {
+      // If regenerate times out or throws, return failure
+      return { content, attempts: attempt, passed: false };
+    }
   }
 
   // Should not be reached, but TypeScript needs it

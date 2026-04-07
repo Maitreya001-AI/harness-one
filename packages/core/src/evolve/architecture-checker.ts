@@ -149,7 +149,8 @@ export function layerDependencyRule(layers: Record<string, string[]>): Architect
 }
 
 function getModule(filePath: string, modules: string[]): string | undefined {
-  return modules.find((m) => filePath.includes(`/${m}/`) || filePath.startsWith(`${m}/`) || filePath === m);
+  const segments = filePath.split('/');
+  return modules.find((m) => segments.includes(m));
 }
 
 function hasCycle(
