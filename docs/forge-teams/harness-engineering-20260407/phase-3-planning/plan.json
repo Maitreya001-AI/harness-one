@@ -1,0 +1,179 @@
+{
+  "version": "1.0",
+  "totalTasks": 19,
+  "criticalPathLength": 9,
+  "maxParallelism": 3,
+  "estimatedDays": { "sequential": 21, "parallel": 12.5 },
+  "waves": [
+    {
+      "wave": 0,
+      "name": "Project Scaffolding",
+      "parallelism": 1,
+      "tasks": ["T001"]
+    },
+    {
+      "wave": 1,
+      "name": "Foundation Layer",
+      "parallelism": 3,
+      "tasks": ["T002", "T003", "T004"]
+    },
+    {
+      "wave": 2,
+      "name": "Core Module",
+      "parallelism": 1,
+      "tasks": ["T005", "T006", "T007", "T008"]
+    },
+    {
+      "wave": 3,
+      "name": "Feature Modules (3 parallel tracks)",
+      "parallelism": 3,
+      "tracks": {
+        "A": { "name": "Context", "tasks": ["T009", "T010", "T011", "T012"] },
+        "B": { "name": "Tools", "tasks": ["T013", "T014", "T015"] },
+        "C": { "name": "Guardrails", "tasks": ["T016", "T017", "T018"] }
+      }
+    },
+    {
+      "wave": 4,
+      "name": "Integration Testing",
+      "parallelism": 1,
+      "tasks": ["T019"]
+    }
+  ],
+  "tasks": {
+    "T001": {
+      "name": "Project Setup",
+      "description": "Initialize npm package with package.json, tsconfig, tsup, vitest, eslint",
+      "complexity": "M",
+      "dependencies": [],
+      "files": ["package.json", "tsconfig.json", "tsup.config.ts", "vitest.config.ts", ".eslintrc.cjs"]
+    },
+    "T002": {
+      "name": "JSON Schema Validator",
+      "description": "Minimal JSON Schema validator in _internal/ (~200 lines)",
+      "complexity": "M",
+      "dependencies": ["T001"],
+      "files": ["src/_internal/json-schema.ts", "src/_internal/__tests__/json-schema.test.ts"]
+    },
+    "T003": {
+      "name": "Token Estimator",
+      "description": "Character-based token estimation heuristic with registerTokenizer()",
+      "complexity": "S",
+      "dependencies": ["T001"],
+      "files": ["src/_internal/token-estimator.ts", "src/_internal/__tests__/token-estimator.test.ts"]
+    },
+    "T004": {
+      "name": "Core Types",
+      "description": "Message, AgentAdapter, ChatParams, TokenUsage, JsonSchema, etc.",
+      "complexity": "S",
+      "dependencies": ["T001"],
+      "files": ["src/core/types.ts"]
+    },
+    "T005": {
+      "name": "Error Hierarchy",
+      "description": "HarnessError + 5 subclasses with .code and .suggestion",
+      "complexity": "S",
+      "dependencies": ["T004"],
+      "files": ["src/core/errors.ts", "src/core/__tests__/errors.test.ts"]
+    },
+    "T006": {
+      "name": "Agent Events",
+      "description": "AgentEvent discriminated union + DoneReason type",
+      "complexity": "S",
+      "dependencies": ["T004", "T005"],
+      "files": ["src/core/events.ts"]
+    },
+    "T007": {
+      "name": "Agent Loop",
+      "description": "AgentLoop class with AsyncGenerator .run(), abort, safety valves",
+      "complexity": "L",
+      "dependencies": ["T004", "T005", "T006"],
+      "files": ["src/core/agent-loop.ts", "src/core/__tests__/agent-loop.test.ts"]
+    },
+    "T008": {
+      "name": "Core Index",
+      "description": "Barrel export for core module",
+      "complexity": "S",
+      "dependencies": ["T004", "T005", "T006", "T007"],
+      "files": ["src/core/index.ts"]
+    },
+    "T009": {
+      "name": "Context Types",
+      "description": "Segment, BudgetConfig, ContextLayout, CompressionStrategy types",
+      "complexity": "S",
+      "dependencies": ["T008"],
+      "files": ["src/context/types.ts"]
+    },
+    "T010": {
+      "name": "Token Counting + Budget",
+      "description": "countTokens(), registerTokenizer(), createBudget() → TokenBudget",
+      "complexity": "M",
+      "dependencies": ["T009", "T003"],
+      "files": ["src/context/count-tokens.ts", "src/context/budget.ts", "src/context/__tests__/count-tokens.test.ts", "src/context/__tests__/budget.test.ts"]
+    },
+    "T011": {
+      "name": "Pack + Compress + Cache Stability",
+      "description": "packContext(), compress() with 4 strategies, analyzeCacheStability()",
+      "complexity": "L",
+      "dependencies": ["T010"],
+      "files": ["src/context/pack.ts", "src/context/compress.ts", "src/context/cache-stability.ts", "src/context/__tests__/pack.test.ts", "src/context/__tests__/compress.test.ts", "src/context/__tests__/cache-stability.test.ts"]
+    },
+    "T012": {
+      "name": "Context Index",
+      "description": "Barrel export for context module",
+      "complexity": "S",
+      "dependencies": ["T011"],
+      "files": ["src/context/index.ts"]
+    },
+    "T013": {
+      "name": "Tool Types + defineTool",
+      "description": "ToolDefinition, ToolResult, ToolFeedback types + defineTool() factory",
+      "complexity": "M",
+      "dependencies": ["T008", "T002"],
+      "files": ["src/tools/types.ts", "src/tools/define-tool.ts", "src/tools/__tests__/define-tool.test.ts"]
+    },
+    "T014": {
+      "name": "Tool Registry + Validation",
+      "description": "createRegistry() + validateToolCall() with rate limiting",
+      "complexity": "M",
+      "dependencies": ["T013"],
+      "files": ["src/tools/registry.ts", "src/tools/validate.ts", "src/tools/__tests__/registry.test.ts", "src/tools/__tests__/validate.test.ts"]
+    },
+    "T015": {
+      "name": "Tools Index",
+      "description": "Barrel export for tools module",
+      "complexity": "S",
+      "dependencies": ["T014"],
+      "files": ["src/tools/index.ts"]
+    },
+    "T016": {
+      "name": "Guardrail Pipeline + Self-Healing",
+      "description": "GuardrailVerdict, createPipeline, runInput/runOutput, withSelfHealing",
+      "complexity": "L",
+      "dependencies": ["T008"],
+      "files": ["src/guardrails/types.ts", "src/guardrails/pipeline.ts", "src/guardrails/self-healing.ts", "src/guardrails/__tests__/pipeline.test.ts", "src/guardrails/__tests__/self-healing.test.ts"]
+    },
+    "T017": {
+      "name": "Built-in Guardrails",
+      "description": "4 reference guardrails: rate-limiter, injection-detector, schema-validator, content-filter",
+      "complexity": "M",
+      "dependencies": ["T016", "T002"],
+      "files": ["src/guardrails/rate-limiter.ts", "src/guardrails/injection-detector.ts", "src/guardrails/schema-validator.ts", "src/guardrails/content-filter.ts", "src/guardrails/__tests__/builtins.test.ts"]
+    },
+    "T018": {
+      "name": "Guardrails Index",
+      "description": "Barrel export for guardrails module",
+      "complexity": "S",
+      "dependencies": ["T017"],
+      "files": ["src/guardrails/index.ts"]
+    },
+    "T019": {
+      "name": "Integration Test",
+      "description": "Full loop with mock adapter composing all modules",
+      "complexity": "M",
+      "dependencies": ["T008", "T012", "T015", "T018"],
+      "files": ["src/__tests__/integration.test.ts"]
+    }
+  },
+  "criticalPath": ["T001", "T004", "T005", "T006", "T007", "T008", "T009", "T010", "T011", "T012", "T019"]
+}
