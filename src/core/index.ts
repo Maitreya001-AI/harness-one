@@ -1,1 +1,33 @@
-// Core module exports
+// Core module — public exports
+
+// Types
+export type {
+  Role,
+  Message,
+  MessageMeta,
+  ToolCallRequest,
+  TokenUsage,
+  AgentAdapter,
+  ChatParams,
+  ChatResponse,
+  StreamChunk,
+  ToolSchema,
+  JsonSchema,
+} from './types.js';
+
+// Errors
+export {
+  HarnessError,
+  MaxIterationsError,
+  AbortedError,
+  GuardrailBlockedError,
+  ToolValidationError,
+  TokenBudgetExceededError,
+} from './errors.js';
+
+// Events
+export type { AgentEvent, DoneReason } from './events.js';
+
+// AgentLoop
+export { AgentLoop } from './agent-loop.js';
+export type { AgentLoopConfig } from './agent-loop.js';

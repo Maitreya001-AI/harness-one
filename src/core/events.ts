@@ -1,0 +1,30 @@
+/**
+ * Agent event types — discriminated union for all events yielded by AgentLoop.
+ *
+ * @module
+ */
+
+import type { Message, TokenUsage, ToolCallRequest } from './types.js';
+import type { HarnessError } from './errors.js';
+
+/** Reason the agent loop terminated. */
+export type DoneReason = 'end_turn' | 'max_iterations' | 'token_budget' | 'aborted';
+
+/**
+ * Discriminated union of all events yielded by the AgentLoop.
+ *
+ * @example
+ * ```ts
+ * for await (const event of loop.run(messages)) {
+ *   if (event.type === 'message') console.log(event.message.content);
+ * }
+ * ```
+ */
+export type AgentEvent =
+  | { type: 'iteration_start'; iteration: number }
+  | { type: 'text_delta'; text: string }
+  | { type: 'tool_call'; toolCall: ToolCallRequest; iteration: number }
+  | { type: 'tool_result'; toolCallId: string; result: unknown }
+  | { type: 'message'; message: Message; usage: TokenUsage }
+  | { type: 'error'; error: HarnessError }
+  | { type: 'done'; reason: DoneReason; totalUsage: TokenUsage };

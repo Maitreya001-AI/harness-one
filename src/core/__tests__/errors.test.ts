@@ -1,0 +1,81 @@
+import { describe, it, expect } from 'vitest';
+import {
+  HarnessError,
+  MaxIterationsError,
+  AbortedError,
+  GuardrailBlockedError,
+  ToolValidationError,
+  TokenBudgetExceededError,
+} from '../errors.js';
+
+describe('HarnessError', () => {
+  it('sets message, code, and suggestion', () => {
+    const err = new HarnessError('test', 'TEST', 'try again');
+    expect(err.message).toBe('test');
+    expect(err.code).toBe('TEST');
+    expect(err.suggestion).toBe('try again');
+    expect(err.name).toBe('HarnessError');
+    expect(err).toBeInstanceOf(Error);
+  });
+
+  it('captures cause', () => {
+    const cause = new Error('root');
+    const err = new HarnessError('wrapped', 'WRAP', undefined, cause);
+    expect(err.cause).toBe(cause);
+  });
+
+  it('works without suggestion', () => {
+    const err = new HarnessError('msg', 'CODE');
+    expect(err.suggestion).toBeUndefined();
+  });
+});
+
+describe('MaxIterationsError', () => {
+  it('has correct code and iterations', () => {
+    const err = new MaxIterationsError(25);
+    expect(err.code).toBe('MAX_ITERATIONS');
+    expect(err.iterations).toBe(25);
+    expect(err.name).toBe('MaxIterationsError');
+    expect(err).toBeInstanceOf(HarnessError);
+    expect(err.message).toContain('25');
+  });
+});
+
+describe('AbortedError', () => {
+  it('has correct code', () => {
+    const err = new AbortedError();
+    expect(err.code).toBe('ABORTED');
+    expect(err.name).toBe('AbortedError');
+    expect(err).toBeInstanceOf(HarnessError);
+  });
+});
+
+describe('GuardrailBlockedError', () => {
+  it('includes reason in message', () => {
+    const err = new GuardrailBlockedError('toxic content');
+    expect(err.code).toBe('GUARDRAIL_BLOCKED');
+    expect(err.message).toContain('toxic content');
+    expect(err).toBeInstanceOf(HarnessError);
+  });
+});
+
+describe('ToolValidationError', () => {
+  it('has correct code', () => {
+    const err = new ToolValidationError('bad params');
+    expect(err.code).toBe('TOOL_VALIDATION');
+    expect(err.message).toBe('bad params');
+    expect(err).toBeInstanceOf(HarnessError);
+  });
+});
+
+describe('TokenBudgetExceededError', () => {
+  it('has correct code, used, and budget', () => {
+    const err = new TokenBudgetExceededError(50000, 100000);
+    expect(err.code).toBe('TOKEN_BUDGET_EXCEEDED');
+    expect(err.used).toBe(50000);
+    expect(err.budget).toBe(100000);
+    expect(err.message).toContain('50000');
+    expect(err.message).toContain('100000');
+    expect(err).toBeInstanceOf(HarnessError);
+  });
+});
