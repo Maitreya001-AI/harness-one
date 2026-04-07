@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Harness Engineering 参考架构 v1.0</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700;900&family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,400&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: oklch(97% 0.003 260);
+  --bg-s: oklch(99% 0.001 260);
+  --bg-in: oklch(93.5% 0.007 260);
+  --bg-h: oklch(95% 0.008 260);
+  --tx: oklch(18% 0.01 260);
+  --tx2: oklch(40% 0.012 260);
+  --tx3: oklch(55% 0.008 260);
+  --bd: oklch(86% 0.008 260);
+  --bd-h: oklch(74% 0.012 260);
+  --a1: oklch(48% 0.17 260); --a1s: oklch(93% 0.035 260); --a1t: oklch(30% 0.06 260);
+  --a2: oklch(54% 0.14 172); --a2s: oklch(93% 0.03 172); --a2t: oklch(28% 0.05 172);
+  --a3: oklch(58% 0.16 22);  --a3s: oklch(93% 0.03 22);  --a3t: oklch(34% 0.06 22);
+  --a4: oklch(68% 0.15 68);  --a4s: oklch(94% 0.03 68);  --a4t: oklch(34% 0.06 68);
+  --a5: oklch(50% 0.17 288); --a5s: oklch(93% 0.035 288);--a5t: oklch(30% 0.06 288);
+  --a6: oklch(54% 0.13 142); --a6s: oklch(93% 0.03 142); --a6t: oklch(28% 0.05 142);
+  --font: 'Noto Sans SC', system-ui, sans-serif;
+  --ed: 'Fraunces', Georgia, serif;
+  --ease: cubic-bezier(0.16,1,0.3,1);
+  --r: 10px; --rl: 14px;
+}
+@media(prefers-color-scheme:dark){:root{
+  --bg:oklch(12% 0.006 260);--bg-s:oklch(16% 0.006 260);--bg-in:oklch(20% 0.008 260);--bg-h:oklch(23% 0.01 260);
+  --tx:oklch(92% 0.006 260);--tx2:oklch(64% 0.01 260);--tx3:oklch(46% 0.008 260);
+  --bd:oklch(26% 0.008 260);--bd-h:oklch(34% 0.012 260);
+  --a1s:oklch(22% 0.05 260);--a1t:oklch(80% 0.06 260);
+  --a2s:oklch(22% 0.04 172);--a2t:oklch(80% 0.05 172);
+  --a3s:oklch(22% 0.04 22); --a3t:oklch(80% 0.06 22);
+  --a4s:oklch(22% 0.04 68); --a4t:oklch(80% 0.06 68);
+  --a5s:oklch(22% 0.05 288);--a5t:oklch(80% 0.06 288);
+  --a6s:oklch(22% 0.04 142);--a6t:oklch(80% 0.05 142);
+}}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:var(--font);background:var(--bg);color:var(--tx);line-height:1.8;font-size:15px;-webkit-font-smoothing:antialiased}
+.w{max-width:1060px;margin:0 auto;padding:56px 32px 100px}
+/* Header */
+.hd{margin-bottom:52px;padding-bottom:36px;border-bottom:1px solid var(--bd)}
+.hd-v{font-family:var(--ed);font-size:12px;color:var(--tx3);letter-spacing:0.06em;margin-bottom:8px}
+.hd h1{font-size:clamp(28px,4.5vw,44px);font-weight:900;letter-spacing:-0.035em;line-height:1.15;margin-bottom:14px}
+.hd h1 em{font-family:var(--ed);font-style:italic;font-weight:400;color:var(--a1)}
+.hd .sub{font-size:15px;color:var(--tx2);max-width:64ch;line-height:1.85}
+.hd .tags{display:flex;gap:6px;margin-top:14px;flex-wrap:wrap}
+.hd .tag{font-size:11px;font-weight:600;padding:3px 9px;border-radius:5px;background:var(--bg-in);color:var(--tx3)}
+/* TOC */
+.toc{background:var(--bg-s);border:1px solid var(--bd);border-radius:var(--rl);padding:22px 26px;margin-bottom:52px}
+.toc-t{font-size:12px;font-weight:600;color:var(--tx3);letter-spacing:0.06em;margin-bottom:10px}
+.toc-g{display:grid;grid-template-columns:1fr 1fr;gap:5px 28px}
+.toc-g a{font-size:13.5px;color:var(--tx2);text-decoration:none;transition:color .15s}
+.toc-g a:hover{color:var(--a1)}
+.toc-g a b{font-family:var(--ed);color:var(--tx3);margin-right:5px;font-weight:400}
+/* Section */
+.sec{margin-bottom:56px}
+.sh{display:flex;align-items:baseline;gap:10px;margin-bottom:18px;padding-bottom:10px;border-bottom:1px solid var(--bd)}
+.sn{font-family:var(--ed);font-size:14px;color:var(--tx3)}
+.st{font-size:18px;font-weight:700;letter-spacing:-0.01em}
+.ss{font-size:13px;color:var(--tx3);margin-left:6px}
+.p{font-size:15px;color:var(--tx2);line-height:1.85;margin-bottom:18px}
+.p strong{color:var(--tx);font-weight:600}
+.p code{font-family:'SF Mono',Consolas,monospace;font-size:12px;background:var(--bg-in);padding:1px 5px;border-radius:4px}
+/* Callout */
+.co{background:var(--bg-in);border-radius:var(--rl);padding:16px 20px;font-size:14px;color:var(--tx2);line-height:1.8;margin:14px 0 18px}
+.co strong{color:var(--tx);font-weight:600}
+.co.c1{border-left:3px solid var(--a1)}.co.c2{border-left:3px solid var(--a2)}.co.c3{border-left:3px solid var(--a3)}
+.co.c4{border-left:3px solid var(--a4)}.co.c5{border-left:3px solid var(--a5)}.co.c6{border-left:3px solid var(--a6)}
+/* Expandable */
+.ex{margin:10px 0}
+.ex-t{display:flex;align-items:center;gap:8px;padding:13px 15px;background:var(--bg-s);border:1px solid var(--bd);border-radius:var(--r);cursor:pointer;transition:all .15s;width:100%}
+.ex-t:hover{background:var(--bg-h);border-color:var(--bd-h)}
+.ex-t .ar{font-size:11px;color:var(--tx3);transition:transform .2s var(--ease);flex-shrink:0}
+.ex-t.on .ar{transform:rotate(90deg)}
+.ex-t .lb{font-size:14px;font-weight:600;flex:1;text-align:left}
+.ex-t .mt{font-size:12px;color:var(--tx3)}
+.ex-b{display:none;padding:14px 18px;background:var(--bg-s);border:1px solid var(--bd);border-top:none;border-radius:0 0 var(--r) var(--r)}
+.ex-b.show{display:block;animation:sd .3s var(--ease)}
+.ex-b p{font-size:13.5px;color:var(--tx2);line-height:1.8;margin-bottom:9px}
+.ex-b p:last-child{margin-bottom:0}
+.ex-b h4{font-size:13.5px;font-weight:600;color:var(--tx);margin:12px 0 5px}
+.ex-b h4:first-child{margin-top:0}
+@keyframes sd{from{opacity:0;transform:translateY(-5px)}to{opacity:1;transform:translateY(0)}}
+/* Table grid */
+.tg{display:flex;flex-direction:column;border:1px solid var(--bd);border-radius:var(--rl);overflow:hidden;margin:14px 0 18px}
+.tr{display:grid;border-bottom:1px solid var(--bd);transition:background .12s}
+.tr:last-child{border-bottom:none}
+.tr:hover:not(.th){background:var(--bg-h)}
+.tr.th{background:var(--bg-in);font-weight:600;font-size:12px}
+.td{padding:10px 13px;font-size:13px;border-right:1px solid var(--bd);line-height:1.6}
+.td:last-child{border-right:none}
+.tr.g3{grid-template-columns:180px 1fr 1fr}
+.tr.g4{grid-template-columns:40px 180px 1fr 1fr}
+.tr.g2{grid-template-columns:200px 1fr}
+.tr.g5{grid-template-columns:40px 160px 100px 1fr 1fr}
+/* Maturity */
+.ml{margin:14px 0 18px}
+.mi{display:grid;grid-template-columns:36px 1fr;gap:10px;padding:12px 0;border-bottom:1px solid var(--bd)}
+.mi:last-child{border-bottom:none}
+.mn{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;flex-shrink:0}
+.mb .mt2{font-size:14px;font-weight:600;margin-bottom:3px}
+.mb .md{font-size:13px;color:var(--tx2);line-height:1.7}
+/* Layers stack */
+.ls{display:flex;flex-direction:column;gap:2px;margin:14px 0 18px}
+.ll{display:grid;grid-template-columns:36px 140px 1fr;background:var(--bg-s);border-radius:var(--r);overflow:hidden;border:1px solid var(--bd)}
+.ll .ln{padding:12px 10px;font-size:18px;font-weight:800;display:flex;align-items:center;justify-content:center;border-right:1px solid var(--bd)}
+.ll .lt{padding:12px 14px;font-size:13px;font-weight:600;display:flex;align-items:center;border-right:1px solid var(--bd)}
+.ll .ld{padding:12px 14px;font-size:13px;color:var(--tx2);line-height:1.6}
+/* Audit checklist */
+.ck{margin:14px 0 18px}
+.ci{display:grid;grid-template-columns:24px 1fr;gap:8px;padding:8px 0;font-size:13.5px;color:var(--tx2);line-height:1.6}
+.ci .cb{width:16px;height:16px;border:2px solid var(--bd-h);border-radius:4px;margin-top:3px}
+/* Fade */
+.fade{opacity:0;transform:translateY(10px);animation:fu .45s var(--ease) forwards}
+@keyframes fu{to{opacity:1;transform:translateY(0)}}
+@media(prefers-reduced-motion:reduce){.fade{animation:none;opacity:1;transform:none}}
+@media(max-width:768px){
+  .w{padding:24px 16px 60px}
+  .toc-g{grid-template-columns:1fr}
+  .tr.g3{grid-template-columns:120px 1fr 1fr}
+  .tr.g4{grid-template-columns:30px 120px 1fr 1fr}
+  .tr.g5{grid-template-columns:30px 110px 70px 1fr 1fr}
+  .ll{grid-template-columns:30px 100px 1fr}
+}
+</style>
+</head>
+<body>
+<div class="w">
+
+<div class="hd fade">
+  <div class="hd-v">REFERENCE ARCHITECTURE v1.0 · 2026-04</div>
+  <h1>Harness Engineering<br><em>通用参考架构</em></h1>
+  <p class="sub">综合 Anthropic 系列文章、OpenAI 百万行实验、Manus 上下文工程实战、Martin Fowler / Thoughtworks 框架、harness-engineering.ai 6 组件模型、OpenHarness 开源逆向、两本 Claude Code 架构书——提炼出一个不绑定任何具体项目的通用方法论，适用于任何 AI Agent 产品的 Harness 设计、审计和演进规划。</p>
+  <div class="tags">
+    <span class="tag">通用 · 不绑定框架</span>
+    <span class="tag">9 层架构</span>
+    <span class="tag">18 设计模式</span>
+    <span class="tag">10 反模式</span>
+    <span class="tag">5 级成熟度</span>
+    <span class="tag">审计 Checklist</span>
+  </div>
+</div>
+
+<div class="toc fade" style="animation-delay:40ms">
+  <div class="toc-t">目录</div>
+  <div class="toc-g">
+    <a href="#s1"><b>01</b> 一句话定义</a>
+    <a href="#s2"><b>02</b> 学科层级</a>
+    <a href="#s3"><b>03</b> 9 层参考架构</a>
+    <a href="#s4"><b>04</b> 18 个设计模式</a>
+    <a href="#s5"><b>05</b> 10 个反模式</a>
+    <a href="#s6"><b>06</b> 成本经济学</a>
+    <a href="#s7"><b>07</b> 5 级成熟度模型</a>
+    <a href="#s8"><b>08</b> 审计 Checklist</a>
+    <a href="#s9"><b>09</b> 三个反直觉发现</a>
+    <a href="#s10"><b>10</b> 参考文献</a>
+  </div>
+</div>
+
+<!-- 01 -->
+<div class="sec fade" style="animation-delay:60ms" id="s1">
+  <div class="sh"><span class="sn">01</span><span class="st">一句话定义</span></div>
+  <p class="p"><strong>Harness Engineering</strong> 是围绕 AI Agent 设计环境、约束和反馈回路的工程学科，使 Agent 在生产环境中可靠运行。公式：<strong>Agent = Model + Harness</strong>。Model 提供智能，Harness 提供一切其他——工具、记忆、状态、权限、验证、生命周期管理、编排、熵回收。</p>
+
+  <div class="ls">
+    <div class="ll"><div class="ln" style="color:var(--a5)">⚙</div><div class="lt" style="background:var(--a5s);color:var(--a5t)">模型 = CPU</div><div class="ld">原始算力。你不写汇编操控寄存器，同理你不直接 prompt 裸模型做复杂生产任务。</div></div>
+    <div class="ll"><div class="ln" style="color:var(--a4)">⟦⟧</div><div class="lt" style="background:var(--a4s);color:var(--a4t)">Context = RAM</div><div class="ld">有限、易失的工作记忆。Token 窗口就是内存——有注意力预算、会 context rot、满了得 swap。</div></div>
+    <div class="ll"><div class="ln" style="color:var(--a2)">◈</div><div class="lt" style="background:var(--a2s);color:var(--a2t)">Harness = OS</div><div class="ld">操作系统。管理上下文、调度工具、权限控制、启动引导、标准驱动、可观测性、熵回收。</div></div>
+    <div class="ll"><div class="ln" style="color:var(--a1)">▲</div><div class="lt" style="background:var(--a1s);color:var(--a1t)">Agent = 应用</div><div class="ld">跑在 OS 上的应用程序。你的业务技能、对话交互、任务编排就是应用层。</div></div>
+  </div>
+
+  <div class="co c1"><strong>核心洞察：</strong>Harness 比 Model 更重要。LangChain DeepAgents 仅换 Harness（模型不变），TerminalBench 分数 52.8% → 66.5%。Anthropic 在 SWE-bench 上定制 Harness 多带来 10 个百分点。OpenAI 用 Codex + Harness，零手写代码，5 个月 100 万行生产代码。</div>
+</div>
+
+<!-- 02 -->
+<div class="sec fade" style="animation-delay:80ms" id="s2">
+  <div class="sh"><span class="sn">02</span><span class="st">学科层级</span></div>
+  <p class="p">Harness Engineering 在新兴学科体系中的位置——每一层包含上面所有层，但增加新的关注维度：</p>
+  <div class="ls">
+    <div class="ll"><div class="ln">1</div><div class="lt">Prompt Eng.</div><div class="ld">优化单次模型交互——写好一个 prompt。</div></div>
+    <div class="ll"><div class="ln">2</div><div class="lt">Context Eng.</div><div class="ld">管理工作记忆预算——单次调用内模型看到什么。包含 Prompt Eng.。</div></div>
+    <div class="ll"><div class="ln">3</div><div class="lt">Agent Eng.</div><div class="ld">优化 Agent 决策逻辑——循环、工具选择、目标追踪。包含 Context Eng.。</div></div>
+    <div class="ll"><div class="ln">4</div><div class="lt" style="background:var(--a1s);color:var(--a1t)">Harness Eng.</div><div class="ld">设计整个系统——工具、约束、反馈回路、状态、治理、生命周期、可观测、熵回收。包含 Agent Eng.。</div></div>
+  </div>
+  <div class="co c2"><strong>Martin Fowler 的另一个分析维度：</strong>Harness 的控制手段可以按两个正交轴分类——<strong>方向</strong>（Feedforward 前馈 vs Feedback 反馈）和 <strong>执行</strong>（Computational 确定性 vs Inferential 推理性）。前馈引导 Agent 做对，反馈在 Agent 做错后纠正。确定性手段（Linter、测试）便宜可靠，推理性手段（LLM-as-judge）昂贵但能处理语义问题。</div>
+</div>
+
+<!-- 03 -->
+<div class="sec fade" style="animation-delay:100ms" id="s3">
+  <div class="sh"><span class="sn">03</span><span class="st">9 层参考架构</span></div>
+  <p class="p">这不是行业标准（目前没有统一标准），而是综合所有主要来源后的一个参考模型。行业里已有的分类法包括 harness-engineering.ai 的 6 组件模型、Martin Fowler 的 Feedforward/Feedback × Computational/Inferential 矩阵、以及学术界的 CAR（Control-Agency-Runtime）分解。本模型试图以「实现层」的视角将它们统一。</p>
+  <p class="p">不是说必须全部实现——Phil Schmid 的第一原则就是「Start Simple」。但你需要知道完整蓝图，才能有意识地选择做什么、不做什么。</p>
+  <div id="layers"></div>
+</div>
+
+<!-- 04 -->
+<div class="sec fade" style="animation-delay:120ms" id="s4">
+  <div class="sh"><span class="sn">04</span><span class="st">18 个设计模式</span></div>
+  <div id="patterns"></div>
+</div>
+
+<!-- 05 -->
+<div class="sec fade" style="animation-delay:140ms" id="s5">
+  <div class="sh"><span class="sn">05</span><span class="st">10 个反模式</span></div>
+  <div class="tg">
+    <div class="tr th g3"><div class="td">反模式</div><div class="td">为什么有害</div><div class="td">正确做法</div></div>
+    <div class="tr g3"><div class="td" style="font-weight:500;color:var(--a3)">大一统 AGENTS.md</div><div class="td">挤占上下文，文档即时腐烂</div><div class="td">渐进式披露，按子系统分散（OpenAI 88 个 AGENTS.md）</div></div>
+    <div class="tr g3"><div class="td" style="font-weight:500;color:var(--a3)">System Prompt 放时间戳</div><div class="td">杀死 KV-cache 命中率</div><div class="td">时间信息通过工具获取</div></div>
+    <div class="tr g3"><div class="td" style="font-weight:500;color:var(--a3)">修改已有上下文</div><div class="td">缓存全部失效</div><div class="td">仅追加（append-only）</div></div>
+    <div class="tr g3"><div class="td" style="font-weight:500;color:var(--a3)">清理失败痕迹</div><div class="td">丢失 Agent 的隐式学习信号</div><div class="td">保留错误记录，压缩时区分成功/失败</div></div>
+    <div class="tr g3"><div class="td" style="font-weight:500;color:var(--a3)">动态移除工具定义</div><div class="td">缓存失效 + 模型困惑</div><div class="td">Tool Masking：logit 层掩码压制</div></div>
+    <div class="tr g3"><div class="td" style="font-weight:500;color:var(--a3)">跨模型通用 Harness</div><div class="td">不同模型需要不同调优</div><div class="td">模型升级时压力测试每个 Harness 假设</div></div>
+    <div class="tr g3"><div class="td" style="font-weight:500;color:var(--a3)">基于角色的子 Agent</div><div class="td">角色分配不如上下文隔离有效</div><div class="td">子 Agent 作为上下文防火墙</div></div>
+    <div class="tr g3"><div class="td" style="font-weight:500;color:var(--a3)">Markdown 格式需求列表</div><div class="td">模型容易不当修改自然语言格式</div><div class="td">JSON 结构化格式</div></div>
+    <div class="tr g3"><div class="td" style="font-weight:500;color:var(--a3)">手动清理 AI 代码</div><div class="td">不可扩展，技术债复利增长</div><div class="td">自动化垃圾回收 + 黄金原则</div></div>
+    <div class="tr g3"><div class="td" style="font-weight:500;color:var(--a3)">过早过度工程化</div><div class="td">在看到失败前就优化</div><div class="td">先观察故障模式再设计 Harness</div></div>
+  </div>
+</div>
+
+<!-- 06 -->
+<div class="sec fade" style="animation-delay:160ms" id="s6">
+  <div class="sh"><span class="sn">06</span><span class="st">成本经济学</span></div>
+  <p class="p">Harness 是「花钱买质量」的杠杆。以下数据来自 Anthropic 和 OpenAI 的公开案例：</p>
+  <div class="tg">
+    <div class="tr th g5"><div class="td">　</div><div class="td">配置</div><div class="td">成本</div><div class="td">时间</div><div class="td">结果</div></div>
+    <div class="tr g5"><div class="td" style="font-weight:700;color:var(--a3)">A</div><div class="td">单 Agent，无 Harness</div><div class="td">$9</div><div class="td">20 分钟</div><div class="td">功能残缺，核心交互坏的</div></div>
+    <div class="tr g5"><div class="td" style="font-weight:700;color:var(--a4)">B</div><div class="td">三 Agent (Sonnet)</div><div class="td">$200</div><div class="td">6 小时</div><div class="td">16 功能 × 10 Sprint，完整可用</div></div>
+    <div class="tr g5"><div class="td" style="font-weight:700;color:var(--a2)">C</div><div class="td">三 Agent (Opus)</div><div class="td">$125</div><div class="td">3h50m</div><div class="td">同 B 质量，换更强模型后 Harness 可简化</div></div>
+    <div class="tr g5"><div class="td" style="font-weight:700;color:var(--a5)">D</div><div class="td">16 并行 Agent</div><div class="td">$20K</div><div class="td">2 周</div><div class="td">10 万行 C 编译器，GCC 测试 99% 通过</div></div>
+  </div>
+  <div class="co c4"><strong>KV-cache 的成本杠杆：</strong>Manus 实测，缓存命中 $0.30/MTok vs 未命中 $3.00/MTok——10 倍差异。仅通过优化缓存命中率就可能将对话成本降低 5-8 倍。这是所有上下文工程优化的经济学驱动力。</div>
+</div>
+
+<!-- 07 -->
+<div class="sec fade" style="animation-delay:180ms" id="s7">
+  <div class="sh"><span class="sn">07</span><span class="st">5 级成熟度模型</span></div>
+  <p class="p">用来评估你的 Agent 产品当前处于 Harness Engineering 的哪个阶段，以及下一步该做什么：</p>
+  <div class="ml">
+    <div class="mi"><div><div class="mn" style="background:var(--a3s);color:var(--a3t)">L0</div></div><div class="mb"><div class="mt2">裸奔</div><div class="md">直接调 LLM API，无护栏、无可观测性、无工具限制。Demo 能跑，生产必崩。大多数 hackathon 项目在这里。</div></div></div>
+    <div class="mi"><div><div class="mn" style="background:var(--a4s);color:var(--a4t)">L1</div></div><div class="mb"><div class="mt2">基础 Harness</div><div class="md">有 Agent Loop（ReAct/while-true）、基础工具系统（声明式定义 + 参数校验）、简单的错误处理。能处理 happy path，但长对话、边界情况和安全性未覆盖。</div></div></div>
+    <div class="mi"><div><div class="mn" style="background:var(--a1s);color:var(--a1t)">L2</div></div><div class="mb"><div class="mt2">结构化 Harness</div><div class="md">加入上下文工程（预算分配 + Lost-in-the-Middle 布局）、输入/输出护栏、结构化记忆（跨会话持久化）、基础可观测性（trace + cost）。可以上生产，但质量波动大、缺少闭环改进机制。</div></div></div>
+    <div class="mi"><div><div class="mn" style="background:var(--a2s);color:var(--a2t)">L3</div></div><div class="mb"><div class="mt2">可度量 Harness</div><div class="md">加入 Eval 评分器 + CI 门禁（质量可量化）、Generator-Evaluator 分离（质量有兜底）、KV-cache 命中率监控（成本可优化）、渐进式技能披露（上下文可控）、跨 session 进度接力。质量稳定，能做 A/B 测试和持续改进。</div></div></div>
+    <div class="mi"><div><div class="mn" style="background:var(--a6s);color:var(--a6t)">L4</div></div><div class="mb"><div class="mt2">自演进 Harness</div><div class="md">品味编码飞轮制度化（失败 → 规则 → 自动化 → 度量）、Build to Delete 自动化（组件拦截率 → 退役 Issue）、自动化熵回收（后台偏差扫描 + 修复 PR）、Harness-as-Dataset（轨迹数据反哺模型训练）。Harness 自己能变好，不需要人全程盯着。</div></div></div>
+  </div>
+</div>
+
+<!-- 08 -->
+<div class="sec fade" style="animation-delay:200ms" id="s8">
+  <div class="sh"><span class="sn">08</span><span class="st">审计 Checklist</span><span class="ss">拿去套任何项目</span></div>
+  <p class="p">每一层问自己「有没有 / 部分有 / 完全没有」，标注现状，就是你的差距矩阵：</p>
+  <div id="checklist"></div>
+</div>
+
+<!-- 09 -->
+<div class="sec fade" style="animation-delay:220ms" id="s9">
+  <div class="sh"><span class="sn">09</span><span class="st">三个反直觉发现</span></div>
+  <div class="co c5"><strong>① Harness 复杂度应与模型能力反向变化。</strong>模型越强，最优 Harness 越简单。Anthropic 在 Opus 4.6 发布后移除了三 Agent 架构的 sprint 机制。每个 Harness 组件都编码了一个「模型做不到 X」的假设——这些假设要持续压力测试。</div>
+  <div class="co c5"><strong>② 约束增加可靠性。</strong>不是给 Agent 更多自由让它变好——而是设计正确的边界。Vercel 移除 80% 的工具反而提升了表现。Manus 用 Tool Masking 而不是移除工具。OpenAI 用 Linter 强制分层。</div>
+  <div class="co c5"><strong>③ 协同进化反馈循环。</strong>前沿模型正在针对其原生 Harness 做后训练（Claude ↔ Claude Code，GPT ↔ Codex）。模型在「自家」Harness 中的表现可能显著优于第三方。第三方 Harness 需要在工程层面弥补这一差距。</div>
+</div>
+
+<!-- 10 -->
+<div class="sec fade" style="animation-delay:240ms" id="s10">
+  <div class="sh"><span class="sn">10</span><span class="st">参考文献</span></div>
+  <div class="tg">
+    <div class="tr th g3"><div class="td">来源</div><div class="td">时间</div><div class="td">核心贡献</div></div>
+    <div class="tr g3"><div class="td">Anthropic · Building Effective Agents</div><div class="td">2024.12</div><div class="td">5 种工作流模式分类，ACI 概念，poka-yoke 防错</div></div>
+    <div class="tr g3"><div class="td">Anthropic · Effective Context Engineering</div><div class="td">2025.09</div><div class="td">注意力预算、context rot、渐进式披露</div></div>
+    <div class="tr g3"><div class="td">Anthropic · Writing Effective Tools</div><div class="td">2025.09</div><div class="td">Build→Evaluate→Collaborate 方法论，response_format</div></div>
+    <div class="tr g3"><div class="td">Anthropic · Agent Skills</div><div class="td">2025.10</div><div class="td">三级渐进披露，技能即文件夹</div></div>
+    <div class="tr g3"><div class="td">Anthropic · Effective Harnesses for Long-Running Agents</div><div class="td">2025.11</div><div class="td">Initializer + Worker 双角色模式，跨上下文接力</div></div>
+    <div class="tr g3"><div class="td">Anthropic · Harness Design for Long-Running Apps</div><div class="td">2026.03</div><div class="td">GAN 式三 Agent、Sprint 合同、Evaluator 调优</div></div>
+    <div class="tr g3"><div class="td">Anthropic · Building a C Compiler</div><div class="td">2026.02</div><div class="td">16 并行 Agent、git 锁文件同步、Agent 专业化</div></div>
+    <div class="tr g3"><div class="td">OpenAI · Harness Engineering: Leveraging Codex</div><div class="td">2026.02</div><div class="td">三大支柱、百万行实验、自动化熵回收</div></div>
+    <div class="tr g3"><div class="td">Manus · Context Engineering Blog</div><div class="td">2025.12</div><div class="td">KV-cache 北极星、Tool Masking、保留失败痕迹</div></div>
+    <div class="tr g3"><div class="td">Mitchell Hashimoto · My AI Adoption Journey</div><div class="td">2026.01</div><div class="td">定义 Harness Engineering 术语，AGENTS.md 模式</div></div>
+    <div class="tr g3"><div class="td">Phil Schmid · Agent Harness 2026</div><div class="td">2026.01</div><div class="td">Start Simple、Build to Delete、Harness is Dataset</div></div>
+    <div class="tr g3"><div class="td">Martin Fowler / Thoughtworks</div><div class="td">2026.04</div><div class="td">Feedforward/Feedback × Computational/Inferential 矩阵</div></div>
+    <div class="tr g3"><div class="td">harness-engineering.ai</div><div class="td">2026.04</div><div class="td">6 组件模型（Foundation + Safety 双层）</div></div>
+    <div class="tr g3"><div class="td">OpenHarness · HKUDS</div><div class="td">2026.04</div><div class="td">11,733 行 Python 复刻 Claude Code 98% 能力</div></div>
+    <div class="tr g3"><div class="td">lintsinghua/claude-code-book</div><div class="td">2026</div><div class="td">42 万字架构分析，从零构建 6 步路线图</div></div>
+    <div class="tr g3"><div class="td">shareAI-lab/learn-claude-code</div><div class="td">2026</div><div class="td">12 个渐进教程，45K GitHub Stars</div></div>
+  </div>
+  <p class="p" style="margin-top:12px;font-size:13px;color:var(--tx3)">本文档是综合多个来源的自研参考模型，不是行业标准。如需引用已有共识框架，建议使用 harness-engineering.ai 的 6 组件模型（引用率最高）或 Martin Fowler 的 Feedforward/Feedback 矩阵（分析最精准）。</p>
+</div>
+
+</div>
+
+<script>
+const L = [
+  { n:'①', name:'Agent Loop', color:'--a1', sum:'ReAct / while(true) 核心循环', body:`<h4>是什么</h4><p>Agent 的心脏。接收输入 → 组装上下文 → 调 LLM → LLM 决定调工具还是回复 → 调工具则执行完把结果喂回 → 循环。Claude Code 用 AsyncGenerator，OpenHarness 用 Python async，核心模式一致。</p><h4>关键设计决策</h4><p>① 流式还是阻塞？流式可以做实时 UI 反馈但增加状态管理复杂度。② 工具调用在循环内还是循环外？循环内（Claude Code / OpenHarness）更简洁。③ 最大循环次数？防止无限循环消耗预算。</p><h4>业界实现</h4><p>Claude Code：QueryEngine.ts ~46K 行。OpenHarness：engine/ 模块。Claude Agent SDK：Gather → Act → Verify → Repeat 四步循环。</p>` },
+  { n:'②', name:'上下文工程', color:'--a2', sum:'有限 token 的精细管理 — 组装、压缩、预算、缓存、披露', body:`<h4>是什么</h4><p>把上下文窗口当稀缺 RAM 管理。包括：组装（什么信息放进去）、排列（放在哪个位置——Lost in the Middle 效应）、预算（每种信息分多少 token）、压缩（满了怎么办——5 种策略）、披露（按需加载而非预加载）、缓存（KV-cache 命中率优化）。</p><h4>关键设计决策</h4><p>① Manus 三条缓存原则：稳定前缀（改一个 token 缓存全废）、仅追加、显式断点。② 压缩策略：时间衰减清理 / LLM 摘要 / 记忆提取式压缩 / 历史总结 / 硬截断，需要多策略组合。③ 压缩时区分成功/失败 trace——失败记录是学习信号，压缩优先级最低。④ 外部持久化数据（如文件系统、画布、数据库）已覆盖的信息可以更激进地从对话历史中压缩。</p><h4>北极星指标</h4><p>KV-cache 命中率。Manus 实测：命中 $0.30/MTok vs 未命中 $3.00/MTok，10 倍差异。</p>` },
+  { n:'③', name:'工具系统', color:'--a5', sum:'声明式定义 + 校验 + 限制 + Tool Masking + response_format', body:`<h4>是什么</h4><p>Agent 的手脚。好的工具系统：声明式定义（名称、描述、参数 schema）、运行时校验、调用限制（per-turn/per-session）、结构化错误反馈（含 suggestedAction）、response_format（concise/detailed 让 Agent 选信息密度）。</p><h4>关键设计决策</h4><p>① Tool Masking（Manus）：不要动态移除工具定义，用 logit 层掩码压制。② 工具命名用一致前缀 Namespace（asana_search, jira_search）——对评估有非平凡影响。③ 工具描述用 Prompt Engineering 级别的精心设计——Anthropic 发现仅改工具描述就能在 SWE-bench 上达到 SOTA。④ Poka-yoke 防错：设计参数结构让错误不可能发生。</p>` },
+  { n:'④', name:'安全与护栏', color:'--a3', sum:'输入/输出双向护栏 + 权限管道 + 自愈 + Fail-Closed', body:`<h4>是什么</h4><p>防止 Agent 做坏事（注入、泄露 PII、有害内容）和做蠢事（幻觉、格式错误）。输入侧拦截，输出侧检查+自愈。</p><h4>关键设计决策</h4><p>① Claude Code 四阶段权限管道：Schema 校验 → 规则匹配 → 上下文评估 → 交互确认。默认 Fail-Closed。② 五种权限模式：默认/宽松/严格/仅确认/绕过。③ 输出护栏支持自愈重试（最多 N 次）。④ 每个护栏组件有退役条件——当模型能力超越护栏假设时，护栏应该被删。</p>` },
+  { n:'⑤', name:'记忆与持久化', color:'--a4', sum:'跨会话认知 + 文件系统即无限记忆 + 跨上下文接力', body:`<h4>是什么</h4><p>让 Agent 在上下文窗口之外拥有长期记忆。Claude Code 三层记忆（MEMORY.md + Topic files + 原始记录），OpenHarness 一层（MEMORY.md）。</p><h4>关键设计决策</h4><p>① 记忆原则（Claude Code）：只保存不能从当前状态推断的信息。可从代码/文件/git 推断的 → 不保存。② 跨上下文接力（Anthropic）：Initializer Agent 生成交接产物（init.sh + progress.txt + JSON 特性列表 + Git commit），Worker Agent 每次启动读取并继续。③ 文件系统即无限记忆（Manus）：上下文窗口 = 工作记忆（有限），文件系统 = 长期记忆（无限）。④ 用 JSON 而非 Markdown 做结构化数据——模型更不容易篡改。</p>` },
+  { n:'⑥', name:'评估与验证', color:'--a6', sum:'Eval + CI 门禁 + Generator-Evaluator 分离 + Ralph Wiggum Loop', body:`<h4>是什么</h4><p>衡量 Agent 输出质量，阻止低质量输出到达用户。离线（Eval 数据集 + CI 门禁）+ 在线（Generator-Evaluator 分离）。</p><h4>关键设计决策</h4><p>① Generator-Evaluator 分离（Anthropic）：「开箱即用，Claude 是一个糟糕的 QA agent——它发现问题后说服自己这不是大事。」分离评估比让生成器自我批评更容易调优。② Sprint 合同：先协商验收标准再开始干活。③ 评估四维度：设计质量、原创性、工艺、功能性（设计和原创性权重更高）。④ Ralph Wiggum Loop：while(!success) 外层循环，每次全新上下文，状态通过文件/git 持久化。⑤ data-flywheel：从低分 trace 自动提取新测试用例。</p>` },
+  { n:'⑦', name:'可观测性', color:'--a4', sum:'Trace / Span / 成本追踪 / 模型漂移 / KV-cache / 可操作告警', body:`<h4>是什么</h4><p>让你看见 Agent 内部发生了什么以及为什么。不只是日志——是追踪每轮交互的完整因果链。</p><h4>三个层次</h4><p>① <strong>被动可观测</strong>——记录发生了什么。Trace/Span 覆盖每个管线步骤，Generation 记录 input/output/token/cost。② <strong>主动检测</strong>——发现异常。DriftCanary 检测模型行为漂移，CostTracker 追踪预算曲线。③ <strong>可操作可观测</strong>——观测结果直接反馈到 Agent 行为。成本告警注入 prompt 让 Agent 自动精简回复；cache hit rate 下降提示排查稳定前缀。</p><h4>OpenAI 的方案</h4><p>Chrome DevTools Protocol（DOM 快照 + 截图）、per-worktree 隔离启动、临时本地 Vector → Victoria Logs/Metrics 栈。Codex CLI 内置 OpenTelemetry。</p>` },
+  { n:'⑧', name:'持续演进', color:'--a1', sum:'品味飞轮 + Build to Delete + 知识治理 + Harness is Dataset', body:`<h4>是什么</h4><p>让 Harness 自己能变好的机制。不是一次性搭建完不管了，而是有制度持续发现问题→编码为规则→废弃过时组件。</p><h4>核心循环</h4><p>Mitchell Hashimoto 的定义：「每次发现 Agent 犯错，就做一个工程方案让它永远不再犯同样的错。」这些方案积累下来就是 Harness。两种编码形式：隐式 prompting（AGENTS.md）和编程工具（脚本、验证器、截图工具）。</p><h4>Build to Delete（Phil Schmid）</h4><p>每个 Harness 组件都编码了一个「模型做不到 X」的假设。模型变强 → 假设失效 → 组件该删。Vercel 删掉 80% 工具后反而性能更好。Manus 6 个月重构 5 次。</p><h4>Harness is the Dataset</h4><p>竞争力不在 prompt 或模型，而在 Harness 捕获的执行轨迹。这些轨迹是模型改进的飞轮燃料。</p>` },
+  { n:'⑨', name:'熵回收', color:'--a5', sum:'自动化垃圾回收 + 架构约束机械化 + 教学性 Lint 错误', body:`<h4>是什么（来自 OpenAI 百万行实验）</h4><p>Agent 从既有代码学习并忠实复制次优模式——技术债以复利速度增长。需要持续自动化清理。</p><h4>三个方法</h4><p>① <strong>架构约束机械化</strong>——用 Linter + CI 强制执行层级依赖方向。OpenAI 分层：Types → Config → Repo → Service → Runtime → UI，跨层依赖被 Linter 阻断。② <strong>教学性 Lint 错误</strong>——Lint 错误信息注入 Agent 上下文。如果包含修复指导，Agent 能自行修复而不需要人工介入。③ <strong>后台垃圾回收</strong>——后台任务定期扫描偏差、更新质量评分、开针对性修复 PR。核心理念：持续小增量 >> 周期性大清理。</p>` },
+];
+
+const layersEl = document.getElementById('layers');
+L.forEach((l,i) => {
+  const id='l'+i;
+  const d=document.createElement('div');d.className='ex';
+  d.innerHTML=`<button class="ex-t" onclick="tog('${id}',this)"><span class="ar">›</span><span class="lb" style="color:var(${l.color})">${l.n} ${l.name}</span><span class="mt">${l.sum}</span></button><div class="ex-b" id="${id}">${l.body}</div>`;
+  layersEl.appendChild(d);
+});
+
+const P = [
+  { n:'Errors as Feedback', d:'工具失败不抛异常，以 ToolResult 形式返回 LLM，让它自适应调整。失败是学习机会。', s:'Anthropic' },
+  { n:'Poka-yoke 防错', d:'设计工具参数让错误在结构上不可能发生。要求绝对路径而不是相对路径。', s:'Anthropic' },
+  { n:'渐进式披露', d:'三级加载：元数据 → 全文 → 附件。不一次性塞入上下文。OpenAI 88 个 AGENTS.md 也是此原则。', s:'Anthropic + OpenAI' },
+  { n:'Lost in the Middle 布局', d:'最重要的信息放 HEAD（KV-cache 稳定前缀）和 TAIL（高注意力区），中间放可压缩内容。', s:'Anthropic' },
+  { n:'追加式消息状态', d:'所有对话状态存为 append-only 消息列表。天然支持持久化、回放、分叉和压缩。', s:'Manus / Claude Code' },
+  { n:'Generator-Evaluator 分离', d:'生成和评估由不同 Agent/prompt 执行。调优评估者的怀疑态度远比让生成者自我批评更容易。', s:'Anthropic' },
+  { n:'Sprint 合同', d:'Generator 和 Evaluator 先协商验收标准，再开始干活。防止目标漂移。', s:'Anthropic' },
+  { n:'跨上下文接力', d:'Initializer Agent 创建环境 + 进度文件 + 功能清单。Worker Agent 每次启动读取进度。', s:'Anthropic' },
+  { n:'成本感知行为调整', d:'预算超阈值时在 prompt 注入成本告警，Agent 自动缩短回复、减少工具调用。', s:'Anthropic' },
+  { n:'Build to Delete', d:'每个 Harness 组件编码一个模型局限性假设。模型变强 → 假设失效 → 组件该删。', s:'Phil Schmid' },
+  { n:'工具 Namespace', d:'一致前缀组织工具名（asana_search, jira_search）。对工具选择准确率有非平凡影响。', s:'Anthropic' },
+  { n:'Harness is the Dataset', d:'竞争力不在 prompt 或模型，而在 Harness 捕获的执行轨迹数据——飞轮燃料。', s:'Phil Schmid' },
+  { n:'KV-cache 北极星', d:'缓存命中 $0.30 vs 未命中 $3.00。稳定前缀、仅追加、显式断点三原则。cache hit rate 是每天必看运营指标。', s:'Manus' },
+  { n:'Tool Masking', d:'不动态移除工具定义。用 logit 层掩码在解码时压制——模型仍知道工具存在，只是不能调用。', s:'Manus' },
+  { n:'保留失败痕迹', d:'压缩时不清理失败 trace。失败记录隐式更新模型信念系统，避免重复犯错。', s:'Manus' },
+  { n:'文件系统即无限记忆', d:'上下文 = 工作记忆（有限），文件系统 = 长期记忆（无限）。Agent 主动将信息写入持久化，需要时读取。', s:'Manus' },
+  { n:'Ralph Wiggum Loop', d:'while(!success) 外层循环，每次迭代全新上下文，状态通过文件/git 持久化。Claude Code 的 /loop 命令。', s:'Vercel / Claude Code' },
+  { n:'教学性 Lint 错误', d:'Lint 错误信息注入 Agent 上下文。如果包含修复指导，Agent 能自行修复。错误信息即微型教程。', s:'OpenAI' },
+];
+
+const patternsEl = document.getElementById('patterns');
+P.forEach((p,i) => {
+  const id='p'+i;
+  const d=document.createElement('div');d.className='ex';
+  d.innerHTML=`<button class="ex-t" onclick="tog('${id}',this)"><span class="ar">›</span><span class="lb">${p.n}</span><span class="mt">${p.s}</span></button><div class="ex-b" id="${id}"><p>${p.d}</p></div>`;
+  patternsEl.appendChild(d);
+});
+
+const CK = [
+  { layer:'① Agent Loop', items:['有 ReAct/while-true 核心循环','流式输出支持','最大循环次数限制','工具调用在循环内自动执行'] },
+  { layer:'② 上下文工程', items:['上下文窗口有分段布局（HEAD/MID/TAIL）','Token 预算按查询复杂度动态分配','有多策略压缩（不只是截断）','KV-cache 稳定前缀设计','KV-cache 命中率作为可监控指标','渐进式技能/知识披露','压缩时区分成功/失败 trace'] },
+  { layer:'③ 工具系统', items:['声明式工具定义（名称 + 描述 + Schema）','参数运行时校验','per-turn 调用次数限制','结构化错误反馈（含 suggestedAction）','response_format（concise/detailed）','工具 Namespace 一致性'] },
+  { layer:'④ 安全与护栏', items:['输入护栏（注入检测 + PII + 毒性 + 频率限制）','输出护栏（安全 + 幻觉 + Schema 验证）','输出自愈重试机制','Fail-Closed 默认策略','权限模式分级（默认/宽松/严格）'] },
+  { layer:'⑤ 记忆与持久化', items:['跨会话持久化记忆','记忆写入有价值分级（不是什么都存）','跨 session 进度接力机制','文件系统/外部数据作为长期记忆'] },
+  { layer:'⑥ 评估与验证', items:['Eval 评分器（≥2 个维度）','CI 门禁（通过率阈值）','Generator-Evaluator 分离','data-flywheel（低分 trace → 新测试用例）'] },
+  { layer:'⑦ 可观测性', items:['Trace/Span 覆盖每个管线步骤','成本追踪（per-session/per-turn）','模型漂移检测','可操作可观测（观测结果反馈到 Agent 行为）'] },
+  { layer:'⑧ 持续演进', items:['品味编码飞轮（失败→规则→自动化→度量）','每个 Harness 组件有退役条件','AGENTS.md / 知识文档有时效管理','Harness 变更有度量指标（每周新增规则/用例数）'] },
+  { layer:'⑨ 熵回收', items:['架构约束有 Linter/CI 机械化执行','Lint 错误信息包含修复指导','后台自动化偏差扫描','持续小增量清理（非周期性大清理）'] },
+];
+
+const ckEl = document.getElementById('checklist');
+CK.forEach(g => {
+  const d = document.createElement('div');
+  d.style.marginBottom = '18px';
+  d.innerHTML = `<div style="font-size:14px;font-weight:600;margin-bottom:8px;color:var(--tx)">${g.layer}</div>`;
+  const ck = document.createElement('div');
+  ck.className = 'ck';
+  g.items.forEach(item => {
+    ck.innerHTML += `<div class="ci"><div class="cb"></div><div>${item}</div></div>`;
+  });
+  d.appendChild(ck);
+  ckEl.appendChild(d);
+});
+
+function tog(id,btn){
+  const b=document.getElementById(id);const o=b.classList.contains('show');
+  document.querySelectorAll('.ex-b').forEach(x=>x.classList.remove('show'));
+  document.querySelectorAll('.ex-t').forEach(x=>x.classList.remove('on'));
+  if(!o){b.classList.add('show');btn.classList.add('on');b.style.animation='none';b.offsetHeight;b.style.animation='';}
+}
+const obs=new IntersectionObserver(e=>{e.forEach(x=>{if(x.isIntersecting){x.target.style.animationPlayState='running';obs.unobserve(x.target);}});},{threshold:0.08});
+document.querySelectorAll('.fade').forEach(el=>{el.style.animationPlayState='paused';obs.observe(el);});
+</script>
+</body>
+</html>
