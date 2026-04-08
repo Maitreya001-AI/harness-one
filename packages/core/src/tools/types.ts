@@ -24,6 +24,7 @@ export interface ToolDefinition<TParams = unknown> {
   readonly name: string;
   readonly description: string;
   readonly parameters: JsonSchema;
+  readonly responseFormat?: 'concise' | 'detailed';
   readonly execute: (params: TParams, signal?: AbortSignal) => Promise<ToolResult>;
 }
 

@@ -25,12 +25,14 @@ export function defineTool<TParams = unknown>(def: {
   name: string;
   description: string;
   parameters: JsonSchema;
+  responseFormat?: 'concise' | 'detailed';
   execute: (params: TParams, signal?: AbortSignal) => Promise<ToolResult>;
 }): ToolDefinition<TParams> {
   const tool: ToolDefinition<TParams> = {
     name: def.name,
     description: def.description,
     parameters: def.parameters,
+    ...(def.responseFormat !== undefined && { responseFormat: def.responseFormat }),
     execute: async (params: TParams, signal?: AbortSignal): Promise<ToolResult> => {
       try {
         return await def.execute(params, signal);

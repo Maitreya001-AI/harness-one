@@ -10,10 +10,14 @@ export type GuardrailVerdict =
   | { action: 'block'; reason: string }
   | { action: 'modify'; modified: string; reason: string };
 
+/** Permission level tiers for guardrail evaluation. */
+export type PermissionLevel = 'strict' | 'default' | 'permissive';
+
 /** Context passed to a guardrail for evaluation. */
 export interface GuardrailContext {
   content: string;
   meta?: Record<string, unknown>;
+  permissionLevel?: PermissionLevel;
 }
 
 /** A guardrail function that evaluates content and returns a verdict. */

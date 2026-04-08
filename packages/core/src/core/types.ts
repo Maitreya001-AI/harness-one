@@ -129,6 +129,7 @@ export interface ToolSchema {
   readonly name: string;
   readonly description: string;
   readonly parameters: JsonSchema;
+  readonly responseFormat?: 'concise' | 'detailed';
 }
 
 /** JSON Schema definition (supported subset). */

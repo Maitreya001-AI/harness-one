@@ -20,6 +20,8 @@ export interface PromptTemplate {
   readonly content: string;
   readonly variables: string[];
   readonly metadata?: Record<string, unknown>;
+  /** Optional TTL — epoch milliseconds after which the template is considered expired. */
+  readonly expiresAt?: number;
 }
 
 /** A multi-stage guided workflow definition. */

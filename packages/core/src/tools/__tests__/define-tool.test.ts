@@ -142,4 +142,32 @@ describe('defineTool', () => {
       expect(result.error.category).toBe('permission');
     }
   });
+
+  it('preserves responseFormat on the frozen tool definition', () => {
+    const tool = defineTool<{ text: string }>({
+      name: 'search',
+      description: 'Search tool',
+      parameters: {
+        type: 'object',
+        properties: { text: { type: 'string' } },
+        required: ['text'],
+      },
+      responseFormat: 'concise',
+      execute: async (params) => toolSuccess(params.text),
+    });
+
+    expect(tool.responseFormat).toBe('concise');
+    expect(Object.isFrozen(tool)).toBe(true);
+  });
+
+  it('defaults responseFormat to undefined when not provided', () => {
+    const tool = defineTool({
+      name: 'basic',
+      description: 'Basic tool',
+      parameters: { type: 'object' },
+      execute: async () => toolSuccess(null),
+    });
+
+    expect(tool.responseFormat).toBeUndefined();
+  });
 });

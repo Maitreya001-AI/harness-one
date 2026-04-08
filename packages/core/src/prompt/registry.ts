@@ -19,6 +19,12 @@ export interface PromptRegistry {
   list(): PromptTemplate[];
   /** Check if a template ID exists. */
   has(id: string): boolean;
+  /** Check whether a template has exceeded its TTL. Returns false for unknown ids or templates without expiresAt. */
+  isExpired(id: string, version?: string): boolean;
+  /** Return all templates whose expiresAt is in the past. */
+  getExpired(): PromptTemplate[];
+  /** Remove all expired templates from the registry and return the count removed. */
+  removeExpired(): number;
 }
 
 /**
@@ -101,6 +107,42 @@ export function createPromptRegistry(): PromptRegistry {
 
     has(id: string): boolean {
       return store.has(id);
+    },
+
+    isExpired(id: string, version?: string): boolean {
+      const template = this.get(id, version);
+      if (!template || template.expiresAt == null) return false;
+      return Date.now() > template.expiresAt;
+    },
+
+    getExpired(): PromptTemplate[] {
+      const now = Date.now();
+      const result: PromptTemplate[] = [];
+      for (const versions of store.values()) {
+        for (const t of versions.values()) {
+          if (t.expiresAt != null && now > t.expiresAt) {
+            result.push(t);
+          }
+        }
+      }
+      return result;
+    },
+
+    removeExpired(): number {
+      const now = Date.now();
+      let count = 0;
+      for (const [id, versions] of store) {
+        for (const [ver, t] of versions) {
+          if (t.expiresAt != null && now > t.expiresAt) {
+            versions.delete(ver);
+            count++;
+          }
+        }
+        if (versions.size === 0) {
+          store.delete(id);
+        }
+      }
+      return count;
     },
   };
 }

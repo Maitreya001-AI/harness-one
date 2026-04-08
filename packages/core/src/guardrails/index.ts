@@ -11,6 +11,7 @@ export type {
   Guardrail,
   GuardrailEvent,
   PipelineResult,
+  PermissionLevel,
 } from './types.js';
 
 // Pipeline

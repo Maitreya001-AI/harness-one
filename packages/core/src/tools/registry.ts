@@ -88,6 +88,7 @@ export function createRegistry(config?: {
       name: t.name,
       description: t.description,
       parameters: t.parameters,
+      ...(t.responseFormat !== undefined && { responseFormat: t.responseFormat }),
     }));
   }
 

@@ -192,3 +192,49 @@ describe('FIX-6: budget.ts throws HarnessError', () => {
     expect(true).toBe(true);
   });
 });
+
+describe('Gap 2: permissionLevel in GuardrailContext', () => {
+  it('passes permissionLevel through to guardrail functions', async () => {
+    let receivedCtx: import('../types.js').GuardrailContext | undefined;
+    const capturingGuard: Guardrail = (ctx) => {
+      receivedCtx = ctx;
+      return { action: 'allow' };
+    };
+    const pipeline = createPipeline({
+      input: [{ name: 'capture', guard: capturingGuard }],
+    });
+    await runInput(pipeline, { content: 'hello', permissionLevel: 'strict' });
+    expect(receivedCtx).toBeDefined();
+    expect(receivedCtx!.permissionLevel).toBe('strict');
+  });
+
+  it('defaults permissionLevel to undefined when not provided', async () => {
+    let receivedCtx: import('../types.js').GuardrailContext | undefined;
+    const capturingGuard: Guardrail = (ctx) => {
+      receivedCtx = ctx;
+      return { action: 'allow' };
+    };
+    const pipeline = createPipeline({
+      input: [{ name: 'capture', guard: capturingGuard }],
+    });
+    await runInput(pipeline, { content: 'hello' });
+    expect(receivedCtx).toBeDefined();
+    expect(receivedCtx!.permissionLevel).toBeUndefined();
+  });
+
+  it('supports all three permission levels', async () => {
+    const levels: import('../types.js').PermissionLevel[] = ['strict', 'default', 'permissive'];
+    for (const level of levels) {
+      let receivedLevel: string | undefined;
+      const guard: Guardrail = (ctx) => {
+        receivedLevel = ctx.permissionLevel;
+        return { action: 'allow' };
+      };
+      const pipeline = createPipeline({
+        input: [{ name: 'check', guard }],
+      });
+      await runInput(pipeline, { content: 'test', permissionLevel: level });
+      expect(receivedLevel).toBe(level);
+    }
+  });
+});

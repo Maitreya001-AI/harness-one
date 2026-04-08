@@ -85,6 +85,32 @@ describe('createRegistry', () => {
       expect(s[0].description).toBe('Echoes input (echo)');
       expect(s[0].parameters.type).toBe('object');
     });
+
+    it('includes responseFormat in schemas when defined on tool', () => {
+      const registry = createRegistry();
+      const tool = defineTool<{ text: string }>({
+        name: 'search',
+        description: 'Search tool',
+        parameters: {
+          type: 'object',
+          properties: { text: { type: 'string' } },
+          required: ['text'],
+        },
+        responseFormat: 'detailed',
+        execute: async (params) => toolSuccess(params.text),
+      });
+      registry.register(tool);
+      const s = registry.schemas();
+      expect(s).toHaveLength(1);
+      expect(s[0].responseFormat).toBe('detailed');
+    });
+
+    it('omits responseFormat from schemas when not defined on tool', () => {
+      const registry = createRegistry();
+      registry.register(makeEchoTool());
+      const s = registry.schemas();
+      expect(s[0].responseFormat).toBeUndefined();
+    });
   });
 
   describe('execute', () => {

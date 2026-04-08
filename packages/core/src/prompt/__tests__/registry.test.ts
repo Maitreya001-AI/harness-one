@@ -93,4 +93,91 @@ describe('createPromptRegistry', () => {
       expect(reg.has('b')).toBe(false);
     });
   });
+
+  describe('TTL management', () => {
+    it('returns a template with expiresAt in the future normally', () => {
+      const reg = createPromptRegistry();
+      const futureMs = Date.now() + 60_000;
+      reg.register({ id: 'fresh', version: '1.0', content: 'I am fresh', variables: [], expiresAt: futureMs });
+      expect(reg.get('fresh')).toBeDefined();
+      expect(reg.get('fresh')!.content).toBe('I am fresh');
+      expect(reg.isExpired('fresh')).toBe(false);
+    });
+
+    it('treats a template with expiresAt in the past as expired', () => {
+      const reg = createPromptRegistry();
+      const pastMs = Date.now() - 60_000;
+      reg.register({ id: 'stale', version: '1.0', content: 'I am stale', variables: [], expiresAt: pastMs });
+      expect(reg.isExpired('stale')).toBe(true);
+      // get() still returns the template — caller uses isExpired() to decide
+      expect(reg.get('stale')).toBeDefined();
+    });
+
+    it('isExpired returns false for templates without expiresAt', () => {
+      const reg = createPromptRegistry();
+      reg.register({ id: 'forever', version: '1.0', content: 'No TTL', variables: [] });
+      expect(reg.isExpired('forever')).toBe(false);
+    });
+
+    it('isExpired returns false for unknown template ids', () => {
+      const reg = createPromptRegistry();
+      expect(reg.isExpired('nonexistent')).toBe(false);
+    });
+
+    it('isExpired checks a specific version', () => {
+      const reg = createPromptRegistry();
+      const pastMs = Date.now() - 60_000;
+      const futureMs = Date.now() + 60_000;
+      reg.register({ id: 'multi', version: '1.0', content: 'old', variables: [], expiresAt: pastMs });
+      reg.register({ id: 'multi', version: '2.0', content: 'new', variables: [], expiresAt: futureMs });
+      expect(reg.isExpired('multi', '1.0')).toBe(true);
+      expect(reg.isExpired('multi', '2.0')).toBe(false);
+    });
+
+    it('getExpired() returns only expired templates', () => {
+      const reg = createPromptRegistry();
+      const pastMs = Date.now() - 60_000;
+      const futureMs = Date.now() + 60_000;
+      reg.register({ id: 'a', version: '1.0', content: 'A', variables: [], expiresAt: pastMs });
+      reg.register({ id: 'b', version: '1.0', content: 'B', variables: [], expiresAt: futureMs });
+      reg.register({ id: 'c', version: '1.0', content: 'C', variables: [] }); // no TTL
+      const expired = reg.getExpired();
+      expect(expired).toHaveLength(1);
+      expect(expired[0].id).toBe('a');
+    });
+
+    it('removeExpired() cleans up expired entries and returns count', () => {
+      const reg = createPromptRegistry();
+      const pastMs = Date.now() - 60_000;
+      const futureMs = Date.now() + 60_000;
+      reg.register({ id: 'x', version: '1.0', content: 'X', variables: [], expiresAt: pastMs });
+      reg.register({ id: 'x', version: '2.0', content: 'X2', variables: [], expiresAt: pastMs });
+      reg.register({ id: 'y', version: '1.0', content: 'Y', variables: [], expiresAt: futureMs });
+      reg.register({ id: 'z', version: '1.0', content: 'Z', variables: [] });
+      const removed = reg.removeExpired();
+      expect(removed).toBe(2);
+      // expired templates are gone
+      expect(reg.get('x', '1.0')).toBeUndefined();
+      expect(reg.get('x', '2.0')).toBeUndefined();
+      // non-expired templates remain
+      expect(reg.get('y')).toBeDefined();
+      expect(reg.get('z')).toBeDefined();
+      // list should reflect removal
+      expect(reg.list()).toHaveLength(2);
+    });
+
+    it('removeExpired() returns 0 when nothing is expired', () => {
+      const reg = createPromptRegistry();
+      reg.register({ id: 'a', version: '1.0', content: 'A', variables: [] });
+      expect(reg.removeExpired()).toBe(0);
+    });
+
+    it('removeExpired() cleans up the id entry when all versions are expired', () => {
+      const reg = createPromptRegistry();
+      const pastMs = Date.now() - 60_000;
+      reg.register({ id: 'gone', version: '1.0', content: 'Gone', variables: [], expiresAt: pastMs });
+      reg.removeExpired();
+      expect(reg.has('gone')).toBe(false);
+    });
+  });
 });
