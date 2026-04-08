@@ -250,6 +250,99 @@ describe('createPIIDetector', () => {
     });
   });
 
+  describe('IPv4 address detection (opt-in)', () => {
+    it('does not detect IP addresses by default', () => {
+      const { guard } = createPIIDetector();
+      const result = guard({ content: 'Server at 192.168.1.1 is down' });
+      // IP detection is off by default
+      expect(result.action).toBe('allow');
+    });
+
+    it('blocks content with IPv4 addresses when enabled', () => {
+      const { guard } = createPIIDetector({
+        detect: { email: false, phone: false, ssn: false, creditCard: false, ipAddress: true },
+      });
+      const result = guard({ content: 'Server at 192.168.1.1 is down' });
+      expect(result.action).toBe('block');
+      if (result.action === 'block') {
+        expect(result.reason).toContain('IP address');
+      }
+    });
+
+    it('detects various IPv4 formats', () => {
+      const { guard } = createPIIDetector({
+        detect: { email: false, phone: false, ssn: false, creditCard: false, ipAddress: true },
+      });
+      expect(guard({ content: 'Address: 10.0.0.1' }).action).toBe('block');
+      expect(guard({ content: 'External: 203.0.113.42' }).action).toBe('block');
+    });
+  });
+
+  describe('API key detection (opt-in)', () => {
+    it('does not detect API keys by default', () => {
+      const { guard } = createPIIDetector();
+      const result = guard({ content: 'Key: sk-abcDefGhiJklmnOpQrsTuv' });
+      expect(result.action).toBe('allow');
+    });
+
+    it('blocks content with OpenAI-style API keys when enabled', () => {
+      const { guard } = createPIIDetector({
+        detect: { email: false, phone: false, ssn: false, creditCard: false, apiKey: true },
+      });
+      const result = guard({ content: 'Key: sk-abcDefGhiJklmnOpQrsTuv' });
+      expect(result.action).toBe('block');
+      if (result.action === 'block') {
+        expect(result.reason).toContain('API key');
+      }
+    });
+
+    it('blocks content with AWS access keys when enabled', () => {
+      const { guard } = createPIIDetector({
+        detect: { email: false, phone: false, ssn: false, creditCard: false, apiKey: true },
+      });
+      const result = guard({ content: 'AWS key: AKIAIOSFODNN7EXAMPLE' });
+      expect(result.action).toBe('block');
+      if (result.action === 'block') {
+        expect(result.reason).toContain('API key');
+      }
+    });
+  });
+
+  describe('PEM private key detection (opt-in)', () => {
+    it('does not detect private keys by default', () => {
+      const { guard } = createPIIDetector();
+      const result = guard({ content: '-----BEGIN RSA PRIVATE KEY-----\nMIIE...' });
+      expect(result.action).toBe('allow');
+    });
+
+    it('blocks content with RSA private key headers when enabled', () => {
+      const { guard } = createPIIDetector({
+        detect: { email: false, phone: false, ssn: false, creditCard: false, privateKey: true },
+      });
+      const result = guard({ content: '-----BEGIN RSA PRIVATE KEY-----\nMIIE...' });
+      expect(result.action).toBe('block');
+      if (result.action === 'block') {
+        expect(result.reason).toContain('private key');
+      }
+    });
+
+    it('blocks content with EC private key headers when enabled', () => {
+      const { guard } = createPIIDetector({
+        detect: { email: false, phone: false, ssn: false, creditCard: false, privateKey: true },
+      });
+      const result = guard({ content: '-----BEGIN EC PRIVATE KEY-----\nMHQ...' });
+      expect(result.action).toBe('block');
+    });
+
+    it('blocks content with generic private key headers when enabled', () => {
+      const { guard } = createPIIDetector({
+        detect: { email: false, phone: false, ssn: false, creditCard: false, privateKey: true },
+      });
+      const result = guard({ content: '-----BEGIN PRIVATE KEY-----\nMIIE...' });
+      expect(result.action).toBe('block');
+    });
+  });
+
   describe('selective detection', () => {
     it('can disable specific detectors', () => {
       const { guard } = createPIIDetector({

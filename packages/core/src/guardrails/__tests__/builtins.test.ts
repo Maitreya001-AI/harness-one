@@ -69,25 +69,24 @@ describe('createRateLimiter', () => {
   });
 
   describe('H5: efficient key lookup with many keys', () => {
-    it('handles many keys efficiently without O(N) indexOf', () => {
+    it('handles many keys efficiently with O(1) Map-based LRU', () => {
       const { guard } = createRateLimiter({
         max: 100,
         windowMs: 60_000,
         keyFn: (ctx) => ctx.content,
         maxKeys: 10_000,
       });
-      // Insert 1000 distinct keys - should be fast with Map-based lookup
+      // Insert 1000 distinct keys - should be fast with Map-based O(1) LRU
       const start = performance.now();
       for (let i = 0; i < 1000; i++) {
         guard({ content: `key_${i}` });
       }
       const elapsed = performance.now() - start;
-      // With O(N) indexOf on every touchKey, 1000 keys would be slow.
-      // With Map-based O(1) lookup, this should be well under 1 second.
+      // With O(1) Map delete+set, this should be well under 1 second.
       expect(elapsed).toBeLessThan(1000);
     });
 
-    it('correctly maintains LRU behavior with Map-backed lookup', () => {
+    it('correctly maintains LRU behavior with Map-based O(1) eviction', () => {
       const { guard } = createRateLimiter({
         max: 1,
         windowMs: 60_000,
@@ -105,6 +104,25 @@ describe('createRateLimiter', () => {
       guard({ content: 'key4' });
       // key1 was evicted and should be allowed again (fresh bucket)
       expect(guard({ content: 'key1' }).action).toBe('allow');
+    });
+
+    it('Map-based LRU correctly evicts under high key churn', () => {
+      const { guard } = createRateLimiter({
+        max: 1,
+        windowMs: 60_000,
+        keyFn: (ctx) => ctx.content,
+        maxKeys: 5,
+      });
+      // Insert 10 keys, only last 5 should survive
+      for (let i = 0; i < 10; i++) {
+        guard({ content: `churn_${i}` });
+      }
+      // Early keys evicted -- should be allowed (fresh)
+      expect(guard({ content: 'churn_0' }).action).toBe('allow');
+      expect(guard({ content: 'churn_1' }).action).toBe('allow');
+      // Recent keys still tracked -- should be blocked
+      expect(guard({ content: 'churn_8' }).action).toBe('block');
+      expect(guard({ content: 'churn_9' }).action).toBe('block');
     });
   });
 });

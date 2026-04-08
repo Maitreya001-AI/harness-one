@@ -17,3 +17,7 @@ export { createTraceManager, createConsoleExporter, createNoOpExporter } from '.
 // Cost tracker
 export type { ModelPricing, CostTracker } from './cost-tracker.js';
 export { createCostTracker } from './cost-tracker.js';
+
+// Logger
+export type { LogLevel, Logger, LoggerConfig } from './logger.js';
+export { createLogger } from './logger.js';

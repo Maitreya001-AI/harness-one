@@ -61,9 +61,19 @@ export function validateJsonSchema(
   return { valid: errors.length === 0, errors };
 }
 
-// Reject patterns with nested quantifiers (ReDoS risk)
+/**
+ * Reject regex patterns that risk catastrophic backtracking (ReDoS).
+ * Catches: nested quantifiers like (a+)+, alternation quantifiers like (a|a)*,
+ * and deeply nested groups with quantifiers.
+ */
 function isSafePattern(pattern: string): boolean {
-  return !/([+*]|\{\d+,?\d*\})\)([+*]|\{\d+,?\d*\})/.test(pattern);
+  // Nested quantifiers: (...)+ (...)* etc.
+  if (/([+*]|\{\d+,?\d*\})\)([+*]|\{\d+,?\d*\})/.test(pattern)) return false;
+  // Alternation with quantifier on group: (a|b)+ where alternatives overlap
+  if (/\([^)]*\|[^)]*\)[+*]/.test(pattern)) return false;
+  // Deeply nested groups (3+ levels) with quantifiers
+  if (/\([^)]*\([^)]*\([^)]*\)/.test(pattern)) return false;
+  return true;
 }
 
 function validate(

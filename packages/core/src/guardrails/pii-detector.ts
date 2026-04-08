@@ -12,6 +12,12 @@ interface PIIDetectConfig {
   phone?: boolean;
   ssn?: boolean;
   creditCard?: boolean;
+  /** Detect IPv4 addresses. Default: false (opt-in to avoid false positives). */
+  ipAddress?: boolean;
+  /** Detect API keys (OpenAI sk-*, AWS AKIA*). Default: false (opt-in to avoid false positives). */
+  apiKey?: boolean;
+  /** Detect PEM private key headers. Default: false (opt-in to avoid false positives). */
+  privateKey?: boolean;
 }
 
 /** A custom PII pattern with a name for identification. */
@@ -25,6 +31,9 @@ const EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
 const PHONE_RE = /(?:\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})/;
 const SSN_RE = /\b\d{3}-\d{2}-\d{4}\b/;
 const CREDIT_CARD_RE = /\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b/;
+const IPV4_RE = /\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/;
+const API_KEY_RE = /\b(sk-[a-zA-Z0-9]{20,}|AKIA[A-Z0-9]{16})\b/;
+const PEM_PRIVATE_KEY_RE = /-----BEGIN (?:RSA |EC )?PRIVATE KEY-----/;
 
 /**
  * Create a PII detector guardrail.
@@ -62,6 +71,15 @@ export function createPIIDetector(config?: {
   }
   if (detect.creditCard !== false) {
     detectors.push({ name: 'credit card', pattern: CREDIT_CARD_RE });
+  }
+  if (detect.ipAddress === true) {
+    detectors.push({ name: 'IP address', pattern: IPV4_RE });
+  }
+  if (detect.apiKey === true) {
+    detectors.push({ name: 'API key', pattern: API_KEY_RE });
+  }
+  if (detect.privateKey === true) {
+    detectors.push({ name: 'private key', pattern: PEM_PRIVATE_KEY_RE });
   }
 
   for (const custom of customPatterns) {

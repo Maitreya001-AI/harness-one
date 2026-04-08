@@ -22,32 +22,17 @@ export function createRateLimiter(config: {
 }): { name: string; guard: Guardrail } {
   const maxKeys = config.maxKeys ?? 10_000;
   const buckets = new Map<string, number[]>();
-  const lruOrder: string[] = [];
-  // Map for O(1) index lookup instead of O(N) indexOf
-  const lruIndex = new Map<string, number>();
+  // Map-based LRU: delete + re-set moves key to end (O(1)); keys().next() = oldest (O(1))
+  const lru = new Map<string, true>();
 
   function touchKey(key: string): void {
-    const idx = lruIndex.get(key);
-    if (idx !== undefined) {
-      // Remove from old position
-      lruOrder.splice(idx, 1);
-      // Update indices for all keys that shifted left
-      for (let i = idx; i < lruOrder.length; i++) {
-        lruIndex.set(lruOrder[i], i);
-      }
-    }
-    // Add to end
-    lruOrder.push(key);
-    lruIndex.set(key, lruOrder.length - 1);
-
-    // Evict oldest keys if over limit
-    while (lruOrder.length > maxKeys) {
-      const evicted = lruOrder.shift()!;
-      lruIndex.delete(evicted);
-      buckets.delete(evicted);
-      // Update all indices after shift
-      for (let i = 0; i < lruOrder.length; i++) {
-        lruIndex.set(lruOrder[i], i);
+    lru.delete(key);
+    lru.set(key, true);
+    while (lru.size > maxKeys) {
+      const oldest = lru.keys().next().value;
+      if (oldest !== undefined) {
+        lru.delete(oldest);
+        buckets.delete(oldest);
       }
     }
   }

@@ -102,6 +102,18 @@ export interface LLMConfig {
   readonly extra?: Readonly<Record<string, unknown>>;
 }
 
+/**
+ * Requested response format for structured output.
+ *
+ * - `text`: default free-form text
+ * - `json_object`: request valid JSON output
+ * - `json_schema`: request JSON conforming to a specific schema
+ */
+export type ResponseFormat =
+  | { readonly type: 'text' }
+  | { readonly type: 'json_object' }
+  | { readonly type: 'json_schema'; readonly schema: JsonSchema; readonly strict?: boolean };
+
 /** Parameters for an LLM chat call. */
 export interface ChatParams {
   readonly messages: readonly Message[];
@@ -109,6 +121,8 @@ export interface ChatParams {
   readonly signal?: AbortSignal;
   /** Optional LLM configuration — adapter passes to provider. */
   readonly config?: LLMConfig;
+  /** Request structured output from the LLM. */
+  readonly responseFormat?: ResponseFormat;
 }
 
 /** Response from an LLM chat call. */

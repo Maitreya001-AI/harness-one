@@ -101,6 +101,7 @@ vi.mock('@harness-one/tiktoken', () => ({
 
 import { createHarness } from '../index.js';
 import type { AnthropicHarnessConfig } from '../index.js';
+import { HarnessError } from 'harness-one/core';
 import type { AgentAdapter } from 'harness-one/core';
 import type { MemoryStore } from 'harness-one/memory';
 import type { SchemaValidator } from 'harness-one/tools';
@@ -396,6 +397,76 @@ describe('createHarness', () => {
       const harness = createHarness({ ...baseConfig, memoryStore: customStore });
       expect(harness.memory).toBe(customStore);
       expect(mocks.createAnthropicAdapter).toHaveBeenCalled();
+    });
+  });
+
+  describe('config validation', () => {
+    it('throws INVALID_CONFIG when neither adapter nor client is provided', () => {
+      const badConfig = { provider: 'anthropic' } as unknown as AnthropicHarnessConfig;
+      expect(() => createHarness(badConfig)).toThrow(HarnessError);
+      try {
+        createHarness(badConfig);
+      } catch (e) {
+        expect((e as HarnessError).code).toBe('INVALID_CONFIG');
+        expect((e as HarnessError).message).toContain('adapter or client');
+      }
+    });
+
+    it('throws INVALID_CONFIG when maxIterations is zero', () => {
+      expect(() => createHarness({ ...baseConfig, maxIterations: 0 })).toThrow(HarnessError);
+      try {
+        createHarness({ ...baseConfig, maxIterations: 0 });
+      } catch (e) {
+        expect((e as HarnessError).code).toBe('INVALID_CONFIG');
+        expect((e as HarnessError).message).toContain('maxIterations');
+      }
+    });
+
+    it('throws INVALID_CONFIG when maxIterations is negative', () => {
+      expect(() => createHarness({ ...baseConfig, maxIterations: -5 })).toThrow(HarnessError);
+    });
+
+    it('throws INVALID_CONFIG when maxTotalTokens is zero', () => {
+      expect(() => createHarness({ ...baseConfig, maxTotalTokens: 0 })).toThrow(HarnessError);
+      try {
+        createHarness({ ...baseConfig, maxTotalTokens: 0 });
+      } catch (e) {
+        expect((e as HarnessError).code).toBe('INVALID_CONFIG');
+        expect((e as HarnessError).message).toContain('maxTotalTokens');
+      }
+    });
+
+    it('throws INVALID_CONFIG when maxTotalTokens is negative', () => {
+      expect(() => createHarness({ ...baseConfig, maxTotalTokens: -100 })).toThrow(HarnessError);
+    });
+
+    it('throws INVALID_CONFIG when budget is zero', () => {
+      expect(() => createHarness({ ...baseConfig, budget: 0 })).toThrow(HarnessError);
+      try {
+        createHarness({ ...baseConfig, budget: 0 });
+      } catch (e) {
+        expect((e as HarnessError).code).toBe('INVALID_CONFIG');
+        expect((e as HarnessError).message).toContain('budget');
+      }
+    });
+
+    it('throws INVALID_CONFIG when budget is negative', () => {
+      expect(() => createHarness({ ...baseConfig, budget: -10 })).toThrow(HarnessError);
+    });
+
+    it('allows valid positive values for maxIterations, maxTotalTokens, budget', () => {
+      expect(() => createHarness({
+        ...baseConfig,
+        maxIterations: 10,
+        maxTotalTokens: 50000,
+        budget: 5.0,
+      })).not.toThrow();
+    });
+
+    it('allows adapter without client', () => {
+      const customAdapter = { chat: vi.fn() } as unknown as AgentAdapter;
+      const configWithAdapter = { provider: 'anthropic', adapter: customAdapter } as unknown as AnthropicHarnessConfig;
+      expect(() => createHarness(configWithAdapter)).not.toThrow();
     });
   });
 });

@@ -81,6 +81,7 @@ describe('createOpenAIAdapter', () => {
 
       expect(mock.mocks.create).toHaveBeenCalledWith(
         expect.objectContaining({ model: 'gpt-4o' }),
+        expect.any(Object),
       );
     });
 
@@ -95,6 +96,7 @@ describe('createOpenAIAdapter', () => {
 
       expect(mock.mocks.create).toHaveBeenCalledWith(
         expect.objectContaining({ model: 'gpt-3.5-turbo' }),
+        expect.any(Object),
       );
     });
 
@@ -234,8 +236,9 @@ describe('createOpenAIAdapter', () => {
         signal: controller.signal,
       });
 
-      // The OpenAI SDK accepts signal in the options parameter
+      // The OpenAI SDK accepts signal in the second options parameter
       expect(mock.mocks.create).toHaveBeenCalledWith(
+        expect.any(Object),
         expect.objectContaining({ signal: controller.signal }),
       );
     });
@@ -335,6 +338,7 @@ describe('createOpenAIAdapter', () => {
           max_tokens: 100,
           stop: ['STOP'],
         }),
+        expect.any(Object),
       );
     });
   });
@@ -360,8 +364,9 @@ describe('createOpenAIAdapter', () => {
         chunks.push(chunk);
       }
 
-      // The OpenAI SDK accepts signal in the options parameter
+      // The OpenAI SDK accepts signal in the second options parameter
       expect(mock.mocks.create).toHaveBeenCalledWith(
+        expect.any(Object),
         expect.objectContaining({ signal: controller.signal }),
       );
     });
@@ -575,6 +580,7 @@ describe('createOpenAIAdapter', () => {
 
       expect(mock.mocks.create).toHaveBeenCalledWith(
         expect.objectContaining({ model: 'llama-3.3-70b-versatile' }),
+        expect.any(Object),
       );
     });
   });

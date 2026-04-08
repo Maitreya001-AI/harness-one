@@ -108,6 +108,9 @@ export interface Harness {
 
   /** Shut down all services. */
   shutdown(): Promise<void>;
+
+  /** Abort the running loop and shut down all services gracefully. */
+  drain(timeoutMs?: number): Promise<void>;
 }
 
 /**
@@ -117,6 +120,20 @@ export interface Harness {
  * explicit config field.
  */
 export function createHarness(config: HarnessConfig): Harness {
+  // Validate config
+  if (!config.adapter && !config.client) {
+    throw new HarnessError('Either adapter or client must be provided', 'INVALID_CONFIG', 'Pass a provider client or a custom adapter');
+  }
+  if (config.maxIterations !== undefined && config.maxIterations <= 0) {
+    throw new HarnessError('maxIterations must be positive', 'INVALID_CONFIG', 'Use a value >= 1');
+  }
+  if (config.maxTotalTokens !== undefined && config.maxTotalTokens <= 0) {
+    throw new HarnessError('maxTotalTokens must be positive', 'INVALID_CONFIG', 'Use a value >= 1');
+  }
+  if (config.budget !== undefined && config.budget <= 0) {
+    throw new HarnessError('budget must be positive', 'INVALID_CONFIG', 'Use a value > 0');
+  }
+
   // 1. Adapter
   const adapter: AgentAdapter = config.adapter ?? createAdapter(config);
 
@@ -204,6 +221,18 @@ export function createHarness(config: HarnessConfig): Harness {
         }
       }
     },
+
+    async drain(timeoutMs = 30_000): Promise<void> {
+      loop.abort();
+      const deadline = Date.now() + timeoutMs;
+      // Poll until the loop's abort signal settles (short spin)
+      while (Date.now() < deadline) {
+        // Give pending microtasks a chance to complete
+        await new Promise((r) => setTimeout(r, 50));
+        break; // Single tick is sufficient after abort()
+      }
+      await this.shutdown();
+    },
   };
 
   return harness;
@@ -287,3 +316,9 @@ function createGuardrails(config: HarnessConfig): GuardrailPipeline {
 
   return createPipeline({ input, output });
 }
+
+// ---------------------------------------------------------------------------
+// Environment configuration helper
+// ---------------------------------------------------------------------------
+
+export { createConfigFromEnv } from './env.js';

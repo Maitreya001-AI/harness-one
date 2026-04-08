@@ -230,6 +230,34 @@ describe('createPromptRegistry', () => {
       expect(latest!.content).toBe('Third');
     });
 
+    it('explicit version tracking returns highest version regardless of registration order', () => {
+      const reg = createPromptRegistry();
+      // Register out of order
+      reg.register({ id: 'ooo', version: '3.0', content: 'Three', variables: [] });
+      reg.register({ id: 'ooo', version: '1.0', content: 'One', variables: [] });
+      reg.register({ id: 'ooo', version: '2.0', content: 'Two', variables: [] });
+      // Should return version 3.0 (highest string comparison) not 2.0 (last registered)
+      const latest = reg.get('ooo');
+      expect(latest).toBeDefined();
+      expect(latest!.version).toBe('3.0');
+      expect(latest!.content).toBe('Three');
+    });
+
+    it('explicit version tracking updates when removing expired latest version', () => {
+      const reg = createPromptRegistry();
+      const pastMs = Date.now() - 60_000;
+      reg.register({ id: 'track', version: '1.0', content: 'V1', variables: [] });
+      reg.register({ id: 'track', version: '2.0', content: 'V2', variables: [], expiresAt: pastMs });
+      // Latest should be 2.0
+      expect(reg.get('track')!.version).toBe('2.0');
+      // Remove expired
+      reg.removeExpired();
+      // Now latest should fall back to 1.0
+      const latest = reg.get('track');
+      expect(latest).toBeDefined();
+      expect(latest!.version).toBe('1.0');
+    });
+
     it('remove non-existent template — no error', () => {
       const reg = createPromptRegistry();
       // removeExpired on empty registry should not throw

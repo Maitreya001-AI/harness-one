@@ -41,16 +41,13 @@ export interface PromptRegistry {
 export function createPromptRegistry(): PromptRegistry {
   // Map<id, Map<version, PromptTemplate>>
   const store = new Map<string, Map<string, PromptTemplate>>();
+  // Explicit latest version tracking: id -> latest version string
+  const latestVersions = new Map<string, string>();
 
   function getLatestVersion(id: string): PromptTemplate | undefined {
-    const versions = store.get(id);
-    if (!versions || versions.size === 0) return undefined;
-    // Return the last inserted version
-    let latest: PromptTemplate | undefined;
-    for (const t of versions.values()) {
-      latest = t;
-    }
-    return latest;
+    const latestVer = latestVersions.get(id);
+    if (!latestVer) return undefined;
+    return store.get(id)?.get(latestVer);
   }
 
   return {
@@ -62,6 +59,11 @@ export function createPromptRegistry(): PromptRegistry {
         store.set(template.id, versions);
       }
       versions.set(template.version, frozen);
+
+      const existing = latestVersions.get(template.id);
+      if (!existing || template.version > existing) {
+        latestVersions.set(template.id, template.version);
+      }
     },
 
     get(id: string, version?: string): PromptTemplate | undefined {
@@ -140,6 +142,23 @@ export function createPromptRegistry(): PromptRegistry {
         }
         if (versions.size === 0) {
           store.delete(id);
+          latestVersions.delete(id);
+        } else {
+          // Recompute latest version for this id if it was affected
+          const currentLatest = latestVersions.get(id);
+          if (currentLatest && !versions.has(currentLatest)) {
+            let newLatest: string | undefined;
+            for (const ver of versions.keys()) {
+              if (!newLatest || ver > newLatest) {
+                newLatest = ver;
+              }
+            }
+            if (newLatest) {
+              latestVersions.set(id, newLatest);
+            } else {
+              latestVersions.delete(id);
+            }
+          }
         }
       }
       return count;

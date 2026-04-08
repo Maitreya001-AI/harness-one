@@ -224,6 +224,91 @@ describe('createLangfuseExporter', () => {
     expect(mock.mocks.span).not.toHaveBeenCalled();
   });
 
+  describe('sanitize hook', () => {
+    it('calls sanitize on span attributes when provided', async () => {
+      const sanitize = vi.fn((attrs: Record<string, unknown>) => {
+        const sanitized = { ...attrs };
+        delete sanitized['input'];
+        delete sanitized['output'];
+        return sanitized;
+      });
+      const exporter = createLangfuseExporter({ client: mock.client, sanitize });
+      const span: Span = {
+        id: 'span-sanitize',
+        traceId: 'trace-1',
+        name: 'llm-call',
+        startTime: 1000,
+        endTime: 2000,
+        attributes: { model: 'claude-3', input: 'secret PII', output: 'secret response', inputTokens: 10, outputTokens: 5 },
+        events: [],
+        status: 'completed',
+      };
+
+      await exporter.exportSpan(span);
+
+      expect(sanitize).toHaveBeenCalledTimes(1);
+      expect(sanitize).toHaveBeenCalledWith(span.attributes);
+      expect(mock.mocks.generation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          input: undefined,
+          output: undefined,
+          model: 'claude-3',
+        }),
+      );
+    });
+
+    it('passes attributes through unchanged when no sanitize hook', async () => {
+      const exporter = createLangfuseExporter({ client: mock.client });
+      const span: Span = {
+        id: 'span-no-sanitize',
+        traceId: 'trace-1',
+        name: 'llm-call',
+        startTime: 1000,
+        endTime: 2000,
+        attributes: { model: 'claude-3', input: 'hello', output: 'world' },
+        events: [],
+        status: 'completed',
+      };
+
+      await exporter.exportSpan(span);
+
+      expect(mock.mocks.generation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          input: 'hello',
+          output: 'world',
+        }),
+      );
+    });
+
+    it('sanitize hook output is used for non-generation spans too', async () => {
+      const sanitize = vi.fn((attrs: Record<string, unknown>) => {
+        const sanitized = { ...attrs };
+        sanitized['tool'] = '[REDACTED]';
+        return sanitized;
+      });
+      const exporter = createLangfuseExporter({ client: mock.client, sanitize });
+      const span: Span = {
+        id: 'span-sanitize-non-gen',
+        traceId: 'trace-1',
+        name: 'tool-exec',
+        startTime: 1000,
+        endTime: 2000,
+        attributes: { tool: 'web_search' },
+        events: [],
+        status: 'completed',
+      };
+
+      await exporter.exportSpan(span);
+
+      expect(sanitize).toHaveBeenCalledTimes(1);
+      expect(mock.mocks.span).toHaveBeenCalledWith(
+        expect.objectContaining({
+          metadata: expect.objectContaining({ tool: '[REDACTED]' }),
+        }),
+      );
+    });
+  });
+
   it('exports a span with parentId in metadata for non-generation spans', async () => {
     const exporter = createLangfuseExporter({ client: mock.client });
     const span: Span = {

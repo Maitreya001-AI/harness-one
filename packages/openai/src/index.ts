@@ -162,8 +162,7 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
         top_p: params.config?.topP,
         max_tokens: params.config?.maxTokens,
         stop: params.config?.stopSequences as string[] | undefined,
-        signal: params.signal,
-      });
+      }, { signal: params.signal });
 
       const choice = response.choices[0];
       if (!choice) {
@@ -183,8 +182,7 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
         tools: params.tools?.map(toOpenAITool),
         temperature: params.config?.temperature,
         stream: true,
-        signal: params.signal,
-      });
+      }, { signal: params.signal });
 
       const toolCallAccum = new Map<
         number,
@@ -225,9 +223,11 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
 
         if (chunk.usage) {
           yield { type: 'done', usage: toTokenUsage(chunk.usage) };
+          return; // usage chunk is the final event — don't emit another done
         }
       }
 
+      // Only emit bare done if stream ended without a usage chunk
       yield { type: 'done' };
     },
   };

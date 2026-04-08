@@ -270,11 +270,15 @@ export class AgentLoop {
    * Yields text_delta and tool_call_delta events, accumulates the full response.
    * Returns the accumulated message and usage, or null on error.
    */
+  /** Maximum accumulated stream content size (10 MB) to prevent memory exhaustion. */
+  private static readonly MAX_STREAM_BYTES = 10 * 1024 * 1024;
+
   private async *handleStream(
     conversation: Message[],
     _iteration: number,
   ): AsyncGenerator<AgentEvent, { message: Message; usage: TokenUsage } | null> {
     let accumulatedText = '';
+    let accumulatedBytes = 0;
     const accumulatedToolCalls: Map<string, { id: string; name: string; arguments: string }> = new Map();
     let usage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
 
@@ -287,6 +291,11 @@ export class AgentLoop {
 
       for await (const chunk of stream) {
         if (chunk.type === 'text_delta' && chunk.text) {
+          accumulatedBytes += chunk.text.length;
+          if (accumulatedBytes > AgentLoop.MAX_STREAM_BYTES) {
+            yield { type: 'error', error: new Error(`Stream exceeded maximum size (${AgentLoop.MAX_STREAM_BYTES} bytes)`) };
+            return null;
+          }
           accumulatedText += chunk.text;
           yield { type: 'text_delta', text: chunk.text };
         } else if (chunk.type === 'tool_call_delta' && chunk.toolCall) {
@@ -294,6 +303,14 @@ export class AgentLoop {
           yield { type: 'tool_call_delta', toolCall: partial };
 
           // Accumulate tool call parts
+          if (partial.arguments) {
+            accumulatedBytes += partial.arguments.length;
+            if (accumulatedBytes > AgentLoop.MAX_STREAM_BYTES) {
+              yield { type: 'error', error: new Error(`Stream exceeded maximum size (${AgentLoop.MAX_STREAM_BYTES} bytes)`) };
+              return null;
+            }
+          }
+
           if (partial.id) {
             const existing = accumulatedToolCalls.get(partial.id);
             if (existing) {

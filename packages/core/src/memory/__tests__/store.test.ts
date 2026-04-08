@@ -413,6 +413,59 @@ describe('createInMemoryStore', () => {
     });
   });
 
+  describe('maxEntries option', () => {
+    it('evicts oldest entry when maxEntries is exceeded', async () => {
+      const bounded = createInMemoryStore({ maxEntries: 2 });
+      const first = await bounded.write({ key: 'k1', content: 'first', grade: 'useful' });
+      await bounded.write({ key: 'k2', content: 'second', grade: 'useful' });
+      await bounded.write({ key: 'k3', content: 'third', grade: 'useful' });
+
+      // first entry should have been evicted
+      expect(await bounded.read(first.id)).toBeNull();
+      expect(await bounded.count()).toBe(2);
+    });
+
+    it('does not evict when within maxEntries limit', async () => {
+      const bounded = createInMemoryStore({ maxEntries: 3 });
+      const first = await bounded.write({ key: 'k1', content: 'first', grade: 'useful' });
+      await bounded.write({ key: 'k2', content: 'second', grade: 'useful' });
+      await bounded.write({ key: 'k3', content: 'third', grade: 'useful' });
+
+      expect(await bounded.read(first.id)).not.toBeNull();
+      expect(await bounded.count()).toBe(3);
+    });
+
+    it('has no limit when maxEntries is undefined', async () => {
+      const unbounded = createInMemoryStore();
+      for (let i = 0; i < 20; i++) {
+        await unbounded.write({ key: `k${i}`, content: `c${i}`, grade: 'useful' });
+      }
+      expect(await unbounded.count()).toBe(20);
+    });
+
+    it('maxEntries of 1 keeps only the latest entry', async () => {
+      const single = createInMemoryStore({ maxEntries: 1 });
+      await single.write({ key: 'k1', content: 'a', grade: 'useful' });
+      await single.write({ key: 'k2', content: 'b', grade: 'useful' });
+      const last = await single.write({ key: 'k3', content: 'c', grade: 'useful' });
+
+      expect(await single.count()).toBe(1);
+      expect(await single.read(last.id)).not.toBeNull();
+    });
+
+    it('evicts entries in FIFO order (oldest first)', async () => {
+      const bounded = createInMemoryStore({ maxEntries: 2 });
+      const e1 = await bounded.write({ key: 'k1', content: 'first', grade: 'useful' });
+      const e2 = await bounded.write({ key: 'k2', content: 'second', grade: 'useful' });
+      const e3 = await bounded.write({ key: 'k3', content: 'third', grade: 'useful' });
+
+      // e1 evicted, e2 and e3 remain
+      expect(await bounded.read(e1.id)).toBeNull();
+      expect(await bounded.read(e2.id)).not.toBeNull();
+      expect(await bounded.read(e3.id)).not.toBeNull();
+    });
+  });
+
   describe('H1: ID uniqueness', () => {
     it('generates IDs with randomness to avoid cross-process collisions', async () => {
       const entry = await store.write({ key: 'k1', content: 'a', grade: 'useful' });

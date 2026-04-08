@@ -39,7 +39,8 @@ export interface MemoryStore {
  * const results = await store.searchByVector!({ embedding: [0.1, 0.2], limit: 5 });
  * ```
  */
-export function createInMemoryStore(): MemoryStore {
+export function createInMemoryStore(config?: { maxEntries?: number }): MemoryStore {
+  const maxEntries = config?.maxEntries;
   const entries = new Map<string, MemoryEntry>();
   let idCounter = 0;
 
@@ -73,6 +74,10 @@ export function createInMemoryStore(): MemoryStore {
         tags: input.tags,
       };
       entries.set(entry.id, entry);
+      if (maxEntries !== undefined && entries.size > maxEntries) {
+        const firstKey = entries.keys().next().value;
+        if (firstKey !== undefined) entries.delete(firstKey);
+      }
       return entry;
     },
 

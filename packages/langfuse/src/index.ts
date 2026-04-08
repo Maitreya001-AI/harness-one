@@ -21,6 +21,8 @@ import { HarnessError } from 'harness-one/core';
 export interface LangfuseExporterConfig {
   /** A pre-configured Langfuse client instance. */
   readonly client: Langfuse;
+  /** Optional: sanitize span attributes before export (e.g., strip PII). */
+  readonly sanitize?: (attributes: Record<string, unknown>) => Record<string, unknown>;
 }
 
 /**
@@ -75,8 +77,10 @@ export function createLangfuseExporter(config: LangfuseExporterConfig): TraceExp
         }
       }
 
+      const attrs = config.sanitize ? config.sanitize(span.attributes) : span.attributes;
+
       const isGeneration =
-        span.attributes['model'] !== undefined ||
+        attrs['model'] !== undefined ||
         span.name.includes('llm') ||
         span.name.includes('chat');
 
@@ -85,17 +89,17 @@ export function createLangfuseExporter(config: LangfuseExporterConfig): TraceExp
           name: span.name,
           startTime: new Date(span.startTime),
           endTime: span.endTime ? new Date(span.endTime) : undefined,
-          model: span.attributes['model'] as string | undefined,
-          input: span.attributes['input'] as unknown,
-          output: span.attributes['output'] as unknown,
+          model: attrs['model'] as string | undefined,
+          input: attrs['input'] as unknown,
+          output: attrs['output'] as unknown,
           metadata: {
-            ...span.attributes,
+            ...attrs,
             events: span.events,
             status: span.status,
           },
           usage: {
-            input: span.attributes['inputTokens'] as number | undefined,
-            output: span.attributes['outputTokens'] as number | undefined,
+            input: attrs['inputTokens'] as number | undefined,
+            output: attrs['outputTokens'] as number | undefined,
           },
         });
       } else {
@@ -104,7 +108,7 @@ export function createLangfuseExporter(config: LangfuseExporterConfig): TraceExp
           startTime: new Date(span.startTime),
           endTime: span.endTime ? new Date(span.endTime) : undefined,
           metadata: {
-            ...span.attributes,
+            ...attrs,
             events: span.events,
             status: span.status,
             parentId: span.parentId,
