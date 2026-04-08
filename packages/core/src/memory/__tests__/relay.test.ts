@@ -178,6 +178,81 @@ describe('createRelay', () => {
     });
   });
 
+  describe('findRelay query path — relay entry exists but current instance has no cached ID', () => {
+    it('finds existing relay entry via store query when no cached ID exists', async () => {
+      // Write a relay entry directly to the store with content containing the relayKey
+      // so the search filter in findRelay can find it.
+      // findRelay does: store.query({ search: relayKey, limit: 1 })
+      // then checks entry.key === relayKey in the for loop (lines 48-52).
+      const relayKey = '__relay__';
+      const state = {
+        progress: { written: true },
+        artifacts: ['x.txt'],
+        checkpoint: 'cp1',
+        timestamp: 5000,
+      };
+      // Content must contain relayKey string for the search filter to match
+      const content = JSON.stringify({ ...state, _relayKey: relayKey });
+      await store.write({
+        key: relayKey,
+        content,
+        grade: 'critical',
+      });
+
+      // Create a FRESH relay instance with currentId === null.
+      // findRelay must fall through to the query path (lines 45-52).
+      const freshRelay = createRelay({ store, relayKey });
+      const loaded = await freshRelay.load();
+
+      expect(loaded).not.toBeNull();
+      expect(loaded!.progress).toEqual({ written: true });
+      expect(loaded!.artifacts).toEqual(['x.txt']);
+    });
+
+    it('checkpoint via query path when fresh instance finds existing relay', async () => {
+      const relayKey = '__relay__';
+      const state = {
+        progress: { step: 1 },
+        artifacts: [],
+        checkpoint: 'cp1',
+        timestamp: 1000,
+      };
+      await store.write({
+        key: relayKey,
+        content: JSON.stringify({ ...state, _relayKey: relayKey }),
+        grade: 'critical',
+      });
+
+      // Fresh instance checkpoints on top of existing state found via query
+      const freshRelay = createRelay({ store, relayKey });
+      await freshRelay.checkpoint({ step: 2, extra: 'data' });
+
+      const loaded = await freshRelay.load();
+      expect(loaded!.progress).toEqual({ step: 2, extra: 'data' });
+    });
+
+    it('addArtifact via query path when fresh instance finds existing relay', async () => {
+      const relayKey = '__relay__';
+      const state = {
+        progress: {},
+        artifacts: ['a.txt'],
+        checkpoint: 'cp1',
+        timestamp: 1000,
+      };
+      await store.write({
+        key: relayKey,
+        content: JSON.stringify({ ...state, _relayKey: relayKey }),
+        grade: 'critical',
+      });
+
+      const freshRelay = createRelay({ store, relayKey });
+      await freshRelay.addArtifact('b.txt');
+
+      const loaded = await freshRelay.load();
+      expect(loaded!.artifacts).toEqual(['a.txt', 'b.txt']);
+    });
+  });
+
   describe('H3: stale cache invalidation', () => {
     it('clears cached ID when entry is deleted externally and re-created', async () => {
       // Save state to populate the cache

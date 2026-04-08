@@ -299,6 +299,67 @@ describe('createSkillEngine', () => {
       expect(engine.processTurn('nope').advanced).toBe(false);
     });
 
+    it('reset without active skill throws', () => {
+      const engine = createSkillEngine();
+      expect(() => engine.reset()).toThrow(HarnessError);
+      expect(() => engine.reset()).toThrow(/No active skill/);
+    });
+
+    it('processTurn with explicit history passes it to custom condition', () => {
+      const capturedHistory: readonly { role: string; content: string }[] = [];
+      const skill: SkillDefinition = {
+        id: 'history-check',
+        name: 'History Check',
+        description: 'test',
+        initialStage: 'a',
+        stages: [
+          {
+            id: 'a',
+            name: 'A',
+            prompt: 'A',
+            transitions: [
+              {
+                to: 'b',
+                condition: {
+                  type: 'custom',
+                  check: (ctx) => {
+                    (capturedHistory as { role: string; content: string }[]).push(...ctx.history);
+                    return ctx.history.length > 0;
+                  },
+                },
+              },
+            ],
+          },
+          { id: 'b', name: 'B', prompt: 'B', transitions: [] },
+        ],
+      };
+      const engine = createSkillEngine();
+      engine.registerSkill(skill);
+      engine.startSkill('history-check');
+
+      const history = [{ role: 'user', content: 'hello' }];
+      const result = engine.processTurn('test', history);
+      expect(result.advanced).toBe(true);
+      expect(capturedHistory).toHaveLength(1);
+      expect(capturedHistory[0]).toEqual({ role: 'user', content: 'hello' });
+    });
+
+    it('getAvailableTools returns empty array when stage has no tools', () => {
+      const skill: SkillDefinition = {
+        id: 'no-tools',
+        name: 'No Tools',
+        description: 'test',
+        initialStage: 'a',
+        stages: [
+          { id: 'a', name: 'A', prompt: 'A', transitions: [] },
+        ],
+      };
+      const engine = createSkillEngine();
+      engine.registerSkill(skill);
+      engine.startSkill('no-tools');
+      expect(engine.getAvailableTools()).toEqual([]);
+    });
+
     it('reset turn count after stage advance', () => {
       const skill: SkillDefinition = {
         id: 'turn-reset',

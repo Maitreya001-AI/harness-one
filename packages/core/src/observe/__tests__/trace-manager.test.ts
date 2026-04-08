@@ -200,6 +200,103 @@ describe('createConsoleExporter', () => {
     const exporter = createConsoleExporter();
     expect(exporter.name).toBe('console');
   });
+
+  it('exportTrace logs summary in non-verbose mode', async () => {
+    const exporter = createConsoleExporter({ verbose: false });
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await exporter.exportTrace({
+        id: 'trace-1',
+        name: 'my-trace',
+        startTime: 1000,
+        metadata: {},
+        spans: [],
+        status: 'completed',
+      });
+      expect(spy).toHaveBeenCalledOnce();
+      const output = spy.mock.calls[0][0] as string;
+      expect(output).toContain('[trace]');
+      expect(output).toContain('my-trace');
+      expect(output).toContain('completed');
+      expect(output).toContain('0 spans');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('exportTrace logs JSON in verbose mode', async () => {
+    const exporter = createConsoleExporter({ verbose: true });
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await exporter.exportTrace({
+        id: 'trace-1',
+        name: 'verbose-trace',
+        startTime: 1000,
+        metadata: {},
+        spans: [],
+        status: 'running',
+      });
+      expect(spy).toHaveBeenCalledOnce();
+      expect(spy.mock.calls[0][0]).toBe('[trace]');
+      // Verbose mode outputs JSON.stringify with indent
+      const jsonOutput = spy.mock.calls[0][1] as string;
+      expect(jsonOutput).toContain('verbose-trace');
+      expect(jsonOutput).toContain('"id"');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('exportSpan logs summary in non-verbose mode', async () => {
+    const exporter = createConsoleExporter({ verbose: false });
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await exporter.exportSpan({
+        id: 'span-1',
+        traceId: 'trace-1',
+        name: 'my-span',
+        startTime: 1000,
+        attributes: {},
+        events: [],
+        status: 'completed',
+      });
+      expect(spy).toHaveBeenCalledOnce();
+      const output = spy.mock.calls[0][0] as string;
+      expect(output).toContain('[span]');
+      expect(output).toContain('my-span');
+      expect(output).toContain('completed');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('exportSpan logs JSON in verbose mode', async () => {
+    const exporter = createConsoleExporter({ verbose: true });
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await exporter.exportSpan({
+        id: 'span-1',
+        traceId: 'trace-1',
+        name: 'verbose-span',
+        startTime: 1000,
+        attributes: { key: 'value' },
+        events: [],
+        status: 'error',
+      });
+      expect(spy).toHaveBeenCalledOnce();
+      expect(spy.mock.calls[0][0]).toBe('[span]');
+      const jsonOutput = spy.mock.calls[0][1] as string;
+      expect(jsonOutput).toContain('verbose-span');
+      expect(jsonOutput).toContain('"id"');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('flush resolves without error', async () => {
+    const exporter = createConsoleExporter();
+    await expect(exporter.flush()).resolves.toBeUndefined();
+  });
 });
 
 describe('createNoOpExporter', () => {

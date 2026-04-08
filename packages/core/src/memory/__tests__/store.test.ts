@@ -227,6 +227,71 @@ describe('createInMemoryStore', () => {
     });
   });
 
+  describe('query with offset', () => {
+    it('applies offset before limit', async () => {
+      await store.write({ key: 'k1', content: 'first', grade: 'useful' });
+      await store.write({ key: 'k2', content: 'second', grade: 'useful' });
+      await store.write({ key: 'k3', content: 'third', grade: 'useful' });
+
+      const results = await store.query({ offset: 1, limit: 1 });
+      expect(results).toHaveLength(1);
+    });
+
+    it('offset of 0 has no effect', async () => {
+      await store.write({ key: 'k1', content: 'first', grade: 'useful' });
+      await store.write({ key: 'k2', content: 'second', grade: 'useful' });
+
+      const withOffset = await store.query({ offset: 0 });
+      const without = await store.query({});
+      expect(withOffset).toHaveLength(without.length);
+    });
+  });
+
+  describe('compact maxAge removes old non-critical entries', () => {
+    it('removes ephemeral entries older than maxAge', async () => {
+      await store.write({ key: 'k1', content: 'old ephemeral', grade: 'ephemeral' });
+      await store.write({ key: 'k2', content: 'old useful', grade: 'useful' });
+      await store.write({ key: 'k3', content: 'critical stays', grade: 'critical' });
+
+      // Wait a tiny bit so createdAt has elapsed
+      await new Promise(r => setTimeout(r, 5));
+
+      // maxAge: 0 means anything created > 0ms ago is old
+      const result = await store.compact({ maxAge: 0 });
+      expect(result.removed).toBe(2);
+      expect(result.freedEntries).toHaveLength(2);
+
+      const remaining = await store.query({});
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0].grade).toBe('critical');
+    });
+  });
+
+  describe('compact maxEntries stops at critical boundary', () => {
+    it('stops removing when only critical entries remain', async () => {
+      // Create entries that are ALL critical
+      await store.write({ key: 'k1', content: 'critical 1', grade: 'critical' });
+      await store.write({ key: 'k2', content: 'critical 2', grade: 'critical' });
+      await store.write({ key: 'k3', content: 'critical 3', grade: 'critical' });
+
+      // Try to compact to 1 entry, but all are critical (weight=1.0), so none can be removed
+      const result = await store.compact({ maxEntries: 1 });
+      expect(result.removed).toBe(0);
+      expect(result.remaining).toBe(3);
+    });
+
+    it('removes non-critical then breaks at critical', async () => {
+      await store.write({ key: 'k1', content: 'ephemeral', grade: 'ephemeral' });
+      await store.write({ key: 'k2', content: 'critical 1', grade: 'critical' });
+      await store.write({ key: 'k3', content: 'critical 2', grade: 'critical' });
+
+      // Target 1 entry, but after removing ephemeral, only critical remains => break
+      const result = await store.compact({ maxEntries: 1 });
+      expect(result.removed).toBe(1);
+      expect(result.remaining).toBe(2); // 2 critical remain, can't go lower
+    });
+  });
+
   describe('H1: ID uniqueness', () => {
     it('generates IDs with randomness to avoid cross-process collisions', async () => {
       const entry = await store.write({ key: 'k1', content: 'a', grade: 'useful' });

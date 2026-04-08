@@ -175,4 +175,74 @@ describe('createFileSystemStore', () => {
       expect(result.removed).toBe(2);
     });
   });
+
+  describe('query with limit filter', () => {
+    it('respects limit parameter and returns only the specified number of results', async () => {
+      await store.write({ key: 'k1', content: 'first', grade: 'useful' });
+      await store.write({ key: 'k2', content: 'second', grade: 'useful' });
+      await store.write({ key: 'k3', content: 'third', grade: 'useful' });
+
+      const limited = await store.query({ limit: 2 });
+      expect(limited).toHaveLength(2);
+
+      const unlimited = await store.query({});
+      expect(unlimited).toHaveLength(3);
+    });
+
+    it('returns all results when limit exceeds total entries', async () => {
+      await store.write({ key: 'k1', content: 'first', grade: 'useful' });
+
+      const results = await store.query({ limit: 100 });
+      expect(results).toHaveLength(1);
+    });
+  });
+
+  describe('compact with maxAge', () => {
+    it('removes non-critical entries older than maxAge', async () => {
+      // Write entries that will be "old" (maxAge: 0 means anything older than 0ms)
+      await store.write({ key: 'k1', content: 'old ephemeral', grade: 'ephemeral' });
+      await store.write({ key: 'k2', content: 'old useful', grade: 'useful' });
+      await store.write({ key: 'k3', content: 'old critical', grade: 'critical' });
+
+      // Wait a tiny bit so entries have non-zero age
+      await new Promise(r => setTimeout(r, 5));
+
+      // maxAge: 0 means all entries with age > 0 are candidates
+      // Only non-critical (weight < 1.0) should be removed
+      const result = await store.compact({ maxAge: 0 });
+      expect(result.removed).toBe(2);
+      expect(result.remaining).toBe(1);
+      expect(result.freedEntries).toHaveLength(2);
+
+      // Only critical entry should survive
+      const remaining = await store.query({});
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0].grade).toBe('critical');
+    });
+
+    it('keeps entries newer than maxAge', async () => {
+      await store.write({ key: 'k1', content: 'new', grade: 'ephemeral' });
+
+      // maxAge of 60 seconds means nothing should be removed
+      const result = await store.compact({ maxAge: 60_000 });
+      expect(result.removed).toBe(0);
+      expect(result.remaining).toBe(1);
+    });
+
+    it('compact with both maxAge and maxEntries in single pass', async () => {
+      await store.write({ key: 'k1', content: 'a', grade: 'ephemeral' });
+      await store.write({ key: 'k2', content: 'b', grade: 'useful' });
+      await store.write({ key: 'k3', content: 'c', grade: 'critical' });
+      await store.write({ key: 'k4', content: 'd', grade: 'ephemeral' });
+
+      await new Promise(r => setTimeout(r, 5));
+
+      // maxAge: 0 removes ephemeral + useful (3 entries), then maxEntries: 1 trims further
+      const result = await store.compact({ maxAge: 0, maxEntries: 1 });
+      expect(result.remaining).toBe(1);
+      // critical should survive both passes
+      const remaining = await store.query({});
+      expect(remaining[0].grade).toBe('critical');
+    });
+  });
 });

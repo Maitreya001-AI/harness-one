@@ -143,5 +143,32 @@ describe('createDisclosureManager', () => {
       expect(content).not.toContain('Tokens expire');
       expect(content).not.toContain('Refresh');
     });
+
+    it('expand with gapped level numbers returns empty for missing levels', () => {
+      const dm = createDisclosureManager();
+      // Register levels 0 and 2, skipping level 1
+      dm.register('gapped', [
+        { level: 0, content: 'Level zero' },
+        { level: 2, content: 'Level two' },
+      ]);
+      // expand from 0 tries to find level 1, which doesn't exist
+      // should return '' from the ?? '' fallback (line 92)
+      const content = dm.expand('gapped');
+      expect(content).toBe('');
+      expect(dm.getCurrentLevel('gapped')).toBe(1);
+    });
+
+    it('expand with gapped levels then reaching an existing level', () => {
+      const dm = createDisclosureManager();
+      dm.register('gapped', [
+        { level: 0, content: 'Level zero' },
+        { level: 3, content: 'Level three' },
+      ]);
+      // expand from 0 -> 1 (missing), 1 -> 2 (missing), 2 -> 3 (exists)
+      expect(dm.expand('gapped')).toBe('');
+      expect(dm.expand('gapped')).toBe('');
+      expect(dm.expand('gapped')).toBe('Level three');
+      expect(dm.getCurrentLevel('gapped')).toBe(3);
+    });
   });
 });

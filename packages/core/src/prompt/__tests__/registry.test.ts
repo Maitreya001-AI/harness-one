@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest';
-import { createPromptRegistry } from '../registry.js';
+import { describe, it, expect, vi } from 'vitest';
+import { createPromptRegistry, createAsyncPromptRegistry } from '../registry.js';
 import { HarnessError } from '../../core/errors.js';
+import type { PromptBackend, PromptTemplate } from '../types.js';
 
 describe('createPromptRegistry', () => {
   it('registers and retrieves a template', () => {
@@ -237,6 +238,310 @@ describe('createPromptRegistry', () => {
       reg.register({ id: 'safe', version: '1.0', content: 'Safe', variables: [] });
       expect(reg.removeExpired()).toBe(0);
       expect(reg.has('safe')).toBe(true);
+    });
+  });
+});
+
+describe('createAsyncPromptRegistry', () => {
+  function makeBackend(overrides: Partial<PromptBackend> = {}): PromptBackend {
+    return {
+      fetch: vi.fn().mockResolvedValue(undefined),
+      ...overrides,
+    };
+  }
+
+  const templateA: PromptTemplate = { id: 'a', version: '1.0', content: 'Hello {{name}}', variables: ['name'] };
+  const templateB: PromptTemplate = { id: 'b', version: '1.0', content: 'Bye {{name}}', variables: ['name'] };
+
+  describe('register', () => {
+    it('registers a template locally', () => {
+      const backend = makeBackend();
+      const reg = createAsyncPromptRegistry(backend);
+      reg.register(templateA);
+      expect(reg.has('a')).toBe(true);
+    });
+  });
+
+  describe('has', () => {
+    it('returns true for locally registered templates', () => {
+      const backend = makeBackend();
+      const reg = createAsyncPromptRegistry(backend);
+      reg.register(templateA);
+      expect(reg.has('a')).toBe(true);
+    });
+
+    it('returns false for templates not in local cache', () => {
+      const backend = makeBackend();
+      const reg = createAsyncPromptRegistry(backend);
+      expect(reg.has('nonexistent')).toBe(false);
+    });
+  });
+
+  describe('get', () => {
+    it('returns a locally registered template without calling backend', async () => {
+      const fetchFn = vi.fn();
+      const backend = makeBackend({ fetch: fetchFn });
+      const reg = createAsyncPromptRegistry(backend);
+      reg.register(templateA);
+
+      const result = await reg.get('a');
+      expect(result).toBeDefined();
+      expect(result!.id).toBe('a');
+      expect(fetchFn).not.toHaveBeenCalled();
+    });
+
+    it('falls back to backend when template is not in local cache', async () => {
+      const fetchFn = vi.fn().mockResolvedValue(templateA);
+      const backend = makeBackend({ fetch: fetchFn });
+      const reg = createAsyncPromptRegistry(backend);
+
+      const result = await reg.get('a');
+      expect(result).toBeDefined();
+      expect(result!.id).toBe('a');
+      expect(fetchFn).toHaveBeenCalledWith('a', undefined);
+    });
+
+    it('caches backend result locally after fetch', async () => {
+      const fetchFn = vi.fn().mockResolvedValue(templateA);
+      const backend = makeBackend({ fetch: fetchFn });
+      const reg = createAsyncPromptRegistry(backend);
+
+      // First call fetches from backend
+      await reg.get('a');
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+
+      // Second call should use local cache
+      const result2 = await reg.get('a');
+      expect(result2).toBeDefined();
+      expect(result2!.id).toBe('a');
+      expect(fetchFn).toHaveBeenCalledTimes(1); // still 1 — not called again
+    });
+
+    it('returns undefined when neither local nor backend has the template', async () => {
+      const fetchFn = vi.fn().mockResolvedValue(undefined);
+      const backend = makeBackend({ fetch: fetchFn });
+      const reg = createAsyncPromptRegistry(backend);
+
+      const result = await reg.get('unknown');
+      expect(result).toBeUndefined();
+      expect(fetchFn).toHaveBeenCalledWith('unknown', undefined);
+    });
+
+    it('passes version to backend.fetch', async () => {
+      const fetchFn = vi.fn().mockResolvedValue(templateA);
+      const backend = makeBackend({ fetch: fetchFn });
+      const reg = createAsyncPromptRegistry(backend);
+
+      await reg.get('a', '1.0');
+      expect(fetchFn).toHaveBeenCalledWith('a', '1.0');
+    });
+
+    it('returns local template for a specific version without calling backend', async () => {
+      const fetchFn = vi.fn();
+      const backend = makeBackend({ fetch: fetchFn });
+      const reg = createAsyncPromptRegistry(backend);
+      reg.register(templateA);
+
+      const result = await reg.get('a', '1.0');
+      expect(result).toBeDefined();
+      expect(result!.version).toBe('1.0');
+      expect(fetchFn).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('resolve', () => {
+    it('resolves variables from a locally registered template', async () => {
+      const backend = makeBackend();
+      const reg = createAsyncPromptRegistry(backend);
+      reg.register(templateA);
+
+      const result = await reg.resolve('a', { name: 'Alice' });
+      expect(result).toBe('Hello Alice');
+    });
+
+    it('resolves variables from a backend-fetched template', async () => {
+      const fetchFn = vi.fn().mockResolvedValue(templateA);
+      const backend = makeBackend({ fetch: fetchFn });
+      const reg = createAsyncPromptRegistry(backend);
+
+      const result = await reg.resolve('a', { name: 'Bob' });
+      expect(result).toBe('Hello Bob');
+    });
+
+    it('resolves a specific version', async () => {
+      const v1: PromptTemplate = { id: 'g', version: '1.0', content: 'V1 {{x}}', variables: ['x'] };
+      const fetchFn = vi.fn().mockResolvedValue(v1);
+      const backend = makeBackend({ fetch: fetchFn });
+      const reg = createAsyncPromptRegistry(backend);
+
+      const result = await reg.resolve('g', { x: 'val' }, '1.0');
+      expect(result).toBe('V1 val');
+    });
+
+    it('throws TEMPLATE_NOT_FOUND when template does not exist anywhere', async () => {
+      const fetchFn = vi.fn().mockResolvedValue(undefined);
+      const backend = makeBackend({ fetch: fetchFn });
+      const reg = createAsyncPromptRegistry(backend);
+
+      await expect(reg.resolve('nope', {})).rejects.toThrow(HarnessError);
+      try {
+        await reg.resolve('nope', {});
+      } catch (e) {
+        expect((e as HarnessError).code).toBe('TEMPLATE_NOT_FOUND');
+      }
+    });
+
+    it('throws TEMPLATE_NOT_FOUND with version info in message', async () => {
+      const fetchFn = vi.fn().mockResolvedValue(undefined);
+      const backend = makeBackend({ fetch: fetchFn });
+      const reg = createAsyncPromptRegistry(backend);
+
+      try {
+        await reg.resolve('nope', {}, '2.0');
+      } catch (e) {
+        expect((e as HarnessError).code).toBe('TEMPLATE_NOT_FOUND');
+        expect((e as HarnessError).message).toContain('nope@2.0');
+      }
+    });
+
+    it('throws MISSING_VARIABLE when a required variable is not provided', async () => {
+      const backend = makeBackend();
+      const reg = createAsyncPromptRegistry(backend);
+      reg.register(templateA);
+
+      await expect(reg.resolve('a', {})).rejects.toThrow(HarnessError);
+      try {
+        await reg.resolve('a', {});
+      } catch (e) {
+        expect((e as HarnessError).code).toBe('MISSING_VARIABLE');
+      }
+    });
+
+    it('resolves template with multiple variables', async () => {
+      const multiVar: PromptTemplate = {
+        id: 'multi', version: '1.0', content: '{{greeting}} {{name}}, age {{age}}',
+        variables: ['greeting', 'name', 'age'],
+      };
+      const backend = makeBackend();
+      const reg = createAsyncPromptRegistry(backend);
+      reg.register(multiVar);
+
+      const result = await reg.resolve('multi', { greeting: 'Hi', name: 'Alice', age: '30' });
+      expect(result).toBe('Hi Alice, age 30');
+    });
+  });
+
+  describe('list', () => {
+    it('returns local templates when backend has no list method', async () => {
+      const backend: PromptBackend = {
+        fetch: vi.fn().mockResolvedValue(undefined),
+        // No list method
+      };
+      const reg = createAsyncPromptRegistry(backend);
+      reg.register(templateA);
+      reg.register(templateB);
+
+      const result = await reg.list();
+      expect(result).toHaveLength(2);
+    });
+
+    it('merges local and remote templates, preferring local', async () => {
+      const remoteA: PromptTemplate = { id: 'a', version: '1.0', content: 'Remote A', variables: [] };
+      const remoteC: PromptTemplate = { id: 'c', version: '1.0', content: 'Remote C', variables: [] };
+      const listFn = vi.fn().mockResolvedValue([remoteA, remoteC]);
+      const backend = makeBackend({ list: listFn });
+      const reg = createAsyncPromptRegistry(backend);
+      reg.register(templateA); // local 'a@1.0'
+
+      const result = await reg.list();
+      // Should have local 'a@1.0', local 'a@1.0' (not duplicated), and remote 'c@1.0'
+      expect(result).toHaveLength(2);
+      // Local version of 'a' takes priority — content should be local
+      const aTemplate = result.find((t) => t.id === 'a');
+      expect(aTemplate!.content).toBe('Hello {{name}}');
+      // Remote-only template 'c' should be included
+      const cTemplate = result.find((t) => t.id === 'c');
+      expect(cTemplate).toBeDefined();
+      expect(cTemplate!.content).toBe('Remote C');
+    });
+
+    it('includes remote templates with different versions from local', async () => {
+      const remoteA2: PromptTemplate = { id: 'a', version: '2.0', content: 'Remote A v2', variables: [] };
+      const listFn = vi.fn().mockResolvedValue([remoteA2]);
+      const backend = makeBackend({ list: listFn });
+      const reg = createAsyncPromptRegistry(backend);
+      reg.register(templateA); // local 'a@1.0'
+
+      const result = await reg.list();
+      // local a@1.0 + remote a@2.0 should both be present
+      expect(result).toHaveLength(2);
+      expect(result.find((t) => t.version === '1.0')).toBeDefined();
+      expect(result.find((t) => t.version === '2.0')).toBeDefined();
+    });
+
+    it('returns empty array when no local or remote templates', async () => {
+      const listFn = vi.fn().mockResolvedValue([]);
+      const backend = makeBackend({ list: listFn });
+      const reg = createAsyncPromptRegistry(backend);
+
+      const result = await reg.list();
+      expect(result).toHaveLength(0);
+    });
+  });
+
+  describe('prefetch', () => {
+    it('fetches templates from backend and caches them locally', async () => {
+      const fetchFn = vi.fn().mockImplementation(async (id: string) => {
+        if (id === 'a') return templateA;
+        if (id === 'b') return templateB;
+        return undefined;
+      });
+      const backend = makeBackend({ fetch: fetchFn });
+      const reg = createAsyncPromptRegistry(backend);
+
+      await reg.prefetch(['a', 'b']);
+
+      expect(reg.has('a')).toBe(true);
+      expect(reg.has('b')).toBe(true);
+      expect(fetchFn).toHaveBeenCalledTimes(2);
+    });
+
+    it('skips ids already in local cache', async () => {
+      const fetchFn = vi.fn().mockResolvedValue(templateB);
+      const backend = makeBackend({ fetch: fetchFn });
+      const reg = createAsyncPromptRegistry(backend);
+      reg.register(templateA); // 'a' already local
+
+      await reg.prefetch(['a', 'b']);
+
+      // Only 'b' should be fetched
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+      expect(fetchFn).toHaveBeenCalledWith('b');
+    });
+
+    it('handles backend returning undefined for some ids', async () => {
+      const fetchFn = vi.fn().mockImplementation(async (id: string) => {
+        if (id === 'a') return templateA;
+        return undefined; // 'unknown' not found
+      });
+      const backend = makeBackend({ fetch: fetchFn });
+      const reg = createAsyncPromptRegistry(backend);
+
+      await reg.prefetch(['a', 'unknown']);
+
+      expect(reg.has('a')).toBe(true);
+      expect(reg.has('unknown')).toBe(false);
+      expect(fetchFn).toHaveBeenCalledTimes(2);
+    });
+
+    it('handles empty prefetch list', async () => {
+      const fetchFn = vi.fn();
+      const backend = makeBackend({ fetch: fetchFn });
+      const reg = createAsyncPromptRegistry(backend);
+
+      await reg.prefetch([]);
+
+      expect(fetchFn).not.toHaveBeenCalled();
     });
   });
 });
