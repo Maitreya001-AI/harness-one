@@ -8,6 +8,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added — Multi-Agent Orchestration (`harness-one/orchestration`)
+
+- New `orchestration` module for managing multiple agents with lifecycle tracking,
+  inter-agent messaging, shared context propagation, and task delegation.
+- `createOrchestrator()` factory with `hierarchical` and `peer` modes.
+- Built-in delegation strategies: `createRoundRobinStrategy()`,
+  `createRandomStrategy()`, `createFirstAvailableStrategy()`.
+- Agent lifecycle events via `onEvent()` subscription.
+- Shared context with `get`/`set`/`entries` for cross-agent data sharing.
+
+### Added — RAG Pipeline (`harness-one/rag`)
+
+- New `rag` module providing a complete document retrieval pipeline:
+  load → chunk → embed → index → retrieve.
+- Document loaders: `createTextLoader()`, `createDocumentArrayLoader()`.
+- Chunking strategies: `createFixedSizeChunking()` (with overlap),
+  `createParagraphChunking()` (with maxChunkSize), `createSlidingWindowChunking()`.
+- `createInMemoryRetriever()` using cosine similarity for vector search.
+- `createRAGPipeline()` orchestrates the full ingest/query workflow.
+
 ### Fixed — Adapters (`@harness-one/anthropic`, `@harness-one/openai`)
 
 - **AbortSignal propagation**: `ChatParams.signal` is now forwarded to the

@@ -397,6 +397,75 @@ checker.addRule(layerDependencyRule({
 }));
 ```
 
+### harness-one/orchestration -- Multi-Agent Orchestration
+
+Manage multiple agents with hierarchical or peer-to-peer communication, shared context, delegation strategies, and lifecycle events.
+
+```typescript
+import {
+  createOrchestrator,
+  createRoundRobinStrategy,
+} from 'harness-one/orchestration';
+
+// Create orchestrator with round-robin delegation
+const orch = createOrchestrator({
+  mode: 'hierarchical',
+  strategy: createRoundRobinStrategy(),
+  maxAgents: 10,
+});
+
+// Register agents
+orch.register('coordinator', 'Coordinator');
+orch.register('researcher', 'Researcher', { parentId: 'coordinator' });
+orch.register('writer', 'Writer', { parentId: 'coordinator' });
+
+// Shared context across all agents
+orch.context.set('topic', 'AI safety');
+
+// Delegate a task (round-robin selects an idle agent)
+orch.setStatus('researcher', 'idle');
+const agentId = orch.delegate({ description: 'Research latest papers' });
+
+// Send messages between agents
+orch.send({ from: 'coordinator', to: 'researcher', type: 'request', content: 'Find papers on RLHF' });
+
+// Broadcast to all children
+orch.broadcast('coordinator', 'Deadline in 1 hour', { parentId: 'coordinator' });
+```
+
+### harness-one/rag -- RAG Pipeline
+
+Document loading, chunking, embedding, and retrieval pipeline with built-in strategies and in-memory vector search.
+
+```typescript
+import {
+  createTextLoader,
+  createParagraphChunking,
+  createInMemoryRetriever,
+  createRAGPipeline,
+} from 'harness-one/rag';
+
+// Create a RAG pipeline
+const pipeline = createRAGPipeline({
+  loader: createTextLoader([
+    'TypeScript is a typed superset of JavaScript.',
+    'Harness engineering builds infrastructure around LLMs.',
+  ]),
+  chunking: createParagraphChunking({ maxChunkSize: 500 }),
+  embedding: myEmbeddingModel, // implements EmbeddingModel interface
+  retriever: createInMemoryRetriever({ embedding: myEmbeddingModel }),
+});
+
+// Ingest: load → chunk → embed → index
+const { documents, chunks } = await pipeline.ingest();
+
+// Query: embed query → retrieve relevant chunks
+const results = await pipeline.query('What is harness engineering?', { limit: 3 });
+for (const { chunk, score } of results) {
+  console.log(`[${score.toFixed(2)}] ${chunk.content}`);
+}
+```
+
 ## harness-one-full — Batteries Included
 
 `harness-one-full` wires all modules and integrations together in a single `createHarness()` call. Install it when you want a fully-configured harness without writing boilerplate.

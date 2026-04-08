@@ -53,6 +53,16 @@
       "types": "./dist/evolve/index.d.ts",
       "import": "./dist/evolve/index.js",
       "require": "./dist/cjs/evolve/index.cjs"
+    },
+    "./rag": {
+      "types": "./dist/rag/index.d.ts",
+      "import": "./dist/rag/index.js",
+      "require": "./dist/cjs/rag/index.cjs"
+    },
+    "./orchestration": {
+      "types": "./dist/orchestration/index.d.ts",
+      "import": "./dist/orchestration/index.js",
+      "require": "./dist/cjs/orchestration/index.cjs"
     }
   },
   "bin": {
