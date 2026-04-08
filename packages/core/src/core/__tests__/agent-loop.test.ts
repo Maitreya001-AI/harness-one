@@ -651,5 +651,467 @@ describe('AgentLoop', () => {
       const done = events.find((e) => e.type === 'done');
       expect(done).toBeDefined();
     });
+
+    // ── New streaming tests ──────────────────────────────────────────────
+
+    it('accumulates full response text in conversation history for subsequent iterations', async () => {
+      const chunks: StreamChunk[] = [
+        { type: 'text_delta', text: 'Accumulated' },
+        { type: 'text_delta', text: ' response' },
+        { type: 'text_delta', text: ' text' },
+        { type: 'done', usage: { inputTokens: 20, outputTokens: 10 } },
+      ];
+
+      const adapter: AgentAdapter = {
+        async chat() {
+          throw new Error('Should not be called when stream() is available');
+        },
+        async *stream() {
+          for (const chunk of chunks) {
+            yield chunk;
+          }
+        },
+      };
+
+      const loop = new AgentLoop({ adapter, streaming: true });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'Hi' }]));
+
+      // Verify all three deltas were yielded
+      const deltas = events.filter((e) => e.type === 'text_delta');
+      expect(deltas).toHaveLength(3);
+
+      // Verify the accumulated message has the full concatenated text
+      const msgEvent = events.find((e) => e.type === 'message') as Extract<AgentEvent, { type: 'message' }>;
+      expect(msgEvent).toBeDefined();
+      expect(msgEvent.message.content).toBe('Accumulated response text');
+
+      // Verify usage is passed through from the done chunk
+      expect(msgEvent.usage).toEqual({ inputTokens: 20, outputTokens: 10 });
+    });
+
+    it('yields tool_call_delta events during streaming', async () => {
+      const chunks: StreamChunk[] = [
+        { type: 'tool_call_delta', toolCall: { id: 'tc1', name: 'readFile' } },
+        { type: 'tool_call_delta', toolCall: { arguments: '{"path":' } },
+        { type: 'tool_call_delta', toolCall: { arguments: '"test.ts"}' } },
+        { type: 'done', usage: USAGE },
+      ];
+
+      let callCount = 0;
+      const adapter: AgentAdapter = {
+        async chat() {
+          throw new Error('Should not be called');
+        },
+        async *stream() {
+          callCount++;
+          if (callCount === 1) {
+            for (const chunk of chunks) yield chunk;
+          } else {
+            yield { type: 'text_delta' as const, text: 'Done!' };
+            yield { type: 'done' as const, usage: USAGE };
+          }
+        },
+      };
+      const onToolCall = vi.fn().mockResolvedValue('file contents');
+
+      const loop = new AgentLoop({ adapter, onToolCall, streaming: true });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'read file' }]));
+
+      // Should have yielded tool_call_delta events
+      const toolDeltas = events.filter((e) => e.type === 'tool_call_delta');
+      expect(toolDeltas.length).toBeGreaterThanOrEqual(3);
+
+      // Should eventually yield a tool_call event with accumulated data
+      const toolCallEvent = events.find((e) => e.type === 'tool_call') as Extract<AgentEvent, { type: 'tool_call' }>;
+      expect(toolCallEvent).toBeDefined();
+      expect(toolCallEvent.toolCall.name).toBe('readFile');
+      expect(toolCallEvent.toolCall.arguments).toBe('{"path":"test.ts"}');
+    });
+
+    it('does not call chat() when streaming is enabled and adapter has stream()', async () => {
+      const chatSpy = vi.fn();
+      const adapter: AgentAdapter = {
+        async chat() {
+          chatSpy();
+          return { message: { role: 'assistant', content: 'fallback' }, usage: USAGE };
+        },
+        async *stream() {
+          yield { type: 'text_delta' as const, text: 'streamed' };
+          yield { type: 'done' as const, usage: USAGE };
+        },
+      };
+
+      const loop = new AgentLoop({ adapter, streaming: true });
+      await collectEvents(loop.run([{ role: 'user', content: 'Hi' }]));
+
+      expect(chatSpy).not.toHaveBeenCalled();
+    });
+
+    it('fallback to chat() produces no text_delta events', async () => {
+      const adapter: AgentAdapter = {
+        async chat() {
+          return { message: { role: 'assistant', content: 'Via chat' }, usage: USAGE };
+        },
+        // No stream() method
+      };
+
+      const loop = new AgentLoop({ adapter, streaming: true });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'Hi' }]));
+
+      // No text_delta events because chat() was used, not stream()
+      const deltas = events.filter((e) => e.type === 'text_delta');
+      expect(deltas).toHaveLength(0);
+
+      // But still yields a message
+      const msg = events.find((e) => e.type === 'message') as Extract<AgentEvent, { type: 'message' }>;
+      expect(msg.message.content).toBe('Via chat');
+    });
+
+    it('handles stream() throwing an error gracefully', async () => {
+      const adapter: AgentAdapter = {
+        async chat() {
+          return { message: { role: 'assistant', content: 'fallback' }, usage: USAGE };
+        },
+        async *stream() {
+          yield { type: 'text_delta' as const, text: 'partial' };
+          throw new Error('Stream connection lost');
+        },
+      };
+
+      const loop = new AgentLoop({ adapter, streaming: true });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'Hi' }]));
+
+      // Should have an error event from the stream failure
+      const errorEvent = events.find((e) => e.type === 'error');
+      expect(errorEvent).toBeDefined();
+
+      // Should still have a done event
+      const done = events.find((e) => e.type === 'done');
+      expect(done).toBeDefined();
+      expect((done as Extract<AgentEvent, { type: 'done' }>).reason).toBe('error');
+    });
+
+    it('passes tools to adapter.stream() when configured', async () => {
+      let receivedTools: readonly ToolSchema[] | undefined;
+      const adapter: AgentAdapter = {
+        async chat() {
+          throw new Error('Should not be called');
+        },
+        async *stream(params) {
+          receivedTools = params.tools;
+          yield { type: 'text_delta' as const, text: 'hi' };
+          yield { type: 'done' as const, usage: USAGE };
+        },
+      };
+
+      const tools: ToolSchema[] = [
+        { name: 'search', description: 'Search', parameters: { type: 'object' } },
+      ];
+
+      const loop = new AgentLoop({ adapter, streaming: true, tools });
+      await collectEvents(loop.run([{ role: 'user', content: 'test' }]));
+
+      expect(receivedTools).toEqual(tools);
+    });
+  });
+
+  // =====================================================================
+  // Additional comprehensive tests for untested features
+  // =====================================================================
+
+  describe('maxConversationMessages warning (comprehensive)', () => {
+    it('warning message includes the actual conversation length', async () => {
+      const toolCall: ToolCallRequest = { id: 'call_1', name: 'tool', arguments: '{}' };
+      let callCount = 0;
+      const adapter: AgentAdapter = {
+        async chat() {
+          callCount++;
+          if (callCount <= 2) {
+            return { message: { role: 'assistant', content: '', toolCalls: [toolCall] }, usage: USAGE };
+          }
+          return { message: { role: 'assistant', content: 'done' }, usage: USAGE };
+        },
+      };
+      const onToolCall = vi.fn().mockResolvedValue('ok');
+
+      const loop = new AgentLoop({
+        adapter,
+        onToolCall,
+        maxConversationMessages: 3,
+      });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'test' }]));
+
+      const warnings = events.filter((e) => e.type === 'warning');
+      expect(warnings.length).toBeGreaterThan(0);
+
+      // Warning should include the conversation length number
+      const warningMsg = (warnings[0] as Extract<AgentEvent, { type: 'warning' }>).message;
+      expect(warningMsg).toMatch(/\d+/); // contains a number
+      expect(warningMsg.toLowerCase()).toContain('conversation');
+    });
+
+    it('does not emit warning when conversation stays under maxConversationMessages', async () => {
+      const adapter = createMockAdapter([
+        { message: { role: 'assistant', content: 'Hi' }, usage: USAGE },
+      ]);
+
+      const loop = new AgentLoop({
+        adapter,
+        maxConversationMessages: 100,
+      });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'test' }]));
+
+      const warnings = events.filter((e) => e.type === 'warning');
+      expect(warnings).toHaveLength(0);
+    });
+
+    it('emits no warning when maxConversationMessages is not configured', async () => {
+      const toolCall: ToolCallRequest = { id: 'call_1', name: 'tool', arguments: '{}' };
+      let callCount = 0;
+      const adapter: AgentAdapter = {
+        async chat() {
+          callCount++;
+          if (callCount <= 5) {
+            return { message: { role: 'assistant', content: '', toolCalls: [toolCall] }, usage: USAGE };
+          }
+          return { message: { role: 'assistant', content: 'done' }, usage: USAGE };
+        },
+      };
+      const onToolCall = vi.fn().mockResolvedValue('ok');
+
+      const loop = new AgentLoop({ adapter, onToolCall });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'test' }]));
+
+      const warnings = events.filter((e) => e.type === 'warning');
+      expect(warnings).toHaveLength(0);
+    });
+  });
+
+  describe('Post-call budget check (comprehensive)', () => {
+    it('emits error event with token_budget reason when adapter response pushes tokens over budget', async () => {
+      // A single response that immediately exceeds the budget
+      const adapter: AgentAdapter = {
+        async chat() {
+          return {
+            message: { role: 'assistant', content: 'big response' },
+            usage: { inputTokens: 600, outputTokens: 600 },
+          };
+        },
+      };
+
+      const loop = new AgentLoop({ adapter, maxTotalTokens: 1000 });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'test' }]));
+
+      // Should emit an error event before done
+      const errorEvent = events.find((e) => e.type === 'error');
+      expect(errorEvent).toBeDefined();
+      const error = (errorEvent as Extract<AgentEvent, { type: 'error' }>).error;
+      expect(error.message).toContain('Token budget exceeded');
+
+      // Done event with token_budget reason
+      const done = events.find((e) => e.type === 'done') as Extract<AgentEvent, { type: 'done' }>;
+      expect(done.reason).toBe('token_budget');
+    });
+
+    it('still emits the message event before the budget error when content is present', async () => {
+      const adapter: AgentAdapter = {
+        async chat() {
+          return {
+            message: { role: 'assistant', content: 'important content', toolCalls: [{ id: 'c1', name: 't', arguments: '{}' }] },
+            usage: { inputTokens: 800, outputTokens: 800 },
+          };
+        },
+      };
+      const onToolCall = vi.fn().mockResolvedValue('ok');
+
+      const loop = new AgentLoop({ adapter, maxTotalTokens: 1000, onToolCall });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'test' }]));
+
+      // Message event should appear before the error event
+      const types = events.map((e) => e.type);
+      const msgIdx = types.indexOf('message');
+      const errIdx = types.indexOf('error');
+      expect(msgIdx).toBeGreaterThan(-1);
+      expect(errIdx).toBeGreaterThan(msgIdx);
+
+      // Tool should NOT have been called (budget exceeded before tool dispatch)
+      expect(onToolCall).not.toHaveBeenCalled();
+    });
+
+    it('accumulates tokens across multiple iterations before triggering budget', async () => {
+      const toolCall: ToolCallRequest = { id: 'call_1', name: 'tool', arguments: '{}' };
+      let callCount = 0;
+      const adapter: AgentAdapter = {
+        async chat() {
+          callCount++;
+          if (callCount === 1) {
+            // First call: 400 tokens, under 1000 budget
+            return { message: { role: 'assistant', content: '', toolCalls: [toolCall] }, usage: { inputTokens: 200, outputTokens: 200 } };
+          }
+          // Second call: 800 tokens, cumulative = 1200 > 1000
+          return { message: { role: 'assistant', content: 'result' }, usage: { inputTokens: 400, outputTokens: 400 } };
+        },
+      };
+      const onToolCall = vi.fn().mockResolvedValue('ok');
+
+      const loop = new AgentLoop({ adapter, maxTotalTokens: 1000, onToolCall });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'test' }]));
+
+      // First call should succeed (400 < 1000)
+      expect(onToolCall).toHaveBeenCalledTimes(1);
+      // Second call pushes over budget
+      const done = events.find((e) => e.type === 'done') as Extract<AgentEvent, { type: 'done' }>;
+      expect(done.reason).toBe('token_budget');
+      expect(callCount).toBe(2);
+    });
+  });
+
+  describe('Tools passed to adapter (comprehensive)', () => {
+    it('passes tools config to adapter.chat() in every call', async () => {
+      const receivedTools: (readonly ToolSchema[] | undefined)[] = [];
+      const toolCall: ToolCallRequest = { id: 'call_1', name: 'search', arguments: '{}' };
+      let callCount = 0;
+      const adapter: AgentAdapter = {
+        async chat(params) {
+          receivedTools.push(params.tools);
+          callCount++;
+          if (callCount === 1) {
+            return { message: { role: 'assistant', content: '', toolCalls: [toolCall] }, usage: USAGE };
+          }
+          return { message: { role: 'assistant', content: 'done' }, usage: USAGE };
+        },
+      };
+      const onToolCall = vi.fn().mockResolvedValue('result');
+
+      const tools: ToolSchema[] = [
+        { name: 'search', description: 'Search', parameters: { type: 'object' } },
+        { name: 'readFile', description: 'Read a file', parameters: { type: 'object', properties: { path: { type: 'string' } } } },
+      ];
+
+      const loop = new AgentLoop({ adapter, onToolCall, tools });
+      await collectEvents(loop.run([{ role: 'user', content: 'test' }]));
+
+      // Both calls should have received the same tools array
+      expect(receivedTools).toHaveLength(2);
+      expect(receivedTools[0]).toEqual(tools);
+      expect(receivedTools[1]).toEqual(tools);
+    });
+
+    it('passes undefined tools when none configured', async () => {
+      let receivedTools: readonly ToolSchema[] | undefined = [] as ToolSchema[];
+      const adapter: AgentAdapter = {
+        async chat(params) {
+          receivedTools = params.tools;
+          return { message: { role: 'assistant', content: 'done' }, usage: USAGE };
+        },
+      };
+
+      const loop = new AgentLoop({ adapter });
+      await collectEvents(loop.run([{ role: 'user', content: 'test' }]));
+
+      expect(receivedTools).toBeUndefined();
+    });
+  });
+
+  describe('Error event type (comprehensive)', () => {
+    it('yields error event with the original Error instance when adapter.chat() throws', async () => {
+      const originalError = new Error('Network timeout after 30s');
+      const adapter: AgentAdapter = {
+        async chat() {
+          throw originalError;
+        },
+      };
+
+      const loop = new AgentLoop({ adapter });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'test' }]));
+
+      const errorEvent = events.find((e) => e.type === 'error') as Extract<AgentEvent, { type: 'error' }>;
+      expect(errorEvent).toBeDefined();
+      expect(errorEvent.error).toBe(originalError);
+      expect(errorEvent.error.message).toBe('Network timeout after 30s');
+    });
+
+    it('wraps non-Error throws into an Error instance', async () => {
+      const adapter: AgentAdapter = {
+        async chat() {
+          throw 'string error'; // non-Error throw
+        },
+      };
+
+      const loop = new AgentLoop({ adapter });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'test' }]));
+
+      const errorEvent = events.find((e) => e.type === 'error') as Extract<AgentEvent, { type: 'error' }>;
+      expect(errorEvent).toBeDefined();
+      expect(errorEvent.error).toBeInstanceOf(Error);
+      expect(errorEvent.error.message).toBe('string error');
+    });
+
+    it('always yields done event after error event when adapter.chat() throws', async () => {
+      const adapter: AgentAdapter = {
+        async chat() {
+          throw new Error('Catastrophic failure');
+        },
+      };
+
+      const loop = new AgentLoop({ adapter });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'test' }]));
+
+      const types = events.map((e) => e.type);
+
+      // error event is present
+      expect(types).toContain('error');
+      // done event is present
+      expect(types).toContain('done');
+
+      // done event comes after the error event
+      const errorIdx = types.indexOf('error');
+      const doneIdx = types.indexOf('done');
+      expect(doneIdx).toBeGreaterThan(errorIdx);
+
+      // done reason is 'error'
+      const done = events.find((e) => e.type === 'done') as Extract<AgentEvent, { type: 'done' }>;
+      expect(done.reason).toBe('error');
+    });
+
+    it('done event after error still includes cumulative token usage', async () => {
+      const toolCall: ToolCallRequest = { id: 'call_1', name: 'tool', arguments: '{}' };
+      let callCount = 0;
+      const adapter: AgentAdapter = {
+        async chat() {
+          callCount++;
+          if (callCount === 1) {
+            return { message: { role: 'assistant', content: '', toolCalls: [toolCall] }, usage: { inputTokens: 100, outputTokens: 50 } };
+          }
+          throw new Error('Rate limited');
+        },
+      };
+      const onToolCall = vi.fn().mockResolvedValue('ok');
+
+      const loop = new AgentLoop({ adapter, onToolCall });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'test' }]));
+
+      const done = events.find((e) => e.type === 'done') as Extract<AgentEvent, { type: 'done' }>;
+      expect(done).toBeDefined();
+      // Total usage from the first successful call should be preserved
+      expect(done.totalUsage.inputTokens).toBe(100);
+      expect(done.totalUsage.outputTokens).toBe(50);
+    });
+
+    it('yields iteration_start before the error event', async () => {
+      const adapter: AgentAdapter = {
+        async chat() {
+          throw new Error('Immediate failure');
+        },
+      };
+
+      const loop = new AgentLoop({ adapter });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'test' }]));
+
+      const types = events.map((e) => e.type);
+      expect(types[0]).toBe('iteration_start');
+      expect(types).toContain('error');
+      expect(types).toContain('done');
+    });
   });
 });

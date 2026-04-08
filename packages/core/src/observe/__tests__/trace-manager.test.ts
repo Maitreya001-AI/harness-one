@@ -303,6 +303,130 @@ describe('span cleanup on eviction', () => {
   });
 });
 
+describe('edge cases', () => {
+  it('span cleanup on trace LRU eviction — verifies spans are deleted from internal map', () => {
+    const tm = createTraceManager({ maxTraces: 1 });
+
+    // Create a trace with spans
+    const traceId = tm.startTrace('trace-to-evict');
+    const s1 = tm.startSpan(traceId, 'span-a');
+    const s2 = tm.startSpan(traceId, 'span-b');
+    tm.endSpan(s1);
+    tm.endSpan(s2);
+
+    // Evict by adding a new trace
+    const traceId2 = tm.startTrace('replacement');
+    expect(tm.getTrace(traceId)).toBeUndefined();
+    expect(tm.getTrace(traceId2)).toBeDefined();
+
+    // Attempting to add events or end evicted spans should throw
+    expect(() => tm.addSpanEvent(s1, { name: 'test' })).toThrow(HarnessError);
+    expect(() => tm.setSpanAttributes(s2, { x: 1 })).toThrow(HarnessError);
+  });
+
+  it('onExportError callback receives export errors from span export', async () => {
+    const capturedErrors: unknown[] = [];
+    const failExporter: TraceExporter = {
+      name: 'fail-exporter',
+      async exportTrace() { throw new Error('trace-fail'); },
+      async exportSpan() { throw new Error('span-fail'); },
+      async flush() {},
+    };
+    const tm = createTraceManager({
+      exporters: [failExporter],
+      onExportError: (err) => { capturedErrors.push(err); },
+    });
+    const tid = tm.startTrace('t');
+    const sid = tm.startSpan(tid, 's');
+    tm.endSpan(sid);
+    await new Promise(r => setTimeout(r, 20));
+    expect(capturedErrors.length).toBeGreaterThanOrEqual(1);
+    expect((capturedErrors[0] as Error).message).toBe('span-fail');
+  });
+
+  it('onExportError callback receives export errors from trace export', async () => {
+    const capturedErrors: unknown[] = [];
+    const failExporter: TraceExporter = {
+      name: 'fail-exporter',
+      async exportTrace() { throw new Error('trace-export-fail'); },
+      async exportSpan() {},
+      async flush() {},
+    };
+    const tm = createTraceManager({
+      exporters: [failExporter],
+      onExportError: (err) => { capturedErrors.push(err); },
+    });
+    const tid = tm.startTrace('t');
+    tm.endTrace(tid);
+    await new Promise(r => setTimeout(r, 20));
+    expect(capturedErrors.some(e => (e as Error).message === 'trace-export-fail')).toBe(true);
+  });
+
+  it('dispose() flushes and clears all state', async () => {
+    const events: string[] = [];
+    const exporter: TraceExporter = {
+      name: 'lifecycle',
+      async exportTrace() {},
+      async exportSpan() {},
+      async flush() { events.push('flush'); },
+      async shutdown() { events.push('shutdown'); },
+    };
+    const tm = createTraceManager({ exporters: [exporter] });
+    const tid = tm.startTrace('my-trace');
+    const sid = tm.startSpan(tid, 'my-span');
+    tm.endSpan(sid);
+    tm.endTrace(tid);
+
+    await tm.dispose();
+
+    // All state should be cleared
+    expect(tm.getTrace(tid)).toBeUndefined();
+    // Flush and shutdown should have been called
+    expect(events).toContain('flush');
+    expect(events).toContain('shutdown');
+
+    // Starting new spans on old trace should fail (trace is gone)
+    expect(() => tm.startSpan(tid, 'new-span')).toThrow(HarnessError);
+  });
+
+  it('start span on non-existent trace — throws HarnessError', () => {
+    const tm = createTraceManager();
+    expect(() => tm.startSpan('non-existent-trace-id', 'span')).toThrow(HarnessError);
+  });
+
+  it('multiple exporters — all called on endSpan and endTrace', async () => {
+    const exportedSpans1: string[] = [];
+    const exportedSpans2: string[] = [];
+    const exportedTraces1: string[] = [];
+    const exportedTraces2: string[] = [];
+
+    const exporter1: TraceExporter = {
+      name: 'exporter-1',
+      async exportTrace(trace) { exportedTraces1.push(trace.name); },
+      async exportSpan(span) { exportedSpans1.push(span.name); },
+      async flush() {},
+    };
+    const exporter2: TraceExporter = {
+      name: 'exporter-2',
+      async exportTrace(trace) { exportedTraces2.push(trace.name); },
+      async exportSpan(span) { exportedSpans2.push(span.name); },
+      async flush() {},
+    };
+
+    const tm = createTraceManager({ exporters: [exporter1, exporter2] });
+    const tid = tm.startTrace('multi-export-trace');
+    const sid = tm.startSpan(tid, 'multi-export-span');
+    tm.endSpan(sid);
+    tm.endTrace(tid);
+    await new Promise(r => setTimeout(r, 20));
+
+    expect(exportedSpans1).toContain('multi-export-span');
+    expect(exportedSpans2).toContain('multi-export-span');
+    expect(exportedTraces1).toContain('multi-export-trace');
+    expect(exportedTraces2).toContain('multi-export-trace');
+  });
+});
+
 // Architecture: TraceManager needs dispose()
 describe('dispose', () => {
   it('flushes and shuts down all exporters', async () => {

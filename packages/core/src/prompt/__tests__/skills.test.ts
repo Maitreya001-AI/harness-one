@@ -210,4 +210,141 @@ describe('createSkillEngine', () => {
       expect(engine.isComplete()).toBe(true);
     });
   });
+
+  describe('edge cases', () => {
+    it('maxTurns with only manual transitions — no auto-advance', () => {
+      const skill: SkillDefinition = {
+        id: 'manual-only',
+        name: 'Manual Only',
+        description: 'test',
+        initialStage: 'a',
+        stages: [
+          {
+            id: 'a',
+            name: 'A',
+            prompt: 'A',
+            maxTurns: 2,
+            transitions: [
+              { to: 'b', condition: { type: 'manual' } },
+            ],
+          },
+          { id: 'b', name: 'B', prompt: 'B', transitions: [] },
+        ],
+      };
+      const engine = createSkillEngine();
+      engine.registerSkill(skill);
+      engine.startSkill('manual-only');
+      // Process turns past maxTurns — should NOT auto-advance because all transitions are manual
+      engine.processTurn('one');
+      const result = engine.processTurn('two');
+      expect(result.advanced).toBe(false);
+      expect(result.currentStage).toBe('a');
+      // Even after more turns
+      const result3 = engine.processTurn('three');
+      expect(result3.advanced).toBe(false);
+      expect(result3.currentStage).toBe('a');
+    });
+
+    it('complete stage — no further transitions possible via processTurn', () => {
+      const engine = createSkillEngine();
+      engine.registerSkill(twoStageSkill);
+      engine.startSkill('onboarding');
+      engine.advanceTo('setup');
+      expect(engine.isComplete()).toBe(true);
+      // processTurn on a complete stage should not advance
+      const result = engine.processTurn('anything');
+      expect(result.advanced).toBe(false);
+      expect(result.currentStage).toBe('setup');
+    });
+
+    it('multiple keyword triggers on same transition', () => {
+      const skill: SkillDefinition = {
+        id: 'multi-kw',
+        name: 'Multi Keyword',
+        description: 'test',
+        initialStage: 'a',
+        stages: [
+          {
+            id: 'a',
+            name: 'A',
+            prompt: 'A',
+            transitions: [
+              { to: 'b', condition: { type: 'keyword', keywords: ['yes', 'sure', 'ok', 'proceed'] } },
+            ],
+          },
+          { id: 'b', name: 'B', prompt: 'B', transitions: [] },
+        ],
+      };
+      const engine = createSkillEngine();
+      engine.registerSkill(skill);
+
+      // Test first keyword
+      engine.startSkill('multi-kw');
+      expect(engine.processTurn('yes please').advanced).toBe(true);
+
+      // Reset and test second keyword
+      engine.reset();
+      expect(engine.processTurn('I am sure').advanced).toBe(true);
+
+      // Reset and test third keyword
+      engine.reset();
+      expect(engine.processTurn('ok then').advanced).toBe(true);
+
+      // Reset and test fourth keyword
+      engine.reset();
+      expect(engine.processTurn('let us proceed').advanced).toBe(true);
+
+      // Reset and test non-matching
+      engine.reset();
+      expect(engine.processTurn('nope').advanced).toBe(false);
+    });
+
+    it('reset turn count after stage advance', () => {
+      const skill: SkillDefinition = {
+        id: 'turn-reset',
+        name: 'Turn Reset',
+        description: 'test',
+        initialStage: 'a',
+        stages: [
+          {
+            id: 'a',
+            name: 'A',
+            prompt: 'A',
+            transitions: [
+              { to: 'b', condition: { type: 'keyword', keywords: ['next'] } },
+            ],
+          },
+          {
+            id: 'b',
+            name: 'B',
+            prompt: 'B',
+            transitions: [
+              { to: 'c', condition: { type: 'turn_count', count: 3 } },
+            ],
+          },
+          { id: 'c', name: 'C', prompt: 'C', transitions: [] },
+        ],
+      };
+      const engine = createSkillEngine();
+      engine.registerSkill(skill);
+      engine.startSkill('turn-reset');
+
+      // Accumulate turns in stage a
+      engine.processTurn('one');
+      engine.processTurn('two');
+      expect(engine.turnCount).toBe(2);
+
+      // Advance to stage b
+      engine.processTurn('next');
+      // Turn count should reset to 0 after advance
+      expect(engine.turnCount).toBe(0);
+      expect(engine.currentStage.id).toBe('b');
+
+      // Now count turns in stage b — should need 3 turns to advance
+      expect(engine.processTurn('x').advanced).toBe(false);
+      expect(engine.processTurn('y').advanced).toBe(false);
+      expect(engine.processTurn('z').advanced).toBe(true);
+      expect(engine.currentStage.id).toBe('c');
+    });
+  });
 });

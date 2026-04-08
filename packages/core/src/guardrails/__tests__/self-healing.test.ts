@@ -198,6 +198,116 @@ describe('withSelfHealing', () => {
     });
   });
 
+  describe('edge cases', () => {
+    it('max retries exceeded: returns failure with correct attempt count', async () => {
+      const guard: Guardrail = () => ({ action: 'block', reason: 'always fails' });
+      const regenerate = vi.fn().mockResolvedValue('still bad');
+
+      // Use only 2 retries to keep the real backoff short (1s total backoff)
+      const result = await withSelfHealing(
+        {
+          maxRetries: 2,
+          guardrails: [{ name: 'g1', guard }],
+          buildRetryPrompt: () => 'fix',
+          regenerate,
+        },
+        'bad content',
+      );
+
+      expect(result.passed).toBe(false);
+      expect(result.attempts).toBe(2);
+      // Regenerate called once (between attempt 1 and 2)
+      expect(regenerate).toHaveBeenCalledTimes(1);
+    }, 10_000);
+
+    it('backoff timing: verify delay increases exponentially', async () => {
+      // Collect backoff delays by intercepting setTimeout
+      const backoffDelays: number[] = [];
+      const realSetTimeout = globalThis.setTimeout;
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation((fn, ms, ...args) => {
+        if (typeof ms === 'number' && ms >= 500) {
+          backoffDelays.push(ms);
+        }
+        // Run immediately for speed
+        return realSetTimeout(fn as () => void, 0, ...args);
+      });
+
+      const guard: Guardrail = () => ({ action: 'block', reason: 'bad' });
+      const regenerate = vi.fn().mockResolvedValue('still bad');
+
+      await withSelfHealing(
+        {
+          maxRetries: 4,
+          guardrails: [{ name: 'g1', guard }],
+          buildRetryPrompt: () => 'fix',
+          regenerate,
+        },
+        'bad',
+      );
+
+      setTimeoutSpy.mockRestore();
+
+      // There are 3 backoff delays (between attempts 1-2, 2-3, 3-4)
+      // But regenerateTimeoutMs also creates setTimeout calls with the timeout value (default 30000)
+      // Filter to only the backoff delays: 1000, 2000, 4000
+      const exponentialDelays = backoffDelays.filter((d) => d <= 10_000);
+      expect(exponentialDelays.length).toBe(3);
+      // 1000 * 2^0 = 1000, 1000 * 2^1 = 2000, 1000 * 2^2 = 4000
+      expect(exponentialDelays[0]).toBe(1000);
+      expect(exponentialDelays[1]).toBe(2000);
+      expect(exponentialDelays[2]).toBe(4000);
+    });
+
+    it('regenerate timeout: when regenerate hangs, self-healing returns failure', async () => {
+      const guard: Guardrail = () => ({ action: 'block', reason: 'bad' });
+      const regenerate = vi.fn().mockImplementation(
+        () => new Promise(() => {}), // never resolves
+      );
+
+      const result = await withSelfHealing(
+        {
+          maxRetries: 3,
+          guardrails: [{ name: 'g1', guard }],
+          buildRetryPrompt: () => 'fix',
+          regenerate,
+          regenerateTimeoutMs: 50,
+        },
+        'bad content',
+      );
+
+      expect(result.passed).toBe(false);
+      // Should fail on the first retry attempt when regenerate times out
+      expect(result.attempts).toBe(1);
+      expect(result.content).toBe('bad content'); // original content, since regenerate never completed
+    });
+
+    it('all guardrails pass on first try: no regenerate needed, returns immediately', async () => {
+      const guard1: Guardrail = () => ({ action: 'allow' });
+      const guard2: Guardrail = () => ({ action: 'allow' });
+      const regenerate = vi.fn();
+      const buildRetryPrompt = vi.fn();
+
+      const result = await withSelfHealing(
+        {
+          maxRetries: 5,
+          guardrails: [
+            { name: 'g1', guard: guard1 },
+            { name: 'g2', guard: guard2 },
+          ],
+          buildRetryPrompt,
+          regenerate,
+        },
+        'perfect content',
+      );
+
+      expect(result.passed).toBe(true);
+      expect(result.attempts).toBe(1);
+      expect(result.content).toBe('perfect content');
+      expect(regenerate).not.toHaveBeenCalled();
+      expect(buildRetryPrompt).not.toHaveBeenCalled();
+    });
+  });
+
   it('treats modify verdict as a failure for retry', async () => {
     let callCount = 0;
     const guard: Guardrail = () => {

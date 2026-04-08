@@ -345,4 +345,124 @@ describe('createRegistry', () => {
       expect(result.success).toBe(false);
     });
   });
+
+  describe('edge cases', () => {
+    it('permission check blocks execution', async () => {
+      const registry = createRegistry({
+        permissions: {
+          check: (toolName: string) => toolName !== 'echo',
+        },
+      });
+      registry.register(makeEchoTool());
+      const result = await registry.execute({
+        id: '1',
+        name: 'echo',
+        arguments: '{"text":"hello"}',
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.category).toBe('permission');
+      }
+    });
+
+    it('permission check allows execution', async () => {
+      const registry = createRegistry({
+        permissions: {
+          check: () => true,
+        },
+      });
+      registry.register(makeEchoTool());
+      const result = await registry.execute({
+        id: '1',
+        name: 'echo',
+        arguments: '{"text":"hello"}',
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('timeout: tool exceeds timeoutMs — returns timeout error', async () => {
+      const slowTool = defineTool({
+        name: 'slow',
+        description: 'Slow tool',
+        parameters: { type: 'object' },
+        execute: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 5000));
+          return toolSuccess('done');
+        },
+      });
+      const registry = createRegistry({ timeoutMs: 30 });
+      registry.register(slowTool);
+      const result = await registry.execute({
+        id: '1',
+        name: 'slow',
+        arguments: '{}',
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.category).toBe('timeout');
+        expect(result.error.retryable).toBe(true);
+      }
+    });
+
+    it('execute tool with empty arguments string (valid empty object)', async () => {
+      const registry = createRegistry();
+      const noArgTool = defineTool({
+        name: 'ping',
+        description: 'Ping tool',
+        parameters: { type: 'object' },
+        execute: async () => toolSuccess('pong'),
+      });
+      registry.register(noArgTool);
+      const result = await registry.execute({
+        id: '1',
+        name: 'ping',
+        arguments: '{}',
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).toBe('pong');
+      }
+    });
+
+    it('list tools by namespace prefix', () => {
+      const registry = createRegistry();
+      registry.register(makeEchoTool('fs.read'));
+      registry.register(makeEchoTool('fs.write'));
+      registry.register(makeEchoTool('fs.delete'));
+      registry.register(makeEchoTool('net.fetch'));
+      registry.register(makeEchoTool('net.post'));
+
+      const fsTools = registry.list('fs');
+      expect(fsTools).toHaveLength(3);
+      expect(fsTools.every(t => t.name.startsWith('fs.'))).toBe(true);
+
+      const netTools = registry.list('net');
+      expect(netTools).toHaveLength(2);
+
+      const dbTools = registry.list('db');
+      expect(dbTools).toHaveLength(0);
+    });
+
+    it('schemas include responseFormat when defined', () => {
+      const registry = createRegistry();
+      const tool = defineTool<{ text: string }>({
+        name: 'search',
+        description: 'Search tool',
+        parameters: {
+          type: 'object',
+          properties: { text: { type: 'string' } },
+          required: ['text'],
+        },
+        responseFormat: 'concise',
+        execute: async (params) => toolSuccess(params.text),
+      });
+      registry.register(tool);
+      registry.register(makeEchoTool());
+      const s = registry.schemas();
+      const searchSchema = s.find(sc => sc.name === 'search');
+      const echoSchema = s.find(sc => sc.name === 'echo');
+      expect(searchSchema!.responseFormat).toBe('concise');
+      expect(echoSchema!.responseFormat).toBeUndefined();
+    });
+  });
 });

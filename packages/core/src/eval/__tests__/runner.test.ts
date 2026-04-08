@@ -182,6 +182,65 @@ describe('createEvalRunner', () => {
     });
   });
 
+  describe('edge cases', () => {
+    it('handles scorer that throws an error gracefully', async () => {
+      const throwingScorer: Scorer = {
+        name: 'throwing',
+        description: 'Always throws',
+        async score() {
+          throw new Error('Scorer exploded');
+        },
+      };
+      const runner = createEvalRunner({ scorers: [throwingScorer] });
+      await expect(
+        runner.run([{ id: 'c1', input: 'hi' }], async (i) => i),
+      ).rejects.toThrow('Scorer exploded');
+    });
+
+    it('treats NaN score as 0 for pass/fail determination', async () => {
+      const nanScorer: Scorer = {
+        name: 'nan-scorer',
+        description: 'Returns NaN score',
+        async score() {
+          return { score: NaN, explanation: 'NaN result' };
+        },
+      };
+      const runner = createEvalRunner({ scorers: [nanScorer], passThreshold: 0.5 });
+      const report = await runner.run(
+        [{ id: 'c1', input: 'test' }],
+        async (i) => i,
+      );
+      // NaN >= 0.5 is false, so the case should fail
+      expect(report.results[0].passed).toBe(false);
+      expect(report.results[0].scores['nan-scorer']).toBeNaN();
+    });
+
+    it('throws on empty cases array', async () => {
+      const runner = createEvalRunner({ scorers: [alwaysPassScorer] });
+      await expect(runner.run([], async (i) => i)).rejects.toThrow(HarnessError);
+    });
+
+    it('checkGate with 0% pass rate — all cases fail', () => {
+      const runner = createEvalRunner({
+        scorers: [alwaysPassScorer],
+        overallPassRate: 0.5,
+      });
+      const gate = runner.checkGate({
+        totalCases: 10,
+        passedCases: 0,
+        failedCases: 10,
+        passRate: 0.0,
+        averageScores: {},
+        results: [],
+        duration: 100,
+        timestamp: Date.now(),
+      });
+      expect(gate.passed).toBe(false);
+      expect(gate.reason).toContain('0.0%');
+      expect(gate.reason).toContain('below threshold');
+    });
+  });
+
   // H3: Eval scorers don't use scoreBatch
   describe('scoreBatch', () => {
     it('uses scoreBatch when available on a scorer', async () => {

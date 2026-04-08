@@ -107,6 +107,77 @@ describe('createRelay', () => {
     });
   });
 
+  describe('edge cases', () => {
+    it('stale cache invalidation — entry deleted, relay re-queries', async () => {
+      // Save initial state
+      await relay.save({
+        progress: { step: 1 },
+        artifacts: [],
+        checkpoint: 'cp1',
+        timestamp: 1000,
+      });
+      let loaded = await relay.load();
+      expect(loaded).not.toBeNull();
+
+      // Delete the relay entry directly from the store
+      const entries = await store.query({});
+      for (const entry of entries) {
+        if (entry.key === '__relay__') {
+          await store.delete(entry.id);
+        }
+      }
+
+      // Load should return null after external deletion
+      loaded = await relay.load();
+      expect(loaded).toBeNull();
+
+      // Save again — should create new entry
+      await relay.save({
+        progress: { step: 99 },
+        artifacts: [],
+        checkpoint: 'cp99',
+        timestamp: 9999,
+      });
+      loaded = await relay.load();
+      expect(loaded).not.toBeNull();
+      expect(loaded!.progress.step).toBe(99);
+    });
+
+    it('multiple checkpoints accumulate progress', async () => {
+      await relay.checkpoint({ step: 1, taskA: 'done' });
+      await relay.checkpoint({ step: 2, taskB: 'done' });
+      await relay.checkpoint({ step: 3, taskC: 'done' });
+
+      const loaded = await relay.load();
+      expect(loaded).not.toBeNull();
+      expect(loaded!.progress).toEqual({
+        step: 3,
+        taskA: 'done',
+        taskB: 'done',
+        taskC: 'done',
+      });
+    });
+
+    it('add multiple artifacts accumulates all paths', async () => {
+      await relay.addArtifact('file1.txt');
+      await relay.addArtifact('file2.txt');
+      await relay.addArtifact('file3.txt');
+
+      const loaded = await relay.load();
+      expect(loaded).not.toBeNull();
+      expect(loaded!.artifacts).toEqual(['file1.txt', 'file2.txt', 'file3.txt']);
+    });
+
+    it('checkpoint after addArtifact preserves artifacts', async () => {
+      await relay.addArtifact('output.json');
+      await relay.checkpoint({ phase: 'complete' });
+
+      const loaded = await relay.load();
+      expect(loaded!.artifacts).toEqual(['output.json']);
+      expect(loaded!.progress.phase).toBe('complete');
+    });
+  });
+
   describe('H3: stale cache invalidation', () => {
     it('clears cached ID when entry is deleted externally and re-created', async () => {
       // Save state to populate the cache

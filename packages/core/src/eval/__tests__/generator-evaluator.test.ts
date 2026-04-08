@@ -82,6 +82,89 @@ describe('runGeneratorEvaluator', () => {
     ).rejects.toThrow(HarnessError);
   });
 
+  describe('edge cases', () => {
+    it('evaluator always passes on first try — no retry occurs', async () => {
+      let generateCallCount = 0;
+      const result = await runGeneratorEvaluator(
+        {
+          generate: async (input) => {
+            generateCallCount++;
+            return `response: ${input}`;
+          },
+          evaluate: async () => ({ pass: true, feedback: '' }),
+          maxRetries: 5,
+        },
+        'test input',
+      );
+      expect(result.passed).toBe(true);
+      expect(result.attempts).toBe(1);
+      expect(generateCallCount).toBe(1);
+      expect(result.output).toBe('response: test input');
+      expect(result.feedback).toBeUndefined();
+    });
+
+    it('generate throws error — propagates to caller', async () => {
+      await expect(
+        runGeneratorEvaluator(
+          {
+            generate: async () => {
+              throw new Error('Generator exploded');
+            },
+            evaluate: async () => ({ pass: true, feedback: '' }),
+          },
+          'input',
+        ),
+      ).rejects.toThrow('Generator exploded');
+    });
+
+    it('max retries reached — returns last output with passed=false', async () => {
+      let callCount = 0;
+      const result = await runGeneratorEvaluator(
+        {
+          generate: async () => {
+            callCount++;
+            return `output-${callCount}`;
+          },
+          evaluate: async () => ({ pass: false, feedback: `fail-${callCount}` }),
+          maxRetries: 3,
+        },
+        'q',
+      );
+      expect(result.passed).toBe(false);
+      expect(result.attempts).toBe(3);
+      expect(result.output).toBe('output-3');
+      expect(result.feedback).toBe('fail-3');
+    });
+
+    it('feedback from evaluator is only the latest — not accumulated', async () => {
+      const augmentedInputs: string[] = [];
+      let attempt = 0;
+      await runGeneratorEvaluator(
+        {
+          generate: async (input) => {
+            augmentedInputs.push(input);
+            attempt++;
+            return `output-${attempt}`;
+          },
+          evaluate: async () => {
+            if (attempt >= 3) return { pass: true, feedback: '' };
+            return { pass: false, feedback: `feedback-round-${attempt}` };
+          },
+          maxRetries: 5,
+        },
+        'original',
+      );
+
+      // Second call should only have feedback-round-1
+      expect(augmentedInputs[1]).toContain('feedback-round-1');
+      expect(augmentedInputs[1]).not.toContain('feedback-round-2');
+
+      // Third call should only have feedback-round-2, not feedback-round-1
+      expect(augmentedInputs[2]).toContain('feedback-round-2');
+      expect(augmentedInputs[2]).not.toContain('feedback-round-1');
+    });
+  });
+
   // H1: Generator-Evaluator feedback accumulates in prompt
   it('does not accumulate previous feedback across retries', async () => {
     const inputs: string[] = [];

@@ -155,6 +155,78 @@ describe('createInMemoryStore', () => {
     });
   });
 
+  describe('edge cases', () => {
+    it('query with all filter combinations (tags + grade + since + search)', async () => {
+      const now = Date.now();
+      await store.write({ key: 'k1', content: 'alpha info', grade: 'critical', tags: ['topic-a'] });
+      await store.write({ key: 'k2', content: 'beta info', grade: 'critical', tags: ['topic-a', 'topic-b'] });
+      await store.write({ key: 'k3', content: 'gamma info', grade: 'useful', tags: ['topic-a'] });
+      await store.write({ key: 'k4', content: 'delta info', grade: 'critical', tags: ['topic-b'] });
+
+      // Combine all filters: grade=critical, tags=[topic-a], since=now-1, search='info'
+      const results = await store.query({
+        grade: 'critical',
+        tags: ['topic-a'],
+        since: now - 1,
+        search: 'info',
+      });
+
+      // Only k1 and k2 match all criteria: critical grade + topic-a tag + recent + contains 'info'
+      expect(results).toHaveLength(2);
+      const keys = results.map(r => r.key);
+      expect(keys).toContain('k1');
+      expect(keys).toContain('k2');
+    });
+
+    it('compaction preserves critical entries', async () => {
+      await store.write({ key: 'k1', content: 'critical data', grade: 'critical' });
+      await store.write({ key: 'k2', content: 'ephemeral data', grade: 'ephemeral' });
+      await store.write({ key: 'k3', content: 'useful data', grade: 'useful' });
+
+      const result = await store.compact({ maxEntries: 1 });
+      expect(result.remaining).toBe(1);
+
+      const remaining = await store.query({});
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0].grade).toBe('critical');
+      expect(remaining[0].content).toBe('critical data');
+    });
+
+    it('compaction removes ephemeral first', async () => {
+      await store.write({ key: 'k1', content: 'ephemeral 1', grade: 'ephemeral' });
+      await store.write({ key: 'k2', content: 'useful 1', grade: 'useful' });
+      await store.write({ key: 'k3', content: 'critical 1', grade: 'critical' });
+
+      const result = await store.compact({ maxEntries: 2 });
+      expect(result.removed).toBe(1);
+      expect(result.remaining).toBe(2);
+
+      const remaining = await store.query({});
+      const grades = remaining.map(r => r.grade);
+      // Ephemeral should be removed first
+      expect(grades).not.toContain('ephemeral');
+      expect(grades).toContain('useful');
+      expect(grades).toContain('critical');
+    });
+
+    it('update non-existent entry — throws HarnessError', async () => {
+      await expect(store.update('non-existent-id', { content: 'x' })).rejects.toThrow(HarnessError);
+    });
+
+    it('ID uniqueness under rapid creation', async () => {
+      const ids = new Set<string>();
+      const promises = [];
+      for (let i = 0; i < 100; i++) {
+        promises.push(store.write({ key: `rapid-${i}`, content: `content-${i}`, grade: 'useful' }));
+      }
+      const entries = await Promise.all(promises);
+      for (const entry of entries) {
+        ids.add(entry.id);
+      }
+      expect(ids.size).toBe(100);
+    });
+  });
+
   describe('H1: ID uniqueness', () => {
     it('generates IDs with randomness to avoid cross-process collisions', async () => {
       const entry = await store.write({ key: 'k1', content: 'a', grade: 'useful' });

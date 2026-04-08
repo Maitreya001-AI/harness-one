@@ -102,4 +102,46 @@ describe('createDisclosureManager', () => {
     expect(dm.getContent('test')).toBe('Basic');
     expect(dm.getContent('test', 2)).toBe('Basic\nMore\nDeep');
   });
+
+  describe('edge cases', () => {
+    it('expand beyond max level — stays at max', () => {
+      const dm = createDisclosureManager();
+      dm.register('small', [
+        { level: 0, content: 'Level 0' },
+        { level: 1, content: 'Level 1' },
+      ]);
+      dm.expand('small'); // -> 1
+      dm.expand('small'); // attempt -> 2, stays at 1
+      dm.expand('small'); // attempt -> 3, stays at 1
+      expect(dm.getCurrentLevel('small')).toBe(1);
+    });
+
+    it('register topic with single level', () => {
+      const dm = createDisclosureManager();
+      dm.register('single', [{ level: 0, content: 'Only level' }]);
+      expect(dm.getContent('single')).toBe('Only level');
+      expect(dm.getCurrentLevel('single')).toBe(0);
+      // Expanding should stay at level 0 since there is no level 1
+      const expandResult = dm.expand('single');
+      expect(dm.getCurrentLevel('single')).toBe(0);
+      // Should return the content for the current (max) level
+      expect(expandResult).toBeDefined();
+    });
+
+    it('getContent with maxLevel=0 — returns only level 0 content', () => {
+      const dm = createDisclosureManager();
+      dm.register('auth', [
+        { level: 0, content: 'Auth uses JWT.' },
+        { level: 1, content: 'Tokens expire after 1h.' },
+        { level: 2, content: 'Refresh via httpOnly cookies.' },
+      ]);
+      // Even after expanding, getContent with maxLevel=0 should return only level 0
+      dm.expand('auth');
+      dm.expand('auth');
+      const content = dm.getContent('auth', 0);
+      expect(content).toBe('Auth uses JWT.');
+      expect(content).not.toContain('Tokens expire');
+      expect(content).not.toContain('Refresh');
+    });
+  });
 });

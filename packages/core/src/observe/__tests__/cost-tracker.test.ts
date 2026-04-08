@@ -168,6 +168,65 @@ describe('createCostTracker', () => {
     });
   });
 
+  describe('edge cases', () => {
+    it('getAlertMessage returns null when under budget', () => {
+      const tracker = createCostTracker({ pricing, budget: 100.0 });
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 100, outputTokens: 50 });
+      expect(tracker.getAlertMessage()).toBeNull();
+    });
+
+    it('getAlertMessage returns warning at 80% of budget', () => {
+      const tracker = createCostTracker({ pricing, budget: 0.00375 });
+      // 0.003 cost = 80% of 0.00375
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      const msg = tracker.getAlertMessage();
+      expect(msg).not.toBeNull();
+      expect(msg).toContain('BUDGET WARNING');
+    });
+
+    it('getAlertMessage returns critical at 95% of budget', () => {
+      const tracker = createCostTracker({ pricing, budget: 0.003 });
+      // 0.003 cost = 100% of 0.003 => critical
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      const msg = tracker.getAlertMessage();
+      expect(msg).not.toBeNull();
+      expect(msg).toContain('BUDGET CRITICAL');
+    });
+
+    it('cost with zero pricing returns 0', () => {
+      const tracker = createCostTracker({
+        pricing: [{ model: 'free-model', inputPer1kTokens: 0, outputPer1kTokens: 0 }],
+      });
+      const record = tracker.recordUsage({
+        traceId: 't1',
+        model: 'free-model',
+        inputTokens: 10000,
+        outputTokens: 5000,
+      });
+      expect(record.estimatedCost).toBe(0);
+      expect(tracker.getTotalCost()).toBe(0);
+    });
+
+    it('multiple models with different pricing', () => {
+      const tracker = createCostTracker({
+        pricing: [
+          { model: 'cheap', inputPer1kTokens: 0.001, outputPer1kTokens: 0.002 },
+          { model: 'expensive', inputPer1kTokens: 0.01, outputPer1kTokens: 0.03 },
+        ],
+      });
+      tracker.recordUsage({ traceId: 't1', model: 'cheap', inputTokens: 1000, outputTokens: 1000 });
+      tracker.recordUsage({ traceId: 't2', model: 'expensive', inputTokens: 1000, outputTokens: 1000 });
+
+      const byModel = tracker.getCostByModel();
+      // cheap: 1*0.001 + 1*0.002 = 0.003
+      expect(byModel['cheap']).toBeCloseTo(0.003, 4);
+      // expensive: 1*0.01 + 1*0.03 = 0.04
+      expect(byModel['expensive']).toBeCloseTo(0.04, 4);
+      // total: 0.003 + 0.04 = 0.043
+      expect(tracker.getTotalCost()).toBeCloseTo(0.043, 4);
+    });
+  });
+
   // Architecture: Cost-aware prompt injection via getAlertMessage
   describe('getAlertMessage', () => {
     it('returns null when budget not set', () => {

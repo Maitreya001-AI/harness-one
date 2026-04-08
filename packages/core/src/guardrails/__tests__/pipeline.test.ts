@@ -193,6 +193,120 @@ describe('FIX-6: budget.ts throws HarnessError', () => {
   });
 });
 
+describe('pipeline edge cases', () => {
+  it('modify verdict: pipeline returns modified content and short-circuits', async () => {
+    const modifierGuard: Guardrail = (ctx) => {
+      if (ctx.content.includes('bad')) {
+        return { action: 'modify', modified: ctx.content.replace('bad', 'good'), reason: 'cleaned up' };
+      }
+      return { action: 'allow' };
+    };
+    const secondGuard = vi.fn(allowGuard);
+    const pipeline = createPipeline({
+      input: [
+        { name: 'modifier', guard: modifierGuard },
+        { name: 'second', guard: secondGuard },
+      ],
+    });
+    const result = await runInput(pipeline, { content: 'this is bad content' });
+    expect(result.passed).toBe(true);
+    expect(result.verdict.action).toBe('modify');
+    if (result.verdict.action === 'modify') {
+      expect(result.verdict.modified).toBe('this is good content');
+    }
+    // Second guardrail should NOT have been called (short-circuit on modify)
+    expect(secondGuard).not.toHaveBeenCalled();
+  });
+
+  it('first allows, second blocks: verifies short-circuit on second guardrail', async () => {
+    const thirdGuard = vi.fn(allowGuard);
+    const pipeline = createPipeline({
+      input: [
+        { name: 'allower', guard: allowGuard },
+        { name: 'blocker', guard: blockGuard },
+        { name: 'third', guard: thirdGuard },
+      ],
+    });
+    const result = await runInput(pipeline, { content: 'hello' });
+    expect(result.passed).toBe(false);
+    expect(result.verdict).toEqual({ action: 'block', reason: 'blocked' });
+    // Two events: allower (allow) and blocker (block)
+    expect(result.results).toHaveLength(2);
+    expect(result.results[0].guardrail).toBe('allower');
+    expect(result.results[0].verdict.action).toBe('allow');
+    expect(result.results[1].guardrail).toBe('blocker');
+    expect(result.results[1].verdict.action).toBe('block');
+    // Third guardrail was never reached
+    expect(thirdGuard).not.toHaveBeenCalled();
+  });
+
+  it('event callback receives correct timing (latencyMs > 0) for slow guardrail', async () => {
+    const events: GuardrailEvent[] = [];
+    const slowGuard: Guardrail = async () => {
+      await new Promise((r) => setTimeout(r, 20));
+      return { action: 'allow' };
+    };
+    const pipeline = createPipeline({
+      input: [{ name: 'slow', guard: slowGuard }],
+      onEvent: (e) => events.push(e),
+    });
+    await runInput(pipeline, { content: 'hello' });
+    expect(events).toHaveLength(1);
+    expect(events[0].latencyMs).toBeGreaterThan(0);
+    // Should be at least ~20ms since the guardrail sleeps 20ms
+    expect(events[0].latencyMs).toBeGreaterThanOrEqual(15);
+  });
+
+  it('per-guardrail timeout: guardrail exceeds timeoutMs, handled by failClosed logic', async () => {
+    const hangingGuard: Guardrail = () => new Promise(() => {}); // never resolves
+    const events: GuardrailEvent[] = [];
+
+    // failClosed = true (default): should block
+    const pipelineClosed = createPipeline({
+      input: [{ name: 'hanger', guard: hangingGuard, timeoutMs: 50 }],
+      failClosed: true,
+      onEvent: (e) => events.push(e),
+    });
+    const resultClosed = await runInput(pipelineClosed, { content: 'hello' });
+    expect(resultClosed.passed).toBe(false);
+    expect(resultClosed.verdict.action).toBe('block');
+    if (resultClosed.verdict.action === 'block') {
+      expect(resultClosed.verdict.reason).toContain('timed out');
+    }
+    expect(events.length).toBeGreaterThanOrEqual(1);
+
+    // failClosed = false: should skip and allow
+    const eventsOpen: GuardrailEvent[] = [];
+    const pipelineOpen = createPipeline({
+      input: [
+        { name: 'hanger', guard: hangingGuard, timeoutMs: 50 },
+        { name: 'allower', guard: allowGuard },
+      ],
+      failClosed: false,
+      onEvent: (e) => eventsOpen.push(e),
+    });
+    const resultOpen = await runInput(pipelineOpen, { content: 'hello' });
+    expect(resultOpen.passed).toBe(true);
+    expect(eventsOpen).toHaveLength(2);
+  });
+
+  it('PermissionLevel is passed through context to guardrails', async () => {
+    const receivedLevels: (string | undefined)[] = [];
+    const capturingGuard: Guardrail = (ctx) => {
+      receivedLevels.push(ctx.permissionLevel);
+      return { action: 'allow' };
+    };
+    const pipeline = createPipeline({
+      input: [
+        { name: 'g1', guard: capturingGuard },
+        { name: 'g2', guard: capturingGuard },
+      ],
+    });
+    await runInput(pipeline, { content: 'test', permissionLevel: 'permissive' });
+    expect(receivedLevels).toEqual(['permissive', 'permissive']);
+  });
+});
+
 describe('Gap 2: permissionLevel in GuardrailContext', () => {
   it('passes permissionLevel through to guardrail functions', async () => {
     let receivedCtx: import('../types.js').GuardrailContext | undefined;

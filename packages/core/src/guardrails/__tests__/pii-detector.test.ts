@@ -106,6 +106,150 @@ describe('createPIIDetector', () => {
     });
   });
 
+  describe('international phone numbers', () => {
+    it('detects UK phone numbers with +44 prefix via custom pattern', () => {
+      // Disable built-in phone detection so only the custom pattern fires
+      const { guard } = createPIIDetector({
+        detect: { email: false, phone: false, ssn: false, creditCard: false },
+        customPatterns: [
+          { name: 'international-phone', pattern: /\+\d{1,3}\s?\d{4,14}/ },
+        ],
+      });
+      const result = guard({ content: 'Call me at +44 7911123456' });
+      expect(result.action).toBe('block');
+      if (result.action === 'block') {
+        expect(result.reason).toContain('international-phone');
+      }
+    });
+
+    it('detects Japanese phone numbers with +81 prefix via custom pattern', () => {
+      const { guard } = createPIIDetector({
+        detect: { email: false, phone: false, ssn: false, creditCard: false },
+        customPatterns: [
+          { name: 'international-phone', pattern: /\+\d{1,3}\s?\d{4,14}/ },
+        ],
+      });
+      const result = guard({ content: 'Contact: +81 3012345678' });
+      expect(result.action).toBe('block');
+      if (result.action === 'block') {
+        expect(result.reason).toContain('international-phone');
+      }
+    });
+  });
+
+  describe('partial PII', () => {
+    it('does not detect last 4 digits of SSN as a full SSN', () => {
+      const { guard } = createPIIDetector();
+      // Only last 4 digits, not a full SSN pattern (XXX-XX-XXXX)
+      const result = guard({ content: 'Last 4 of SSN: 6789' });
+      // The built-in SSN pattern requires full XXX-XX-XXXX, so partial should be allowed
+      expect(result.action).toBe('allow');
+    });
+  });
+
+  describe('custom patterns for employee IDs', () => {
+    it('detects custom employee ID pattern', () => {
+      const { guard } = createPIIDetector({
+        customPatterns: [
+          { name: 'employee-id', pattern: /EMP-\d{6}/i },
+        ],
+      });
+      expect(guard({ content: 'Employee EMP-654321 filed a report' }).action).toBe('block');
+    });
+
+    it('allows content without employee ID pattern', () => {
+      const { guard } = createPIIDetector({
+        customPatterns: [
+          { name: 'employee-id', pattern: /EMP-\d{6}/i },
+        ],
+      });
+      expect(guard({ content: 'No employee data here' }).action).toBe('allow');
+    });
+
+    it('detects custom patterns alongside built-in patterns', () => {
+      const { guard } = createPIIDetector({
+        customPatterns: [
+          { name: 'badge-number', pattern: /BADGE-\d{4}/ },
+        ],
+      });
+      // Should detect built-in email
+      expect(guard({ content: 'user@example.com' }).action).toBe('block');
+      // Should also detect custom badge
+      expect(guard({ content: 'Badge: BADGE-1234' }).action).toBe('block');
+    });
+  });
+
+  describe('multiple PII types in same content', () => {
+    it('detects the first matching PII type when multiple are present', () => {
+      const { guard } = createPIIDetector();
+      // Content with email AND phone AND SSN
+      const result = guard({
+        content: 'Contact user@example.com or call 555-123-4567, SSN: 123-45-6789',
+      });
+      expect(result.action).toBe('block');
+      if (result.action === 'block') {
+        // The first detector in order is email
+        expect(result.reason).toContain('email');
+      }
+    });
+
+    it('detects phone when email detection is disabled but phone is present', () => {
+      const { guard } = createPIIDetector({
+        detect: {
+          email: false,
+          phone: true,
+          ssn: true,
+          creditCard: true,
+        },
+      });
+      const result = guard({
+        content: 'Email user@example.com or call 555-123-4567',
+      });
+      expect(result.action).toBe('block');
+      if (result.action === 'block') {
+        // Email detection is disabled, so phone should be the match
+        expect(result.reason).toContain('phone');
+      }
+    });
+  });
+
+  describe('PII in tool arguments vs plain text', () => {
+    it('detects PII embedded in JSON-like tool arguments', () => {
+      const { guard } = createPIIDetector();
+      const toolArgs = JSON.stringify({
+        to: 'user@example.com',
+        subject: 'Meeting',
+      });
+      const result = guard({ content: toolArgs });
+      expect(result.action).toBe('block');
+      if (result.action === 'block') {
+        expect(result.reason).toContain('email');
+      }
+    });
+
+    it('detects credit card in tool argument content', () => {
+      const { guard } = createPIIDetector();
+      const toolArgs = JSON.stringify({
+        payment: { cardNumber: '4111 1111 1111 1111' },
+      });
+      const result = guard({ content: toolArgs });
+      expect(result.action).toBe('block');
+      if (result.action === 'block') {
+        expect(result.reason).toContain('credit card');
+      }
+    });
+
+    it('allows tool arguments without PII', () => {
+      const { guard } = createPIIDetector();
+      const toolArgs = JSON.stringify({
+        action: 'search',
+        query: 'best restaurants nearby',
+      });
+      const result = guard({ content: toolArgs });
+      expect(result.action).toBe('allow');
+    });
+  });
+
   describe('selective detection', () => {
     it('can disable specific detectors', () => {
       const { guard } = createPIIDetector({

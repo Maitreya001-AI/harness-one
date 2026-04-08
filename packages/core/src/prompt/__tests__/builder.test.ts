@@ -212,4 +212,72 @@ describe('createPromptBuilder', () => {
       expect(result.metadata.cacheableTokens).toBeLessThanOrEqual(result.metadata.totalTokens);
     });
   });
+
+  describe('edge cases', () => {
+    it('cache hash stability: changing variable value does not change hash', () => {
+      const builder = createPromptBuilder();
+      builder.addLayer({
+        name: 'sys',
+        content: 'Role: {{role}}',
+        priority: 0,
+        cacheable: true,
+      });
+
+      builder.setVariable('role', 'admin');
+      const hash1 = builder.build().stablePrefixHash;
+
+      builder.setVariable('role', 'guest');
+      const hash2 = builder.build().stablePrefixHash;
+
+      expect(hash1).toBe(hash2);
+    });
+
+    it('empty layers — build returns empty string', () => {
+      const builder = createPromptBuilder();
+      const result = builder.build();
+      expect(result.systemPrompt).toBe('');
+      expect(result.metadata.layerCount).toBe(0);
+      // Token estimator may return a small baseline even for empty strings
+      expect(result.metadata.totalTokens).toBeGreaterThanOrEqual(0);
+    });
+
+    it('multiple variables in same layer', () => {
+      const builder = createPromptBuilder();
+      builder.addLayer({
+        name: 'multi',
+        content: '{{greeting}} {{name}}, welcome to {{place}}!',
+        priority: 0,
+        cacheable: false,
+      });
+      builder.setVariable('greeting', 'Hello');
+      builder.setVariable('name', 'Bob');
+      builder.setVariable('place', 'Earth');
+      const result = builder.build();
+      expect(result.systemPrompt).toBe('Hello Bob, welcome to Earth!');
+    });
+
+    it('variable not set — placeholder preserved as {{var}}', () => {
+      const builder = createPromptBuilder();
+      builder.addLayer({
+        name: 'mixed',
+        content: 'Hello {{name}}, your role is {{role}}',
+        priority: 0,
+        cacheable: false,
+      });
+      builder.setVariable('name', 'Alice');
+      // 'role' is intentionally not set
+      const result = builder.build();
+      expect(result.systemPrompt).toBe('Hello Alice, your role is {{role}}');
+    });
+
+    it('layer with priority 0 (highest importance)', () => {
+      const builder = createPromptBuilder();
+      builder.addLayer({ name: 'critical', content: 'Critical', priority: 0, cacheable: false });
+      builder.addLayer({ name: 'normal', content: 'Normal', priority: 5, cacheable: false });
+      builder.addLayer({ name: 'low', content: 'Low', priority: 10, cacheable: false });
+      const result = builder.build();
+      expect(result.layers[0].name).toBe('critical');
+      expect(result.layers[0].priority).toBe(0);
+    });
+  });
 });

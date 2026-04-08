@@ -311,4 +311,89 @@ describe('createSessionManager', () => {
       sm.dispose();
     });
   });
+
+  describe('edge cases', () => {
+    it('concurrent lock attempt — throws SESSION_LOCKED', () => {
+      const sm = createSessionManager({ gcIntervalMs: 0 });
+      const session = sm.create();
+      sm.lock(session.id);
+      // Attempting to access (or lock-like operations) while locked should fail
+      expect(() => sm.access(session.id)).toThrow(HarnessError);
+      try {
+        sm.access(session.id);
+      } catch (e) {
+        expect((e as HarnessError).code).toBe('SESSION_LOCKED');
+      }
+      sm.dispose();
+    });
+
+    it('unlock after destroy — throws HarnessError', () => {
+      const sm = createSessionManager({ gcIntervalMs: 0 });
+      const session = sm.create();
+      const { unlock } = sm.lock(session.id);
+      sm.destroy(session.id);
+      expect(() => unlock()).toThrow(HarnessError);
+      try {
+        unlock();
+      } catch (e) {
+        expect((e as HarnessError).code).toBe('SESSION_NOT_FOUND');
+      }
+      sm.dispose();
+    });
+
+    it('event unsubscribe function works', () => {
+      const events: SessionEvent[] = [];
+      const sm = createSessionManager({ gcIntervalMs: 0 });
+      const unsub = sm.onEvent(e => events.push(e));
+
+      sm.create();
+      const countAfterFirst = events.length;
+      expect(countAfterFirst).toBeGreaterThan(0);
+
+      unsub();
+
+      sm.create();
+      // No new events after unsubscribe
+      expect(events.length).toBe(countAfterFirst);
+      sm.dispose();
+    });
+
+    it('session metadata update reflected in get()', () => {
+      const sm = createSessionManager({ gcIntervalMs: 0 });
+      const session = sm.create({ userId: 'alice', theme: 'dark' });
+      const got = sm.get(session.id);
+      expect(got).toBeDefined();
+      expect(got!.metadata.userId).toBe('alice');
+      expect(got!.metadata.theme).toBe('dark');
+      sm.dispose();
+    });
+
+    it('access expired session — throws SESSION_EXPIRED', () => {
+      const sm = createSessionManager({ ttlMs: 1, gcIntervalMs: 0 });
+      const session = sm.create();
+      // Force time forward so session is expired
+      vi.spyOn(Date, 'now').mockReturnValue(session.createdAt + 1000);
+      expect(() => sm.access(session.id)).toThrow(HarnessError);
+      try {
+        sm.access(session.id);
+      } catch (e) {
+        expect((e as HarnessError).code).toBe('SESSION_EXPIRED');
+      }
+      sm.dispose();
+    });
+
+    it('dispose() prevents further GC runs from clearing active sessions', () => {
+      const sm = createSessionManager({ ttlMs: 1, gcIntervalMs: 10 });
+      const session = sm.create();
+      sm.dispose();
+      // After dispose, GC timer is cleared, so even if we wait,
+      // manual gc() still works but auto-gc won't run
+      vi.spyOn(Date, 'now').mockReturnValue(session.createdAt + 1000);
+      // The session should still be accessible via get() (even though expired,
+      // it is not auto-removed because GC timer was disposed)
+      const got = sm.get(session.id);
+      expect(got).toBeDefined();
+      expect(got!.status).toBe('expired');
+    });
+  });
 });

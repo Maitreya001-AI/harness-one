@@ -181,5 +181,75 @@ describe('createComponentRegistry', () => {
       const stale = registry.getStale(30);
       expect(stale).toHaveLength(0);
     });
+
+    it('getStale with various ages', () => {
+      const registry = createComponentRegistry();
+      // Validated 10 days ago
+      const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
+      // Validated 60 days ago
+      const sixtyDaysAgo = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
+      registry.register(makeMeta({ id: 'recent', lastValidated: tenDaysAgo }));
+      registry.register(makeMeta({ id: 'old', lastValidated: sixtyDaysAgo }));
+      registry.register(makeMeta({ id: 'never' }));
+
+      // maxAgeDays=30 should return 'old' (60 days) and 'never' (no validation)
+      const stale30 = registry.getStale(30);
+      expect(stale30).toHaveLength(2);
+      expect(stale30.some(c => c.id === 'old')).toBe(true);
+      expect(stale30.some(c => c.id === 'never')).toBe(true);
+
+      // maxAgeDays=5 should return all three (10 > 5, 60 > 5, never)
+      const stale5 = registry.getStale(5);
+      expect(stale5).toHaveLength(3);
+
+      // maxAgeDays=90 should return only 'never' (no validation)
+      const stale90 = registry.getStale(90);
+      expect(stale90).toHaveLength(1);
+      expect(stale90[0].id).toBe('never');
+    });
+  });
+
+  describe('edge cases', () => {
+    it('validate() with context that meets retirement condition', () => {
+      const registry = createComponentRegistry();
+      registry.register(makeMeta({
+        id: 'retire-me',
+        retirementCondition: 'score >= 100',
+      }));
+      const result = registry.validate('retire-me', { score: 150 });
+      expect(result.valid).toBe(false);
+      expect(result.reason).toContain('Retirement condition met');
+    });
+
+    it('validate() with context that does not meet condition', () => {
+      const registry = createComponentRegistry();
+      registry.register(makeMeta({
+        id: 'keep-me',
+        retirementCondition: 'score >= 100',
+      }));
+      const result = registry.validate('keep-me', { score: 50 });
+      expect(result.valid).toBe(true);
+    });
+
+    it('multiple operators in retirement condition', () => {
+      const registry = createComponentRegistry();
+
+      // Test != operator
+      registry.register(makeMeta({ id: 'ne-test', retirementCondition: 'version != 3' }));
+      expect(registry.validate('ne-test', { version: 5 }).valid).toBe(false);
+      expect(registry.validate('ne-test', { version: 3 }).valid).toBe(true);
+
+      // Test <= operator
+      registry.register(makeMeta({ id: 'le-test', retirementCondition: 'latency <= 50' }));
+      expect(registry.validate('le-test', { latency: 50 }).valid).toBe(false);
+      expect(registry.validate('le-test', { latency: 49 }).valid).toBe(false);
+      expect(registry.validate('le-test', { latency: 51 }).valid).toBe(true);
+
+      // Test < operator
+      registry.register(makeMeta({ id: 'lt-test', retirementCondition: 'accuracy < 0.5' }));
+      expect(registry.validate('lt-test', { accuracy: 0.3 }).valid).toBe(false);
+      expect(registry.validate('lt-test', { accuracy: 0.5 }).valid).toBe(true);
+      expect(registry.validate('lt-test', { accuracy: 0.8 }).valid).toBe(true);
+    });
   });
 });

@@ -179,5 +179,64 @@ describe('createPromptRegistry', () => {
       reg.removeExpired();
       expect(reg.has('gone')).toBe(false);
     });
+
+    it('template at exact expiry boundary (Date.now() === expiresAt) is NOT expired', () => {
+      const reg = createPromptRegistry();
+      const now = Date.now();
+      reg.register({ id: 'boundary', version: '1.0', content: 'Boundary', variables: [], expiresAt: now });
+      // isExpired uses Date.now() > expiresAt, so at exact boundary it should NOT be expired
+      // (because the time the check runs may equal expiresAt)
+      // We mock Date.now to return exactly the expiresAt value
+      const origNow = Date.now;
+      Date.now = () => now;
+      try {
+        expect(reg.isExpired('boundary')).toBe(false);
+      } finally {
+        Date.now = origNow;
+      }
+    });
+
+    it('multiple versions: some expired, some not', () => {
+      const reg = createPromptRegistry();
+      const pastMs = Date.now() - 60_000;
+      const futureMs = Date.now() + 60_000;
+      reg.register({ id: 'multi', version: '1.0', content: 'old', variables: [], expiresAt: pastMs });
+      reg.register({ id: 'multi', version: '2.0', content: 'new', variables: [], expiresAt: futureMs });
+      reg.register({ id: 'multi', version: '3.0', content: 'newest', variables: [], expiresAt: pastMs });
+
+      const expired = reg.getExpired();
+      const expiredVersions = expired.map(t => t.version);
+      expect(expiredVersions).toContain('1.0');
+      expect(expiredVersions).toContain('3.0');
+      expect(expiredVersions).not.toContain('2.0');
+
+      const removed = reg.removeExpired();
+      expect(removed).toBe(2);
+      expect(reg.get('multi', '2.0')).toBeDefined();
+      expect(reg.get('multi', '1.0')).toBeUndefined();
+      expect(reg.get('multi', '3.0')).toBeUndefined();
+    });
+
+    it('getLatestVersion returns most recently registered', () => {
+      const reg = createPromptRegistry();
+      reg.register({ id: 'seq', version: '1.0', content: 'First', variables: [] });
+      reg.register({ id: 'seq', version: '2.0', content: 'Second', variables: [] });
+      reg.register({ id: 'seq', version: '3.0', content: 'Third', variables: [] });
+      // get() without version should return the last registered
+      const latest = reg.get('seq');
+      expect(latest).toBeDefined();
+      expect(latest!.version).toBe('3.0');
+      expect(latest!.content).toBe('Third');
+    });
+
+    it('remove non-existent template — no error', () => {
+      const reg = createPromptRegistry();
+      // removeExpired on empty registry should not throw
+      expect(reg.removeExpired()).toBe(0);
+      // Register one non-expired template, removeExpired should still return 0
+      reg.register({ id: 'safe', version: '1.0', content: 'Safe', variables: [] });
+      expect(reg.removeExpired()).toBe(0);
+      expect(reg.has('safe')).toBe(true);
+    });
   });
 });

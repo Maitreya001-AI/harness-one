@@ -170,4 +170,65 @@ describe('defineTool', () => {
 
     expect(tool.responseFormat).toBeUndefined();
   });
+
+  describe('edge cases', () => {
+    it('tool with responseFormat preserved on frozen definition', () => {
+      const tool = defineTool({
+        name: 'detailed',
+        description: 'Detailed tool',
+        parameters: { type: 'object' },
+        responseFormat: 'detailed',
+        execute: async () => toolSuccess('data'),
+      });
+      expect(tool.responseFormat).toBe('detailed');
+      expect(Object.isFrozen(tool)).toBe(true);
+      // Verify it cannot be changed
+      expect(() => {
+        (tool as any).responseFormat = 'concise';
+      }).toThrow();
+    });
+
+    it('tool handler returning complex nested object', async () => {
+      const tool = defineTool<Record<string, never>>({
+        name: 'complex',
+        description: 'Returns complex data',
+        parameters: { type: 'object' },
+        execute: async () => toolSuccess({
+          users: [
+            { name: 'Alice', roles: ['admin', 'user'], profile: { age: 30 } },
+            { name: 'Bob', roles: ['user'], profile: { age: 25 } },
+          ],
+          meta: { total: 2, page: 1 },
+        }),
+      });
+
+      const result = await tool.execute({});
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).toHaveProperty('users');
+        expect((result.data as any).users).toHaveLength(2);
+        expect((result.data as any).users[0].roles).toContain('admin');
+        expect((result.data as any).meta.total).toBe(2);
+      }
+    });
+
+    it('tool handler with async error (rejected promise)', async () => {
+      const tool = defineTool({
+        name: 'async_fail',
+        description: 'Fails asynchronously',
+        parameters: { type: 'object' },
+        execute: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 1));
+          throw new Error('async failure');
+        },
+      });
+
+      const result = await tool.execute({});
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.message).toBe('async failure');
+        expect(result.error.category).toBe('internal');
+      }
+    });
+  });
 });

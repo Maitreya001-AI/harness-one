@@ -93,6 +93,60 @@ describe('extractNewCases', () => {
     expect(newCases[0].input).not.toBe('case-abc');
   });
 
+  describe('edge cases', () => {
+    it('returns empty array when all cases pass (no new cases generated)', () => {
+      const report = makeReport([
+        { caseId: 'c1', scores: { relevance: 0.9, quality: 0.95 } },
+        { caseId: 'c2', scores: { relevance: 0.85, quality: 0.9 } },
+      ]);
+      const cases = extractNewCases(report, { scoreThreshold: 0.5 });
+      expect(cases).toHaveLength(0);
+    });
+
+    it('maxNewCases limits output to specified count', () => {
+      const report = makeReport([
+        { caseId: 'c1', scores: { r: 0.1 } },
+        { caseId: 'c2', scores: { r: 0.15 } },
+        { caseId: 'c3', scores: { r: 0.2 } },
+        { caseId: 'c4', scores: { r: 0.25 } },
+        { caseId: 'c5', scores: { r: 0.3 } },
+      ]);
+      const cases = extractNewCases(report, { scoreThreshold: 0.5, maxNewCases: 2 });
+      expect(cases).toHaveLength(2);
+      // Should get the worst two
+      expect(cases[0].metadata!.sourceCase).toBe('c1');
+      expect(cases[1].metadata!.sourceCase).toBe('c2');
+    });
+
+    it('cases are sorted by score ascending (worst first)', () => {
+      const report = makeReport([
+        { caseId: 'c1', scores: { r: 0.3 } },
+        { caseId: 'c2', scores: { r: 0.1 } },
+        { caseId: 'c3', scores: { r: 0.2 } },
+      ]);
+      const cases = extractNewCases(report, { scoreThreshold: 0.5 });
+      expect(cases).toHaveLength(3);
+      // Sorted: c2 (0.1), c3 (0.2), c1 (0.3)
+      expect(cases[0].metadata!.sourceCase).toBe('c2');
+      expect(cases[1].metadata!.sourceCase).toBe('c3');
+      expect(cases[2].metadata!.sourceCase).toBe('c1');
+    });
+
+    it('maxNewCases=0 returns empty array', () => {
+      const report = makeReport([
+        { caseId: 'c1', scores: { r: 0.1 } },
+      ]);
+      const cases = extractNewCases(report, { scoreThreshold: 0.5, maxNewCases: 0 });
+      expect(cases).toHaveLength(0);
+    });
+
+    it('report with empty results returns empty array', () => {
+      const report = makeReport([]);
+      const cases = extractNewCases(report, { scoreThreshold: 0.5 });
+      expect(cases).toHaveLength(0);
+    });
+  });
+
   it('falls back gracefully when original cases not provided', () => {
     const report = makeReport([
       { caseId: 'case-abc', scores: { relevance: 0.1 } },

@@ -177,3 +177,57 @@ describe('noCircularDepsRule - weak module detection fix', () => {
     expect(result.passed).toBe(true);
   });
 });
+
+describe('architecture-checker edge cases', () => {
+  it('path segment matching does not false-positive on substrings', () => {
+    const rule = layerDependencyRule({
+      core: [],
+      context: ['core'],
+    });
+    // 'hardcore' contains 'core' but should not be matched
+    const result = rule.check({
+      files: ['src/hardcore/utils.ts'],
+      imports: {
+        'src/hardcore/utils.ts': ['src/context/pack.ts'],
+      },
+    });
+    // 'hardcore' is NOT module 'core', so no violation
+    expect(result.passed).toBe(true);
+
+    // But 'core' as a proper path segment DOES match
+    const result2 = rule.check({
+      files: ['src/core/types.ts'],
+      imports: {
+        'src/core/types.ts': ['src/context/pack.ts'],
+      },
+    });
+    expect(result2.passed).toBe(false);
+  });
+
+  it('self-import cycle detection', () => {
+    const rule = noCircularDepsRule(['core', 'context']);
+    // A file in 'core' importing from another file in 'core' should not trigger cycle
+    const result = rule.check({
+      files: ['src/core/types.ts', 'src/core/errors.ts'],
+      imports: {
+        'src/core/types.ts': ['src/core/errors.ts'],
+        'src/core/errors.ts': ['src/core/types.ts'],
+      },
+    });
+    // Same module imports are not cross-module cycles
+    expect(result.passed).toBe(true);
+  });
+
+  it('empty dependency map', () => {
+    const checker = createArchitectureChecker();
+    checker.addRule(noCircularDepsRule(['core', 'context', 'tools']));
+    checker.addRule(layerDependencyRule({
+      core: [],
+      context: ['core'],
+      tools: ['core'],
+    }));
+    const result = checker.check({ files: [], imports: {} });
+    expect(result.passed).toBe(true);
+    expect(result.violations).toHaveLength(0);
+  });
+});

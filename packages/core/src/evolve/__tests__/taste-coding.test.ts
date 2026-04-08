@@ -197,4 +197,66 @@ describe('createTasteCodingRegistry', () => {
       expect(typeof registry.getMetrics().lastCheckTimestamp).toBe('number');
     });
   });
+
+  describe('edge cases', () => {
+    it('checkCompliance with compliant code — empty violations', () => {
+      const registry = createTasteCodingRegistry();
+      registry.addRule(makeRule({
+        id: 'tc-001',
+        pattern: 'eval(',
+        rule: 'Never use eval',
+        enforcement: 'lint',
+      }));
+      registry.addRule(makeRule({
+        id: 'tc-002',
+        pattern: 'var ',
+        rule: 'Use const/let instead of var',
+        enforcement: 'ci',
+      }));
+
+      const violations = registry.checkCompliance('const x = 42; const y = x + 1;');
+      expect(violations).toHaveLength(0);
+    });
+
+    it('getMetrics tracks lastCheckTimestamp updates', () => {
+      const registry = createTasteCodingRegistry();
+      registry.addRule(makeRule({ id: 'r1', enforcement: 'lint' }));
+
+      expect(registry.getMetrics().lastCheckTimestamp).toBeNull();
+
+      registry.checkCompliance('some code');
+      const firstTimestamp = registry.getMetrics().lastCheckTimestamp;
+      expect(firstTimestamp).not.toBeNull();
+      expect(typeof firstTimestamp).toBe('number');
+
+      // Second check should update the timestamp
+      registry.checkCompliance('more code');
+      const secondTimestamp = registry.getMetrics().lastCheckTimestamp;
+      expect(secondTimestamp).not.toBeNull();
+      expect(secondTimestamp!).toBeGreaterThanOrEqual(firstTimestamp!);
+    });
+
+    it('manual enforcement rules skipped in checkCompliance', () => {
+      const registry = createTasteCodingRegistry();
+      registry.addRule(makeRule({
+        id: 'tc-manual',
+        pattern: 'TODO',
+        rule: 'Resolve TODOs before merge',
+        enforcement: 'manual',
+      }));
+      registry.addRule(makeRule({
+        id: 'tc-lint',
+        pattern: 'console.log',
+        rule: 'Use structured logging',
+        enforcement: 'lint',
+      }));
+
+      // Code has both patterns, but only the lint rule should trigger
+      const violations = registry.checkCompliance('// TODO: console.log("debug")');
+      expect(violations).toHaveLength(1);
+      expect(violations[0].ruleId).toBe('tc-lint');
+      // Manual rule should NOT appear in violations
+      expect(violations.some(v => v.ruleId === 'tc-manual')).toBe(false);
+    });
+  });
 });

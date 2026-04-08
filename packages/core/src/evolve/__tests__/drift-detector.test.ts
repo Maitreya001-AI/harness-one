@@ -146,4 +146,71 @@ describe('createDriftDetector', () => {
       expect(report.deviations[0].severity).toBe('low');
     });
   });
+
+  describe('edge cases', () => {
+    it('custom thresholds change severity classification', () => {
+      // With very tight thresholds (low=0.01, medium=0.05)
+      const detector = createDriftDetector({
+        thresholds: { low: 0.01, medium: 0.05 },
+      });
+      detector.setBaseline('comp-1', { value: 100 });
+
+      // 2% change — normally 'low' but with tight thresholds should be 'medium'
+      const report = detector.check('comp-1', { value: 102 });
+      expect(report.deviations[0].severity).toBe('medium');
+
+      // 10% change — should be 'high' with tight thresholds
+      const report2 = detector.check('comp-1', { value: 110 });
+      expect(report2.deviations[0].severity).toBe('high');
+    });
+
+    it('zero baseline handling', () => {
+      const detector = createDriftDetector();
+      detector.setBaseline('comp-1', { value: 0 });
+
+      // When baseline is 0 and actual is also 0, should be 'low' (no drift)
+      const sameReport = detector.check('comp-1', { value: 0 });
+      expect(sameReport.driftDetected).toBe(false);
+
+      // When baseline is 0 and actual is non-zero, should be 'high'
+      const diffReport = detector.check('comp-1', { value: 5 });
+      expect(diffReport.driftDetected).toBe(true);
+      expect(diffReport.deviations[0].severity).toBe('high');
+    });
+
+    it('string value change detection', () => {
+      const detector = createDriftDetector();
+      detector.setBaseline('comp-1', { name: 'alpha', version: 'v1' });
+
+      // Same strings — no drift
+      const same = detector.check('comp-1', { name: 'alpha', version: 'v1' });
+      expect(same.driftDetected).toBe(false);
+
+      // Different string — drift detected with medium severity (same type, different value)
+      const diff = detector.check('comp-1', { name: 'beta', version: 'v1' });
+      expect(diff.driftDetected).toBe(true);
+      const nameDev = diff.deviations.find(d => d.field === 'name');
+      expect(nameDev).toBeDefined();
+      expect(nameDev!.severity).toBe('medium');
+    });
+
+    it('boolean drift detection', () => {
+      const detector = createDriftDetector();
+      detector.setBaseline('comp-1', { enabled: true, debug: false });
+
+      // Same booleans — no drift
+      const same = detector.check('comp-1', { enabled: true, debug: false });
+      expect(same.driftDetected).toBe(false);
+
+      // Changed boolean — drift detected
+      const diff = detector.check('comp-1', { enabled: false, debug: false });
+      expect(diff.driftDetected).toBe(true);
+      const enabledDev = diff.deviations.find(d => d.field === 'enabled');
+      expect(enabledDev).toBeDefined();
+      expect(enabledDev!.expected).toBe(true);
+      expect(enabledDev!.actual).toBe(false);
+      // Same type (boolean) but different value should be 'medium'
+      expect(enabledDev!.severity).toBe('medium');
+    });
+  });
 });
