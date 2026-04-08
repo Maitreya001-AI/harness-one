@@ -1297,6 +1297,33 @@ describe('AgentLoop', () => {
     });
   });
 
+  describe('Pre-call token budget check (lines 128-135)', () => {
+    it('triggers pre-call budget check with maxTotalTokens of -1', async () => {
+      let chatCalled = false;
+      const adapter: AgentAdapter = {
+        async chat() {
+          chatCalled = true;
+          return { message: { role: 'assistant', content: 'Hi' }, usage: USAGE };
+        },
+      };
+
+      // With maxTotalTokens = -1, the pre-call check (0 > -1 = true) fires
+      // before any LLM call is made
+      const loop = new AgentLoop({ adapter, maxTotalTokens: -1 });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'test' }]));
+
+      // The adapter should NOT have been called because budget check fires first
+      expect(chatCalled).toBe(false);
+
+      const errorEvent = events.find((e) => e.type === 'error');
+      expect(errorEvent).toBeDefined();
+
+      const done = events.find((e) => e.type === 'done') as Extract<AgentEvent, { type: 'done' }>;
+      expect(done).toBeDefined();
+      expect(done.reason).toBe('token_budget');
+    });
+  });
+
   describe('Error event type (comprehensive)', () => {
     it('yields error event with the original Error instance when adapter.chat() throws', async () => {
       const originalError = new Error('Network timeout after 30s');

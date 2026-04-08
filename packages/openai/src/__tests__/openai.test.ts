@@ -1,4 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+const { mockOpenAIConstructor } = vi.hoisted(() => {
+  const mockCreateFn = vi.fn();
+  const mockOpenAIConstructor = vi.fn().mockImplementation(() => ({
+    chat: {
+      completions: {
+        create: mockCreateFn,
+      },
+    },
+    _mockCreate: mockCreateFn,
+  }));
+  return { mockOpenAIConstructor };
+});
+
+vi.mock('openai', () => ({
+  default: mockOpenAIConstructor,
+}));
+
 import { createOpenAIAdapter, providers } from '../index.js';
 import type { OpenAIAdapterConfig } from '../index.js';
 import type { Message } from 'harness-one/core';
@@ -246,7 +264,6 @@ describe('createOpenAIAdapter', () => {
       expect(calledMessages[1].tool_calls).toHaveLength(1);
       expect(calledMessages[1].tool_calls[0].function.name).toBe('search');
     });
-  });
 
     it('converts plain assistant messages (no tool calls) correctly', async () => {
       mock.mocks.create.mockResolvedValue({
@@ -506,6 +523,27 @@ describe('createOpenAIAdapter', () => {
       // The last chunk should always be a 'done' event
       const lastChunk = chunks[chunks.length - 1] as any;
       expect(lastChunk.type).toBe('done');
+    });
+  });
+
+  describe('client creation', () => {
+    it('creates OpenAI client with apiKey, baseURL, defaultHeaders, and maxRetries when no client provided', () => {
+      mockOpenAIConstructor.mockClear();
+
+      createOpenAIAdapter({
+        apiKey: 'test-key',
+        baseURL: 'https://custom.api.com',
+        defaultHeaders: { 'X-Custom': 'header' },
+        maxRetries: 5,
+        model: 'gpt-4',
+      });
+
+      expect(mockOpenAIConstructor).toHaveBeenCalledWith({
+        apiKey: 'test-key',
+        baseURL: 'https://custom.api.com',
+        defaultHeaders: { 'X-Custom': 'header' },
+        maxRetries: 5,
+      });
     });
   });
 

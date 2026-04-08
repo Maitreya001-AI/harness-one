@@ -147,6 +147,124 @@ describe('createDriftDetector', () => {
     });
   });
 
+  describe('deepEqual edge cases', () => {
+    it('handles null values correctly', () => {
+      const detector = createDriftDetector();
+      detector.setBaseline('comp-1', { a: null as unknown as string });
+
+      const same = detector.check('comp-1', { a: null as unknown as string });
+      expect(same.driftDetected).toBe(false);
+
+      const diff = detector.check('comp-1', { a: 'not null' });
+      expect(diff.driftDetected).toBe(true);
+    });
+
+    it('detects type change drift as high severity', () => {
+      const detector = createDriftDetector();
+      detector.setBaseline('comp-1', { value: 100 });
+
+      // number -> string type change
+      const report = detector.check('comp-1', { value: '100' as unknown as number });
+      expect(report.driftDetected).toBe(true);
+      expect(report.deviations[0].severity).toBe('high');
+    });
+
+    it('handles array length mismatch', () => {
+      const detector = createDriftDetector();
+      detector.setBaseline('comp-1', { items: [1, 2] });
+
+      const report = detector.check('comp-1', { items: [1, 2, 3] });
+      expect(report.driftDetected).toBe(true);
+    });
+
+    it('handles deeply nested object comparison', () => {
+      const detector = createDriftDetector();
+      detector.setBaseline('comp-1', { nested: { deep: { value: 42 } } });
+
+      const same = detector.check('comp-1', { nested: { deep: { value: 42 } } });
+      expect(same.driftDetected).toBe(false);
+
+      const diff = detector.check('comp-1', { nested: { deep: { value: 43 } } });
+      expect(diff.driftDetected).toBe(true);
+    });
+
+    it('null vs non-null is detected as drift', () => {
+      const detector = createDriftDetector();
+      detector.setBaseline('comp-1', { a: null as unknown as string });
+
+      const report = detector.check('comp-1', { a: { b: 1 } as unknown as string });
+      expect(report.driftDetected).toBe(true);
+    });
+
+    it('object key superset detection', () => {
+      const detector = createDriftDetector();
+      detector.setBaseline('comp-1', { a: { x: 1 } });
+
+      // Extra key in current
+      const report = detector.check('comp-1', { a: { x: 1, y: 2 } });
+      expect(report.driftDetected).toBe(true);
+    });
+  });
+
+  describe('classifyWithThresholds edge cases', () => {
+    it('classifies zero baseline with zero actual as low', () => {
+      const detector = createDriftDetector();
+      detector.setBaseline('comp-1', { value: 0 });
+
+      const report = detector.check('comp-1', { value: 0 });
+      expect(report.driftDetected).toBe(false);
+    });
+
+    it('classifies zero baseline with non-zero actual as high', () => {
+      const detector = createDriftDetector();
+      detector.setBaseline('comp-1', { value: 0 });
+
+      const report = detector.check('comp-1', { value: 1 });
+      expect(report.driftDetected).toBe(true);
+      expect(report.deviations[0].severity).toBe('high');
+    });
+
+    it('classifies different types (number vs string) as high', () => {
+      const detector = createDriftDetector();
+      detector.setBaseline('comp-1', { value: 42 });
+
+      const report = detector.check('comp-1', { value: 'forty-two' as unknown as number });
+      expect(report.driftDetected).toBe(true);
+      expect(report.deviations[0].severity).toBe('high');
+    });
+
+    it('classifies same type non-number values (string vs string) as medium', () => {
+      const detector = createDriftDetector();
+      detector.setBaseline('comp-1', { label: 'alpha' });
+
+      const report = detector.check('comp-1', { label: 'beta' });
+      expect(report.driftDetected).toBe(true);
+      expect(report.deviations[0].severity).toBe('medium');
+    });
+
+    it('classifies undefined expected as high severity', () => {
+      const detector = createDriftDetector();
+      detector.setBaseline('comp-1', { a: 1 });
+
+      // New key 'b' not in baseline => expected is undefined
+      const report = detector.check('comp-1', { a: 1, b: 99 });
+      expect(report.driftDetected).toBe(true);
+      const bDev = report.deviations.find(d => d.field === 'b');
+      expect(bDev!.severity).toBe('high');
+    });
+
+    it('classifies undefined actual as high severity', () => {
+      const detector = createDriftDetector();
+      detector.setBaseline('comp-1', { a: 1, b: 2 });
+
+      // Key 'b' missing in current => actual is undefined
+      const report = detector.check('comp-1', { a: 1 });
+      expect(report.driftDetected).toBe(true);
+      const bDev = report.deviations.find(d => d.field === 'b');
+      expect(bDev!.severity).toBe('high');
+    });
+  });
+
   describe('edge cases', () => {
     it('custom thresholds change severity classification', () => {
       // With very tight thresholds (low=0.01, medium=0.05)

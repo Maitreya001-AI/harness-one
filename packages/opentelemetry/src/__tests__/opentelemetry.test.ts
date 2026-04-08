@@ -164,6 +164,42 @@ describe('createOTelExporter', () => {
     expect(attrNames).not.toContain('harness.parent.id');
   });
 
+  it('exports an error span with ERROR status', async () => {
+    const exporter = createOTelExporter({ tracer: mock.tracer });
+    const span: Span = {
+      id: 'span-err',
+      traceId: 'trace-1',
+      name: 'failing-op',
+      startTime: 1000,
+      endTime: 2000,
+      attributes: {},
+      events: [],
+      status: 'error',
+    };
+
+    await exporter.exportSpan(span);
+
+    expect(mock.mocks.setStatus).toHaveBeenCalledWith({ code: 2 }); // SpanStatusCode.ERROR = 2
+  });
+
+  it('exports a completed span with OK status', async () => {
+    const exporter = createOTelExporter({ tracer: mock.tracer });
+    const span: Span = {
+      id: 'span-ok',
+      traceId: 'trace-1',
+      name: 'success-op',
+      startTime: 1000,
+      endTime: 2000,
+      attributes: {},
+      events: [],
+      status: 'completed',
+    };
+
+    await exporter.exportSpan(span);
+
+    expect(mock.mocks.setStatus).toHaveBeenCalledWith({ code: 1 }); // SpanStatusCode.OK = 1
+  });
+
   it('does not set status for running spans', async () => {
     const exporter = createOTelExporter({ tracer: mock.tracer });
     const span: Span = {

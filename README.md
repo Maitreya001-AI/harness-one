@@ -79,6 +79,8 @@ if (check.passed) {
 
 The execution engine. Calls your LLM adapter in a loop, dispatches tool calls, and enforces safety valves (max iterations, token budgets, abort signals).
 
+Adapters receive `ChatParams.signal` (an `AbortSignal`) and should forward it to their underlying SDK to cancel in-flight requests when the loop is aborted. `LLMConfig.extra` accepts a `Record<string, unknown>` for provider-specific options that fall outside the standard fields.
+
 ```typescript
 import { AgentLoop } from 'harness-one/core';
 import type { AgentAdapter, Message } from 'harness-one/core';
@@ -394,6 +396,65 @@ checker.addRule(layerDependencyRule({
   tools: ['core'],
 }));
 ```
+
+## harness-one-full — Batteries Included
+
+`harness-one-full` wires all modules and integrations together in a single `createHarness()` call. Install it when you want a fully-configured harness without writing boilerplate.
+
+```bash
+npm install harness-one-full @anthropic-ai/sdk
+```
+
+```typescript
+import Anthropic from '@anthropic-ai/sdk';
+import { createHarness } from 'harness-one-full';
+
+// HarnessConfig is a discriminated union keyed by `provider`.
+// Pass `provider: 'anthropic'` or `provider: 'openai'` — TypeScript
+// narrows the required `client` field accordingly.
+const harness = createHarness({
+  provider: 'anthropic',
+  client: new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }),
+  model: 'claude-sonnet-4-20250514',
+  maxIterations: 20,
+  guardrails: {
+    injection: { sensitivity: 'medium' },
+    rateLimit: { max: 10, windowMs: 60_000 },
+  },
+  budget: 5.0,
+});
+
+// Register tools, then run
+harness.tools.register(myTool);
+for await (const event of harness.run(messages)) {
+  if (event.type === 'message') console.log(event.message.content);
+  if (event.type === 'done') break;
+}
+
+await harness.shutdown();
+```
+
+**Provider variants**:
+
+```typescript
+// OpenAI
+import OpenAI from 'openai';
+const harness = createHarness({
+  provider: 'openai',
+  client: new OpenAI({ apiKey: process.env.OPENAI_API_KEY }),
+  model: 'gpt-4o',
+});
+```
+
+**Optional integrations** (pass pre-configured clients to enable):
+
+| Field | Type | Effect |
+|-------|------|--------|
+| `langfuse` | `Langfuse` instance | Enables Langfuse trace export and cost tracking |
+| `redis` | `Redis` instance | Enables Redis-backed persistent memory |
+| `tokenizer` | `'tiktoken'` | Registers tiktoken for exact token counts |
+
+All auto-configured components can be replaced by passing the explicit override field (`adapter`, `exporters`, `memoryStore`, `schemaValidator`).
 
 ## CLI Tool
 

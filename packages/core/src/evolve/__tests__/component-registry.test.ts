@@ -209,6 +209,89 @@ describe('createComponentRegistry', () => {
     });
   });
 
+  describe('validate with lastValidated set', () => {
+    it('returns valid with "assumption still valid" reason when lastValidated is set', () => {
+      const registry = createComponentRegistry();
+      registry.register(makeMeta({ id: 'validated' }));
+      registry.markValidated('validated');
+      const result = registry.validate('validated');
+      expect(result.valid).toBe(true);
+      expect(result.reason).toContain('still valid');
+    });
+
+    it('returns valid with "untested" reason when lastValidated is not set', () => {
+      const registry = createComponentRegistry();
+      registry.register(makeMeta({ id: 'unvalidated' }));
+      const result = registry.validate('unvalidated');
+      expect(result.valid).toBe(true);
+      expect(result.reason).toContain('untested');
+    });
+  });
+
+  describe('retirement condition edge cases', () => {
+    it('returns valid when condition string has no matching operator', () => {
+      const registry = createComponentRegistry();
+      registry.register(makeMeta({
+        id: 'no-op',
+        retirementCondition: 'just a description with no operator',
+      }));
+      // No operator found => evaluateCondition returns false => valid
+      const result = registry.validate('no-op', { anything: 42 });
+      expect(result.valid).toBe(true);
+    });
+
+    it('returns valid when context value is not a number', () => {
+      const registry = createComponentRegistry();
+      registry.register(makeMeta({
+        id: 'string-val',
+        retirementCondition: 'name > 5',
+      }));
+      // 'name' is a string, not a number => evaluateCondition returns false
+      const result = registry.validate('string-val', { name: 'hello' });
+      expect(result.valid).toBe(true);
+    });
+
+    it('returns valid when target value in condition is not a number', () => {
+      const registry = createComponentRegistry();
+      registry.register(makeMeta({
+        id: 'nan-target',
+        retirementCondition: 'score > abc',
+      }));
+      // 'abc' parses to NaN => evaluateCondition returns false
+      const result = registry.validate('nan-target', { score: 100 });
+      expect(result.valid).toBe(true);
+    });
+
+    it('returns valid when no retirementCondition is set', () => {
+      const registry = createComponentRegistry();
+      registry.register(makeMeta({
+        id: 'no-condition',
+        retirementCondition: undefined,
+      }));
+      const result = registry.validate('no-condition', { score: 999 });
+      expect(result.valid).toBe(true);
+    });
+  });
+
+  describe('list without filter returns all', () => {
+    it('returns all components when no filter is provided', () => {
+      const registry = createComponentRegistry();
+      registry.register(makeMeta({ id: 'a' }));
+      registry.register(makeMeta({ id: 'b' }));
+      const all = registry.list();
+      expect(all).toHaveLength(2);
+    });
+
+    it('returns all components when filter has empty tags', () => {
+      const registry = createComponentRegistry();
+      registry.register(makeMeta({ id: 'a', tags: ['x'] }));
+      registry.register(makeMeta({ id: 'b' }));
+      // Empty tags array should not filter
+      const all = registry.list({ tags: [] });
+      expect(all).toHaveLength(2);
+    });
+  });
+
   describe('edge cases', () => {
     it('validate() with context that meets retirement condition', () => {
       const registry = createComponentRegistry();

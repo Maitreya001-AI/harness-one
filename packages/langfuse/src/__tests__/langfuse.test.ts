@@ -172,6 +172,80 @@ describe('createLangfuseExporter', () => {
     expect(mock.mocks.update).toHaveBeenCalledTimes(2);
   });
 
+  it('evicts oldest trace when traceMap exceeds MAX_TRACE_MAP_SIZE via exportSpan', async () => {
+    const exporter = createLangfuseExporter({ client: mock.client });
+
+    // Export 1002 unique spans (each with a unique traceId) to exceed the 1000 limit
+    for (let i = 0; i < 1002; i++) {
+      await exporter.exportSpan({
+        id: `span-${i}`,
+        traceId: `spanTrace-${i}`,
+        name: `op-${i}`,
+        startTime: Date.now(),
+        attributes: {},
+        events: [],
+        status: 'completed',
+      });
+    }
+
+    mock.mocks.trace.mockClear();
+    // The first trace should have been evicted
+    await exporter.exportSpan({
+      id: 'span-new',
+      traceId: 'spanTrace-0',
+      name: 'op-new',
+      startTime: Date.now(),
+      attributes: {},
+      events: [],
+      status: 'completed',
+    });
+
+    // trace() should be called because spanTrace-0 was evicted
+    expect(mock.mocks.trace).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'spanTrace-0' }),
+    );
+  });
+
+  it('exports a span with "chat" in name as generation', async () => {
+    const exporter = createLangfuseExporter({ client: mock.client });
+    const span: Span = {
+      id: 'span-chat',
+      traceId: 'trace-1',
+      name: 'chat-completion',
+      startTime: 1000,
+      endTime: 2000,
+      attributes: { input: 'hello', output: 'world' },
+      events: [],
+      status: 'completed',
+    };
+
+    await exporter.exportSpan(span);
+    expect(mock.mocks.generation).toHaveBeenCalled();
+    expect(mock.mocks.span).not.toHaveBeenCalled();
+  });
+
+  it('exports a span with parentId in metadata for non-generation spans', async () => {
+    const exporter = createLangfuseExporter({ client: mock.client });
+    const span: Span = {
+      id: 'span-child',
+      traceId: 'trace-1',
+      parentId: 'span-parent',
+      name: 'tool-exec',
+      startTime: 1000,
+      endTime: 2000,
+      attributes: { tool: 'web_search' },
+      events: [],
+      status: 'completed',
+    };
+
+    await exporter.exportSpan(span);
+    expect(mock.mocks.span).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({ parentId: 'span-parent' }),
+      }),
+    );
+  });
+
   it('evicts oldest trace when traceMap exceeds MAX_TRACE_MAP_SIZE', async () => {
     const exporter = createLangfuseExporter({ client: mock.client });
 

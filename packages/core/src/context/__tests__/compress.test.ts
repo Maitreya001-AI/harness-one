@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { compress } from '../compress.js';
 import type { Message } from '../../core/types.js';
 import { estimateTokens } from '../../_internal/token-estimator.js';
@@ -136,6 +136,87 @@ describe('compress', () => {
         const origIdxB = msgsWithFailure.findIndex((m) => m.content === contents[i + 1]);
         expect(origIdxA).toBeLessThan(origIdxB);
       }
+    });
+  });
+
+  describe('summarize strategy with preserved messages', () => {
+    it('preserves marked messages and summarizes the rest', async () => {
+      const msgs: Message[] = [
+        msg('system', 'System prompt'),
+        msg('user', 'First question'),
+        msg('assistant', 'First answer with lots of details'),
+        msg('user', 'Second question'),
+        msg('assistant', 'Second answer'),
+        msg('user', 'Third'),
+        msg('assistant', 'Third answer'),
+      ];
+
+      let summarizedMsgs: Message[] = [];
+      const result = await compress(msgs, {
+        strategy: 'summarize',
+        budget: 14,
+        preserve: (m) => m.role === 'system',
+        summarizer: async (toSummarize) => {
+          summarizedMsgs = toSummarize;
+          return `Summarized ${toSummarize.length} messages`;
+        },
+      });
+
+      // The system prompt should be preserved (moved to front)
+      expect(result.some((m) => m.content === 'System prompt')).toBe(true);
+      // There should be a summary message
+      expect(result.some((m) => m.content.includes('Summary'))).toBe(true);
+      // The system prompt should NOT have been summarized
+      expect(summarizedMsgs.some((m) => m.content === 'System prompt')).toBe(false);
+    });
+
+    it('returns original messages when nothing needs summarizing after preserve', async () => {
+      const msgs: Message[] = [
+        msg('user', 'Short'),
+        msg('assistant', 'Reply'),
+      ];
+
+      const result = await compress(msgs, {
+        strategy: 'summarize',
+        budget: 500, // large budget, nothing to summarize
+        preserve: (m) => m.role === 'user',
+        summarizer: async () => 'summary',
+      });
+
+      expect(result).toHaveLength(2);
+    });
+  });
+
+  describe('summarize strategy: toSummarize is empty returns original messages', () => {
+    it('returns original messages when all non-kept messages are preserved', async () => {
+      // The summarize strategy works backwards from the end keeping messages
+      // that fit in the budget. Messages that don't fit are either preserved
+      // (if preserve returns true) or summarized. If ALL non-kept messages
+      // are preserved, toSummarize is empty, and it returns [...messages].
+      //
+      // We need: total tokens > budget (so summarization is attempted),
+      // but all messages not kept by the backward pass are preserved.
+      const msgs: Message[] = [
+        msg('user', 'A'.repeat(200)),       // ~54 tokens, won't fit in budget
+        msg('user', 'B'.repeat(200)),       // ~54 tokens, won't fit in budget
+        msg('assistant', 'C'),               // ~5 tokens, fits in budget (kept from end)
+      ];
+
+      const summarizerFn = vi.fn(async () => 'summary');
+      const result = await compress(msgs, {
+        strategy: 'summarize',
+        budget: 10, // Only the last message 'C' fits
+        preserve: () => true, // Preserve ALL messages that aren't kept
+        summarizer: summarizerFn,
+      });
+
+      // The backward pass keeps 'C' (fits in 10 tokens).
+      // 'A' and 'B' don't fit, but preserve returns true for both,
+      // so they go to toKeep.unshift(), NOT toSummarize.
+      // toSummarize is empty => returns [...messages]
+      expect(result).toHaveLength(3);
+      // Summarizer should NOT have been called since toSummarize is empty
+      expect(summarizerFn).not.toHaveBeenCalled();
     });
   });
 
