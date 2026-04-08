@@ -7,7 +7,7 @@
  * @module
  */
 
-import Ajv from 'ajv';
+import { Ajv } from 'ajv';
 import type { JsonSchema } from 'harness-one/core';
 import type { SchemaValidator, ValidationError } from 'harness-one/tools';
 

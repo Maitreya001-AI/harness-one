@@ -81,6 +81,9 @@ vi.mock('@harness-one/tiktoken', () => ({
 
 import { createHarness } from '../index.js';
 import type { HarnessConfig } from '../index.js';
+import type { AgentAdapter } from 'harness-one/core';
+import type { MemoryStore } from 'harness-one/memory';
+import type { SchemaValidator } from 'harness-one/tools';
 
 describe('createHarness', () => {
   beforeEach(() => {
@@ -89,7 +92,7 @@ describe('createHarness', () => {
 
   const baseConfig: HarnessConfig = {
     provider: 'anthropic',
-    client: {} as any,
+    client: {},
     model: 'claude-sonnet-4-20250514',
   };
 
@@ -126,7 +129,7 @@ describe('createHarness', () => {
 
     it('uses custom adapter when provided', () => {
       const customAdapter = { chat: vi.fn() };
-      createHarness({ ...baseConfig, adapter: customAdapter as any });
+      createHarness({ ...baseConfig, adapter: customAdapter as unknown as AgentAdapter });
       expect(mocks.createAnthropicAdapter).not.toHaveBeenCalled();
       expect(mocks.createOpenAIAdapter).not.toHaveBeenCalled();
     });
@@ -172,10 +175,10 @@ describe('createHarness', () => {
     });
 
     it('uses custom memory store when provided', () => {
-      const customStore = {
+      const customStore: MemoryStore = {
         write: vi.fn(), read: vi.fn(), query: vi.fn(), update: vi.fn(),
         delete: vi.fn(), compact: vi.fn(), count: vi.fn(), clear: vi.fn(),
-      } as any;
+      } as unknown as MemoryStore;
       const harness = createHarness({ ...baseConfig, memoryStore: customStore, redis: {} });
       expect(mocks.createRedisStore).not.toHaveBeenCalled();
       expect(harness.memory).toBe(customStore);
@@ -189,7 +192,7 @@ describe('createHarness', () => {
     });
 
     it('uses custom schema validator when provided', () => {
-      const customValidator = { validate: vi.fn(() => ({ valid: true, errors: [] })) } as any;
+      const customValidator = { validate: vi.fn(() => ({ valid: true, errors: [] })) } as unknown as SchemaValidator;
       createHarness({ ...baseConfig, schemaValidator: customValidator });
       // When override is provided, Ajv should NOT be called
       expect(mocks.createAjvValidator).not.toHaveBeenCalled();
@@ -264,7 +267,7 @@ describe('createHarness', () => {
   describe('partial overrides', () => {
     it('allows overriding adapter while using default everything else', () => {
       const customAdapter = { chat: vi.fn() };
-      const harness = createHarness({ ...baseConfig, adapter: customAdapter as any });
+      const harness = createHarness({ ...baseConfig, adapter: customAdapter as unknown as AgentAdapter });
       expect(harness.loop).toBeDefined();
       expect(harness.memory).toBeDefined();
       expect(mocks.createAnthropicAdapter).not.toHaveBeenCalled();
@@ -274,7 +277,7 @@ describe('createHarness', () => {
       const customStore = {
         write: vi.fn(), read: vi.fn(), query: vi.fn(), update: vi.fn(),
         delete: vi.fn(), compact: vi.fn(), count: vi.fn(), clear: vi.fn(),
-      } as any;
+      } as unknown as MemoryStore;
       const harness = createHarness({ ...baseConfig, memoryStore: customStore });
       expect(harness.memory).toBe(customStore);
       expect(mocks.createAnthropicAdapter).toHaveBeenCalled();

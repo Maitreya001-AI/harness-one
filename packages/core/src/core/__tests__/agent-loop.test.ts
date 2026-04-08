@@ -412,7 +412,7 @@ describe('AgentLoop', () => {
 
     it('aborts the signal passed to adapter when abort() is called', async () => {
       let receivedSignal: AbortSignal | undefined;
-      let resolveChat: ((value: any) => void) | undefined;
+      let resolveChat: ((value: ChatResponse) => void) | undefined;
 
       const adapter: AgentAdapter = {
         chat(params) {

@@ -4,7 +4,9 @@ import {
   createLangfusePromptBackend,
   createLangfuseCostTracker,
 } from '../index.js';
+import type { LangfuseExporterConfig } from '../index.js';
 import type { Trace, Span } from 'harness-one/observe';
+import type { CostAlert } from 'harness-one/observe';
 
 // ---------------------------------------------------------------------------
 // Mock Langfuse client
@@ -30,7 +32,7 @@ function createMockLangfuse() {
       trace: traceFn,
       flushAsync: flushAsyncFn,
       getPrompt: getPromptFn,
-    } as any,
+    } as unknown as LangfuseExporterConfig['client'],
     mocks: {
       trace: traceFn,
       generation: generationFn,
@@ -326,7 +328,7 @@ describe('createLangfuseCostTracker', () => {
     ]);
     tracker.setBudget(1.0);
 
-    const alerts: any[] = [];
+    const alerts: CostAlert[] = [];
     tracker.onAlert((a) => alerts.push(a));
 
     // 85% usage -> warning

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createOpenAIAdapter, providers } from '../index.js';
+import type { OpenAIAdapterConfig } from '../index.js';
 import type { Message } from 'harness-one/core';
 import { HarnessError } from 'harness-one/core';
 
@@ -17,7 +18,7 @@ function createMockOpenAIClient() {
           create: createFn,
         },
       },
-    } as any,
+    } as unknown as NonNullable<OpenAIAdapterConfig['client']>,
     mocks: {
       create: createFn,
     },

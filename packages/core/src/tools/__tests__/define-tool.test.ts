@@ -184,7 +184,7 @@ describe('defineTool', () => {
       expect(Object.isFrozen(tool)).toBe(true);
       // Verify it cannot be changed
       expect(() => {
-        (tool as any).responseFormat = 'concise';
+        (tool as unknown as { responseFormat: string }).responseFormat = 'concise';
       }).toThrow();
     });
 
@@ -205,10 +205,11 @@ describe('defineTool', () => {
       const result = await tool.execute({});
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.data).toHaveProperty('users');
-        expect((result.data as any).users).toHaveLength(2);
-        expect((result.data as any).users[0].roles).toContain('admin');
-        expect((result.data as any).meta.total).toBe(2);
+        const data = result.data as { users: { name: string; roles: string[]; profile: { age: number } }[]; meta: { total: number; page: number } };
+        expect(data).toHaveProperty('users');
+        expect(data.users).toHaveLength(2);
+        expect(data.users[0].roles).toContain('admin');
+        expect(data.meta.total).toBe(2);
       }
     });
 

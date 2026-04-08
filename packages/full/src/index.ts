@@ -16,7 +16,7 @@ import type { PromptBuilder } from 'harness-one/prompt';
 import { createRegistry } from 'harness-one/tools';
 import type { ToolRegistry, SchemaValidator } from 'harness-one/tools';
 import { createPipeline, createInjectionDetector, createRateLimiter, createContentFilter } from 'harness-one/guardrails';
-import type { GuardrailPipeline } from 'harness-one/guardrails';
+import type { GuardrailPipeline, Guardrail } from 'harness-one/guardrails';
 import { createSessionManager } from 'harness-one/session';
 import type { SessionManager } from 'harness-one/session';
 import { createInMemoryStore } from 'harness-one/memory';
@@ -25,9 +25,13 @@ import { createEvalRunner, createRelevanceScorer } from 'harness-one/eval';
 import type { EvalRunner } from 'harness-one/eval';
 
 import { createAnthropicAdapter } from '@harness-one/anthropic';
+import type { AnthropicAdapterConfig } from '@harness-one/anthropic';
 import { createOpenAIAdapter } from '@harness-one/openai';
-import { createLangfuseExporter, createLangfusePromptBackend, createLangfuseCostTracker } from '@harness-one/langfuse';
+import type { OpenAIAdapterConfig } from '@harness-one/openai';
+import { createLangfuseExporter, createLangfuseCostTracker } from '@harness-one/langfuse';
+import type { LangfuseExporterConfig, LangfuseCostTrackerConfig } from '@harness-one/langfuse';
 import { createRedisStore } from '@harness-one/redis';
+import type { RedisStoreConfig } from '@harness-one/redis';
 import { createAjvValidator } from '@harness-one/ajv';
 import { registerTiktokenModels } from '@harness-one/tiktoken';
 
@@ -121,7 +125,7 @@ export function createHarness(config: HarnessConfig): Harness {
 
   // 6. Cost tracker
   const costs = config.langfuse
-    ? createLangfuseCostTracker({ client: config.langfuse as any })
+    ? createLangfuseCostTracker({ client: config.langfuse as LangfuseCostTrackerConfig['client'] })
     : createCostTracker();
 
   if (config.pricing) {
@@ -199,13 +203,13 @@ export function createHarness(config: HarnessConfig): Harness {
 function createAdapter(config: HarnessConfig): AgentAdapter {
   if (config.provider === 'anthropic') {
     return createAnthropicAdapter({
-      client: config.client as any,
+      client: config.client as AnthropicAdapterConfig['client'],
       model: config.model,
     });
   }
   if (config.provider === 'openai') {
     return createOpenAIAdapter({
-      client: config.client as any,
+      client: config.client as OpenAIAdapterConfig['client'],
       model: config.model,
     });
   }
@@ -214,54 +218,57 @@ function createAdapter(config: HarnessConfig): AgentAdapter {
 
 function createExporters(config: HarnessConfig): TraceExporter[] {
   if (config.langfuse) {
-    return [createLangfuseExporter({ client: config.langfuse as any })];
+    return [createLangfuseExporter({ client: config.langfuse as LangfuseExporterConfig['client'] })];
   }
   return [createConsoleExporter()];
 }
 
 function createMemory(config: HarnessConfig): MemoryStore {
   if (config.redis) {
-    return createRedisStore({ client: config.redis as any });
+    return createRedisStore({ client: config.redis as RedisStoreConfig['client'] });
   }
   return createInMemoryStore();
 }
 
 function createGuardrails(config: HarnessConfig): GuardrailPipeline {
-  const guardrailFns: Array<{ name: string; fn: any; direction: 'input' | 'output' }> = [];
+  const entries: Array<{ name: string; guard: Guardrail; direction: 'input' | 'output' }> = [];
 
   if (config.guardrails?.injection) {
     const sensitivity = typeof config.guardrails.injection === 'object'
       ? config.guardrails.injection.sensitivity
       : undefined;
-    guardrailFns.push({
-      name: 'injection',
-      fn: createInjectionDetector({ sensitivity }),
+    const detector = createInjectionDetector({ sensitivity });
+    entries.push({
+      name: detector.name,
+      guard: detector.guard,
       direction: 'input',
     });
   }
 
   if (config.guardrails?.rateLimit) {
-    guardrailFns.push({
-      name: 'rate-limit',
-      fn: createRateLimiter(config.guardrails.rateLimit),
+    const limiter = createRateLimiter(config.guardrails.rateLimit);
+    entries.push({
+      name: limiter.name,
+      guard: limiter.guard,
       direction: 'input',
     });
   }
 
   if (config.guardrails?.contentFilter) {
-    guardrailFns.push({
-      name: 'content-filter',
-      fn: createContentFilter(config.guardrails.contentFilter),
+    const filter = createContentFilter(config.guardrails.contentFilter);
+    entries.push({
+      name: filter.name,
+      guard: filter.guard,
       direction: 'output',
     });
   }
 
-  const input = guardrailFns
+  const input = entries
     .filter((g) => g.direction === 'input')
-    .map((g) => ({ name: g.name, fn: g.fn }));
-  const output = guardrailFns
+    .map((g) => ({ name: g.name, guard: g.guard }));
+  const output = entries
     .filter((g) => g.direction === 'output')
-    .map((g) => ({ name: g.name, fn: g.fn }));
+    .map((g) => ({ name: g.name, guard: g.guard }));
 
   return createPipeline({ input, output });
 }

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createAnthropicAdapter } from '../index.js';
+import type { AnthropicAdapterConfig } from '../index.js';
 import type { Message } from 'harness-one/core';
 
 // ---------------------------------------------------------------------------
@@ -16,7 +17,7 @@ function createMockAnthropicClient() {
         create: createFn,
         stream: streamFn,
       },
-    } as any,
+    } as unknown as AnthropicAdapterConfig['client'],
     mocks: {
       create: createFn,
       stream: streamFn,

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createRedisStore } from '../index.js';
+import type { RedisStoreConfig } from '../index.js';
 
 // ---------------------------------------------------------------------------
 // Mock Redis client
@@ -49,7 +50,7 @@ function createMockRedis() {
     mget: vi.fn(async (...keys: string[]) => keys.map((k) => store.get(k) ?? null)),
     _store: store,
     _sets: sets,
-  } as any;
+  } as unknown as RedisStoreConfig['client'];
 }
 
 describe('createRedisStore', () => {

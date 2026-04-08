@@ -322,6 +322,20 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): Co
     reset(): void {
       records.length = 0;
     },
+
+    getAlertMessage(): string | null {
+      if (budget === undefined) return null;
+      const currentCost = tracker.getTotalCost();
+      const percentUsed = currentCost / budget;
+
+      if (percentUsed >= criticalThreshold) {
+        return `[BUDGET CRITICAL] You have used ${(percentUsed * 100).toFixed(0)}% of your token budget. Be extremely concise.`;
+      }
+      if (percentUsed >= warningThreshold) {
+        return `[BUDGET WARNING] You have used ${(percentUsed * 100).toFixed(0)}% of your token budget. Please be concise.`;
+      }
+      return null;
+    },
   };
 
   return tracker;

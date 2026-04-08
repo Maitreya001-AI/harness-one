@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createAjvValidator } from '../index.js';
+import type { JsonSchema } from 'harness-one/core';
 
 describe('createAjvValidator', () => {
   it('validates a correct object', () => {
@@ -144,9 +145,9 @@ describe('createAjvValidator', () => {
 
   it('handles empty schema (accepts anything)', () => {
     const validator = createAjvValidator({ formats: false });
-    expect(validator.validate({} as any, { anything: true }).valid).toBe(true);
-    expect(validator.validate({} as any, 'string').valid).toBe(true);
-    expect(validator.validate({} as any, 42).valid).toBe(true);
+    expect(validator.validate({} as unknown as JsonSchema, { anything: true }).valid).toBe(true);
+    expect(validator.validate({} as unknown as JsonSchema, 'string').valid).toBe(true);
+    expect(validator.validate({} as unknown as JsonSchema, 42).valid).toBe(true);
   });
 
   it('provides suggestion for unknown keyword errors', () => {

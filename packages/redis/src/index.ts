@@ -7,13 +7,12 @@
  * @module
  */
 
-import type Redis from 'ioredis';
+import type { Redis } from 'ioredis';
 import type { MemoryStore } from 'harness-one/memory';
 import type {
   MemoryEntry,
   MemoryFilter,
   CompactionPolicy,
-  CompactionResult,
 } from 'harness-one/memory';
 import { HarnessError } from 'harness-one/core';
 
@@ -69,7 +68,7 @@ export function createRedisStore(config: RedisStoreConfig): MemoryStore {
   }
 
   return {
-    async write(input) {
+    async write(input: Omit<MemoryEntry, 'id' | 'createdAt' | 'updatedAt'>) {
       const now = Date.now();
       const entry: MemoryEntry = {
         id: generateId(),
@@ -85,7 +84,7 @@ export function createRedisStore(config: RedisStoreConfig): MemoryStore {
       return entry;
     },
 
-    async read(id) {
+    async read(id: string) {
       return getEntry(id);
     },
 
@@ -130,7 +129,7 @@ export function createRedisStore(config: RedisStoreConfig): MemoryStore {
       return entries;
     },
 
-    async update(id, updates) {
+    async update(id: string, updates: Partial<Pick<MemoryEntry, 'content' | 'grade' | 'metadata' | 'tags'>>) {
       const existing = await getEntry(id);
       if (!existing) {
         throw new HarnessError(`Memory entry not found: ${id}`, 'NOT_FOUND');
@@ -144,7 +143,7 @@ export function createRedisStore(config: RedisStoreConfig): MemoryStore {
       return updated;
     },
 
-    async delete(id) {
+    async delete(id: string) {
       const existed = await client.del(entryKey(id));
       await client.srem(indexKey, id);
       return existed > 0;

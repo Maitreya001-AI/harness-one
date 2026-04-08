@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createOTelExporter } from '../index.js';
 import type { Trace, Span } from 'harness-one/observe';
+import type { Tracer, Span as OTelSpan } from '@opentelemetry/api';
 
 // ---------------------------------------------------------------------------
 // Mock OTel Tracer
@@ -19,14 +20,14 @@ function createMockTracer() {
     end: endFn,
   };
 
-  const startActiveSpanFn = vi.fn().mockImplementation((_name: string, fn: (span: any) => void) => {
-    fn(mockSpan);
+  const startActiveSpanFn = vi.fn().mockImplementation((_name: string, fn: (span: OTelSpan) => void) => {
+    fn(mockSpan as unknown as OTelSpan);
   });
 
   return {
     tracer: {
       startActiveSpan: startActiveSpanFn,
-    } as any,
+    } as unknown as Tracer,
     mocks: {
       startActiveSpan: startActiveSpanFn,
       setAttribute: setAttributeFn,
@@ -132,7 +133,7 @@ describe('createOTelExporter', () => {
 
     // 'complex' should NOT have been set (not a primitive)
     const calls = mock.mocks.setAttribute.mock.calls;
-    const attrNames = calls.map((c: any) => c[0]);
+    const attrNames = calls.map((c: unknown[]) => c[0]);
     expect(attrNames).not.toContain('complex');
     expect(attrNames).toContain('simple');
   });
@@ -157,7 +158,7 @@ describe('createOTelExporter', () => {
     await exporter.exportSpan(span);
 
     const calls = mock.mocks.setAttribute.mock.calls;
-    const attrNames = calls.map((c: any) => c[0]);
+    const attrNames = calls.map((c: unknown[]) => c[0]);
     expect(attrNames).not.toContain('harness.parent.id');
   });
 

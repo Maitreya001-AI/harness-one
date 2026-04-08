@@ -42,7 +42,7 @@ function toAnthropicMessage(msg: Message): Anthropic.MessageParam {
   }
 
   if (msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0) {
-    const content: Anthropic.ContentBlockParam[] = [];
+    const content: (Anthropic.TextBlockParam | Anthropic.ToolUseBlockParam)[] = [];
     if (msg.content) {
       content.push({ type: 'text', text: msg.content });
     }
@@ -87,8 +87,8 @@ function toTokenUsage(usage: Anthropic.Usage): TokenUsage {
   return {
     inputTokens: usage.input_tokens,
     outputTokens: usage.output_tokens,
-    cacheReadTokens: (usage as Record<string, number>).cache_read_input_tokens ?? 0,
-    cacheWriteTokens: (usage as Record<string, number>).cache_creation_input_tokens ?? 0,
+    cacheReadTokens: (usage as unknown as Record<string, number>).cache_read_input_tokens ?? 0,
+    cacheWriteTokens: (usage as unknown as Record<string, number>).cache_creation_input_tokens ?? 0,
   };
 }
 
@@ -183,7 +183,7 @@ export function createAnthropicAdapter(config: AnthropicAdapterConfig): AgentAda
             };
           }
         } else if (event.type === 'message_delta') {
-          const usage = (event as Record<string, unknown>).usage as
+          const usage = (event as unknown as Record<string, unknown>).usage as
             | Anthropic.Usage
             | undefined;
           if (usage) {
