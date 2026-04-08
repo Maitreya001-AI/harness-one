@@ -193,4 +193,142 @@ describe('createRedisStore', () => {
     expect(results).toHaveLength(1);
     expect(results[0].content).toBe('tagged');
   });
+
+  it('writes with TTL when defaultTTL is set', async () => {
+    const store = createRedisStore({ client: redis, prefix: 'test', defaultTTL: 3600 });
+
+    await store.write({ key: 'k', content: 'ttl entry', grade: 'useful' });
+
+    // set should have been called with 'EX' and the TTL value
+    const mockRedis = redis as unknown as { set: ReturnType<typeof vi.fn> };
+    const setCall = mockRedis.set.mock.calls[0];
+    expect(setCall[2]).toBe('EX');
+    expect(setCall[3]).toBe(3600);
+  });
+
+  it('queries with offset', async () => {
+    const store = createRedisStore({ client: redis, prefix: 'test' });
+
+    await store.write({ key: 'a', content: 'first', grade: 'useful' });
+    await store.write({ key: 'b', content: 'second', grade: 'useful' });
+    await store.write({ key: 'c', content: 'third', grade: 'useful' });
+
+    const results = await store.query({ offset: 1 });
+    expect(results).toHaveLength(2);
+  });
+
+  it('queries with offset and limit combined', async () => {
+    const store = createRedisStore({ client: redis, prefix: 'test' });
+
+    await store.write({ key: 'a', content: 'first', grade: 'useful' });
+    await store.write({ key: 'b', content: 'second', grade: 'useful' });
+    await store.write({ key: 'c', content: 'third', grade: 'useful' });
+
+    const results = await store.query({ offset: 1, limit: 1 });
+    expect(results).toHaveLength(1);
+  });
+
+  it('queries with since filter', async () => {
+    const store = createRedisStore({ client: redis, prefix: 'test' });
+
+    const entry1 = await store.write({ key: 'a', content: 'old', grade: 'useful' });
+    // Adjust the timestamp of the first entry to simulate an old entry
+    const mockRedis = redis as unknown as { _store: Map<string, string> };
+    const key1 = `test:${entry1.id}`;
+    const storedEntry = JSON.parse(mockRedis._store.get(key1)!);
+    storedEntry.updatedAt = Date.now() - 100000;
+    mockRedis._store.set(key1, JSON.stringify(storedEntry));
+
+    await store.write({ key: 'b', content: 'recent', grade: 'useful' });
+
+    const results = await store.query({ since: Date.now() - 1000 });
+    expect(results).toHaveLength(1);
+    expect(results[0].content).toBe('recent');
+  });
+
+  it('compacts by maxAge, removing non-critical old entries', async () => {
+    const store = createRedisStore({ client: redis, prefix: 'test' });
+
+    const entry1 = await store.write({ key: 'a', content: 'old ephemeral', grade: 'ephemeral' });
+    const entry2 = await store.write({ key: 'b', content: 'old useful', grade: 'useful' });
+    await store.write({ key: 'c', content: 'new critical', grade: 'critical' });
+
+    // Make first two entries old
+    const mockRedis = redis as unknown as { _store: Map<string, string> };
+    for (const entry of [entry1, entry2]) {
+      const key = `test:${entry.id}`;
+      const stored = JSON.parse(mockRedis._store.get(key)!);
+      stored.createdAt = Date.now() - 200000;
+      mockRedis._store.set(key, JSON.stringify(stored));
+    }
+
+    const result = await store.compact({ maxAge: 100000 });
+    // Both ephemeral (0.1) and useful (0.5) are < 1.0, so they get removed
+    expect(result.removed).toBe(2);
+  });
+
+  it('compact with maxAge does not remove critical entries', async () => {
+    const store = createRedisStore({ client: redis, prefix: 'test' });
+
+    const entry1 = await store.write({ key: 'a', content: 'old critical', grade: 'critical' });
+
+    // Make it old
+    const mockRedis = redis as unknown as { _store: Map<string, string> };
+    const key = `test:${entry1.id}`;
+    const stored = JSON.parse(mockRedis._store.get(key)!);
+    stored.createdAt = Date.now() - 200000;
+    mockRedis._store.set(key, JSON.stringify(stored));
+
+    const result = await store.compact({ maxAge: 100000 });
+    // Critical grade has weight 1.0, should NOT be removed
+    expect(result.removed).toBe(0);
+  });
+
+  it('compact with maxEntries stops evicting when only critical entries remain', async () => {
+    const store = createRedisStore({ client: redis, prefix: 'test' });
+
+    await store.write({ key: 'a', content: 'critical1', grade: 'critical' });
+    await store.write({ key: 'b', content: 'critical2', grade: 'critical' });
+    await store.write({ key: 'c', content: 'critical3', grade: 'critical' });
+
+    // Try to compact to 1 entry -- but all are critical, so none get removed
+    const result = await store.compact({ maxEntries: 1 });
+    expect(result.removed).toBe(0);
+    expect(result.remaining).toBe(3);
+  });
+
+  it('clear on empty store does not throw', async () => {
+    const store = createRedisStore({ client: redis, prefix: 'test' });
+    await expect(store.clear()).resolves.not.toThrow();
+  });
+
+  it('uses default prefix when none provided', async () => {
+    const store = createRedisStore({ client: redis });
+    const entry = await store.write({ key: 'k', content: 'test', grade: 'useful' });
+
+    const mockRedis = redis as unknown as { set: ReturnType<typeof vi.fn> };
+    const setCall = mockRedis.set.mock.calls[0];
+    // Key should start with 'harness:memory:'
+    expect(setCall[0]).toMatch(/^harness:memory:/);
+  });
+
+  it('compact uses batched mget instead of sequential getEntry calls', async () => {
+    const store = createRedisStore({ client: redis, prefix: 'test' });
+
+    await store.write({ key: 'a', content: 'one', grade: 'ephemeral' });
+    await store.write({ key: 'b', content: 'two', grade: 'useful' });
+    await store.write({ key: 'c', content: 'three', grade: 'critical' });
+
+    // Reset mock call counts after writes
+    const mockRedis = redis as unknown as { mget: ReturnType<typeof vi.fn>; get: ReturnType<typeof vi.fn> };
+    mockRedis.get.mockClear();
+    mockRedis.mget.mockClear();
+
+    await store.compact({ maxEntries: 2 });
+
+    // compact should use mget (batched) not individual get calls
+    expect(mockRedis.mget).toHaveBeenCalled();
+    // No individual get calls should be made during compact
+    expect(mockRedis.get).not.toHaveBeenCalled();
+  });
 });

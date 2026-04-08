@@ -118,15 +118,20 @@ function toHarnessMessage(
  *
  * Usage:
  *   const adapter = createOpenAIAdapter({ apiKey: process.env.OPENAI_API_KEY });
+ *
+ * @param config.maxRetries - Override SDK retry count for transient errors (429, 5xx).
+ *   Defaults to 2 (OpenAI SDK default).
  */
 export function createOpenAIAdapter(config: {
   apiKey?: string;
   model?: string;
   baseURL?: string;
+  maxRetries?: number;
 }): AgentAdapter {
   const client = new OpenAI({
     apiKey: config.apiKey,
     baseURL: config.baseURL,
+    maxRetries: config.maxRetries,
   });
   const model = config.model ?? 'gpt-4o';
 
@@ -143,6 +148,7 @@ export function createOpenAIAdapter(config: {
         top_p: params.config?.topP,
         max_tokens: params.config?.maxTokens,
         stop: params.config?.stopSequences as string[] | undefined,
+        signal: params.signal,
       });
 
       const choice = response.choices[0];
@@ -166,6 +172,7 @@ export function createOpenAIAdapter(config: {
         tools: params.tools?.map(toOpenAITool),
         temperature: params.config?.temperature,
         stream: true,
+        signal: params.signal,
       });
 
       // Track partial tool calls by index

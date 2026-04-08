@@ -68,6 +68,93 @@ describe('analyzeCacheStability', () => {
     expect(report.recommendations.length).toBeGreaterThan(0);
   });
 
+  describe('tool message comparison (toolCallId field)', () => {
+    it('considers tool messages equal when all fields match including toolCallId', () => {
+      const v1: Message[] = [
+        { role: 'tool', content: 'result', toolCallId: 'tc1' },
+      ];
+      const v2: Message[] = [
+        { role: 'tool', content: 'result', toolCallId: 'tc1' },
+      ];
+      const report = analyzeCacheStability(v1, v2);
+      expect(report.firstDivergenceIndex).toBe(-1);
+      expect(report.prefixMatchRatio).toBe(1);
+    });
+
+    it('detects divergence when tool messages have different toolCallId', () => {
+      const v1: Message[] = [
+        { role: 'tool', content: 'result', toolCallId: 'tc1' },
+      ];
+      const v2: Message[] = [
+        { role: 'tool', content: 'result', toolCallId: 'tc2' },
+      ];
+      const report = analyzeCacheStability(v1, v2);
+      expect(report.firstDivergenceIndex).toBe(0);
+    });
+  });
+
+  describe('assistant message with undefined vs defined toolCalls', () => {
+    it('considers assistant messages equal when both have undefined toolCalls', () => {
+      const v1: Message[] = [
+        { role: 'assistant', content: 'Hello' },
+      ];
+      const v2: Message[] = [
+        { role: 'assistant', content: 'Hello' },
+      ];
+      const report = analyzeCacheStability(v1, v2);
+      expect(report.firstDivergenceIndex).toBe(-1);
+    });
+
+    it('detects divergence when one assistant message has toolCalls and other does not', () => {
+      const v1: Message[] = [
+        { role: 'assistant', content: 'Hello', toolCalls: [{ id: 'tc1', name: 'search', arguments: '{}' }] },
+      ];
+      const v2: Message[] = [
+        { role: 'assistant', content: 'Hello' },
+      ];
+      const report = analyzeCacheStability(v1, v2);
+      expect(report.firstDivergenceIndex).toBe(0);
+    });
+  });
+
+  describe('name field comparison in messagesEqual', () => {
+    it('detects divergence when name fields differ', () => {
+      const v1: Message[] = [
+        { role: 'user', content: 'Hello', name: 'alice' },
+      ];
+      const v2: Message[] = [
+        { role: 'user', content: 'Hello', name: 'bob' },
+      ];
+      const report = analyzeCacheStability(v1, v2);
+      expect(report.firstDivergenceIndex).toBe(0);
+    });
+  });
+
+  describe('moderate stability recommendation', () => {
+    it('generates HEAD/MID/TAIL layout recommendation when ratio is between 0.5 and 0.8', () => {
+      // Need prefix match ratio between 0.5 and 0.8
+      // 4 messages, diverge at index 3 => ratio = 3/5 = 0.6
+      const v1: Message[] = [
+        msg('system', 'Sys'),
+        msg('user', 'A'),
+        msg('assistant', 'B'),
+        msg('user', 'C'),
+      ];
+      const v2: Message[] = [
+        msg('system', 'Sys'),
+        msg('user', 'A'),
+        msg('assistant', 'B'),
+        msg('user', 'D'),
+        msg('assistant', 'E'),
+      ];
+
+      const report = analyzeCacheStability(v1, v2);
+      expect(report.prefixMatchRatio).toBeGreaterThanOrEqual(0.5);
+      expect(report.prefixMatchRatio).toBeLessThan(0.8);
+      expect(report.recommendations.some(r => r.includes('HEAD/MID/TAIL'))).toBe(true);
+    });
+  });
+
   describe('H4: JSON.stringify comparison for toolCalls is unstable', () => {
     it('considers messages equal when toolCalls have same fields in different order', () => {
       // JSON.stringify is not order-stable. Two objects with same fields in different

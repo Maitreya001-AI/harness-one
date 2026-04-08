@@ -20,7 +20,9 @@ function createMockTracer() {
     end: endFn,
   };
 
-  const startActiveSpanFn = vi.fn().mockImplementation((_name: string, fn: (span: OTelSpan) => void) => {
+  const startActiveSpanFn = vi.fn().mockImplementation((_name: string, ...args: unknown[]) => {
+    // Handle both (name, fn) and (name, options, context, fn) calling conventions
+    const fn = args[args.length - 1] as (span: OTelSpan) => void;
     fn(mockSpan as unknown as OTelSpan);
   });
 
@@ -176,5 +178,63 @@ describe('createOTelExporter', () => {
 
     await exporter.exportSpan(span);
     expect(mock.mocks.setStatus).not.toHaveBeenCalled();
+  });
+
+  it('creates child span with parent context when parentId matches a known span', async () => {
+    const exporter = createOTelExporter({ tracer: mock.tracer });
+
+    // Export parent span first
+    const parentSpan: Span = {
+      id: 'span-parent',
+      traceId: 'trace-1',
+      name: 'parent-op',
+      startTime: 1000,
+      endTime: 3000,
+      attributes: {},
+      events: [],
+      status: 'completed',
+    };
+    await exporter.exportSpan(parentSpan);
+
+    // Export child span with parentId referencing the parent
+    const childSpan: Span = {
+      id: 'span-child',
+      traceId: 'trace-1',
+      parentId: 'span-parent',
+      name: 'child-op',
+      startTime: 1500,
+      endTime: 2500,
+      attributes: {},
+      events: [],
+      status: 'completed',
+    };
+    await exporter.exportSpan(childSpan);
+
+    // Child should have been started with 4 args (name, options, context, callback)
+    const childCall = mock.mocks.startActiveSpan.mock.calls[1];
+    expect(childCall[0]).toBe('child-op');
+    // When parent context is available, it should pass options and context before callback
+    expect(childCall.length).toBe(4);
+  });
+
+  it('creates root span when parentId has no matching known span', async () => {
+    const exporter = createOTelExporter({ tracer: mock.tracer });
+
+    const span: Span = {
+      id: 'span-1',
+      traceId: 'trace-1',
+      parentId: 'unknown-parent',
+      name: 'orphan-op',
+      startTime: 1000,
+      attributes: {},
+      events: [],
+      status: 'completed',
+    };
+    await exporter.exportSpan(span);
+
+    // Should fall back to 2-arg form (no parent context)
+    const call = mock.mocks.startActiveSpan.mock.calls[0];
+    expect(call[0]).toBe('orphan-op');
+    expect(call.length).toBe(2);
   });
 });

@@ -98,7 +98,8 @@ export interface LLMConfig {
   readonly topP?: number;
   readonly maxTokens?: number;
   readonly stopSequences?: readonly string[];
-  readonly [key: string]: unknown;
+  /** Provider-specific configuration passed through to the underlying SDK. */
+  readonly extra?: Readonly<Record<string, unknown>>;
 }
 
 /** Parameters for an LLM chat call. */

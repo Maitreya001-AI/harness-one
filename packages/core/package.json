@@ -5,54 +5,54 @@
   "type": "module",
   "exports": {
     "./core": {
+      "types": "./dist/core/index.d.ts",
       "import": "./dist/core/index.js",
-      "require": "./dist/cjs/core/index.cjs",
-      "types": "./dist/core/index.d.ts"
+      "require": "./dist/cjs/core/index.cjs"
     },
     "./prompt": {
+      "types": "./dist/prompt/index.d.ts",
       "import": "./dist/prompt/index.js",
-      "require": "./dist/cjs/prompt/index.cjs",
-      "types": "./dist/prompt/index.d.ts"
+      "require": "./dist/cjs/prompt/index.cjs"
     },
     "./context": {
+      "types": "./dist/context/index.d.ts",
       "import": "./dist/context/index.js",
-      "require": "./dist/cjs/context/index.cjs",
-      "types": "./dist/context/index.d.ts"
+      "require": "./dist/cjs/context/index.cjs"
     },
     "./tools": {
+      "types": "./dist/tools/index.d.ts",
       "import": "./dist/tools/index.js",
-      "require": "./dist/cjs/tools/index.cjs",
-      "types": "./dist/tools/index.d.ts"
+      "require": "./dist/cjs/tools/index.cjs"
     },
     "./guardrails": {
+      "types": "./dist/guardrails/index.d.ts",
       "import": "./dist/guardrails/index.js",
-      "require": "./dist/cjs/guardrails/index.cjs",
-      "types": "./dist/guardrails/index.d.ts"
+      "require": "./dist/cjs/guardrails/index.cjs"
     },
     "./observe": {
+      "types": "./dist/observe/index.d.ts",
       "import": "./dist/observe/index.js",
-      "require": "./dist/cjs/observe/index.cjs",
-      "types": "./dist/observe/index.d.ts"
+      "require": "./dist/cjs/observe/index.cjs"
     },
     "./session": {
+      "types": "./dist/session/index.d.ts",
       "import": "./dist/session/index.js",
-      "require": "./dist/cjs/session/index.cjs",
-      "types": "./dist/session/index.d.ts"
+      "require": "./dist/cjs/session/index.cjs"
     },
     "./memory": {
+      "types": "./dist/memory/index.d.ts",
       "import": "./dist/memory/index.js",
-      "require": "./dist/cjs/memory/index.cjs",
-      "types": "./dist/memory/index.d.ts"
+      "require": "./dist/cjs/memory/index.cjs"
     },
     "./eval": {
+      "types": "./dist/eval/index.d.ts",
       "import": "./dist/eval/index.js",
-      "require": "./dist/cjs/eval/index.cjs",
-      "types": "./dist/eval/index.d.ts"
+      "require": "./dist/cjs/eval/index.cjs"
     },
     "./evolve": {
+      "types": "./dist/evolve/index.d.ts",
       "import": "./dist/evolve/index.js",
-      "require": "./dist/cjs/evolve/index.cjs",
-      "types": "./dist/evolve/index.d.ts"
+      "require": "./dist/cjs/evolve/index.cjs"
     }
   },
   "bin": {

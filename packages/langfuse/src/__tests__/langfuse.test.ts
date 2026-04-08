@@ -171,6 +171,39 @@ describe('createLangfuseExporter', () => {
     expect(mock.mocks.trace).toHaveBeenCalledTimes(1);
     expect(mock.mocks.update).toHaveBeenCalledTimes(2);
   });
+
+  it('evicts oldest trace when traceMap exceeds MAX_TRACE_MAP_SIZE', async () => {
+    const exporter = createLangfuseExporter({ client: mock.client });
+
+    // Export 1002 unique traces to exceed the 1000 limit
+    for (let i = 0; i < 1002; i++) {
+      await exporter.exportTrace({
+        id: `trace-${i}`,
+        name: `test-${i}`,
+        startTime: Date.now(),
+        metadata: {},
+        spans: [],
+        status: 'completed',
+      });
+    }
+
+    // The first trace should have been evicted, so re-exporting it
+    // should create a new Langfuse trace (i.e., call trace() again)
+    mock.mocks.trace.mockClear();
+    await exporter.exportTrace({
+      id: 'trace-0',
+      name: 'test-0',
+      startTime: Date.now(),
+      metadata: {},
+      spans: [],
+      status: 'completed',
+    });
+
+    // trace() should be called because trace-0 was evicted
+    expect(mock.mocks.trace).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'trace-0' }),
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -222,13 +255,40 @@ describe('createLangfusePromptBackend', () => {
     expect(result!.variables).toEqual(['name']);
   });
 
-  it('list returns empty array', async () => {
+  it('list returns empty array when no prompts fetched', async () => {
     const backend = createLangfusePromptBackend({ client: mock.client });
     const result = await backend.list!();
     expect(result).toEqual([]);
   });
 
-  it('push is a no-op', async () => {
+  it('list returns previously fetched prompts', async () => {
+    mock.mocks.getPrompt.mockResolvedValue({
+      prompt: 'Hello {{name}}!',
+      version: 1,
+    });
+
+    const backend = createLangfusePromptBackend({ client: mock.client });
+    await backend.fetch('greeting');
+
+    const result = await backend.list!();
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe('greeting');
+    expect(result[0].content).toBe('Hello {{name}}!');
+  });
+
+  it('list removes prompts that have been deleted', async () => {
+    mock.mocks.getPrompt
+      .mockResolvedValueOnce({ prompt: 'Hello', version: 1 })
+      .mockRejectedValueOnce(new Error('Not found'));
+
+    const backend = createLangfusePromptBackend({ client: mock.client });
+    await backend.fetch('greeting');
+
+    const result = await backend.list!();
+    expect(result).toEqual([]);
+  });
+
+  it('push throws UNSUPPORTED_OPERATION error', async () => {
     const backend = createLangfusePromptBackend({ client: mock.client });
     await expect(
       backend.push!({
@@ -237,7 +297,7 @@ describe('createLangfusePromptBackend', () => {
         content: 'test',
         variables: [],
       }),
-    ).resolves.toBeUndefined();
+    ).rejects.toThrow('Langfuse SDK does not support pushing prompts programmatically');
   });
 });
 
@@ -342,7 +402,7 @@ describe('createLangfuseCostTracker', () => {
     expect(alerts[1].type).toBe('critical');
   });
 
-  it('reset clears all records', () => {
+  it('reset clears all records and running total', () => {
     const tracker = createLangfuseCostTracker({ client: mock.client });
     tracker.setPricing([
       { model: 'a', inputPer1kTokens: 0.001, outputPer1kTokens: 0.002 },
@@ -350,5 +410,143 @@ describe('createLangfuseCostTracker', () => {
     tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 1000, outputTokens: 1000 });
     tracker.reset();
     expect(tracker.getTotalCost()).toBe(0);
+  });
+
+  it('records usage with cache tokens included in cost computation', () => {
+    const tracker = createLangfuseCostTracker({ client: mock.client });
+    tracker.setPricing([{
+      model: 'claude-3',
+      inputPer1kTokens: 0.003,
+      outputPer1kTokens: 0.015,
+      cacheReadPer1kTokens: 0.001,
+      cacheWritePer1kTokens: 0.002,
+    }]);
+
+    const record = tracker.recordUsage({
+      traceId: 't1',
+      model: 'claude-3',
+      inputTokens: 1000,
+      outputTokens: 500,
+      cacheReadTokens: 200,
+      cacheWriteTokens: 100,
+    });
+
+    // input: 1000/1000 * 0.003 = 0.003
+    // output: 500/1000 * 0.015 = 0.0075
+    // cacheRead: 200/1000 * 0.001 = 0.0002
+    // cacheWrite: 100/1000 * 0.002 = 0.0002
+    const expected = 0.003 + 0.0075 + 0.0002 + 0.0002;
+    expect(record.estimatedCost).toBeCloseTo(expected);
+  });
+
+  it('returns 0 cost for unknown models', () => {
+    const tracker = createLangfuseCostTracker({ client: mock.client });
+    // No pricing set for this model
+    const record = tracker.recordUsage({
+      traceId: 't1',
+      model: 'unknown-model',
+      inputTokens: 1000,
+      outputTokens: 500,
+    });
+    expect(record.estimatedCost).toBe(0);
+  });
+
+  it('checkBudget returns null when no budget is set', () => {
+    const tracker = createLangfuseCostTracker({ client: mock.client });
+    expect(tracker.checkBudget()).toBeNull();
+  });
+
+  it('checkBudget returns null when usage is below warning threshold', () => {
+    const tracker = createLangfuseCostTracker({ client: mock.client });
+    tracker.setPricing([
+      { model: 'a', inputPer1kTokens: 0.001, outputPer1kTokens: 0.001 },
+    ]);
+    tracker.setBudget(10.0);
+    // Very small usage, well below 80%
+    tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 100, outputTokens: 100 });
+    expect(tracker.checkBudget()).toBeNull();
+  });
+
+  it('getAlertMessage returns null when no budget is set', () => {
+    const tracker = createLangfuseCostTracker({ client: mock.client });
+    expect(tracker.getAlertMessage()).toBeNull();
+  });
+
+  it('getAlertMessage returns null when below threshold', () => {
+    const tracker = createLangfuseCostTracker({ client: mock.client });
+    tracker.setPricing([
+      { model: 'a', inputPer1kTokens: 0.001, outputPer1kTokens: 0.001 },
+    ]);
+    tracker.setBudget(10.0);
+    tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 100, outputTokens: 100 });
+    expect(tracker.getAlertMessage()).toBeNull();
+  });
+
+  it('getAlertMessage returns warning message at 80%+ usage', () => {
+    const tracker = createLangfuseCostTracker({ client: mock.client });
+    tracker.setPricing([
+      { model: 'a', inputPer1kTokens: 1.0, outputPer1kTokens: 1.0 },
+    ]);
+    tracker.setBudget(1.0);
+    // 85% usage
+    tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 425, outputTokens: 425 });
+    const msg = tracker.getAlertMessage();
+    expect(msg).toContain('BUDGET WARNING');
+    expect(msg).toContain('be concise');
+  });
+
+  it('getAlertMessage returns critical message at 95%+ usage', () => {
+    const tracker = createLangfuseCostTracker({ client: mock.client });
+    tracker.setPricing([
+      { model: 'a', inputPer1kTokens: 1.0, outputPer1kTokens: 1.0 },
+    ]);
+    tracker.setBudget(1.0);
+    // 96% usage
+    tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 480, outputTokens: 480 });
+    const msg = tracker.getAlertMessage();
+    expect(msg).toContain('BUDGET CRITICAL');
+    expect(msg).toContain('extremely concise');
+  });
+
+  it('does not emit alert when usage is below warning threshold', () => {
+    const tracker = createLangfuseCostTracker({ client: mock.client });
+    tracker.setPricing([
+      { model: 'a', inputPer1kTokens: 0.001, outputPer1kTokens: 0.001 },
+    ]);
+    tracker.setBudget(100.0);
+
+    const alerts: CostAlert[] = [];
+    tracker.onAlert((a) => alerts.push(a));
+
+    // Very small usage
+    tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 100, outputTokens: 100 });
+    expect(alerts).toHaveLength(0);
+  });
+
+  it('getCostByTrace returns 0 for unknown traceId', () => {
+    const tracker = createLangfuseCostTracker({ client: mock.client });
+    expect(tracker.getCostByTrace('nonexistent')).toBe(0);
+  });
+
+  it('getTotalCost uses running total (O(1)) not reduce (O(N))', () => {
+    const tracker = createLangfuseCostTracker({ client: mock.client });
+    tracker.setPricing([
+      { model: 'a', inputPer1kTokens: 0.001, outputPer1kTokens: 0.002 },
+    ]);
+
+    // Record multiple usages and verify total is correctly maintained
+    tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 1000, outputTokens: 1000 });
+    expect(tracker.getTotalCost()).toBeCloseTo(0.003);
+
+    tracker.recordUsage({ traceId: 't2', model: 'a', inputTokens: 2000, outputTokens: 2000 });
+    expect(tracker.getTotalCost()).toBeCloseTo(0.009);
+
+    // After reset, total should be 0
+    tracker.reset();
+    expect(tracker.getTotalCost()).toBe(0);
+
+    // New records after reset
+    tracker.recordUsage({ traceId: 't3', model: 'a', inputTokens: 1000, outputTokens: 0 });
+    expect(tracker.getTotalCost()).toBeCloseTo(0.001);
   });
 });

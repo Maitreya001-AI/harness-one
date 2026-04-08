@@ -24,6 +24,13 @@ export interface AnthropicAdapterConfig {
   readonly client: Anthropic;
   /** Model name. Defaults to 'claude-sonnet-4-20250514'. */
   readonly model?: string;
+  /**
+   * Maximum number of retries for transient errors (429, 5xx).
+   * The Anthropic SDK handles retries at the client level.
+   * Configure via `new Anthropic({ maxRetries: N })` when creating the client.
+   * @default 2 (SDK default)
+   */
+  readonly maxRetries?: number;
 }
 
 /** Convert a harness-one Message to the Anthropic message format. */
@@ -47,11 +54,13 @@ function toAnthropicMessage(msg: Message): Anthropic.MessageParam {
       content.push({ type: 'text', text: msg.content });
     }
     for (const tc of msg.toolCalls) {
+      let input: unknown;
+      try { input = JSON.parse(tc.arguments); } catch { input = tc.arguments; }
       content.push({
         type: 'tool_use',
         id: tc.id,
         name: tc.name,
-        input: JSON.parse(tc.arguments),
+        input: input as Record<string, unknown>,
       });
     }
     return { role: 'assistant', content };
@@ -87,8 +96,8 @@ function toTokenUsage(usage: Anthropic.Usage): TokenUsage {
   return {
     inputTokens: usage.input_tokens,
     outputTokens: usage.output_tokens,
-    cacheReadTokens: (usage as unknown as Record<string, number>).cache_read_input_tokens ?? 0,
-    cacheWriteTokens: (usage as unknown as Record<string, number>).cache_creation_input_tokens ?? 0,
+    cacheReadTokens: 'cache_read_input_tokens' in usage ? (usage as Record<string, number>).cache_read_input_tokens : 0,
+    cacheWriteTokens: 'cache_creation_input_tokens' in usage ? (usage as Record<string, number>).cache_creation_input_tokens : 0,
   };
 }
 
@@ -138,7 +147,7 @@ export function createAnthropicAdapter(config: AnthropicAdapterConfig): AgentAda
         temperature: params.config?.temperature,
         top_p: params.config?.topP,
         stop_sequences: params.config?.stopSequences as string[] | undefined,
-      });
+      }, { signal: params.signal });
 
       return {
         message: toHarnessMessage(response),
@@ -156,7 +165,7 @@ export function createAnthropicAdapter(config: AnthropicAdapterConfig): AgentAda
         messages: rest.map(toAnthropicMessage),
         tools: params.tools?.map(toAnthropicTool),
         temperature: params.config?.temperature,
-      });
+      }, { signal: params.signal });
 
       let currentToolId: string | undefined;
       let currentToolName: string | undefined;
@@ -183,12 +192,8 @@ export function createAnthropicAdapter(config: AnthropicAdapterConfig): AgentAda
             };
           }
         } else if (event.type === 'message_delta') {
-          const usage = (event as unknown as Record<string, unknown>).usage as
-            | Anthropic.Usage
-            | undefined;
-          if (usage) {
-            yield { type: 'done', usage: toTokenUsage(usage) };
-          }
+          // Intentionally not yielding done here; finalMessage() below provides
+          // the complete, accurate usage data in a single done event.
         }
       }
 

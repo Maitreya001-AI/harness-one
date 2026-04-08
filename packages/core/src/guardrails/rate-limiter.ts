@@ -26,30 +26,29 @@ export function createRateLimiter(config: {
   // Map for O(1) index lookup instead of O(N) indexOf
   const lruIndex = new Map<string, number>();
 
-  function rebuildIndex(): void {
-    lruIndex.clear();
-    for (let i = 0; i < lruOrder.length; i++) {
-      lruIndex.set(lruOrder[i], i);
-    }
-  }
-
   function touchKey(key: string): void {
     const idx = lruIndex.get(key);
     if (idx !== undefined) {
+      // Remove from old position
       lruOrder.splice(idx, 1);
+      // Update indices for all keys that shifted left
+      for (let i = idx; i < lruOrder.length; i++) {
+        lruIndex.set(lruOrder[i], i);
+      }
     }
+    // Add to end
     lruOrder.push(key);
-    // Rebuild index after structural change
-    rebuildIndex();
+    lruIndex.set(key, lruOrder.length - 1);
 
     // Evict oldest keys if over limit
     while (lruOrder.length > maxKeys) {
       const evicted = lruOrder.shift()!;
       lruIndex.delete(evicted);
       buckets.delete(evicted);
-    }
-    if (lruOrder.length <= maxKeys) {
-      rebuildIndex();
+      // Update all indices after shift
+      for (let i = 0; i < lruOrder.length; i++) {
+        lruIndex.set(lruOrder[i], i);
+      }
     }
   }
 

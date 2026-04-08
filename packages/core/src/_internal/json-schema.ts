@@ -61,6 +61,11 @@ export function validateJsonSchema(
   return { valid: errors.length === 0, errors };
 }
 
+// Reject patterns with nested quantifiers (ReDoS risk)
+function isSafePattern(pattern: string): boolean {
+  return !/([+*]|\{\d+,?\d*\})\)([+*]|\{\d+,?\d*\})/.test(pattern);
+}
+
 function validate(
   schema: SchemaObject,
   data: unknown,
@@ -89,9 +94,13 @@ function validate(
   // String constraints
   if (typeof data === 'string') {
     if (schema.pattern !== undefined) {
-      const re = new RegExp(schema.pattern);
-      if (!re.test(data)) {
-        errors.push({ path, message: `String does not match pattern "${schema.pattern}"` });
+      if (!isSafePattern(schema.pattern)) {
+        errors.push({ path, message: 'Pattern rejected: potential ReDoS' });
+      } else {
+        const re = new RegExp(schema.pattern);
+        if (!re.test(data)) {
+          errors.push({ path, message: `String does not match pattern "${schema.pattern}"` });
+        }
       }
     }
     if (schema.minLength !== undefined && data.length < schema.minLength) {

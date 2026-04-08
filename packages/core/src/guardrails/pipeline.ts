@@ -5,6 +5,7 @@
  */
 
 import type { Guardrail, GuardrailContext, GuardrailEvent, PipelineResult } from './types.js';
+import { HarnessError } from '../core/errors.js';
 
 /** Branded pipeline type to prevent direct construction. */
 export interface GuardrailPipeline {
@@ -24,6 +25,15 @@ interface PipelineInternal extends GuardrailPipeline {
   onEvent?: (event: GuardrailEvent) => void;
 }
 
+const pipelineInstances = new WeakSet<object>();
+
+function getInternal(pipeline: GuardrailPipeline): PipelineInternal {
+  if (!pipelineInstances.has(pipeline as unknown as object)) {
+    throw new HarnessError('Invalid GuardrailPipeline instance', 'INVALID_PIPELINE', 'Use createPipeline() to create pipelines');
+  }
+  return pipeline as unknown as PipelineInternal;
+}
+
 /**
  * Create a guardrail pipeline.
  *
@@ -41,12 +51,14 @@ export function createPipeline(config: {
   failClosed?: boolean;
   onEvent?: (event: GuardrailEvent) => void;
 }): GuardrailPipeline {
-  return {
+  const internal = {
     input: config.input ?? [],
     output: config.output ?? [],
     failClosed: config.failClosed ?? true,
     onEvent: config.onEvent,
-  } as unknown as GuardrailPipeline;
+  };
+  pipelineInstances.add(internal);
+  return internal as unknown as GuardrailPipeline;
 }
 
 async function runGuardrails(
@@ -126,7 +138,7 @@ export async function runInput(
   pipeline: GuardrailPipeline,
   ctx: GuardrailContext,
 ): Promise<PipelineResult> {
-  const p = pipeline as unknown as PipelineInternal;
+  const p = getInternal(pipeline);
   return runGuardrails(p, p.input, 'input', ctx);
 }
 
@@ -135,6 +147,6 @@ export async function runOutput(
   pipeline: GuardrailPipeline,
   ctx: GuardrailContext,
 ): Promise<PipelineResult> {
-  const p = pipeline as unknown as PipelineInternal;
+  const p = getInternal(pipeline);
   return runGuardrails(p, p.output, 'output', ctx);
 }

@@ -153,9 +153,15 @@ export function createRedisStore(config: RedisStoreConfig): MemoryStore {
       const allIds = await client.smembers(indexKey);
       const entries: MemoryEntry[] = [];
 
-      for (const id of allIds) {
-        const entry = await getEntry(id);
-        if (entry) entries.push(entry);
+      const batchSize = 100;
+      for (let i = 0; i < allIds.length; i += batchSize) {
+        const batch = allIds.slice(i, i + batchSize);
+        const keys = batch.map(entryKey);
+        const values = await client.mget(...keys);
+        for (const raw of values) {
+          if (!raw) continue;
+          entries.push(JSON.parse(raw) as MemoryEntry);
+        }
       }
 
       const now = Date.now();

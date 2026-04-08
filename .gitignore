@@ -1,5 +1,6 @@
 node_modules/
 dist/
 coverage/
+coverage-temp/
 *.tsbuildinfo
 pnpm-lock.yaml

@@ -117,6 +117,48 @@ describe('createSessionManager', () => {
       expect(sm.list()).toHaveLength(2);
       sm.dispose();
     });
+
+    it('marks active sessions as expired during listing when TTL is exceeded', () => {
+      const sm = createSessionManager({ ttlMs: 1, gcIntervalMs: 0 });
+      const events: SessionEvent[] = [];
+      const session = sm.create();
+      sm.onEvent(e => events.push(e));
+
+      // Force time forward so the session is expired
+      vi.spyOn(Date, 'now').mockReturnValue(session.createdAt + 100);
+
+      const listed = sm.list();
+      expect(listed).toHaveLength(1);
+      expect(listed[0].status).toBe('expired');
+
+      // Should have emitted an 'expired' event during list()
+      const expiredEvent = events.find(e => e.type === 'expired');
+      expect(expiredEvent).toBeDefined();
+      expect(expiredEvent!.sessionId).toBe(session.id);
+      sm.dispose();
+    });
+
+    it('does not re-emit expired event for already expired sessions', () => {
+      const sm = createSessionManager({ ttlMs: 1, gcIntervalMs: 0 });
+      const session = sm.create();
+
+      // Force time forward
+      vi.spyOn(Date, 'now').mockReturnValue(session.createdAt + 100);
+
+      // First call to get() marks it expired
+      sm.get(session.id);
+
+      // Now track events
+      const events: SessionEvent[] = [];
+      sm.onEvent(e => events.push(e));
+
+      // Second call to list() should NOT re-emit expired since it's already expired
+      const listed = sm.list();
+      expect(listed[0].status).toBe('expired');
+      const expiredEvents = events.filter(e => e.type === 'expired');
+      expect(expiredEvents).toHaveLength(0);
+      sm.dispose();
+    });
   });
 
   describe('LRU eviction', () => {

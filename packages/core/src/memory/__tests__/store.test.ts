@@ -292,6 +292,127 @@ describe('createInMemoryStore', () => {
     });
   });
 
+  describe('searchByVector', () => {
+    it('returns entries with matching embeddings sorted by score descending', async () => {
+      await store.write({ key: 'k1', content: 'a', grade: 'useful', metadata: { embedding: [1, 0, 0] } });
+      await store.write({ key: 'k2', content: 'b', grade: 'useful', metadata: { embedding: [0.9, 0.1, 0] } });
+      await store.write({ key: 'k3', content: 'c', grade: 'useful', metadata: { embedding: [0, 1, 0] } });
+
+      const results = await store.searchByVector!({ embedding: [1, 0, 0] });
+      expect(results.length).toBe(3);
+      // First result should be the most similar (identical vector)
+      expect(results[0].key).toBe('k1');
+      expect(results[0].score).toBeCloseTo(1.0, 5);
+      // Scores should be sorted descending
+      for (let i = 1; i < results.length; i++) {
+        expect(results[i - 1].score).toBeGreaterThanOrEqual(results[i].score);
+      }
+    });
+
+    it('filters results by minScore', async () => {
+      await store.write({ key: 'k1', content: 'a', grade: 'useful', metadata: { embedding: [1, 0] } });
+      await store.write({ key: 'k2', content: 'b', grade: 'useful', metadata: { embedding: [0, 1] } });
+
+      const results = await store.searchByVector!({ embedding: [1, 0], minScore: 0.5 });
+      expect(results.length).toBe(1);
+      expect(results[0].key).toBe('k1');
+      expect(results[0].score).toBeGreaterThanOrEqual(0.5);
+    });
+
+    it('respects limit parameter', async () => {
+      await store.write({ key: 'k1', content: 'a', grade: 'useful', metadata: { embedding: [1, 0] } });
+      await store.write({ key: 'k2', content: 'b', grade: 'useful', metadata: { embedding: [0.9, 0.1] } });
+      await store.write({ key: 'k3', content: 'c', grade: 'useful', metadata: { embedding: [0.8, 0.2] } });
+
+      const results = await store.searchByVector!({ embedding: [1, 0], limit: 2 });
+      expect(results.length).toBe(2);
+    });
+
+    it('skips entries without embeddings', async () => {
+      await store.write({ key: 'k1', content: 'a', grade: 'useful', metadata: { embedding: [1, 0] } });
+      await store.write({ key: 'k2', content: 'b', grade: 'useful' }); // no metadata
+      await store.write({ key: 'k3', content: 'c', grade: 'useful', metadata: { other: 'data' } }); // no embedding
+
+      const results = await store.searchByVector!({ embedding: [1, 0] });
+      expect(results.length).toBe(1);
+      expect(results[0].key).toBe('k1');
+    });
+
+    it('returns empty array when no entries have embeddings', async () => {
+      await store.write({ key: 'k1', content: 'a', grade: 'useful' });
+      await store.write({ key: 'k2', content: 'b', grade: 'useful', metadata: { foo: 'bar' } });
+
+      const results = await store.searchByVector!({ embedding: [1, 0, 0] });
+      expect(results).toEqual([]);
+    });
+
+    it('returns empty array when store is empty', async () => {
+      const results = await store.searchByVector!({ embedding: [1, 0] });
+      expect(results).toEqual([]);
+    });
+
+    it('computes cosine similarity correctly: identical vectors yield score 1.0', async () => {
+      await store.write({ key: 'k1', content: 'a', grade: 'useful', metadata: { embedding: [0.5, 0.5, 0.5] } });
+
+      const results = await store.searchByVector!({ embedding: [0.5, 0.5, 0.5] });
+      expect(results.length).toBe(1);
+      expect(results[0].score).toBeCloseTo(1.0, 5);
+    });
+
+    it('computes cosine similarity correctly: orthogonal vectors yield score 0', async () => {
+      await store.write({ key: 'k1', content: 'a', grade: 'useful', metadata: { embedding: [1, 0] } });
+
+      const results = await store.searchByVector!({ embedding: [0, 1], minScore: 0 });
+      expect(results.length).toBe(1);
+      expect(results[0].score).toBeCloseTo(0, 5);
+    });
+
+    it('handles zero-length vectors gracefully (returns score 0)', async () => {
+      await store.write({ key: 'k1', content: 'a', grade: 'useful', metadata: { embedding: [0, 0, 0] } });
+
+      const results = await store.searchByVector!({ embedding: [1, 0, 0], minScore: 0 });
+      // Zero vector has norm 0 => denom 0 => score 0
+      expect(results.length).toBe(1);
+      expect(results[0].score).toBe(0);
+    });
+
+    it('handles mismatched vector lengths gracefully (returns score 0)', async () => {
+      await store.write({ key: 'k1', content: 'a', grade: 'useful', metadata: { embedding: [1, 0] } });
+
+      // Query with a different dimensionality
+      const results = await store.searchByVector!({ embedding: [1, 0, 0], minScore: 0 });
+      expect(results.length).toBe(1);
+      expect(results[0].score).toBe(0);
+    });
+
+    it('handles empty embedding arrays gracefully (returns score 0)', async () => {
+      await store.write({ key: 'k1', content: 'a', grade: 'useful', metadata: { embedding: [] } });
+
+      const results = await store.searchByVector!({ embedding: [], minScore: 0 });
+      // Empty arrays => length 0 => score 0
+      expect(results.length).toBe(1);
+      expect(results[0].score).toBe(0);
+    });
+
+    it('uses default limit of 10', async () => {
+      for (let i = 0; i < 15; i++) {
+        await store.write({ key: `k${i}`, content: `c${i}`, grade: 'useful', metadata: { embedding: [1, 0] } });
+      }
+
+      const results = await store.searchByVector!({ embedding: [1, 0] });
+      expect(results.length).toBe(10);
+    });
+
+    it('default minScore is 0 (includes all non-negative scores)', async () => {
+      await store.write({ key: 'k1', content: 'a', grade: 'useful', metadata: { embedding: [1, 0] } });
+      await store.write({ key: 'k2', content: 'b', grade: 'useful', metadata: { embedding: [0, 1] } });
+
+      // Default minScore=0 should include the orthogonal vector (score=0)
+      const results = await store.searchByVector!({ embedding: [1, 0] });
+      expect(results.length).toBe(2);
+    });
+  });
+
   describe('H1: ID uniqueness', () => {
     it('generates IDs with randomness to avoid cross-process collisions', async () => {
       const entry = await store.write({ key: 'k1', content: 'a', grade: 'useful' });

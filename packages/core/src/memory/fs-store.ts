@@ -10,12 +10,6 @@ import { HarnessError } from '../core/errors.js';
 import type { MemoryEntry } from './types.js';
 import type { MemoryStore } from './store.js';
 
-let idCounter = 0;
-
-function generateId(): string {
-  return `mem_${Date.now()}_${++idCounter}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
 interface Index {
   keys: Record<string, string>; // key → id
 }
@@ -38,6 +32,11 @@ export function createFileSystemStore(config: {
   const dir = config.directory;
   const indexFileName = config.indexFile ?? '_index.json';
   const indexPath = join(dir, indexFileName);
+  let idCounter = 0;
+
+  function generateId(): string {
+    return `mem_${Date.now()}_${++idCounter}_${Math.random().toString(36).slice(2, 8)}`;
+  }
 
   async function ensureDir(): Promise<void> {
     await mkdir(dir, { recursive: true });
@@ -74,20 +73,20 @@ export function createFileSystemStore(config: {
   }
 
   async function writeEntry(entry: MemoryEntry): Promise<void> {
-    await writeFile(entryPath(entry.id), JSON.stringify(entry, null, 2), 'utf-8');
+    const path = entryPath(entry.id);
+    const tmpPath = path + '.tmp';
+    await writeFile(tmpPath, JSON.stringify(entry, null, 2), 'utf-8');
+    await rename(tmpPath, path);
   }
 
   async function allEntries(): Promise<MemoryEntry[]> {
     try {
       const files = await readdir(dir);
-      const entries: MemoryEntry[] = [];
-      for (const file of files) {
-        if (file.endsWith('.json') && file !== indexFileName) {
-          const entry = await readEntry(file.replace('.json', ''));
-          if (entry) entries.push(entry);
-        }
-      }
-      return entries;
+      const jsonFiles = files.filter(f => f.endsWith('.json') && f !== indexFileName);
+      const results = await Promise.all(
+        jsonFiles.map(file => readEntry(file.replace('.json', '')))
+      );
+      return results.filter((e): e is MemoryEntry => e !== null);
     } catch {
       return [];
     }

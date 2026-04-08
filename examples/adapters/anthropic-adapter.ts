@@ -123,12 +123,17 @@ function toHarnessMessage(response: Anthropic.Message): Message {
  * Usage:
  *   const adapter = createAnthropicAdapter({ apiKey: process.env.ANTHROPIC_API_KEY });
  *   // Pass to any harness-one function that accepts an AgentAdapter
+ *
+ * @param config.maxRetries - Override SDK retry count for transient errors (429, 5xx).
+ *   Alternatively, configure retries on the Anthropic client directly:
+ *   `new Anthropic({ maxRetries: 5 })`.
  */
 export function createAnthropicAdapter(config: {
   apiKey?: string;
   model?: string;
+  maxRetries?: number;
 }): AgentAdapter {
-  const client = new Anthropic({ apiKey: config.apiKey });
+  const client = new Anthropic({ apiKey: config.apiKey, maxRetries: config.maxRetries });
   const model = config.model ?? 'claude-sonnet-4-20250514';
 
   return {
@@ -147,7 +152,7 @@ export function createAnthropicAdapter(config: {
         temperature: params.config?.temperature,
         top_p: params.config?.topP,
         stop_sequences: params.config?.stopSequences as string[] | undefined,
-      });
+      }, { signal: params.signal });
 
       return {
         message: toHarnessMessage(response),
@@ -168,7 +173,7 @@ export function createAnthropicAdapter(config: {
         messages: rest.map(toAnthropicMessage),
         tools: params.tools?.map(toAnthropicTool),
         temperature: params.config?.temperature,
-      });
+      }, { signal: params.signal });
 
       // Accumulate tool call state across content_block events
       let currentToolId: string | undefined;
@@ -196,17 +201,12 @@ export function createAnthropicAdapter(config: {
             };
           }
         } else if (event.type === 'message_delta') {
-          // Final usage is reported on message_delta
-          const usage = (event as Record<string, unknown>).usage as
-            | Anthropic.Usage
-            | undefined;
-          if (usage) {
-            yield { type: 'done', usage: toTokenUsage(usage) };
-          }
+          // Intentionally not yielding done here; finalMessage() below provides
+          // the complete, accurate usage data in a single done event.
         }
       }
 
-      // Always emit a final done chunk
+      // Emit exactly one done chunk using the final, complete usage from the SDK.
       const finalMessage = await stream.finalMessage();
       yield { type: 'done', usage: toTokenUsage(finalMessage.usage) };
     },

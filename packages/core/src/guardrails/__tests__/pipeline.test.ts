@@ -307,6 +307,18 @@ describe('pipeline edge cases', () => {
   });
 });
 
+describe('getInternal validation: invalid pipeline object', () => {
+  it('throws HarnessError when runInput is called with a non-createPipeline object', async () => {
+    const fakePipeline = { input: [], output: [], failClosed: true } as unknown as import('../pipeline.js').GuardrailPipeline;
+    await expect(runInput(fakePipeline, { content: 'hello' })).rejects.toThrow('Invalid GuardrailPipeline');
+  });
+
+  it('throws HarnessError when runOutput is called with a non-createPipeline object', async () => {
+    const fakePipeline = {} as unknown as import('../pipeline.js').GuardrailPipeline;
+    await expect(runOutput(fakePipeline, { content: 'hello' })).rejects.toThrow('Invalid GuardrailPipeline');
+  });
+});
+
 describe('Gap 2: permissionLevel in GuardrailContext', () => {
   it('passes permissionLevel through to guardrail functions', async () => {
     let receivedCtx: import('../types.js').GuardrailContext | undefined;

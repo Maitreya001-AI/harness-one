@@ -80,7 +80,7 @@ vi.mock('@harness-one/tiktoken', () => ({
 }));
 
 import { createHarness } from '../index.js';
-import type { HarnessConfig } from '../index.js';
+import type { AnthropicHarnessConfig } from '../index.js';
 import type { AgentAdapter } from 'harness-one/core';
 import type { MemoryStore } from 'harness-one/memory';
 import type { SchemaValidator } from 'harness-one/tools';
@@ -90,11 +90,12 @@ describe('createHarness', () => {
     vi.clearAllMocks();
   });
 
-  const baseConfig: HarnessConfig = {
+  // All adapters are mocked — client shape doesn't matter at runtime
+  const baseConfig = {
     provider: 'anthropic',
     client: {},
     model: 'claude-sonnet-4-20250514',
-  };
+  } as unknown as AnthropicHarnessConfig;
 
   it('creates a harness with all required fields', () => {
     const harness = createHarness(baseConfig);
@@ -121,7 +122,7 @@ describe('createHarness', () => {
     });
 
     it('creates OpenAI adapter when provider is "openai"', () => {
-      createHarness({ ...baseConfig, provider: 'openai' });
+      createHarness({ ...baseConfig, provider: 'openai' } as unknown as AnthropicHarnessConfig);
       expect(mocks.createOpenAIAdapter).toHaveBeenCalledWith(
         expect.objectContaining({ client: baseConfig.client, model: baseConfig.model }),
       );
@@ -156,7 +157,7 @@ describe('createHarness', () => {
         exportSpan: vi.fn(),
         flush: vi.fn(),
       };
-      createHarness({ ...baseConfig, exporters: [customExporter], langfuse: {} });
+      createHarness({ ...baseConfig, exporters: [customExporter], langfuse: {} as AnthropicHarnessConfig['langfuse'] });
       expect(mocks.createLangfuseExporter).not.toHaveBeenCalled();
     });
   });
@@ -179,7 +180,7 @@ describe('createHarness', () => {
         write: vi.fn(), read: vi.fn(), query: vi.fn(), update: vi.fn(),
         delete: vi.fn(), compact: vi.fn(), count: vi.fn(), clear: vi.fn(),
       } as unknown as MemoryStore;
-      const harness = createHarness({ ...baseConfig, memoryStore: customStore, redis: {} });
+      const harness = createHarness({ ...baseConfig, memoryStore: customStore, redis: {} as AnthropicHarnessConfig['redis'] });
       expect(mocks.createRedisStore).not.toHaveBeenCalled();
       expect(harness.memory).toBe(customStore);
     });
@@ -214,12 +215,12 @@ describe('createHarness', () => {
   describe('cost tracking', () => {
     it('sets pricing when provided', () => {
       const pricing = [{ model: 'claude-3', inputPer1kTokens: 0.003, outputPer1kTokens: 0.015 }];
-      createHarness({ ...baseConfig, langfuse: {}, pricing });
+      createHarness({ ...baseConfig, langfuse: {} as AnthropicHarnessConfig['langfuse'], pricing });
       expect(mocks.mockLangfuseCostTracker.setPricing).toHaveBeenCalledWith(pricing);
     });
 
     it('sets budget when provided', () => {
-      createHarness({ ...baseConfig, langfuse: {}, budget: 10.0 });
+      createHarness({ ...baseConfig, langfuse: {} as AnthropicHarnessConfig['langfuse'], budget: 10.0 });
       expect(mocks.mockLangfuseCostTracker.setBudget).toHaveBeenCalledWith(10.0);
     });
   });

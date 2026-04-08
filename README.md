@@ -447,7 +447,7 @@ The `init` command creates working starter files in a `harness/` directory. The 
 - **Function-first API** -- factory functions (`createRegistry()`, `createBudget()`) over classes for composability
 - **JSON Schema validation** -- tool parameters validated against JSON Schema at runtime
 - **Fail-closed guardrails** -- errors in guardrails block by default (opt into fail-open)
-- **Errors as feedback** -- tool errors are serialized back to the LLM for self-correction
+- **Errors as feedback** -- tool errors are serialized back to the LLM for self-correction; stack traces are stripped so internal implementation details are never leaked to the model
 - **Immutable data** -- `Object.freeze()` on all returned structures to prevent accidental mutation
 - **Zero dependencies** -- pure TypeScript with only `node:fs`, `node:path`, and `node:readline` for the CLI
 

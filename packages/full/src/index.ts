@@ -35,19 +35,15 @@ import type { RedisStoreConfig } from '@harness-one/redis';
 import { createAjvValidator } from '@harness-one/ajv';
 import { registerTiktokenModels } from '@harness-one/tiktoken';
 
-/** Configuration for creating a full Harness instance. */
-export interface HarnessConfig {
-  /** LLM provider -- 'anthropic' or 'openai'. */
-  readonly provider: 'anthropic' | 'openai';
-  /** Provider client instance. */
-  readonly client: unknown;
+/** Shared configuration fields for all providers. */
+interface HarnessConfigBase {
   /** Model name. */
   readonly model?: string;
 
   /** Langfuse client (optional -- enables tracing + prompt management). */
-  readonly langfuse?: unknown;
+  readonly langfuse?: LangfuseExporterConfig['client'];
   /** Redis client (optional -- enables persistent memory). */
-  readonly redis?: unknown;
+  readonly redis?: RedisStoreConfig['client'];
 
   /** Override: custom AgentAdapter. */
   readonly adapter?: AgentAdapter;
@@ -77,6 +73,23 @@ export interface HarnessConfig {
   /** Model pricing configuration. */
   readonly pricing?: ModelPricing[];
 }
+
+/** Configuration for creating a full Harness instance with Anthropic. */
+export interface AnthropicHarnessConfig extends HarnessConfigBase {
+  readonly provider: 'anthropic';
+  /** Anthropic client instance. */
+  readonly client: AnthropicAdapterConfig['client'];
+}
+
+/** Configuration for creating a full Harness instance with OpenAI. */
+export interface OpenAIHarnessConfig extends HarnessConfigBase {
+  readonly provider: 'openai';
+  /** OpenAI client instance. */
+  readonly client: OpenAIAdapterConfig['client'];
+}
+
+/** Configuration for creating a full Harness instance (discriminated by provider). */
+export type HarnessConfig = AnthropicHarnessConfig | OpenAIHarnessConfig;
 
 /** A fully-wired harness instance. */
 export interface Harness {
@@ -125,7 +138,7 @@ export function createHarness(config: HarnessConfig): Harness {
 
   // 6. Cost tracker
   const costs = config.langfuse
-    ? createLangfuseCostTracker({ client: config.langfuse as LangfuseCostTrackerConfig['client'] })
+    ? createLangfuseCostTracker({ client: config.langfuse })
     : createCostTracker();
 
   if (config.pricing) {
@@ -203,29 +216,31 @@ export function createHarness(config: HarnessConfig): Harness {
 function createAdapter(config: HarnessConfig): AgentAdapter {
   if (config.provider === 'anthropic') {
     return createAnthropicAdapter({
-      client: config.client as AnthropicAdapterConfig['client'],
+      client: config.client,
       model: config.model,
     });
   }
   if (config.provider === 'openai') {
     return createOpenAIAdapter({
-      client: config.client as OpenAIAdapterConfig['client'],
+      client: config.client,
       model: config.model,
     });
   }
-  throw new HarnessError(`Unknown provider: ${config.provider}`, 'INVALID_CONFIG', 'Use one of: anthropic, openai');
+  // Exhaustiveness check — TypeScript narrows config.provider to `never` here
+  const _exhaustive: never = config;
+  throw new HarnessError(`Unknown provider: ${(_exhaustive as HarnessConfig).provider}`, 'INVALID_CONFIG', 'Use one of: anthropic, openai');
 }
 
 function createExporters(config: HarnessConfig): TraceExporter[] {
   if (config.langfuse) {
-    return [createLangfuseExporter({ client: config.langfuse as LangfuseExporterConfig['client'] })];
+    return [createLangfuseExporter({ client: config.langfuse })];
   }
   return [createConsoleExporter()];
 }
 
 function createMemory(config: HarnessConfig): MemoryStore {
   if (config.redis) {
-    return createRedisStore({ client: config.redis as RedisStoreConfig['client'] });
+    return createRedisStore({ client: config.redis });
   }
   return createInMemoryStore();
 }

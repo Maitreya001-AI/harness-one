@@ -63,6 +63,8 @@ export function createCostTracker(config?: {
   let budget: number | undefined = config?.budget;
   const warningThreshold = config?.alertThresholds?.warning ?? 0.8;
   const criticalThreshold = config?.alertThresholds?.critical ?? 0.95;
+  const maxRecords = 10_000;
+  let runningTotal = 0;
 
   if (config?.pricing) {
     for (const p of config.pricing) {
@@ -107,6 +109,11 @@ export function createCostTracker(config?: {
         timestamp: Date.now(),
       };
       records.push(record);
+      runningTotal += estimatedCost;
+      if (records.length > maxRecords) {
+        const evicted = records.shift()!;
+        runningTotal -= evicted.estimatedCost;
+      }
 
       // Check budget alerts after recording
       if (budget !== undefined) {
@@ -120,7 +127,7 @@ export function createCostTracker(config?: {
     },
 
     getTotalCost(): number {
-      return records.reduce((sum, r) => sum + r.estimatedCost, 0);
+      return runningTotal;
     },
 
     getCostByModel(): Record<string, number> {
@@ -173,6 +180,7 @@ export function createCostTracker(config?: {
 
     reset(): void {
       records.length = 0;
+      runningTotal = 0;
     },
 
     getAlertMessage(): string | null {

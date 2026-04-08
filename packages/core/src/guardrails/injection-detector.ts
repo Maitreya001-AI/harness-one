@@ -45,13 +45,13 @@ const MEDIUM_PATTERNS: RegExp[] = [
   /forget\s+.*?(rules|instructions)/i,
 ];
 
-// High sensitivity: aggressive substring matching + base64
+// High sensitivity: context-requiring patterns + base64
 const HIGH_PATTERNS: RegExp[] = [
-  /ignore/i,
-  /pretend/i,
-  /reveal/i,
-  /disregard/i,
-  /override/i,
+  /ignore\b.*?\b(?:instruction|rule|previous|system|prompt|above)/i,
+  /pretend\b.*?\b(?:you|are|to be)/i,
+  /reveal\b.*?\b(?:prompt|instruction|rule|system|secret)/i,
+  /disregard\b.*?\b(?:instruction|rule|previous|above)/i,
+  /override\b.*?\b(?:instruction|rule|system|safety|setting)/i,
 ];
 
 // Base64 detection: looks for base64 encoded strings of reasonable length

@@ -8,7 +8,7 @@
  */
 
 import type { Tracer, Span as OTelSpan } from '@opentelemetry/api';
-import { trace as otelTrace, SpanStatusCode } from '@opentelemetry/api';
+import { trace as otelTrace, SpanStatusCode, context as otelContext } from '@opentelemetry/api';
 import type { TraceExporter, Trace, Span } from 'harness-one/observe';
 
 /** Configuration for the OpenTelemetry exporter. */
@@ -28,6 +28,9 @@ export interface OTelExporterConfig {
 export function createOTelExporter(config?: OTelExporterConfig): TraceExporter {
   const serviceName = config?.serviceName ?? 'harness-one';
   const tracer = config?.tracer ?? otelTrace.getTracer(serviceName);
+
+  // Track created OTel spans so children can reference parents
+  const spanMap = new Map<string, OTelSpan>();
 
   function setSpanAttributes(otelSpan: OTelSpan, attrs: Record<string, unknown>): void {
     for (const [key, value] of Object.entries(attrs)) {
@@ -61,7 +64,13 @@ export function createOTelExporter(config?: OTelExporterConfig): TraceExporter {
     },
 
     async exportSpan(harnessSpan: Span): Promise<void> {
-      tracer.startActiveSpan(harnessSpan.name, (otelSpan) => {
+      const parentOTelSpan = harnessSpan.parentId ? spanMap.get(harnessSpan.parentId) : undefined;
+      const parentContext = parentOTelSpan
+        ? otelTrace.setSpan(otelContext.active(), parentOTelSpan)
+        : undefined;
+
+      const spanCallback = (otelSpan: OTelSpan) => {
+        spanMap.set(harnessSpan.id, otelSpan);
         otelSpan.setAttribute('harness.span.id', harnessSpan.id);
         otelSpan.setAttribute('harness.trace.id', harnessSpan.traceId);
         if (harnessSpan.parentId) {
@@ -89,7 +98,13 @@ export function createOTelExporter(config?: OTelExporterConfig): TraceExporter {
         }
 
         otelSpan.end(harnessSpan.endTime ? new Date(harnessSpan.endTime) : undefined);
-      });
+      };
+
+      if (parentContext) {
+        tracer.startActiveSpan(harnessSpan.name, {}, parentContext, spanCallback);
+      } else {
+        tracer.startActiveSpan(harnessSpan.name, spanCallback);
+      }
     },
 
     async flush(): Promise<void> {

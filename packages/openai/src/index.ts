@@ -51,6 +51,11 @@ export interface OpenAIAdapterConfig {
   readonly defaultHeaders?: Record<string, string>;
   /** Model name. Defaults to 'gpt-4o'. */
   readonly model?: string;
+  /**
+   * Maximum number of retries for transient errors (429, 5xx).
+   * Passed to the OpenAI SDK client at creation time. Defaults to 2 (SDK default).
+   */
+  readonly maxRetries?: number;
 }
 
 /** Convert a harness-one Message to OpenAI's chat completion message format. */
@@ -143,6 +148,7 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
     apiKey: config.apiKey,
     baseURL: config.baseURL,
     defaultHeaders: config.defaultHeaders,
+    maxRetries: config.maxRetries,
   });
   const model = config.model ?? 'gpt-4o';
 
@@ -156,6 +162,7 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
         top_p: params.config?.topP,
         max_tokens: params.config?.maxTokens,
         stop: params.config?.stopSequences as string[] | undefined,
+        signal: params.signal,
       });
 
       const choice = response.choices[0];
@@ -176,6 +183,7 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
         tools: params.tools?.map(toOpenAITool),
         temperature: params.config?.temperature,
         stream: true,
+        signal: params.signal,
       });
 
       const toolCallAccum = new Map<

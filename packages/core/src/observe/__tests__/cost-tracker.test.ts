@@ -270,4 +270,42 @@ describe('createCostTracker', () => {
       expect(msg!.length).toBeGreaterThan(10);
     });
   });
+
+  describe('running total optimization', () => {
+    it('getTotalCost uses running total instead of reduce', () => {
+      const tracker = createCostTracker({ pricing });
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      tracker.recordUsage({ traceId: 't2', model: 'claude-3', inputTokens: 2000, outputTokens: 0 });
+      // 0.003 + 0.006 = 0.009
+      expect(tracker.getTotalCost()).toBeCloseTo(0.009, 4);
+    });
+
+    it('reset clears running total', () => {
+      const tracker = createCostTracker({ pricing });
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      tracker.reset();
+      expect(tracker.getTotalCost()).toBe(0);
+
+      // New record after reset starts from 0
+      tracker.recordUsage({ traceId: 't2', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      expect(tracker.getTotalCost()).toBeCloseTo(0.003, 4);
+    });
+  });
+
+  describe('records cap', () => {
+    it('evicts oldest records when exceeding maxRecords (10,000) and adjusts running total', () => {
+      const tracker = createCostTracker({
+        pricing: [{ model: 'a', inputPer1kTokens: 1.0, outputPer1kTokens: 0 }],
+      });
+
+      // Add 10,001 records: each costs 0.001 (1 token input at $1/1k)
+      for (let i = 0; i < 10_001; i++) {
+        tracker.recordUsage({ traceId: `t${i}`, model: 'a', inputTokens: 1, outputTokens: 0 });
+      }
+
+      // The first record should have been evicted, so total should be 10,000 * 0.001 not 10,001 * 0.001
+      // Each record: 1/1000 * 1.0 = 0.001
+      expect(tracker.getTotalCost()).toBeCloseTo(10_000 * 0.001, 2);
+    });
+  });
 });

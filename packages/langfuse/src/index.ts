@@ -11,6 +11,7 @@ import type { TraceExporter, Trace, Span } from 'harness-one/observe';
 import type { PromptBackend, PromptTemplate } from 'harness-one/prompt';
 import type { CostTracker, ModelPricing } from 'harness-one/observe';
 import type { TokenUsageRecord, CostAlert } from 'harness-one/observe';
+import { HarnessError } from 'harness-one/core';
 
 // ---------------------------------------------------------------------------
 // TraceExporter
@@ -33,6 +34,7 @@ export function createLangfuseExporter(config: LangfuseExporterConfig): TraceExp
   const { client } = config;
 
   // Track Langfuse trace objects so spans can attach to the correct parent.
+  const MAX_TRACE_MAP_SIZE = 1000;
   const traceMap = new Map<string, ReturnType<typeof client.trace>>();
 
   return {
@@ -47,6 +49,10 @@ export function createLangfuseExporter(config: LangfuseExporterConfig): TraceExp
           metadata: trace.metadata,
         });
         traceMap.set(trace.id, lfTrace);
+        if (traceMap.size > MAX_TRACE_MAP_SIZE) {
+          const firstKey = traceMap.keys().next().value;
+          if (firstKey !== undefined) traceMap.delete(firstKey);
+        }
       }
 
       lfTrace.update({
@@ -63,6 +69,10 @@ export function createLangfuseExporter(config: LangfuseExporterConfig): TraceExp
       if (!lfTrace) {
         lfTrace = client.trace({ id: span.traceId, name: 'unknown' });
         traceMap.set(span.traceId, lfTrace);
+        if (traceMap.size > MAX_TRACE_MAP_SIZE) {
+          const firstKey = traceMap.keys().next().value;
+          if (firstKey !== undefined) traceMap.delete(firstKey);
+        }
       }
 
       const isGeneration =
@@ -134,6 +144,7 @@ export interface LangfusePromptBackendConfig {
  */
 export function createLangfusePromptBackend(config: LangfusePromptBackendConfig): PromptBackend {
   const { client } = config;
+  const knownPromptNames = new Set<string>();
 
   function toPromptTemplate(
     name: string,
@@ -159,6 +170,7 @@ export function createLangfusePromptBackend(config: LangfusePromptBackendConfig)
     async fetch(id: string, _version?: string): Promise<PromptTemplate | undefined> {
       try {
         const lfPrompt = await client.getPrompt(id);
+        knownPromptNames.add(id);
         return toPromptTemplate(id, lfPrompt as { prompt: unknown; version: number });
       } catch {
         return undefined;
@@ -166,15 +178,25 @@ export function createLangfusePromptBackend(config: LangfusePromptBackendConfig)
     },
 
     async list(): Promise<PromptTemplate[]> {
-      // Langfuse SDK does not have a native "list all prompts" method.
-      // In production, maintain a known list of prompt names and fetch each.
-      return [];
+      const templates: PromptTemplate[] = [];
+      for (const name of knownPromptNames) {
+        try {
+          const lfPrompt = await client.getPrompt(name);
+          templates.push(toPromptTemplate(name, lfPrompt as { prompt: unknown; version: number }));
+        } catch {
+          // Prompt may have been deleted
+          knownPromptNames.delete(name);
+        }
+      }
+      return templates;
     },
 
-    async push(template: PromptTemplate): Promise<void> {
-      // Langfuse prompt creation is typically done via the UI or REST API.
-      // This is a placeholder showing the pattern.
-      void template;
+    async push(_template: PromptTemplate): Promise<void> {
+      throw new HarnessError(
+        'Langfuse SDK does not support pushing prompts programmatically',
+        'UNSUPPORTED_OPERATION',
+        'Use the Langfuse UI or REST API to create prompts',
+      );
     },
   };
 }
@@ -201,6 +223,7 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): Co
   const records: TokenUsageRecord[] = [];
   const alertHandlers: ((alert: CostAlert) => void)[] = [];
   let budget: number | undefined;
+  let runningTotal = 0;
   const warningThreshold = 0.8;
   const criticalThreshold = 0.95;
 
@@ -240,6 +263,7 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): Co
         timestamp: Date.now(),
       };
       records.push(record);
+      runningTotal += estimatedCost;
 
       // Export to Langfuse as a generation with cost metadata
       const trace = client.trace({ id: usage.traceId, name: 'cost-tracking' });
@@ -268,7 +292,7 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): Co
     },
 
     getTotalCost(): number {
-      return records.reduce((sum, r) => sum + r.estimatedCost, 0);
+      return runningTotal;
     },
 
     getCostByModel(): Record<string, number> {
@@ -321,6 +345,7 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): Co
 
     reset(): void {
       records.length = 0;
+      runningTotal = 0;
     },
 
     getAlertMessage(): string | null {

@@ -226,11 +226,9 @@ export class AgentLoop {
               result = { error: `No onToolCall handler registered for tool "${toolCall.name}"` };
             }
           } catch (err) {
-            // H1: Preserve stack trace context in error feedback to LLM
             if (err instanceof Error) {
               result = {
                 error: err.message,
-                stack: err.stack,
               };
             } else {
               result = {
