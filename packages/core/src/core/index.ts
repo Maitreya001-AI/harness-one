@@ -60,6 +60,9 @@ export { toSSEStream, formatSSE } from './sse-stream.js';
 export type { EventHandler, EventBus } from './event-bus.js';
 export { createEventBus } from './event-bus.js';
 
+// Execution strategies
+export { createSequentialStrategy, createParallelStrategy } from './execution-strategies.js';
+
 // Test utilities
 export type { MockAdapterConfig } from './test-utils.js';
 export { createMockAdapter } from './test-utils.js';
