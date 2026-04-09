@@ -14,8 +14,8 @@ harness-one 是一个 TypeScript 工具库，为 AI Agent 产品提供 Harness E
 |------|---|
 | 源码文件 | ~78 个 .ts 文件 |
 | 测试文件 | ~57 个 .test.ts 文件 |
-| 测试用例 | 1,423 |
-| 源码行数 | ~10,200 行 |
+| 测试用例 | 1,480+ |
+| 源码行数 | ~10,500 行 |
 | 运行时依赖 | 0 |
 | 模块数 | 10 核心模块 + 7 集成包 + 1 full 包 |
 | 包结构 | pnpm monorepo with 10 packages |

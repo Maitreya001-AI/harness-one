@@ -14,7 +14,7 @@ context 模块处理 LLM 上下文窗口的工程问题：通过 TokenBudget 分
 | `src/context/count-tokens.ts` | countTokens + registerTokenizer——委托 _internal 估算器 | ~44 |
 | `src/context/budget.ts` | createBudget 工厂——分段 token 预算管理 | ~98 |
 | `src/context/pack.ts` | packContext——HEAD/MID/TAIL 打包 | ~57 |
-| `src/context/compress.ts` | compress + 4 种内置策略 | ~252 |
+| `src/context/compress.ts` | compress + 4 种内置策略 + compactIfNeeded 条件压缩 | ~280 |
 | `src/context/cache-stability.ts` | analyzeCacheStability——缓存稳定性分析 | ~102 |
 | `src/context/index.ts` | 公共导出桶文件 | ~28 |
 
@@ -57,6 +57,12 @@ function packContext(layout: ContextLayout, model?: string):
 function compress(messages: readonly Message[], options: CompressOptions): Promise<Message[]>
 ```
 内置策略名：`'truncate'` | `'sliding-window'` | `'summarize'` | `'preserve-failures'`。
+
+**compactIfNeeded(messages, options)**
+```ts
+function compactIfNeeded(messages: readonly Message[], options: CompactOptions): Promise<Message[]>
+```
+条件压缩：估算 token 数，若超过 `budget × threshold`（默认 0.75）则调用 `compress()`，否则返回原消息。支持 `countTokens` 参数注入精确 tokenizer（避免依赖全局 `registerTokenizer()`）。
 
 **analyzeCacheStability(v1, v2, model?)**
 ```ts
