@@ -12,7 +12,12 @@ export interface ConversationStore {
   save(sessionId: string, messages: readonly Message[]): Promise<void>;
   /** Load the message history for a session (empty array if not found). */
   load(sessionId: string): Promise<Message[]>;
-  /** Append a single message to an existing session's history. */
+  /**
+   * Append a single message to an existing session's history.
+   *
+   * Note: The in-memory implementation is safe under Node.js single-threaded execution,
+   * but custom implementations should ensure atomicity if concurrent appends are possible.
+   */
   append(sessionId: string, message: Message): Promise<void>;
   /** Delete a session's history. Returns true if it existed. */
   delete(sessionId: string): Promise<boolean>;
@@ -44,6 +49,7 @@ export function createInMemoryConversationStore(): ConversationStore {
       const messages = store.get(sessionId);
       return messages ? [...messages] : [];
     },
+    /** @see ConversationStore.append — safe under single-threaded Node.js; no mutex needed. */
     async append(sessionId, message) {
       const existing = store.get(sessionId) ?? [];
       const messages = [...existing, message];

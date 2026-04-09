@@ -56,7 +56,7 @@ function createRegistry(config?: {
   validator?: SchemaValidator; // 自定义校验器（默认使用内置 JSON Schema 验证器）
 }): ToolRegistry
 ```
-ToolRegistry 接口：`register()`, `get()`, `list(namespace?)`, `schemas()`, `execute()`, `handler()`, `resetTurn()`.
+ToolRegistry 接口：`register()`, `get()`, `list(namespace?)`, `schemas()`, `execute()`, `handler()`, `resetTurn()`, `resetSession()`.
 
 传入 `validator` 后，`execute()` 流程中的参数校验将委托给该实现，替代内置的 `validateToolCall()`。典型用例：注入 Ajv 以获得完整 JSON Schema Draft-07 支持（见 `examples/tools/ajv-validator.ts`）。
 
@@ -75,7 +75,7 @@ function validateToolCall(schema: JsonSchema, params: unknown):
 2. 查找工具（未找到返回 `toolError('not_found')`）
 3. JSON.parse arguments（失败返回 `toolError('validation')`）
 4. validateToolCall 校验参数（失败返回验证错误）
-5. 调用 `tool.execute(params)` 并递增计数器
+5. 创建 AbortController 用于超时控制，将 signal 传给 `tool.execute(params, signal)`，并在 finally 块中清理 timer；递增计数器
 
 ### handler() 桥接
 
@@ -103,9 +103,9 @@ function validateToolCall(schema: JsonSchema, params: unknown):
 2. **defineTool 自动 try/catch**——防止工具实现的未捕获异常泄露到 AgentLoop
 3. **Object.freeze**——工具定义注册后不可变
 4. **速率限制内置**——per-turn 和 per-session 两级限制，防止工具滥用
+5. **AbortSignal 超时**——timeout 使用 AbortController 而非裸 setTimeout，允许工具实现响应取消信号
 
 ## 已知限制
 
-- session 级别的 callCount 没有重置接口（仅 turnCalls 可重置）
 - 不支持工具定义的热更新（注册后不可修改或删除）
 - 工具执行是串行的，不支持并行执行多个工具

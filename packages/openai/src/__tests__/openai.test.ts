@@ -509,6 +509,36 @@ describe('createOpenAIAdapter', () => {
       expect((toolChunks[1] as any).toolCall.id).toBe('tc-1');
     });
 
+    it('emits done with usage and terminates stream on usage chunk', async () => {
+      const asyncIter = {
+        async *[Symbol.asyncIterator]() {
+          yield { choices: [{ delta: { content: 'Hi' } }] };
+          yield { choices: [{ delta: {} }], usage: { prompt_tokens: 7, completion_tokens: 3 } };
+          // If the stream continued, this would be yielded — but it should not be
+          yield { choices: [{ delta: { content: 'SHOULD NOT APPEAR' } }] };
+        },
+      };
+      mock.mocks.create.mockResolvedValue(asyncIter);
+
+      const adapter = createOpenAIAdapter({ client: mock.client });
+      const chunks: unknown[] = [];
+      for await (const chunk of adapter.stream!({
+        messages: [{ role: 'user', content: 'Hi' }],
+      })) {
+        chunks.push(chunk);
+      }
+
+      // The done chunk must carry usage data from the usage chunk
+      const doneChunk = chunks.find((c: any) => c.type === 'done') as any;
+      expect(doneChunk).toBeDefined();
+      expect(doneChunk.usage).toEqual({ inputTokens: 7, outputTokens: 3 });
+
+      // No text after the usage chunk should have been emitted
+      const textChunks = chunks.filter((c: any) => c.type === 'text_delta');
+      expect(textChunks).toHaveLength(1);
+      expect((textChunks[0] as any).text).toBe('Hi');
+    });
+
     it('always emits a final done event', async () => {
       const asyncIter = {
         async *[Symbol.asyncIterator]() {

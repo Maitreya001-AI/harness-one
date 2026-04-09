@@ -88,9 +88,13 @@ PromptBuilder.build() 排序规则：cacheable 层排在前面（稳定前缀）
 
 SkillEngine.processTurn() 按 transitions 数组顺序检查条件，首个匹配即触发转换。`manual` 类型仅通过 `advanceTo()` 触发。maxTurns 是安全兜底：超限时自动跳到第一个非 manual 转换目标。
 
+### 注册时条件验证
+
+`registerSkill()` 在注册时验证所有转换条件的合法性：`turn_count` 要求 `count` 为数值，`keyword` 要求 `keywords` 为非空数组，`custom` 要求提供 `check` 函数。未知的条件类型抛出 INVALID_TRANSITION 错误。
+
 ### 哈希算法
 
-stablePrefixHash 使用简单的 djb2 变体（位运算），输出 8 位十六进制字符串。用于追踪 KV-cache 命中率，非密码学用途。
+stablePrefixHash 使用 SHA-256 截断，输出 16 位十六进制字符串（64-bit）。哈希在变量替换之前基于原始模板计算，确保 KV-cache 稳定性。用于追踪 KV-cache 命中率，非密码学用途。
 
 ## 依赖关系
 
@@ -112,6 +116,6 @@ stablePrefixHash 使用简单的 djb2 变体（位运算），输出 8 位十六
 
 ## 已知限制
 
-- token 估算使用 ~4 chars/token 启发式，非精确计数
+- token 估算默认使用 ~4 chars/token 启发式，用户可通过 `registerTokenizer()` 注册精确计数器（如 tiktoken）
 - SkillEngine 一次只能运行一个技能（单活跃技能）
 - PromptRegistry 不支持模板删除或更新（注册即不可变）

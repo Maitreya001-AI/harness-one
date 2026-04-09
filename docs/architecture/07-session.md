@@ -60,11 +60,15 @@ SessionManager 接口：
 
 ### LRU 淘汰
 
-维护 `accessOrder` 数组。`create()` 和 `access()` 时将 session ID 移到末尾。超过 `maxSessions` 时从头部开始淘汰。
+维护 `accessOrder: Map<string, true>`，利用 Map 的插入顺序实现 O(1) LRU（delete + re-set 移到末尾，`keys().next().value` 获取最旧条目）。`create()` 和 `access()` 时将 session ID 移到末尾。超过 `maxSessions` 时淘汰最旧条目。
 
 ### 排他锁定
 
 `lock(id)` 将 session.status 设为 `'locked'`，返回 unlock 闭包。锁定期间 `access()` 抛出 `SESSION_LOCKED` 错误。`unlock()` 时恢复为 `'active'` 并更新 lastAccessedAt。
+
+### 事件重入保护
+
+emit() 使用 `emitting` 标志和 `pendingEvents` 队列。如果 handler 同步触发新事件（如在 'accessed' handler 中调用 create()），新事件被排队而非递归执行，防止状态损坏。
 
 ### 自动 GC
 
@@ -96,4 +100,3 @@ SessionManager 接口：
 - 纯内存实现，进程重启后会话丢失
 - 锁是非竞争性的（无等待/排队机制，lock 期间 access 直接抛错）
 - LRU 淘汰不区分锁定状态（锁定的会话也可能被淘汰）
-- 事件回调无 off/unsubscribe 机制

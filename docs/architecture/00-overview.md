@@ -14,8 +14,8 @@ harness-one 是一个 TypeScript 工具库，为 AI Agent 产品提供 Harness E
 |------|---|
 | 源码文件 | ~78 个 .ts 文件 |
 | 测试文件 | ~57 个 .test.ts 文件 |
-| 测试用例 | 449 |
-| 源码行数 | ~9,000 行 |
+| 测试用例 | 1,423 |
+| 源码行数 | ~10,200 行 |
 | 运行时依赖 | 0 |
 | 模块数 | 10 核心模块 + 7 集成包 + 1 full 包 |
 | 包结构 | pnpm monorepo with 10 packages |
@@ -69,12 +69,13 @@ harness-one 是一个 TypeScript 工具库，为 AI Agent 产品提供 Harness E
 
 | 原则 | 实现方式 |
 |------|---------|
-| **工厂函数优先** | 10 个模块中 9 个使用 `createXxx()` 工厂函数，仅 AgentLoop 使用 class |
+| **工厂函数优先** | 10 个模块中 9 个使用 `createXxx()` 工厂函数，仅 AgentLoop 使用 class（含 `dispose()` 方法） |
 | **零运行时依赖** | JSON Schema 验证器和 Token 估算器均为内部实现 |
 | **不可变返回值** | 所有工厂返回的对象使用 `Object.freeze()` 冻结 |
 | **Fail-Closed 安全默认** | 护栏出错时默认拦截请求，而非放行 |
 | **Errors as Data** | 工具失败返回 `ToolResult`，护栏拦截返回 `GuardrailVerdict`，只有编程错误抛出 `HarnessError` |
 | **类型即文档** | 所有公共 API 有完整 TypeScript 类型 + JSDoc @example |
+| **资源清理** | 有状态模块提供 `dispose()` 方法（AgentLoop、TraceManager、SessionManager、Orchestrator） |
 | **渐进式采用** | 每个模块独立可用，无需全部引入 |
 
 ## 错误处理策略

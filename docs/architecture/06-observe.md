@@ -38,7 +38,11 @@ function createTraceManager(config?: {
   maxTraces?: number;  // 默认 1000，LRU 淘汰
 }): TraceManager
 ```
-TraceManager 接口：`startTrace()`, `startSpan()`, `addSpanEvent()`, `setSpanAttributes()`, `endSpan()`, `endTrace()`, `getTrace()`, `flush()`.
+TraceManager 接口：`startTrace()`, `startSpan()`, `addSpanEvent()`, `setSpanAttributes()`, `endSpan()`, `endTrace()`, `getTrace()`, `getActiveSpans()`, `flush()`, `dispose()`.
+
+- `getActiveSpans(): Array<{ id: string; traceId: string; name: string; startTime: number }>` — 返回仍处于 'running' 状态的 span，用于检测泄漏的 span。
+- `dispose(): Promise<void>` — 执行 flush + shutdown + 清理所有内部状态。
+- `startSpan()` 的 parentId 参数现在会被校验——如果提供了 parentId，必须是同一 trace 中已存在的 span，否则抛出 SPAN_NOT_FOUND 错误。
 
 **createConsoleExporter(config?)** / **createNoOpExporter()**
 ```ts
@@ -54,13 +58,19 @@ function createCostTracker(config?: {
   alertThresholds?: { warning: number; critical: number };  // 默认 0.8 / 0.95（Langfuse 实现中可通过 config 覆盖）
 }): CostTracker
 ```
-CostTracker 接口：`setPricing()`, `recordUsage()`, `getTotalCost()`, `getCostByModel()`, `getCostByTrace()`, `setBudget()`, `checkBudget()`, `onAlert()`, `reset()`.
+CostTracker 接口：`setPricing()`, `recordUsage()`, `getTotalCost()`, `getCostByModel()`, `getCostByTrace()`, `setBudget()`, `checkBudget()`, `onAlert()`, `getAlertMessage()`, `reset()`.
+
+实现特点：
+- 使用独立闭包函数（checkBudgetFn、getAlertMessageFn）代替 `this` 引用，支持安全解构：`const { recordUsage, checkBudget } = createCostTracker()`
+- 内置 maxRecords=10,000 环形缓冲区，超出时自动淘汰最旧记录
+- 每 1,000 条记录执行一次浮点数重校准，防止精度漂移
+- `getAlertMessage(): string | null` — 返回当前预算告警的人类可读消息，无告警时返回 null
 
 ## 内部实现
 
 ### Trace/Span 生命周期
 
-Trace 内部维护 MutableTrace/MutableSpan 结构（可写），通过 `toReadonlyTrace()` 转为只读快照返回。Span 结束时异步调用所有 exporter（catch 吞掉错误），Trace 结束时导出完整 trace。
+Trace 内部维护 MutableTrace/MutableSpan 结构（可写），通过 `toReadonlyTrace()` 转为只读快照返回。Span 结束时异步调用所有 exporter（错误通过 `onExportError` 回调报告），Trace 结束时导出完整 trace。
 
 ### LRU 淘汰
 
@@ -109,13 +119,12 @@ cost = (inputTokens/1000 * inputPrice) + (outputTokens/1000 * outputPrice)
 
 ## 设计决策
 
-1. **Exporter 异步且不阻塞**——exportTrace/exportSpan 的 Promise rejection 被静默吞掉，不影响业务流程
+1. **Exporter 异步且不阻塞**——exportTrace/exportSpan 的 Promise rejection 通过 `onExportError` 回调报告，不影响业务流程
 2. **LRU 而非 TTL**——按数量而非时间淘汰，更适合长期运行的 agent 进程
 3. **成本与追踪分离**——TraceManager 和 CostTracker 是独立的，可单独使用
 
 ## 已知限制
 
-- Exporter 错误被静默忽略，无错误回调
 - TraceManager 不支持跨进程的分布式追踪关联
-- CostTracker 的记录数组只增不减（除非手动 reset）
 - 未注册模型的成本计算为 0，不发出警告
+- getCostByModel()/getCostByTrace() 仅反映缓冲区内的记录；如需包含已淘汰记录的累计总额，使用 getTotalCost()

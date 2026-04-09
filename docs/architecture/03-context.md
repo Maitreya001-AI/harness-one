@@ -26,7 +26,7 @@ context 模块处理 LLM 上下文窗口的工程问题：通过 TokenBudget 分
 |------|------|
 | `Segment` | 预算分段：name、maxTokens、trimPriority、reserved |
 | `BudgetConfig` | 预算配置：totalTokens、segments、responseReserve |
-| `TokenBudget` | 预算追踪接口 |
+| `TokenBudget` | 预算追踪接口（含只读属性 `responseReserve: number`） |
 | `ContextLayout` | 打包布局：head + mid + tail + budget |
 | `CompressionStrategy` | 压缩策略接口：name + compress() |
 | `CacheStabilityReport` | 缓存分析报告 |
@@ -67,7 +67,7 @@ function analyzeCacheStability(v1: readonly Message[], v2: readonly Message[], m
 
 ### 打包策略
 
-packContext 保证 HEAD 和 TAIL 始终包含，MID 段从前端（最旧消息）开始裁剪。这符合对话场景中"最近消息更重要"的假设。
+packContext 先从总预算中减去 `budget.responseReserve`，再计算 MID 段可用 token 数。这确保响应 token 被预留，上下文不会填满整个窗口。HEAD 和 TAIL 始终包含，MID 段从前端（最旧消息）开始裁剪。这符合对话场景中"最近消息更重要"的假设。
 
 ### 压缩策略详解
 

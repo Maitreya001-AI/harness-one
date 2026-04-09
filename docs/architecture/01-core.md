@@ -56,6 +56,7 @@ class AgentLoop {
   constructor(config: AgentLoopConfig)
   get usage(): TokenUsage
   abort(): void
+  dispose(): void
   async *run(messages: Message[]): AsyncGenerator<AgentEvent>
 }
 ```
@@ -67,12 +68,20 @@ class AgentLoop {
 ### 循环机制
 
 AgentLoop.run() 是一个 AsyncGenerator，每次迭代：
-1. 检查 abort 信号（外部 AbortSignal + 内部 aborted 标志）
+1. 检查 abort 信号（单一 AbortController.signal 作为唯一真实来源）
 2. 检查 maxIterations
 3. 检查累计 token 预算（inputTokens + outputTokens 之和，非负 clamp）
 4. 调用 adapter.chat()
 5. 若无 toolCalls → yield `message` + `done(end_turn)` 并返回
 6. 若有 toolCalls → 逐个 yield `tool_call`，调用 onToolCall，yield `tool_result`，将结果追加到 conversation，继续循环
+
+### 事件总线错误隔离
+
+event-bus.ts 的 `emit()` 方法对每个 handler 使用 try-catch 错误隔离，单个 handler 抛异常不影响其他 handler 的执行。
+
+### FallbackAdapter 流式降级
+
+FallbackAdapter 的 `stream()` 方法支持自动降级：当底层 adapter 未实现 stream() 时，自动回退到 chat() 并将完整响应拆分为流式 chunk，与 chat() 的回退模式一致。
 
 ### Errors as Feedback
 
@@ -96,7 +105,7 @@ AgentLoop.run() 是一个 AsyncGenerator，每次迭代：
 
 ## 设计决策
 
-1. **AgentLoop 是唯一的 class**——需要维护迭代状态（cumulativeUsage、aborted），工厂函数不适合
+1. **AgentLoop 是唯一的 class**——需要维护迭代状态（cumulativeUsage、AbortController），工厂函数不适合
 2. **AsyncGenerator 而非回调**——调用方通过 `for await` 消费事件，天然支持背压
 3. **token 非负 clamp**——`Math.max(0, ...)` 防止恶意 adapter 通过负数绕过预算检查
 4. **HarnessError 层级**——每个子类携带 `.code`（程序判断）+ `.suggestion`（人类可读修复建议）
@@ -104,5 +113,4 @@ AgentLoop.run() 是一个 AsyncGenerator，每次迭代：
 ## 已知限制
 
 - AgentLoop 不支持并行工具调用（串行执行所有 toolCalls）
-- stream() 方法在 AgentAdapter 上定义但 AgentLoop 当前未使用
 - 累计 token 检查在调用 LLM **之前**进行，不含当次调用的 token

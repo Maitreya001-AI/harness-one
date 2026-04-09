@@ -221,6 +221,10 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
           }
         }
 
+        // OpenAI sends usage data in the final stream chunk.
+        // We emit 'done' and return immediately upon receiving it.
+        // If OpenAI changes this behavior (e.g., sends usage before final chunk),
+        // subsequent chunks would be silently dropped — review this logic if that happens.
         if (chunk.usage) {
           yield { type: 'done', usage: toTokenUsage(chunk.usage) };
           return; // usage chunk is the final event — don't emit another done
