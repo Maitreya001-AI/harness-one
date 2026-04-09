@@ -1,0 +1,306 @@
+{
+  "plan_version": "1.0",
+  "prd_reference": "docs/forge-teams/core-primitives-gaps-20260409/phase-1-requirements/prd.md",
+  "adr_reference": "docs/forge-teams/core-primitives-gaps-20260409/phase-2-architecture/adr.md",
+  "generated_at": "2026-04-09",
+  "summary": {
+    "total_tasks": 7,
+    "critical_path_length": 3,
+    "max_parallelism": 5,
+    "shared_file_conflicts": 0
+  },
+  "tasks": [
+    {
+      "id": "T1",
+      "title": "P0: Rate limiter TOCTOU fix",
+      "description": "Fix the TOCTOU race condition in registry.ts execute(). Move turnCalls++/sessionCalls++ increment BEFORE the first await (currently at line 158, after all async validation). Add try/catch around the pre-execution checks (lookup, parse, validate, permission) so counters decrement on those failures. Do NOT decrement on tool.execute() failure — a tool that reached execute() consumed a slot (ADR-01). The increment is already at line 158 before tool.execute(), but the check-then-increment gap spans lines 98-157 with multiple early returns. Fix: increment immediately after the rate-limit check passes (after line 111), wrap lines 114-155 in try/catch that decrements on failure.",
+      "files": [
+        {
+          "path": "packages/core/src/tools/registry.ts",
+          "ownership": "OWNS",
+          "action": "MODIFY",
+          "description": "Move counter increment before first await, add try/catch for pre-execution failures"
+        }
+      ],
+      "fileOwnership": "exclusive",
+      "dependencies": [],
+      "priority": "P0",
+      "estimatedLOC": 15,
+      "testFiles": [
+        "packages/core/src/tools/__tests__/registry-toctou.test.ts"
+      ],
+      "acceptance_criteria": [
+        "turnCalls and sessionCalls increment before first async operation (after rate-limit check, before lookup/parse/validate)",
+        "Counters decrement on lookup failure (not_found), parse failure, validation failure, and permission denial",
+        "Counters do NOT decrement on tool.execute() failure",
+        "Test: concurrent execute() calls respect maxPerTurn limit",
+        "No API changes to ToolRegistry interface"
+      ],
+      "verification_command": "npx vitest run packages/core/src/tools/__tests__/registry-toctou.test.ts",
+      "risk_notes": "Low risk. Isolated change in a single function. Existing registry.test.ts covers normal behavior; new test covers concurrency."
+    },
+    {
+      "id": "T2",
+      "title": "P1a: ExecutionStrategy types + ToolDefinition sequential flag",
+      "description": "Add the ExecutionStrategy interface and ToolExecutionResult type to core/types.ts (ADR-02). Add sequential?: boolean to ToolDefinition in tools/types.ts. These types are the foundation for T3 (strategy implementations) and T4 (AgentLoop integration). Add ExecutionStrategy, ToolExecutionResult, and the AgentLoopConfig sugar fields (parallel, maxParallelToolCalls, executionStrategy, isSequentialTool) as type definitions only.",
+      "files": [
+        {
+          "path": "packages/core/src/core/types.ts",
+          "ownership": "OWNS",
+          "action": "MODIFY",
+          "description": "Add ToolExecutionResult type and ExecutionStrategy interface"
+        },
+        {
+          "path": "packages/core/src/tools/types.ts",
+          "ownership": "OWNS",
+          "action": "MODIFY",
+          "description": "Add sequential?: boolean to ToolDefinition interface"
+        }
+      ],
+      "fileOwnership": "exclusive",
+      "dependencies": [],
+      "priority": "P1",
+      "estimatedLOC": 25,
+      "testFiles": [
+        "packages/core/src/core/__tests__/execution-strategy-types.test.ts"
+      ],
+      "acceptance_criteria": [
+        "ExecutionStrategy interface with execute() method matching ADR-02 signature",
+        "ToolExecutionResult type with toolCallId, result, and error fields",
+        "ToolDefinition gains sequential?: boolean (default false)",
+        "All new types are exported from their modules",
+        "Type-only test file verifying assignability"
+      ],
+      "verification_command": "npx vitest run packages/core/src/core/__tests__/execution-strategy-types.test.ts",
+      "risk_notes": "Low risk. Additive type changes only — no runtime behavior change. ToolDefinition is generic so sequential field must use optional."
+    },
+    {
+      "id": "T3",
+      "title": "P1a: ExecutionStrategy implementations (sequential + parallel)",
+      "description": "Create core/execution-strategies.ts with createSequentialStrategy() and createParallelStrategy(). The parallel strategy uses a worker-pool pattern (promiseAllSettledWithConcurrency) — NOT chunk-based batching (ADR-02 explicitly rejects A's chunking as buggy). createParallelStrategy accepts maxConcurrency and isSequentialTool callback. It partitions calls into parallel and sequential groups, runs parallel group through the worker pool, then runs sequential group one-by-one. Results returned in original call order regardless of completion order.",
+      "files": [
+        {
+          "path": "packages/core/src/core/execution-strategies.ts",
+          "ownership": "OWNS",
+          "action": "CREATE",
+          "description": "New file: createSequentialStrategy(), createParallelStrategy() with worker pool"
+        }
+      ],
+      "fileOwnership": "exclusive",
+      "dependencies": ["T2"],
+      "priority": "P1",
+      "estimatedLOC": 55,
+      "testFiles": [
+        "packages/core/src/core/__tests__/execution-strategies.test.ts"
+      ],
+      "acceptance_criteria": [
+        "createSequentialStrategy() executes calls one-by-one in order",
+        "createParallelStrategy() uses worker-pool concurrency (not chunking)",
+        "isSequentialTool callback correctly partitions calls into parallel vs sequential groups",
+        "Sequential tools execute after parallel group completes",
+        "Results in original call order regardless of completion order",
+        "Promise.allSettled semantics — one tool failure doesn't abort others",
+        "Respects AbortSignal in options"
+      ],
+      "verification_command": "npx vitest run packages/core/src/core/__tests__/execution-strategies.test.ts",
+      "risk_notes": "Medium risk. Worker pool concurrency logic must be correct. Key invariant: N workers pulling from queue, not N-sized batches. Test with timing assertions."
+    },
+    {
+      "id": "T4",
+      "title": "P1a: AgentLoop parallel execution integration",
+      "description": "Integrate ExecutionStrategy into AgentLoop. Add parallel, maxParallelToolCalls, executionStrategy, and isSequentialTool to AgentLoopConfig (the interface is in agent-loop.ts lines 15-24). Sugar logic: if executionStrategy is provided, use it directly; else if parallel is true, use createParallelStrategy(maxParallelToolCalls ?? 5, isSequentialTool); else use createSequentialStrategy(). Replace the sequential for-loop at lines 237-269 with strategy.execute(). Maintain deterministic event ordering: yield all tool_call events, then all tool_result events. Push tool result messages in original call order.",
+      "files": [
+        {
+          "path": "packages/core/src/core/agent-loop.ts",
+          "ownership": "OWNS",
+          "action": "MODIFY",
+          "description": "Add strategy config fields, replace sequential tool loop with strategy.execute() call"
+        }
+      ],
+      "fileOwnership": "exclusive",
+      "dependencies": ["T1", "T3"],
+      "priority": "P1",
+      "estimatedLOC": 40,
+      "testFiles": [
+        "packages/core/src/core/__tests__/agent-loop-parallel.test.ts"
+      ],
+      "acceptance_criteria": [
+        "AgentLoopConfig accepts parallel, maxParallelToolCalls, executionStrategy, isSequentialTool",
+        "Sugar: parallel:true creates createParallelStrategy with maxConcurrency default 5",
+        "Sugar: no config = sequential (backward compatible)",
+        "Events yielded in deterministic order: all tool_calls then all tool_results",
+        "Tool result messages in conversation in original call order",
+        "Existing sequential behavior unchanged when parallel:false",
+        "Tests: parallel execution, sequential fallback, mixed mode, error isolation"
+      ],
+      "verification_command": "npx vitest run packages/core/src/core/__tests__/agent-loop-parallel.test.ts",
+      "risk_notes": "Highest risk task. Modifies the core loop. Must not break existing sequential behavior. Event ordering is critical for deterministic replay. Depends on T1 (rate limiter safe under concurrency) and T3 (strategy implementations)."
+    },
+    {
+      "id": "T5",
+      "title": "P1b: spawnSubAgent utility",
+      "description": "Create orchestration/spawn.ts with spawnSubAgent(). Creates a new AgentLoop, runs to completion collecting messages from events, returns frozen {messages, usage, doneReason}. Must collect both 'message' and 'tool_result' events to reconstruct full conversation (ADR-03 notes B's bug of missing tool_result). Add SpawnSubAgentConfig and SpawnSubAgentResult types to orchestration/types.ts. Re-export from orchestration/index.ts.",
+      "files": [
+        {
+          "path": "packages/core/src/orchestration/spawn.ts",
+          "ownership": "OWNS",
+          "action": "CREATE",
+          "description": "New file: spawnSubAgent() utility function"
+        },
+        {
+          "path": "packages/core/src/orchestration/types.ts",
+          "ownership": "OWNS",
+          "action": "MODIFY",
+          "description": "Add SpawnSubAgentConfig and SpawnSubAgentResult types"
+        },
+        {
+          "path": "packages/core/src/orchestration/index.ts",
+          "ownership": "OWNS",
+          "action": "MODIFY",
+          "description": "Re-export spawnSubAgent and new types"
+        }
+      ],
+      "fileOwnership": "exclusive",
+      "dependencies": [],
+      "priority": "P1",
+      "estimatedLOC": 45,
+      "testFiles": [
+        "packages/core/src/orchestration/__tests__/spawn.test.ts"
+      ],
+      "acceptance_criteria": [
+        "spawnSubAgent() creates a new AgentLoop internally",
+        "Collects both message and tool_result events for full conversation",
+        "Returns frozen { messages, usage, doneReason }",
+        "signal parameter cascades abort to child AgentLoop",
+        "Child conversation fully isolated — no shared mutable state",
+        "doneReason reflects actual loop termination reason (end_turn, max_iterations, aborted, etc.)",
+        "Tests: basic spawn, abort propagation, token usage, tool calls in child"
+      ],
+      "verification_command": "npx vitest run packages/core/src/orchestration/__tests__/spawn.test.ts",
+      "risk_notes": "Low-medium risk. Uses AgentLoop as a black box. Main concern: correct event collection for message reconstruction. Must import from core/agent-loop.ts (same package, no cross-module violation)."
+    },
+    {
+      "id": "T6",
+      "title": "P1c: compactIfNeeded helper",
+      "description": "Add compactIfNeeded() to context/compress.ts. Thin wrapper: estimates current token count (using estimateTokens from _internal/token-estimator.ts, already imported), compares to budget * threshold (default 0.75), returns messages unchanged if under threshold, calls compress() if over. ADR-04: accept optional countTokens parameter for pluggable token counting (per-call injection, not global mutable state).",
+      "files": [
+        {
+          "path": "packages/core/src/context/compress.ts",
+          "ownership": "OWNS",
+          "action": "MODIFY",
+          "description": "Add compactIfNeeded() function and CompactOptions interface"
+        }
+      ],
+      "fileOwnership": "exclusive",
+      "dependencies": [],
+      "priority": "P1",
+      "estimatedLOC": 25,
+      "testFiles": [
+        "packages/core/src/context/__tests__/compact-if-needed.test.ts"
+      ],
+      "acceptance_criteria": [
+        "compactIfNeeded() returns messages unchanged when under budget * threshold",
+        "compactIfNeeded() calls compress() when over threshold",
+        "Default threshold is 0.75",
+        "Optional countTokens parameter overrides built-in estimateTokens",
+        "No imports from observe/ or core/ — only _internal/ and context/ (module boundary)",
+        "Tests: under-threshold passthrough, over-threshold compression, custom countTokens, preserve predicate"
+      ],
+      "verification_command": "npx vitest run packages/core/src/context/__tests__/compact-if-needed.test.ts",
+      "risk_notes": "Low risk. Additive function in existing file. Uses existing compress() and estimateTokens(). No cross-module imports."
+    },
+    {
+      "id": "T7",
+      "title": "P2: MCP client package",
+      "description": "Create new @harness-one/mcp package following existing integration package patterns (anthropic, openai). Uses @modelcontextprotocol/sdk directly (ADR-05, no custom transport). Implements createMCPClient() factory with stdio and SSE transport support, listTools() discovery with toToolDefinition() mapping, tool execution via tools/call, dot-notation namespacing (server.toolName), and close() for cleanup. Package structure: packages/mcp/src/client.ts, packages/mcp/src/mapping.ts, packages/mcp/package.json, packages/mcp/tsconfig.json.",
+      "files": [
+        {
+          "path": "packages/mcp/package.json",
+          "ownership": "OWNS",
+          "action": "CREATE",
+          "description": "Package manifest with @modelcontextprotocol/sdk peer dependency"
+        },
+        {
+          "path": "packages/mcp/tsconfig.json",
+          "ownership": "OWNS",
+          "action": "CREATE",
+          "description": "TypeScript config extending root"
+        },
+        {
+          "path": "packages/mcp/src/index.ts",
+          "ownership": "OWNS",
+          "action": "CREATE",
+          "description": "Public exports: createMCPClient, MCPClient type"
+        },
+        {
+          "path": "packages/mcp/src/client.ts",
+          "ownership": "OWNS",
+          "action": "CREATE",
+          "description": "createMCPClient() factory with stdio/SSE transport, listTools(), close()"
+        },
+        {
+          "path": "packages/mcp/src/mapping.ts",
+          "ownership": "OWNS",
+          "action": "CREATE",
+          "description": "MCP tool schema ↔ ToolDefinition conversion, dot-notation namespacing"
+        }
+      ],
+      "fileOwnership": "exclusive",
+      "dependencies": [],
+      "priority": "P2",
+      "estimatedLOC": 200,
+      "testFiles": [
+        "packages/mcp/src/__tests__/client.test.ts",
+        "packages/mcp/src/__tests__/mapping.test.ts"
+      ],
+      "acceptance_criteria": [
+        "createMCPClient() factory function with transport config",
+        "stdio transport spawns child process via SDK",
+        "SSE transport connects via HTTP using SDK",
+        "listTools() returns discovered tools",
+        "toToolDefinition() maps MCP tool to harness-one ToolDefinition",
+        "Dot-notation namespace: server.toolName",
+        "close() cleans up transport connection",
+        "Zero impact on core package dependencies",
+        "Tests: connection, discovery, tool mapping, execution, error handling, cleanup"
+      ],
+      "verification_command": "npx vitest run packages/mcp/src/__tests__/",
+      "risk_notes": "Medium risk. External SDK dependency. Transport lifecycle (spawn/connect/close) needs careful error handling. Mock SDK in tests to avoid real process spawning."
+    }
+  ],
+  "parallelGroups": [
+    {
+      "group": 1,
+      "tasks": ["T1", "T2", "T5", "T6", "T7"],
+      "description": "Fully independent tasks: rate limiter fix, type definitions, spawnSubAgent, compactIfNeeded, MCP client. Zero file overlap."
+    },
+    {
+      "group": 2,
+      "tasks": ["T3"],
+      "description": "ExecutionStrategy implementations. Depends on T2 (types). Can start as soon as T2 completes."
+    },
+    {
+      "group": 3,
+      "tasks": ["T4"],
+      "description": "AgentLoop integration. Depends on T1 (rate limiter safe under concurrency) and T3 (strategy implementations)."
+    }
+  ],
+  "criticalPath": ["T2", "T3", "T4"],
+  "fileOwnershipMatrix": {
+    "packages/core/src/tools/registry.ts": { "T1": "OWNS" },
+    "packages/core/src/core/types.ts": { "T2": "OWNS" },
+    "packages/core/src/tools/types.ts": { "T2": "OWNS" },
+    "packages/core/src/core/execution-strategies.ts": { "T3": "OWNS" },
+    "packages/core/src/core/agent-loop.ts": { "T4": "OWNS" },
+    "packages/core/src/orchestration/spawn.ts": { "T5": "OWNS" },
+    "packages/core/src/orchestration/types.ts": { "T5": "OWNS" },
+    "packages/core/src/orchestration/index.ts": { "T5": "OWNS" },
+    "packages/core/src/context/compress.ts": { "T6": "OWNS" },
+    "packages/mcp/package.json": { "T7": "OWNS" },
+    "packages/mcp/tsconfig.json": { "T7": "OWNS" },
+    "packages/mcp/src/index.ts": { "T7": "OWNS" },
+    "packages/mcp/src/client.ts": { "T7": "OWNS" },
+    "packages/mcp/src/mapping.ts": { "T7": "OWNS" }
+  },
+  "sharedFileConflicts": []
+}
