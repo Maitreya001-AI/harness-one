@@ -7,9 +7,10 @@
  * @module
  */
 
-import type { AgentAdapter, Message, TokenUsage, ToolCallRequest, ToolSchema } from './types.js';
+import type { AgentAdapter, ExecutionStrategy, Message, TokenUsage, ToolCallRequest, ToolSchema } from './types.js';
 import type { AgentEvent, DoneReason } from './events.js';
 import { AbortedError, HarnessError, MaxIterationsError, TokenBudgetExceededError } from './errors.js';
+import { createSequentialStrategy, createParallelStrategy } from './execution-strategies.js';
 
 /** Configuration for the AgentLoop. */
 export interface AgentLoopConfig {
@@ -21,6 +22,10 @@ export interface AgentLoopConfig {
   readonly tools?: ToolSchema[];
   readonly maxConversationMessages?: number;
   readonly streaming?: boolean;
+  readonly parallel?: boolean;
+  readonly maxParallelToolCalls?: number;
+  readonly executionStrategy?: ExecutionStrategy;
+  readonly isSequentialTool?: (name: string) => boolean;
 }
 
 /**
@@ -43,6 +48,8 @@ export class AgentLoop {
   private readonly tools?: ToolSchema[] | undefined;
   private readonly maxConversationMessages?: number | undefined;
   private readonly streaming: boolean;
+  private readonly executionStrategy: ExecutionStrategy;
+  private readonly isSequentialTool?: ((name: string) => boolean) | undefined;
 
   private abortController: AbortController;
   private cumulativeUsage: { inputTokens: number; outputTokens: number } = {
@@ -61,6 +68,17 @@ export class AgentLoop {
     this.tools = config.tools;
     this.maxConversationMessages = config.maxConversationMessages;
     this.streaming = config.streaming ?? false;
+    this.isSequentialTool = config.isSequentialTool;
+
+    if (config.executionStrategy) {
+      this.executionStrategy = config.executionStrategy;
+    } else if (config.parallel) {
+      this.executionStrategy = createParallelStrategy({
+        maxConcurrency: config.maxParallelToolCalls ?? 5,
+      });
+    } else {
+      this.executionStrategy = createSequentialStrategy();
+    }
 
     // H3: Create internal AbortController; link to external signal if provided
     this.abortController = new AbortController();
@@ -231,39 +249,42 @@ export class AgentLoop {
           return;
         }
 
-        // Process tool calls
+        // Process tool calls via execution strategy
         conversation.push(assistantMsg);
 
+        // Yield all tool_call events first (deterministic ordering)
         for (const toolCall of toolCalls) {
           yield { type: 'tool_call', toolCall, iteration };
+        }
 
-          let result: unknown;
-          try {
+        // Execute via strategy
+        const executionResults = await this.executionStrategy.execute(
+          toolCalls,
+          async (call) => {
             if (this.onToolCall) {
-              result = await this.onToolCall(toolCall);
-            } else {
-              result = { error: `No onToolCall handler registered for tool "${toolCall.name}"` };
+              return this.onToolCall(call);
             }
-          } catch (err) {
-            if (err instanceof Error) {
-              result = {
-                error: err.message,
-              };
-            } else {
-              result = {
-                error: String(err),
-              };
-            }
-          }
+            return { error: `No onToolCall handler registered for tool "${call.name}"` };
+          },
+          {
+            getToolMeta: this.isSequentialTool
+              ? (name) => ({ sequential: this.isSequentialTool!(name) })
+              : undefined,
+            signal: this.abortController.signal,
+          },
+        );
 
-          yield { type: 'tool_result', toolCallId: toolCall.id, result };
+        // Yield all tool_result events in original order (deterministic)
+        for (const execResult of executionResults) {
+          yield { type: 'tool_result', toolCallId: execResult.toolCallId, result: execResult.result };
           this._totalToolCalls++;
 
-          // Add tool result as a message
           const toolResultMsg: Message = {
             role: 'tool',
-            content: typeof result === 'string' ? result : JSON.stringify(result),
-            toolCallId: toolCall.id,
+            content: typeof execResult.result === 'string'
+              ? execResult.result
+              : JSON.stringify(execResult.result),
+            toolCallId: execResult.toolCallId,
           };
           conversation.push(toolResultMsg);
         }
