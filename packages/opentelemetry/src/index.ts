@@ -60,6 +60,11 @@ export function createOTelExporter(config?: OTelExporterConfig): TraceExporter {
         }
 
         otelSpan.end(harnessTrace.endTime ? new Date(harnessTrace.endTime) : undefined);
+
+        // Clean up child spans for this trace
+        for (const s of harnessTrace.spans) {
+          spanMap.delete(s.id);
+        }
       });
     },
 
@@ -71,6 +76,13 @@ export function createOTelExporter(config?: OTelExporterConfig): TraceExporter {
 
       const spanCallback = (otelSpan: OTelSpan) => {
         spanMap.set(harnessSpan.id, otelSpan);
+
+        // Safety limit to prevent unbounded growth
+        if (spanMap.size > 10_000) {
+          const firstKey = spanMap.keys().next().value;
+          if (firstKey !== undefined) spanMap.delete(firstKey);
+        }
+
         otelSpan.setAttribute('harness.span.id', harnessSpan.id);
         otelSpan.setAttribute('harness.trace.id', harnessSpan.traceId);
         if (harnessSpan.parentId) {
@@ -108,8 +120,7 @@ export function createOTelExporter(config?: OTelExporterConfig): TraceExporter {
     },
 
     async flush(): Promise<void> {
-      // OTel SDK handles its own flushing via TracerProvider.forceFlush().
-      // This is a no-op unless the user captures the provider.
+      spanMap.clear();
     },
   };
 }

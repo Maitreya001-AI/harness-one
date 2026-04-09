@@ -18,6 +18,6 @@
     "noUnusedParameters": true,
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
-    "exactOptionalPropertyTypes": false
+    "exactOptionalPropertyTypes": true
   }
 }

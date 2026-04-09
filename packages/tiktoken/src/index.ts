@@ -46,7 +46,16 @@ export function registerTiktokenModels(models?: string[]): void {
  * @returns The created Tokenizer instance.
  */
 export function createTiktokenTokenizer(model: string): Tokenizer {
-  const encoder = encoding_for_model(model as TiktokenModel);
+  let encoder;
+  try {
+    encoder = encoding_for_model(model as TiktokenModel);
+  } catch (err) {
+    throw new Error(
+      `Unsupported tiktoken model: "${model}". ` +
+      `Supported models include: gpt-4, gpt-4o, gpt-4o-mini, gpt-3.5-turbo. ` +
+      `Original error: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
 
   const tokenizer: Tokenizer = {
     encode(text: string): { length: number } {

@@ -46,7 +46,7 @@ export async function compress(
       : options.strategy;
 
   const result = await strategy.compress(messages, options.budget, {
-    preserve: options.preserve,
+    ...(options.preserve !== undefined && { preserve: options.preserve }),
   });
   return [...result];
 }

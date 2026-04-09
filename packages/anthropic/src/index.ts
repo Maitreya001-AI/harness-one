@@ -121,7 +121,7 @@ function toHarnessMessage(response: Anthropic.Message): Message {
   return {
     role: 'assistant',
     content: textParts.join(''),
-    toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+    ...(toolCalls.length > 0 && { toolCalls }),
   };
 }
 
@@ -141,12 +141,12 @@ export function createAnthropicAdapter(config: AnthropicAdapterConfig): AgentAda
       const response = await client.messages.create({
         model,
         max_tokens: params.config?.maxTokens ?? 4096,
-        system: system ?? undefined,
+        ...(system !== undefined && { system }),
         messages: rest.map(toAnthropicMessage),
-        tools: params.tools?.map(toAnthropicTool),
-        temperature: params.config?.temperature,
-        top_p: params.config?.topP,
-        stop_sequences: params.config?.stopSequences as string[] | undefined,
+        ...(params.tools && { tools: params.tools.map(toAnthropicTool) }),
+        ...(params.config?.temperature !== undefined && { temperature: params.config.temperature }),
+        ...(params.config?.topP !== undefined && { top_p: params.config.topP }),
+        ...(params.config?.stopSequences !== undefined && { stop_sequences: params.config.stopSequences as string[] }),
       }, { signal: params.signal });
 
       return {
@@ -161,10 +161,10 @@ export function createAnthropicAdapter(config: AnthropicAdapterConfig): AgentAda
       const stream = client.messages.stream({
         model,
         max_tokens: params.config?.maxTokens ?? 4096,
-        system: system ?? undefined,
+        ...(system !== undefined && { system }),
         messages: rest.map(toAnthropicMessage),
-        tools: params.tools?.map(toAnthropicTool),
-        temperature: params.config?.temperature,
+        ...(params.tools && { tools: params.tools.map(toAnthropicTool) }),
+        ...(params.config?.temperature !== undefined && { temperature: params.config.temperature }),
       }, { signal: params.signal });
 
       let currentToolId: string | undefined;
@@ -176,6 +176,10 @@ export function createAnthropicAdapter(config: AnthropicAdapterConfig): AgentAda
           if (block.type === 'tool_use') {
             currentToolId = block.id;
             currentToolName = block.name;
+          } else {
+            // Reset tool state when a non-tool block starts
+            currentToolId = undefined;
+            currentToolName = undefined;
           }
         } else if (event.type === 'content_block_delta') {
           const delta = event.delta;
@@ -185,8 +189,8 @@ export function createAnthropicAdapter(config: AnthropicAdapterConfig): AgentAda
             yield {
               type: 'tool_call_delta',
               toolCall: {
-                id: currentToolId,
-                name: currentToolName,
+                ...(currentToolId !== undefined && { id: currentToolId }),
+                ...(currentToolName !== undefined && { name: currentToolName }),
                 arguments: delta.partial_json,
               },
             };

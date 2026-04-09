@@ -105,7 +105,7 @@ export function createTraceManager(config?: {
       id: mt.id,
       name: mt.name,
       startTime: mt.startTime,
-      endTime: mt.endTime,
+      ...(mt.endTime !== undefined && { endTime: mt.endTime }),
       metadata: { ...mt.metadata },
       spans: traceSpans,
       status: mt.status,
@@ -141,7 +141,7 @@ export function createTraceManager(config?: {
       spans.set(id, {
         id,
         traceId,
-        parentId,
+        ...(parentId !== undefined && { parentId }),
         name,
         startTime: Date.now(),
         attributes: {},

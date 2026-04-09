@@ -191,7 +191,7 @@ export function createSkillEngine(): SkillEngine {
         if (matched) {
           const previousStage = stage.id;
           advanceToStage(transition.to);
-          return { advanced: true, previousStage, currentStage: transition.to, reason };
+          return { advanced: true, previousStage, currentStage: transition.to, ...(reason !== undefined && { reason }) };
         }
       }
 

@@ -73,7 +73,7 @@ function toOpenAIMessage(
   if (msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0) {
     return {
       role: 'assistant',
-      content: msg.content || null,
+      content: msg.content || '',
       tool_calls: msg.toolCalls.map((tc) => ({
         id: tc.id,
         type: 'function' as const,
@@ -134,7 +134,7 @@ function toHarnessMessage(
   return {
     role: 'assistant',
     content: msg.content ?? '',
-    toolCalls: toolCalls && toolCalls.length > 0 ? toolCalls : undefined,
+    ...(toolCalls && toolCalls.length > 0 && { toolCalls }),
   };
 }
 
@@ -157,11 +157,11 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
       const response = await client.chat.completions.create({
         model,
         messages: params.messages.map(toOpenAIMessage),
-        tools: params.tools?.map(toOpenAITool),
-        temperature: params.config?.temperature,
-        top_p: params.config?.topP,
-        max_tokens: params.config?.maxTokens,
-        stop: params.config?.stopSequences as string[] | undefined,
+        ...(params.tools && { tools: params.tools.map(toOpenAITool) }),
+        ...(params.config?.temperature !== undefined && { temperature: params.config.temperature }),
+        ...(params.config?.topP !== undefined && { top_p: params.config.topP }),
+        ...(params.config?.maxTokens !== undefined && { max_tokens: params.config.maxTokens }),
+        ...(params.config?.stopSequences !== undefined && { stop: params.config.stopSequences as string[] }),
       }, { signal: params.signal });
 
       const choice = response.choices[0];
@@ -179,8 +179,8 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
       const stream = await client.chat.completions.create({
         model,
         messages: params.messages.map(toOpenAIMessage),
-        tools: params.tools?.map(toOpenAITool),
-        temperature: params.config?.temperature,
+        ...(params.tools && { tools: params.tools.map(toOpenAITool) }),
+        ...(params.config?.temperature !== undefined && { temperature: params.config.temperature }),
         stream: true,
       }, { signal: params.signal });
 
@@ -213,9 +213,9 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
             yield {
               type: 'tool_call_delta',
               toolCall: {
-                id: accum.id || undefined,
-                name: accum.name || undefined,
-                arguments: tc.function?.arguments,
+                ...(accum.id ? { id: accum.id } : {}),
+                ...(accum.name ? { name: accum.name } : {}),
+                ...(tc.function?.arguments !== undefined && { arguments: tc.function.arguments }),
               },
             };
           }

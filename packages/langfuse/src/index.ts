@@ -52,8 +52,12 @@ export function createLangfuseExporter(config: LangfuseExporterConfig): TraceExp
         });
         traceMap.set(trace.id, lfTrace);
         if (traceMap.size > MAX_TRACE_MAP_SIZE) {
-          const firstKey = traceMap.keys().next().value;
-          if (firstKey !== undefined) traceMap.delete(firstKey);
+          const evictCount = Math.ceil(MAX_TRACE_MAP_SIZE * 0.1);
+          const keys = traceMap.keys();
+          for (let i = 0; i < evictCount; i++) {
+            const key = keys.next().value;
+            if (key !== undefined) traceMap.delete(key);
+          }
         }
       }
 
@@ -72,24 +76,28 @@ export function createLangfuseExporter(config: LangfuseExporterConfig): TraceExp
         lfTrace = client.trace({ id: span.traceId, name: 'unknown' });
         traceMap.set(span.traceId, lfTrace);
         if (traceMap.size > MAX_TRACE_MAP_SIZE) {
-          const firstKey = traceMap.keys().next().value;
-          if (firstKey !== undefined) traceMap.delete(firstKey);
+          const evictCount = Math.ceil(MAX_TRACE_MAP_SIZE * 0.1);
+          const keys = traceMap.keys();
+          for (let i = 0; i < evictCount; i++) {
+            const key = keys.next().value;
+            if (key !== undefined) traceMap.delete(key);
+          }
         }
       }
 
       const attrs = config.sanitize ? config.sanitize(span.attributes) : span.attributes;
 
       const isGeneration =
+        attrs['harness.span.kind'] === 'generation' ||
         attrs['model'] !== undefined ||
-        span.name.includes('llm') ||
-        span.name.includes('chat');
+        (attrs['inputTokens'] !== undefined && attrs['outputTokens'] !== undefined);
 
       if (isGeneration) {
         lfTrace.generation({
           name: span.name,
           startTime: new Date(span.startTime),
-          endTime: span.endTime ? new Date(span.endTime) : undefined,
-          model: attrs['model'] as string | undefined,
+          ...(span.endTime !== undefined && { endTime: new Date(span.endTime) }),
+          ...(attrs['model'] !== undefined && { model: attrs['model'] as string }),
           input: attrs['input'] as unknown,
           output: attrs['output'] as unknown,
           metadata: {
@@ -98,20 +106,20 @@ export function createLangfuseExporter(config: LangfuseExporterConfig): TraceExp
             status: span.status,
           },
           usage: {
-            input: attrs['inputTokens'] as number | undefined,
-            output: attrs['outputTokens'] as number | undefined,
+            ...(attrs['inputTokens'] !== undefined && { input: attrs['inputTokens'] as number }),
+            ...(attrs['outputTokens'] !== undefined && { output: attrs['outputTokens'] as number }),
           },
         });
       } else {
         lfTrace.span({
           name: span.name,
           startTime: new Date(span.startTime),
-          endTime: span.endTime ? new Date(span.endTime) : undefined,
+          ...(span.endTime !== undefined && { endTime: new Date(span.endTime) }),
           metadata: {
             ...attrs,
             events: span.events,
             status: span.status,
-            parentId: span.parentId,
+            ...(span.parentId !== undefined && { parentId: span.parentId }),
           },
         });
       }
@@ -176,7 +184,11 @@ export function createLangfusePromptBackend(config: LangfusePromptBackendConfig)
         const lfPrompt = await client.getPrompt(id);
         knownPromptNames.add(id);
         return toPromptTemplate(id, lfPrompt as { prompt: unknown; version: number });
-      } catch {
+      } catch (err) {
+        // Log warning instead of silently swallowing — network/auth failures should be visible
+        if (typeof console !== 'undefined') {
+          console.warn(`[harness-one/langfuse] Failed to fetch prompt "${id}":`, err instanceof Error ? err.message : err);
+        }
         return undefined;
       }
     },
@@ -187,8 +199,10 @@ export function createLangfusePromptBackend(config: LangfusePromptBackendConfig)
         try {
           const lfPrompt = await client.getPrompt(name);
           templates.push(toPromptTemplate(name, lfPrompt as { prompt: unknown; version: number }));
-        } catch {
-          // Prompt may have been deleted
+        } catch (err) {
+          if (typeof console !== 'undefined') {
+            console.warn(`[harness-one/langfuse] Failed to fetch prompt "${name}" during list:`, err instanceof Error ? err.message : err);
+          }
           knownPromptNames.delete(name);
         }
       }
@@ -213,6 +227,10 @@ export function createLangfusePromptBackend(config: LangfusePromptBackendConfig)
 export interface LangfuseCostTrackerConfig {
   /** A pre-configured Langfuse client instance. */
   readonly client: Langfuse;
+  /** Warning threshold (0-1). Defaults to 0.8. */
+  readonly warningThreshold?: number;
+  /** Critical threshold (0-1). Defaults to 0.95. */
+  readonly criticalThreshold?: number;
 }
 
 /**
@@ -228,8 +246,8 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): Co
   const alertHandlers: ((alert: CostAlert) => void)[] = [];
   let budget: number | undefined;
   let runningTotal = 0;
-  const warningThreshold = 0.8;
-  const criticalThreshold = 0.95;
+  const warningThreshold = config.warningThreshold ?? 0.8;
+  const criticalThreshold = config.criticalThreshold ?? 0.95;
 
   function computeCost(usage: Omit<TokenUsageRecord, 'estimatedCost' | 'timestamp'>): number {
     const p = pricing.get(usage.model);

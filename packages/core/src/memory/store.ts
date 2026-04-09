@@ -70,8 +70,8 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
         grade: input.grade,
         createdAt: now,
         updatedAt: now,
-        metadata: input.metadata,
-        tags: input.tags,
+        ...(input.metadata !== undefined && { metadata: input.metadata }),
+        ...(input.tags !== undefined && { tags: input.tags }),
       };
       entries.set(entry.id, entry);
       if (maxEntries !== undefined && entries.size > maxEntries) {

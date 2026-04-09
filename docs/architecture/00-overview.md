@@ -12,13 +12,13 @@ harness-one 是一个 TypeScript 工具库，为 AI Agent 产品提供 Harness E
 
 | 指标 | 值 |
 |------|---|
-| 源码文件 | ~50 个 .ts 文件 |
-| 测试文件 | 35 个 .test.ts 文件 |
+| 源码文件 | ~78 个 .ts 文件 |
+| 测试文件 | ~57 个 .test.ts 文件 |
 | 测试用例 | 449 |
-| 源码行数 | ~6,300 行 |
+| 源码行数 | ~9,000 行 |
 | 运行时依赖 | 0 |
-| 模块数 | 10 + CLI |
-| 包结构 | 单包 + subpath exports |
+| 模块数 | 10 核心模块 + 7 集成包 + 1 full 包 |
+| 包结构 | pnpm monorepo with 10 packages |
 | 构建目标 | Node.js >= 18, ESM + CJS |
 
 ## 9 层参考架构映射
@@ -52,7 +52,7 @@ harness-one 是一个 TypeScript 工具库，为 AI Agent 产品提供 Harness E
     ┌────────┬───────┬───┴───┬────────┬────────┬────────┬────────┐
     │        │       │       │        │        │        │        │
     ▼        ▼       ▼       ▼        ▼        ▼        ▼        ▼
- context  prompt   tools  guardrails observe session  memory   eval   evolve
+ context  prompt   tools  guardrails observe session  memory   eval   evolve  rag  orchestration
     │                │       │
     ▼                ▼       ▼
  _internal       _internal _internal

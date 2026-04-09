@@ -103,8 +103,8 @@ export function createFileSystemStore(config: {
         grade: input.grade,
         createdAt: now,
         updatedAt: now,
-        metadata: input.metadata,
-        tags: input.tags,
+        ...(input.metadata !== undefined && { metadata: input.metadata }),
+        ...(input.tags !== undefined && { tags: input.tags }),
       };
       await writeEntry(entry);
       const index = await readIndex();

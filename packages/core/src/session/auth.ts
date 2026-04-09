@@ -41,10 +41,10 @@ export function createAuthContext(config: {
 }): AuthContext {
   return Object.freeze({
     userId: config.userId,
-    tenantId: config.tenantId,
-    roles: config.roles ? Object.freeze([...config.roles]) : undefined,
-    permissions: config.permissions ? Object.freeze([...config.permissions]) : undefined,
-    metadata: config.metadata ? Object.freeze({ ...config.metadata }) : undefined,
+    ...(config.tenantId !== undefined && { tenantId: config.tenantId }),
+    ...(config.roles !== undefined && { roles: Object.freeze([...config.roles]) }),
+    ...(config.permissions !== undefined && { permissions: Object.freeze([...config.permissions]) }),
+    ...(config.metadata !== undefined && { metadata: Object.freeze({ ...config.metadata }) }),
   });
 }
 

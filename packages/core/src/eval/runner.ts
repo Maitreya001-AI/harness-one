@@ -118,7 +118,7 @@ export function createEvalRunner(config: EvalConfig): EvalRunner {
         const batchInput = casesWithOutputs.map(({ evalCase, output }) => ({
           input: evalCase.input,
           output,
-          context: evalCase.context,
+          ...(evalCase.context !== undefined && { context: evalCase.context }),
         }));
         const batchScoreResults = await scorer.scoreBatch!(batchInput);
         batchResults.set(scorer.name, batchScoreResults);

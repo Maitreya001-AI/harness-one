@@ -51,7 +51,7 @@ function createNoOpExporter(): TraceExporter
 function createCostTracker(config?: {
   pricing?: ModelPricing[];
   budget?: number;
-  alertThresholds?: { warning: number; critical: number };  // 默认 0.8 / 0.95
+  alertThresholds?: { warning: number; critical: number };  // 默认 0.8 / 0.95（Langfuse 实现中可通过 config 覆盖）
 }): CostTracker
 ```
 CostTracker 接口：`setPricing()`, `recordUsage()`, `getTotalCost()`, `getCostByModel()`, `getCostByTrace()`, `setBudget()`, `checkBudget()`, `onAlert()`, `reset()`.
@@ -81,7 +81,7 @@ cost = (inputTokens/1000 * inputPrice) + (outputTokens/1000 * outputPrice)
 
 ### 预算告警
 
-每次 `recordUsage()` 后自动检查预算。`percentUsed >= critical (0.95)` 触发 critical 告警，`>= warning (0.8)` 触发 warning 告警。告警通过 `onAlert()` 注册的回调分发。
+每次 `recordUsage()` 后自动检查预算。`percentUsed >= critical` 触发 critical 告警，`>= warning` 触发 warning 告警。默认阈值 0.8 / 0.95，可通过 config 自定义。告警通过 `onAlert()` 注册的回调分发。
 
 ## 依赖关系
 

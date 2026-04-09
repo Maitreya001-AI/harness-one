@@ -206,10 +206,46 @@ describe('createLangfuseExporter', () => {
     );
   });
 
-  it('exports a span with "chat" in name as generation', async () => {
+  it('exports a span with explicit generation marker as generation', async () => {
     const exporter = createLangfuseExporter({ client: mock.client });
     const span: Span = {
       id: 'span-chat',
+      traceId: 'trace-1',
+      name: 'chat-completion',
+      startTime: 1000,
+      endTime: 2000,
+      attributes: { 'harness.span.kind': 'generation', input: 'hello', output: 'world' },
+      events: [],
+      status: 'completed',
+    };
+
+    await exporter.exportSpan(span);
+    expect(mock.mocks.generation).toHaveBeenCalled();
+    expect(mock.mocks.span).not.toHaveBeenCalled();
+  });
+
+  it('exports a span with token counts as generation', async () => {
+    const exporter = createLangfuseExporter({ client: mock.client });
+    const span: Span = {
+      id: 'span-tokens',
+      traceId: 'trace-1',
+      name: 'some-llm-call',
+      startTime: 1000,
+      endTime: 2000,
+      attributes: { inputTokens: 100, outputTokens: 50 },
+      events: [],
+      status: 'completed',
+    };
+
+    await exporter.exportSpan(span);
+    expect(mock.mocks.generation).toHaveBeenCalled();
+    expect(mock.mocks.span).not.toHaveBeenCalled();
+  });
+
+  it('exports a span without generation markers as a span', async () => {
+    const exporter = createLangfuseExporter({ client: mock.client });
+    const span: Span = {
+      id: 'span-plain',
       traceId: 'trace-1',
       name: 'chat-completion',
       startTime: 1000,
@@ -220,8 +256,8 @@ describe('createLangfuseExporter', () => {
     };
 
     await exporter.exportSpan(span);
-    expect(mock.mocks.generation).toHaveBeenCalled();
-    expect(mock.mocks.span).not.toHaveBeenCalled();
+    expect(mock.mocks.span).toHaveBeenCalled();
+    expect(mock.mocks.generation).not.toHaveBeenCalled();
   });
 
   describe('sanitize hook', () => {

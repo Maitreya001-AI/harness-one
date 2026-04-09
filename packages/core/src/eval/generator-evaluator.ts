@@ -67,6 +67,6 @@ export async function runGeneratorEvaluator(
     output: lastOutput,
     attempts: maxRetries,
     passed: false,
-    feedback: lastFeedback,
+    ...(lastFeedback !== undefined && { feedback: lastFeedback }),
   };
 }

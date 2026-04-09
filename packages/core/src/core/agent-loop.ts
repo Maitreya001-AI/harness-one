@@ -9,7 +9,7 @@
 
 import type { AgentAdapter, Message, TokenUsage, ToolCallRequest, ToolSchema } from './types.js';
 import type { AgentEvent, DoneReason } from './events.js';
-import { AbortedError, MaxIterationsError, TokenBudgetExceededError } from './errors.js';
+import { AbortedError, HarnessError, MaxIterationsError, TokenBudgetExceededError } from './errors.js';
 
 /** Configuration for the AgentLoop. */
 export interface AgentLoopConfig {
@@ -38,10 +38,10 @@ export class AgentLoop {
   private readonly adapter: AgentAdapter;
   private readonly maxIterations: number;
   private readonly maxTotalTokens: number;
-  private readonly externalSignal?: AbortSignal;
-  private readonly onToolCall?: (call: ToolCallRequest) => Promise<unknown>;
-  private readonly tools?: ToolSchema[];
-  private readonly maxConversationMessages?: number;
+  private readonly externalSignal?: AbortSignal | undefined;
+  private readonly onToolCall?: ((call: ToolCallRequest) => Promise<unknown>) | undefined;
+  private readonly tools?: ToolSchema[] | undefined;
+  private readonly maxConversationMessages?: number | undefined;
   private readonly streaming: boolean;
 
   private abortController: AbortController;
@@ -165,13 +165,18 @@ export class AgentLoop {
             const response = await this.adapter.chat({
               messages: conversation,
               signal: this.abortController.signal,
-              tools: this.tools,
+              ...(this.tools !== undefined && { tools: this.tools }),
             });
             assistantMsg = response.message;
             responseUsage = response.usage;
           } catch (err) {
             // C5: Emit error event and break gracefully
-            yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)) };
+            yield { type: 'error', error: err instanceof HarnessError ? err : new HarnessError(
+              err instanceof Error ? err.message : String(err),
+              'ADAPTER_ERROR',
+              'Check adapter configuration and API credentials',
+              err instanceof Error ? err : undefined,
+            ) };
             yieldedDone = true;
             yield this.doneEvent('error');
             return;
@@ -286,7 +291,7 @@ export class AgentLoop {
       const stream = this.adapter.stream!({
         messages: conversation,
         signal: this.abortController.signal,
-        tools: this.tools,
+        ...(this.tools !== undefined && { tools: this.tools }),
       });
 
       for await (const chunk of stream) {
@@ -339,7 +344,12 @@ export class AgentLoop {
         }
       }
     } catch (err) {
-      yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)) };
+      yield { type: 'error', error: err instanceof HarnessError ? err : new HarnessError(
+        err instanceof Error ? err.message : String(err),
+        'ADAPTER_ERROR',
+        'Check adapter configuration and API credentials',
+        err instanceof Error ? err : undefined,
+      ) };
       return null;
     }
 

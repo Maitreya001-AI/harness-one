@@ -7,6 +7,7 @@
  * @module
  */
 
+import { randomUUID } from 'node:crypto';
 import type { Redis } from 'ioredis';
 import type { MemoryStore } from 'harness-one/memory';
 import type {
@@ -38,8 +39,6 @@ export function createRedisStore(config: RedisStoreConfig): MemoryStore {
   const prefix = config.prefix ?? 'harness:memory';
   const defaultTTL = config.defaultTTL;
 
-  let idCounter = 0;
-
   function entryKey(id: string): string {
     return `${prefix}:${id}`;
   }
@@ -47,13 +46,20 @@ export function createRedisStore(config: RedisStoreConfig): MemoryStore {
   const indexKey = `${prefix}:__keys__`;
 
   function generateId(): string {
-    return `mem_${Date.now()}_${++idCounter}`;
+    return `mem_${randomUUID()}`;
   }
 
   async function getEntry(id: string): Promise<MemoryEntry | null> {
     const raw = await client.get(entryKey(id));
     if (!raw) return null;
-    return JSON.parse(raw) as MemoryEntry;
+    try {
+      return JSON.parse(raw) as MemoryEntry;
+    } catch {
+      // Corrupted entry — remove from index and return null
+      await client.del(entryKey(id));
+      await client.srem(indexKey, id);
+      return null;
+    }
   }
 
   async function setEntry(entry: MemoryEntry): Promise<void> {
@@ -77,8 +83,8 @@ export function createRedisStore(config: RedisStoreConfig): MemoryStore {
         grade: input.grade,
         createdAt: now,
         updatedAt: now,
-        metadata: input.metadata,
-        tags: input.tags,
+        ...(input.metadata !== undefined && { metadata: input.metadata }),
+        ...(input.tags !== undefined && { tags: input.tags }),
       };
       await setEntry(entry);
       return entry;
@@ -100,7 +106,12 @@ export function createRedisStore(config: RedisStoreConfig): MemoryStore {
 
         for (const raw of values) {
           if (!raw) continue;
-          const entry = JSON.parse(raw) as MemoryEntry;
+          let entry: MemoryEntry;
+          try {
+            entry = JSON.parse(raw) as MemoryEntry;
+          } catch {
+            continue; // Skip corrupted entries
+          }
 
           if (filter.grade && entry.grade !== filter.grade) continue;
           if (filter.tags && filter.tags.length > 0) {
@@ -130,9 +141,15 @@ export function createRedisStore(config: RedisStoreConfig): MemoryStore {
     },
 
     async update(id: string, updates: Partial<Pick<MemoryEntry, 'content' | 'grade' | 'metadata' | 'tags'>>) {
-      const existing = await getEntry(id);
-      if (!existing) {
+      const raw = await client.get(entryKey(id));
+      if (!raw) {
         throw new HarnessError(`Memory entry not found: ${id}`, 'NOT_FOUND');
+      }
+      let existing: MemoryEntry;
+      try {
+        existing = JSON.parse(raw) as MemoryEntry;
+      } catch {
+        throw new HarnessError(`Corrupted memory entry: ${id}`, 'DATA_CORRUPTION', 'Delete and recreate the entry');
       }
       const updated: MemoryEntry = {
         ...existing,
@@ -160,7 +177,13 @@ export function createRedisStore(config: RedisStoreConfig): MemoryStore {
         const values = await client.mget(...keys);
         for (const raw of values) {
           if (!raw) continue;
-          entries.push(JSON.parse(raw) as MemoryEntry);
+          let entry: MemoryEntry;
+          try {
+            entry = JSON.parse(raw) as MemoryEntry;
+          } catch {
+            continue; // Skip corrupted entries
+          }
+          entries.push(entry);
         }
       }
 

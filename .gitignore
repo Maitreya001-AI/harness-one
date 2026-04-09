@@ -4,4 +4,3 @@ coverage/
 coverage-temp/
 *.tsbuildinfo
 tsup.config.bundled_*.mjs
-pnpm-lock.yaml

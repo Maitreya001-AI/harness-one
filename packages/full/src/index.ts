@@ -29,7 +29,7 @@ import type { AnthropicAdapterConfig } from '@harness-one/anthropic';
 import { createOpenAIAdapter } from '@harness-one/openai';
 import type { OpenAIAdapterConfig } from '@harness-one/openai';
 import { createLangfuseExporter, createLangfuseCostTracker } from '@harness-one/langfuse';
-import type { LangfuseExporterConfig, LangfuseCostTrackerConfig } from '@harness-one/langfuse';
+import type { LangfuseExporterConfig } from '@harness-one/langfuse';
 import { createRedisStore } from '@harness-one/redis';
 import type { RedisStoreConfig } from '@harness-one/redis';
 import { createAjvValidator } from '@harness-one/ajv';
@@ -202,12 +202,14 @@ export function createHarness(config: HarnessConfig): Harness {
   // 17. Agent loop
   const loop = new AgentLoop({
     adapter,
-    maxIterations: config.maxIterations,
-    maxTotalTokens: config.maxTotalTokens,
+    ...(config.maxIterations !== undefined && { maxIterations: config.maxIterations }),
+    ...(config.maxTotalTokens !== undefined && { maxTotalTokens: config.maxTotalTokens }),
     onToolCall: async (call) => {
       return tools.execute(call);
     },
   });
+
+  let isShutdown = false;
 
   const harness: Harness = {
     loop,
@@ -229,6 +231,8 @@ export function createHarness(config: HarnessConfig): Harness {
     },
 
     async shutdown(): Promise<void> {
+      if (isShutdown) return;
+      isShutdown = true;
       await traces.flush();
       for (const exporter of exporters) {
         if (exporter.shutdown) {
@@ -240,7 +244,7 @@ export function createHarness(config: HarnessConfig): Harness {
     async drain(timeoutMs = 30_000): Promise<void> {
       loop.abort();
       // Allow a tick for the abort to propagate through pending async operations
-      await new Promise((r) => setTimeout(r, 50));
+      await new Promise((r) => setTimeout(r, Math.min(timeoutMs, 100)));
       await this.shutdown();
     },
   };
@@ -256,13 +260,13 @@ function createAdapter(config: HarnessConfig): AgentAdapter {
   if (config.provider === 'anthropic') {
     return createAnthropicAdapter({
       client: config.client,
-      model: config.model,
+      ...(config.model !== undefined && { model: config.model }),
     });
   }
   if (config.provider === 'openai') {
     return createOpenAIAdapter({
-      client: config.client,
-      model: config.model,
+      ...(config.client !== undefined && { client: config.client }),
+      ...(config.model !== undefined && { model: config.model }),
     });
   }
   // Exhaustiveness check — TypeScript narrows config.provider to `never` here
@@ -291,7 +295,7 @@ function createGuardrails(config: HarnessConfig): GuardrailPipeline {
     const sensitivity = typeof config.guardrails.injection === 'object'
       ? config.guardrails.injection.sensitivity
       : undefined;
-    const detector = createInjectionDetector({ sensitivity });
+    const detector = createInjectionDetector(sensitivity !== undefined ? { sensitivity } : {});
     entries.push({
       name: detector.name,
       guard: detector.guard,

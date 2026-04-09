@@ -1325,7 +1325,7 @@ describe('AgentLoop', () => {
   });
 
   describe('Error event type (comprehensive)', () => {
-    it('yields error event with the original Error instance when adapter.chat() throws', async () => {
+    it('wraps adapter errors in HarnessError with ADAPTER_ERROR code', async () => {
       const originalError = new Error('Network timeout after 30s');
       const adapter: AgentAdapter = {
         async chat() {
@@ -1338,11 +1338,13 @@ describe('AgentLoop', () => {
 
       const errorEvent = events.find((e) => e.type === 'error') as Extract<AgentEvent, { type: 'error' }>;
       expect(errorEvent).toBeDefined();
-      expect(errorEvent.error).toBe(originalError);
+      expect(errorEvent.error).toBeInstanceOf(HarnessError);
+      expect((errorEvent.error as HarnessError).code).toBe('ADAPTER_ERROR');
       expect(errorEvent.error.message).toBe('Network timeout after 30s');
+      expect((errorEvent.error as HarnessError).cause).toBe(originalError);
     });
 
-    it('wraps non-Error throws into an Error instance', async () => {
+    it('wraps non-Error throws into a HarnessError instance', async () => {
       const adapter: AgentAdapter = {
         async chat() {
           throw 'string error'; // non-Error throw
@@ -1354,7 +1356,8 @@ describe('AgentLoop', () => {
 
       const errorEvent = events.find((e) => e.type === 'error') as Extract<AgentEvent, { type: 'error' }>;
       expect(errorEvent).toBeDefined();
-      expect(errorEvent.error).toBeInstanceOf(Error);
+      expect(errorEvent.error).toBeInstanceOf(HarnessError);
+      expect((errorEvent.error as HarnessError).code).toBe('ADAPTER_ERROR');
       expect(errorEvent.error.message).toBe('string error');
     });
 
