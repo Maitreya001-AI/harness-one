@@ -25,6 +25,8 @@ export interface ToolDefinition<TParams = unknown> {
   readonly description: string;
   readonly parameters: JsonSchema;
   readonly responseFormat?: 'concise' | 'detailed';
+  /** Force sequential execution even in parallel mode. Default: false. */
+  readonly sequential?: boolean;
   readonly execute: (params: TParams, signal?: AbortSignal) => Promise<ToolResult>;
 }
 

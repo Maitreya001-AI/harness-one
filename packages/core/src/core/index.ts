@@ -19,6 +19,8 @@ export type {
   JsonSchema,
   LLMConfig,
   ResponseFormat,
+  ToolExecutionResult,
+  ExecutionStrategy,
 } from './types.js';
 
 // Errors

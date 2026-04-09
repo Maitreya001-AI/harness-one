@@ -158,3 +158,21 @@ export interface JsonSchema {
   default?: unknown;
   [key: string]: unknown;
 }
+
+/** Result of executing a single tool call within a batch. */
+export interface ToolExecutionResult {
+  readonly toolCallId: string;
+  readonly result: unknown;
+}
+
+/** Strategy for executing a batch of tool calls. */
+export interface ExecutionStrategy {
+  execute(
+    calls: readonly ToolCallRequest[],
+    handler: (call: ToolCallRequest) => Promise<unknown>,
+    options?: {
+      getToolMeta?: (name: string) => { sequential?: boolean } | undefined;
+      signal?: AbortSignal;
+    },
+  ): Promise<readonly ToolExecutionResult[]>;
+}
