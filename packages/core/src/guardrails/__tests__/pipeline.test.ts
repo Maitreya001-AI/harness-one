@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createPipeline, runInput, runOutput } from '../pipeline.js';
+import { createPipeline, runInput, runOutput, runToolOutput } from '../pipeline.js';
 import type { Guardrail, GuardrailEvent } from '../types.js';
 
 const allowGuard: Guardrail = () => ({ action: 'allow' });
@@ -387,6 +387,33 @@ describe('getInternal validation: invalid pipeline object', () => {
   it('throws HarnessError when runOutput is called with a non-createPipeline object', async () => {
     const fakePipeline = {} as unknown as import('../pipeline.js').GuardrailPipeline;
     await expect(runOutput(fakePipeline, { content: 'hello' })).rejects.toThrow('Invalid GuardrailPipeline');
+  });
+});
+
+describe('runToolOutput', () => {
+  it('filters tool output through output guardrails', async () => {
+    const pipeline = createPipeline({
+      output: [{ name: 'blocker', guard: (ctx) =>
+        ctx.content.includes('secret')
+          ? { action: 'block', reason: 'Contains secret data' }
+          : { action: 'allow' }
+      }],
+    });
+
+    const clean = await runToolOutput(pipeline, 'file contents here');
+    expect(clean.passed).toBe(true);
+
+    const blocked = await runToolOutput(pipeline, 'the secret is 12345');
+    expect(blocked.passed).toBe(false);
+  });
+
+  it('passes tool name in meta', async () => {
+    let receivedMeta: any;
+    const pipeline = createPipeline({
+      output: [{ name: 'spy', guard: (ctx) => { receivedMeta = ctx.meta; return { action: 'allow' }; } }],
+    });
+    await runToolOutput(pipeline, 'data', 'readFile');
+    expect(receivedMeta).toEqual({ toolName: 'readFile' });
   });
 });
 

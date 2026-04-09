@@ -49,6 +49,8 @@ export class AgentLoop {
     inputTokens: 0,
     outputTokens: 0,
   };
+  private _iteration = 0;
+  private _totalToolCalls = 0;
 
   constructor(config: AgentLoopConfig) {
     this.adapter = config.adapter;
@@ -91,6 +93,15 @@ export class AgentLoop {
     this.abortController.abort();
   }
 
+  /** Get a snapshot of the loop's current metrics. */
+  getMetrics(): { iteration: number; totalToolCalls: number; usage: TokenUsage } {
+    return {
+      iteration: this._iteration,
+      totalToolCalls: this._totalToolCalls,
+      usage: this.usage,
+    };
+  }
+
   /**
    * Run the agent loop, yielding events as they occur.
    *
@@ -118,6 +129,7 @@ export class AgentLoop {
 
         // Check max iterations
         iteration++;
+        this._iteration = iteration;
         if (iteration > this.maxIterations) {
           const err = new MaxIterationsError(this.maxIterations);
           yield { type: 'error', error: err };
@@ -245,6 +257,7 @@ export class AgentLoop {
           }
 
           yield { type: 'tool_result', toolCallId: toolCall.id, result };
+          this._totalToolCalls++;
 
           // Add tool result as a message
           const toolResultMsg: Message = {

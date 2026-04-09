@@ -167,3 +167,17 @@ export async function runOutput(
   const p = getInternal(pipeline);
   return runGuardrails(p, p.output, 'output', ctx);
 }
+
+/** Run output guardrails on tool execution results. */
+export async function runToolOutput(
+  pipeline: GuardrailPipeline,
+  toolResult: string,
+  toolName?: string,
+): Promise<PipelineResult> {
+  const p = getInternal(pipeline);
+  const ctx: GuardrailContext = {
+    content: toolResult,
+    ...(toolName !== undefined && { meta: { toolName } }),
+  };
+  return runGuardrails(p, p.output, 'output', ctx);
+}

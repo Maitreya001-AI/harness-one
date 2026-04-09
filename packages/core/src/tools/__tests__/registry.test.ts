@@ -291,7 +291,7 @@ describe('createRegistry', () => {
       expect(result.success).toBe(true);
     });
 
-    it('passes context to permissions.check', async () => {
+    it('passes context with parsed params to permissions.check', async () => {
       const checkFn = vi.fn().mockReturnValue(true);
       const registry = createRegistry({
         permissions: { check: checkFn },
@@ -302,7 +302,40 @@ describe('createRegistry', () => {
         name: 'echo',
         arguments: '{"text":"hello"}',
       });
-      expect(checkFn).toHaveBeenCalledWith('echo', { toolCallId: '1' });
+      expect(checkFn).toHaveBeenCalledWith('echo', {
+        toolCallId: '1',
+        params: { text: 'hello' },
+      });
+    });
+
+    it('enables parameter-based authorization via permissions.check', async () => {
+      const registry = createRegistry({
+        permissions: {
+          check: (_name: string, context?: Record<string, unknown>) => {
+            const params = context?.params as { text?: string } | undefined;
+            // Block calls with text "forbidden"
+            return params?.text !== 'forbidden';
+          },
+        },
+      });
+      registry.register(makeEchoTool());
+
+      const allowed = await registry.execute({
+        id: '1',
+        name: 'echo',
+        arguments: '{"text":"hello"}',
+      });
+      expect(allowed.success).toBe(true);
+
+      const blocked = await registry.execute({
+        id: '2',
+        name: 'echo',
+        arguments: '{"text":"forbidden"}',
+      });
+      expect(blocked.success).toBe(false);
+      if (!blocked.success) {
+        expect(blocked.error.category).toBe('permission');
+      }
     });
 
     it('executes without permissions config (backward compatible)', async () => {

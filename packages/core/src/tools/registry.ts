@@ -120,15 +120,6 @@ export function createRegistry(config?: {
       );
     }
 
-    // Permission check
-    if (permissions && !permissions.check(call.name, { toolCallId: call.id })) {
-      return toolError(
-        `Permission denied for tool "${call.name}"`,
-        'permission',
-        'Check that the caller has access to this tool',
-      );
-    }
-
     // Parse arguments
     let params: unknown;
     try {
@@ -151,6 +142,15 @@ export function createRegistry(config?: {
         `Validation failed: ${messages}`,
         'validation',
         'Fix the parameters according to the schema',
+      );
+    }
+
+    // Permission check (after parsing and validation so params are available)
+    if (permissions && !permissions.check(call.name, { toolCallId: call.id, params })) {
+      return toolError(
+        `Permission denied for tool "${call.name}"`,
+        'permission',
+        'Check that the caller has access to this tool',
       );
     }
 

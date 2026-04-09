@@ -752,6 +752,85 @@ describe('createRAGPipeline', () => {
     expect(chunks[0].documentId).toBe('custom-1');
   });
 
+  describe('ingestDocuments', () => {
+    it('ingests pre-loaded documents without a loader', async () => {
+      const pipeline = createRAGPipeline({
+        embedding,
+        retriever: createInMemoryRetriever({ embedding }),
+      });
+
+      const docs: Document[] = [
+        { id: 'doc-1', content: 'Hello world' },
+        { id: 'doc-2', content: 'Another doc' },
+      ];
+
+      const chunkCount = await pipeline.ingestDocuments(docs);
+      expect(chunkCount).toBe(2);
+
+      const chunks = pipeline.getChunks();
+      expect(chunks).toHaveLength(2);
+      expect(chunks[0].content).toBe('Hello world');
+      expect(chunks[1].content).toBe('Another doc');
+    });
+
+    it('uses chunking strategy when provided', async () => {
+      const pipeline = createRAGPipeline({
+        chunking: createFixedSizeChunking({ chunkSize: 5 }),
+        embedding,
+        retriever: createInMemoryRetriever({ embedding }),
+      });
+
+      const docs: Document[] = [
+        { id: 'doc-1', content: 'Hello world' }, // 11 chars -> 3 chunks at size 5
+      ];
+
+      const chunkCount = await pipeline.ingestDocuments(docs);
+      expect(chunkCount).toBeGreaterThan(1);
+    });
+
+    it('treats each document as a single chunk when no chunking strategy', async () => {
+      const pipeline = createRAGPipeline({
+        embedding,
+        retriever: createInMemoryRetriever({ embedding }),
+      });
+
+      const docs: Document[] = [
+        { id: 'doc-1', content: 'A long document that would normally be chunked' },
+      ];
+
+      const chunkCount = await pipeline.ingestDocuments(docs);
+      expect(chunkCount).toBe(1);
+
+      const chunks = pipeline.getChunks();
+      expect(chunks[0].content).toBe('A long document that would normally be chunked');
+      expect(chunks[0].documentId).toBe('doc-1');
+    });
+
+    it('allows querying after ingestDocuments', async () => {
+      const pipeline = createRAGPipeline({
+        embedding,
+        retriever: createInMemoryRetriever({ embedding }),
+      });
+
+      await pipeline.ingestDocuments([
+        { id: 'doc-1', content: 'The cat sat on the mat' },
+        { id: 'doc-2', content: 'Dogs play in the park' },
+      ]);
+
+      const results = await pipeline.query('cat');
+      expect(results.length).toBeGreaterThan(0);
+    });
+
+    it('throws when ingest() called without a loader', async () => {
+      const pipeline = createRAGPipeline({
+        embedding,
+        retriever: createInMemoryRetriever({ embedding }),
+      });
+
+      await expect(pipeline.ingest()).rejects.toThrow('No loader configured');
+    });
+  });
+
   it('throws RAG_EMBEDDING_MISMATCH when embedding count differs from chunk count', async () => {
     // Create a broken embedding model that returns fewer embeddings than inputs
     const brokenEmbedding: EmbeddingModel = {

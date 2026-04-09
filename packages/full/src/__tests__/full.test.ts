@@ -302,6 +302,44 @@ describe('createHarness', () => {
       // run should return an AsyncGenerator
       expect(result).toBeDefined();
     });
+
+    it('auto-persists messages to conversation store', async () => {
+      // Set up mock to yield message and tool_result events
+      mocks.mockAgentLoopRun.mockImplementationOnce(async function* () {
+        yield {
+          type: 'message' as const,
+          message: { role: 'assistant' as const, content: 'Hi there' },
+          usage: { inputTokens: 10, outputTokens: 5 },
+        };
+        yield {
+          type: 'tool_result' as const,
+          toolCallId: 'tc-1',
+          result: 'tool output',
+        };
+      });
+
+      const harness = createHarness(baseConfig);
+      const messages = [{ role: 'user' as const, content: 'Hello' }];
+
+      // Consume the async generator
+      const events = [];
+      for await (const event of harness.run(messages)) {
+        events.push(event);
+      }
+
+      // Verify events were yielded
+      expect(events).toHaveLength(2);
+      expect(events[0]).toEqual(expect.objectContaining({ type: 'message' }));
+      expect(events[1]).toEqual(expect.objectContaining({ type: 'tool_result' }));
+
+      // Verify messages were persisted to conversation store
+      const stored = await harness.conversations.load('default');
+      // Should contain: 1 input message + 1 assistant message + 1 tool message = 3
+      expect(stored).toHaveLength(3);
+      expect(stored[0]).toEqual({ role: 'user', content: 'Hello' });
+      expect(stored[1]).toEqual({ role: 'assistant', content: 'Hi there' });
+      expect(stored[2]).toEqual({ role: 'tool', content: 'tool output', toolCallId: 'tc-1' });
+    });
   });
 
   describe('onToolCall callback', () => {
@@ -472,6 +510,62 @@ describe('createHarness', () => {
 
     it('throws INVALID_CONFIG when budget is negative', () => {
       expect(() => createHarness({ ...baseConfig, budget: -10 })).toThrow(HarnessError);
+    });
+
+    it('throws INVALID_CONFIG when rateLimit.max is zero', () => {
+      expect(() => createHarness({
+        ...baseConfig,
+        guardrails: { rateLimit: { max: 0, windowMs: 60000 } },
+      })).toThrow(HarnessError);
+      try {
+        createHarness({ ...baseConfig, guardrails: { rateLimit: { max: 0, windowMs: 60000 } } });
+      } catch (e) {
+        expect((e as HarnessError).code).toBe('INVALID_CONFIG');
+        expect((e as HarnessError).message).toContain('rateLimit.max');
+      }
+    });
+
+    it('throws INVALID_CONFIG when rateLimit.max is negative', () => {
+      expect(() => createHarness({
+        ...baseConfig,
+        guardrails: { rateLimit: { max: -1, windowMs: 60000 } },
+      })).toThrow(HarnessError);
+    });
+
+    it('throws INVALID_CONFIG when rateLimit.windowMs is zero', () => {
+      expect(() => createHarness({
+        ...baseConfig,
+        guardrails: { rateLimit: { max: 10, windowMs: 0 } },
+      })).toThrow(HarnessError);
+      try {
+        createHarness({ ...baseConfig, guardrails: { rateLimit: { max: 10, windowMs: 0 } } });
+      } catch (e) {
+        expect((e as HarnessError).code).toBe('INVALID_CONFIG');
+        expect((e as HarnessError).message).toContain('windowMs');
+      }
+    });
+
+    it('throws INVALID_CONFIG when pricing has negative values', () => {
+      expect(() => createHarness({
+        ...baseConfig,
+        pricing: [{ model: 'test-model', inputPer1kTokens: -0.01, outputPer1kTokens: 0.02 }],
+      })).toThrow(HarnessError);
+      try {
+        createHarness({
+          ...baseConfig,
+          pricing: [{ model: 'test-model', inputPer1kTokens: -0.01, outputPer1kTokens: 0.02 }],
+        });
+      } catch (e) {
+        expect((e as HarnessError).code).toBe('INVALID_CONFIG');
+        expect((e as HarnessError).message).toContain('test-model');
+      }
+    });
+
+    it('throws INVALID_CONFIG when pricing has negative output value', () => {
+      expect(() => createHarness({
+        ...baseConfig,
+        pricing: [{ model: 'gpt-4', inputPer1kTokens: 0.03, outputPer1kTokens: -0.06 }],
+      })).toThrow(HarnessError);
     });
 
     it('allows valid positive values for maxIterations, maxTotalTokens, budget', () => {

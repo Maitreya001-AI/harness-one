@@ -103,6 +103,43 @@ describe('createDisclosureManager', () => {
     expect(dm.getContent('test', 2)).toBe('Basic\nMore\nDeep');
   });
 
+  describe('destructured usage', () => {
+    it('expand() works correctly when destructured from the manager', () => {
+      const { register, expand, getCurrentLevel, getContent } = createDisclosureManager();
+      register('auth', [
+        { level: 0, content: 'Auth uses JWT.' },
+        { level: 1, content: 'Tokens expire after 1h.' },
+        { level: 2, content: 'Refresh via httpOnly cookies.' },
+      ]);
+
+      // expand should work without `this` context
+      const content1 = expand('auth');
+      expect(content1).toBe('Tokens expire after 1h.');
+      expect(getCurrentLevel('auth')).toBe(1);
+
+      const content2 = expand('auth');
+      expect(content2).toBe('Refresh via httpOnly cookies.');
+      expect(getCurrentLevel('auth')).toBe(2);
+
+      // expand beyond max should return all content (uses getContent internally)
+      const contentMax = expand('auth');
+      expect(contentMax).toContain('Auth uses JWT.');
+      expect(contentMax).toContain('Tokens expire after 1h.');
+      expect(contentMax).toContain('Refresh via httpOnly cookies.');
+    });
+
+    it('getContent() works correctly when destructured', () => {
+      const { register, getContent } = createDisclosureManager();
+      register('auth', [
+        { level: 0, content: 'Auth uses JWT.' },
+        { level: 1, content: 'Tokens expire after 1h.' },
+      ]);
+
+      expect(getContent('auth')).toBe('Auth uses JWT.');
+      expect(getContent('auth', 1)).toBe('Auth uses JWT.\nTokens expire after 1h.');
+    });
+  });
+
   describe('edge cases', () => {
     it('expand beyond max level — stays at max', () => {
       const dm = createDisclosureManager();

@@ -56,8 +56,8 @@ export interface Retriever {
 
 /** Configuration for a RAG pipeline. */
 export interface RAGPipelineConfig {
-  readonly loader: DocumentLoader;
-  readonly chunking: ChunkingStrategy;
+  readonly loader?: DocumentLoader;
+  readonly chunking?: ChunkingStrategy;
   readonly embedding: EmbeddingModel;
   readonly retriever: Retriever;
 }
@@ -66,6 +66,8 @@ export interface RAGPipelineConfig {
 export interface RAGPipeline {
   /** Ingest documents: load -> chunk -> embed -> index. */
   ingest(): Promise<{ documents: number; chunks: number }>;
+  /** Ingest pre-loaded documents directly (skips loader). */
+  ingestDocuments(documents: Document[]): Promise<number>;
   /** Query: embed query -> retrieve relevant chunks. */
   query(text: string, options?: { limit?: number; minScore?: number }): Promise<RetrievalResult[]>;
   /** Get all indexed chunks. */

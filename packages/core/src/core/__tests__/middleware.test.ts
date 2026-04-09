@@ -194,4 +194,32 @@ describe('createMiddlewareChain', () => {
     expect(ctx.endTime).toBeDefined();
     expect((ctx.endTime as number) >= (ctx.startTime as number)).toBe(true);
   });
+
+  it('supports typed context via generic parameter', async () => {
+    type MyExtra = { model: string; temperature: number };
+    const chain = createMiddlewareChain<MyExtra>();
+    let capturedModel = '';
+
+    chain.use(async (ctx, next) => {
+      // ctx.model should be accessible without casting
+      capturedModel = ctx.model;
+      return next();
+    });
+
+    await chain.execute({ type: 'chat', model: 'gpt-4', temperature: 0.7 }, async () => 'ok');
+    expect(capturedModel).toBe('gpt-4');
+  });
+
+  it('works without generic parameter (backward compatible)', async () => {
+    const chain = createMiddlewareChain();
+    let seenType = '';
+
+    chain.use(async (ctx, next) => {
+      seenType = ctx.type;
+      return next();
+    });
+
+    await chain.execute({ type: 'tool_call' }, async () => 'ok');
+    expect(seenType).toBe('tool_call');
+  });
 });

@@ -8,20 +8,20 @@
  */
 
 /** Context passed through the middleware chain. */
-export type MiddlewareContext = {
+export type MiddlewareContext<TExtra extends Record<string, unknown> = Record<string, unknown>> = {
   type: 'chat' | 'tool_call' | 'tool_result';
-  [key: string]: unknown;
-};
+} & TExtra;
 
 /** A single middleware function. Calls `next()` to proceed to the next middleware or handler. */
-export type MiddlewareFn = (ctx: MiddlewareContext, next: () => Promise<unknown>) => Promise<unknown>;
+export type MiddlewareFn<TExtra extends Record<string, unknown> = Record<string, unknown>> =
+  (ctx: MiddlewareContext<TExtra>, next: () => Promise<unknown>) => Promise<unknown>;
 
 /** A composable middleware chain. */
-export interface MiddlewareChain {
+export interface MiddlewareChain<TExtra extends Record<string, unknown> = Record<string, unknown>> {
   /** Register a middleware function. Middlewares execute in registration order. */
-  use(fn: MiddlewareFn): void;
+  use(fn: MiddlewareFn<TExtra>): void;
   /** Execute the chain with the given context and terminal handler. */
-  execute(ctx: MiddlewareContext, handler: () => Promise<unknown>): Promise<unknown>;
+  execute(ctx: MiddlewareContext<TExtra>, handler: () => Promise<unknown>): Promise<unknown>;
 }
 
 /**
@@ -39,15 +39,15 @@ export interface MiddlewareChain {
  * const result = await chain.execute({ type: 'chat' }, () => adapter.chat(params));
  * ```
  */
-export function createMiddlewareChain(): MiddlewareChain {
-  const middlewares: MiddlewareFn[] = [];
+export function createMiddlewareChain<TExtra extends Record<string, unknown> = Record<string, unknown>>(): MiddlewareChain<TExtra> {
+  const middlewares: MiddlewareFn<TExtra>[] = [];
 
   return {
-    use(fn: MiddlewareFn): void {
+    use(fn: MiddlewareFn<TExtra>): void {
       middlewares.push(fn);
     },
 
-    async execute(ctx: MiddlewareContext, handler: () => Promise<unknown>): Promise<unknown> {
+    async execute(ctx: MiddlewareContext<TExtra>, handler: () => Promise<unknown>): Promise<unknown> {
       let index = 0;
       const next = async (): Promise<unknown> => {
         if (index < middlewares.length) {

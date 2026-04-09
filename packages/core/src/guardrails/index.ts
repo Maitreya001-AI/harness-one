@@ -15,7 +15,7 @@ export type {
 } from './types.js';
 
 // Pipeline
-export { createPipeline, runInput, runOutput } from './pipeline.js';
+export { createPipeline, runInput, runOutput, runToolOutput } from './pipeline.js';
 export type { GuardrailPipeline } from './pipeline.js';
 
 // Self-healing

@@ -61,6 +61,15 @@ export function createDisclosureManager(): DisclosureManager {
     return levels;
   }
 
+  function getContentFn(topic: string, maxLevel?: number): string {
+    const levels = requireTopic(topic);
+    const max = maxLevel ?? currentLevels.get(topic) ?? 0;
+    return levels
+      .filter(l => l.level <= max)
+      .map(l => l.content)
+      .join('\n');
+  }
+
   return {
     register(topic: string, levels: DisclosureLevel[]): void {
       const sorted = [...levels].sort((a, b) => a.level - b.level);
@@ -68,14 +77,7 @@ export function createDisclosureManager(): DisclosureManager {
       currentLevels.set(topic, 0);
     },
 
-    getContent(topic: string, maxLevel?: number): string {
-      const levels = requireTopic(topic);
-      const max = maxLevel ?? currentLevels.get(topic) ?? 0;
-      return levels
-        .filter(l => l.level <= max)
-        .map(l => l.content)
-        .join('\n');
-    },
+    getContent: getContentFn,
 
     expand(topic: string): string {
       const levels = requireTopic(topic);
@@ -84,7 +86,7 @@ export function createDisclosureManager(): DisclosureManager {
       const maxAvailable = levels[levels.length - 1].level;
 
       if (nextLevel > maxAvailable) {
-        return this.getContent(topic, current);
+        return getContentFn(topic, current);
       }
 
       currentLevels.set(topic, nextLevel);

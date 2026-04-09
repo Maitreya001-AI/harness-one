@@ -1500,6 +1500,55 @@ describe('AgentLoop', () => {
     });
   });
 
+  describe('getMetrics()', () => {
+    it('returns zero metrics before run', () => {
+      const adapter = createMockAdapter([]);
+      const loop = new AgentLoop({ adapter });
+      const metrics = loop.getMetrics();
+      expect(metrics.iteration).toBe(0);
+      expect(metrics.totalToolCalls).toBe(0);
+      expect(metrics.usage).toEqual({ inputTokens: 0, outputTokens: 0 });
+    });
+
+    it('tracks iteration count and tool calls after run', async () => {
+      const toolCall: ToolCallRequest = { id: 'tc_1', name: 'search', arguments: '{}' };
+      const adapter = createMockAdapter([
+        { message: { role: 'assistant', content: '', toolCalls: [toolCall] }, usage: USAGE },
+        { message: { role: 'assistant', content: 'Done' }, usage: USAGE },
+      ]);
+      const loop = new AgentLoop({
+        adapter,
+        onToolCall: async () => 'result',
+      });
+      await collectEvents(loop.run([{ role: 'user', content: 'go' }]));
+
+      const metrics = loop.getMetrics();
+      expect(metrics.iteration).toBe(2);
+      expect(metrics.totalToolCalls).toBe(1);
+      expect(metrics.usage).toEqual({ inputTokens: 20, outputTokens: 10 });
+    });
+
+    it('tracks multiple tool calls in a single iteration', async () => {
+      const toolCalls: ToolCallRequest[] = [
+        { id: 'tc_1', name: 'a', arguments: '{}' },
+        { id: 'tc_2', name: 'b', arguments: '{}' },
+        { id: 'tc_3', name: 'c', arguments: '{}' },
+      ];
+      const adapter = createMockAdapter([
+        { message: { role: 'assistant', content: '', toolCalls }, usage: USAGE },
+        { message: { role: 'assistant', content: 'Done' }, usage: USAGE },
+      ]);
+      const loop = new AgentLoop({
+        adapter,
+        onToolCall: async () => 'ok',
+      });
+      await collectEvents(loop.run([{ role: 'user', content: 'go' }]));
+
+      const metrics = loop.getMetrics();
+      expect(metrics.totalToolCalls).toBe(3);
+    });
+  });
+
   describe('single source of truth for abort state', () => {
     it('uses only abortController.signal.aborted, no redundant boolean', async () => {
       const adapter = createMockAdapter([

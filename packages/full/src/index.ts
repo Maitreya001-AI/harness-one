@@ -138,6 +138,30 @@ export function createHarness(config: HarnessConfig): Harness {
     throw new HarnessError('budget must be positive', 'INVALID_CONFIG', 'Use a value > 0');
   }
 
+  // Validate guardrails sub-config
+  if (config.guardrails?.rateLimit) {
+    const rl = config.guardrails.rateLimit;
+    if (rl.max <= 0) {
+      throw new HarnessError('guardrails.rateLimit.max must be positive', 'INVALID_CONFIG', 'Use a value >= 1');
+    }
+    if (rl.windowMs <= 0) {
+      throw new HarnessError('guardrails.rateLimit.windowMs must be positive', 'INVALID_CONFIG', 'Use a value >= 1');
+    }
+  }
+
+  // Validate pricing values
+  if (config.pricing) {
+    for (const p of config.pricing) {
+      if (p.inputPer1kTokens < 0 || p.outputPer1kTokens < 0) {
+        throw new HarnessError(
+          `Pricing for model "${p.model}" has negative values`,
+          'INVALID_CONFIG',
+          'All pricing values must be >= 0',
+        );
+      }
+    }
+  }
+
   // 1. Adapter
   const adapter: AgentAdapter = config.adapter ?? createAdapter(config);
 
@@ -226,8 +250,24 @@ export function createHarness(config: HarnessConfig): Harness {
     conversations,
     middleware,
 
-    run(messages: Message[]): AsyncGenerator<AgentEvent> {
-      return loop.run(messages);
+    async *run(messages: Message[]): AsyncGenerator<AgentEvent> {
+      // Persist input messages
+      for (const msg of messages) {
+        await conversations.append('default', msg);
+      }
+      for await (const event of loop.run(messages)) {
+        // Auto-persist messages and tool results to conversation store
+        if (event.type === 'message' && event.message) {
+          await conversations.append('default', event.message);
+        } else if (event.type === 'tool_result') {
+          await conversations.append('default', {
+            role: 'tool' as const,
+            content: typeof event.result === 'string' ? event.result : JSON.stringify(event.result),
+            toolCallId: event.toolCallId,
+          });
+        }
+        yield event;
+      }
     },
 
     async shutdown(): Promise<void> {
