@@ -723,6 +723,45 @@ describe('createLangfuseCostTracker', () => {
     expect(tracker.getCostByTrace('nonexistent')).toBe(0);
   });
 
+  it('evicts oldest records when exceeding maxRecords (10,000) and adjusts runningTotal', () => {
+    const tracker = createLangfuseCostTracker({ client: mock.client });
+    tracker.setPricing([
+      { model: 'a', inputPer1kTokens: 0.001, outputPer1kTokens: 0.0 },
+    ]);
+
+    // Record 10,001 usages — the first record should be evicted
+    for (let i = 0; i < 10_001; i++) {
+      tracker.recordUsage({ traceId: `t${i}`, model: 'a', inputTokens: 1000, outputTokens: 0 });
+    }
+
+    // Each record costs 0.001. After eviction, 10,000 records remain.
+    // runningTotal should reflect 10,000 records, not 10,001.
+    expect(tracker.getTotalCost()).toBeCloseTo(10.0, 2);
+
+    // The first trace should have been evicted, so getCostByTrace returns 0
+    expect(tracker.getCostByTrace('t0')).toBe(0);
+    // The last trace should still be present
+    expect(tracker.getCostByTrace('t10000')).toBeCloseTo(0.001);
+  });
+
+  it('resets recordsSinceRecalibrate on reset()', () => {
+    const tracker = createLangfuseCostTracker({ client: mock.client });
+    tracker.setPricing([
+      { model: 'a', inputPer1kTokens: 0.001, outputPer1kTokens: 0.0 },
+    ]);
+
+    // Record some usages, then reset, then record more
+    for (let i = 0; i < 500; i++) {
+      tracker.recordUsage({ traceId: `t${i}`, model: 'a', inputTokens: 1000, outputTokens: 0 });
+    }
+    tracker.reset();
+    expect(tracker.getTotalCost()).toBe(0);
+
+    // After reset, recording should still work correctly
+    tracker.recordUsage({ traceId: 'post-reset', model: 'a', inputTokens: 1000, outputTokens: 0 });
+    expect(tracker.getTotalCost()).toBeCloseTo(0.001);
+  });
+
   it('getTotalCost uses running total (O(1)) not reduce (O(N))', () => {
     const tracker = createLangfuseCostTracker({ client: mock.client });
     tracker.setPricing([

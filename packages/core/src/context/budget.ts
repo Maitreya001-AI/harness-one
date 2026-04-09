@@ -55,6 +55,7 @@ export function createBudget(config: BudgetConfig): TokenBudget {
 
   return {
     totalTokens: config.totalTokens,
+    responseReserve,
 
     remaining(segmentName: string): number {
       const seg = getSegment(segmentName);

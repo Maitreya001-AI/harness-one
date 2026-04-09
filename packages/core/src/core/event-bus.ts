@@ -49,7 +49,9 @@ export function createEventBus(): EventBus {
     emit<T>(event: string, data: T): void {
       const set = handlers.get(event);
       if (set) {
-        for (const h of set) h(data);
+        for (const h of set) {
+          try { h(data); } catch { /* Prevent misbehaving handler from breaking event delivery */ }
+        }
       }
     },
     off(event: string, handler: EventHandler): void {

@@ -70,16 +70,31 @@ export function createFallbackAdapter(config: FallbackAdapterConfig): AgentAdapt
     },
 
     async *stream(params: ChatParams): AsyncIterable<StreamChunk> {
-      // Streaming doesn't auto-retry -- just use current adapter
-      const adapter = getAdapter();
-      if (!adapter.stream) {
-        throw new HarnessError(
-          'Current adapter does not support streaming',
-          'STREAM_NOT_SUPPORTED',
-          'Use an adapter that implements stream()',
-        );
+      try {
+        const adapter = getAdapter();
+        if (!adapter.stream) {
+          throw new HarnessError(
+            'Current adapter does not support streaming',
+            'STREAM_NOT_SUPPORTED',
+            'Use an adapter that implements stream()',
+          );
+        }
+        yield* adapter.stream(params);
+        handleSuccess();
+      } catch (err) {
+        handleFailure();
+        // Retry with (possibly new) adapter if we switched
+        if (currentIndex < adapters.length - 1 || failureCount === 0) {
+          const retryAdapter = getAdapter();
+          if (!retryAdapter.stream) {
+            throw err; // No stream support on fallback adapter
+          }
+          yield* retryAdapter.stream(params);
+          handleSuccess();
+        } else {
+          throw err;
+        }
       }
-      yield* adapter.stream(params);
     },
   };
 }

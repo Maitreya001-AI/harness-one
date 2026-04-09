@@ -71,6 +71,14 @@ export function createFileSystemStore(config: {
     await rename(tmpPath, indexPath);
   }
 
+  /** Delete files in parallel batches to avoid fd exhaustion. */
+  async function batchUnlink(paths: string[], batchSize = 50): Promise<void> {
+    for (let i = 0; i < paths.length; i += batchSize) {
+      const batch = paths.slice(i, i + batchSize);
+      await Promise.all(batch.map(p => unlink(p).catch(() => {})));
+    }
+  }
+
   function entryPath(id: string): string {
     return join(dir, `${id}.json`);
   }
@@ -215,14 +223,16 @@ export function createFileSystemStore(config: {
         // Remove entries older than maxAge
         if (policy.maxAge !== undefined) {
           const survivors: MemoryEntry[] = [];
+          const toDelete: string[] = [];
           for (const entry of all) {
             if (now - entry.createdAt > policy.maxAge && weights[entry.grade] < 1.0) {
-              await unlink(entryPath(entry.id));
+              toDelete.push(entryPath(entry.id));
               freed.push(entry.id);
             } else {
               survivors.push(entry);
             }
           }
+          await batchUnlink(toDelete);
           all = survivors;
         }
 
@@ -233,15 +243,17 @@ export function createFileSystemStore(config: {
           );
           let current = all.length;
           const removedIds = new Set<string>();
+          const toDelete: string[] = [];
           for (const victim of sorted) {
             if (current <= policy.maxEntries) break;
             if (weights[victim.grade] < 1.0) {
-              await unlink(entryPath(victim.id));
+              toDelete.push(entryPath(victim.id));
               freed.push(victim.id);
               removedIds.add(victim.id);
               current--;
             }
           }
+          await batchUnlink(toDelete);
           all = all.filter((e) => !removedIds.has(e.id));
         }
 
@@ -269,9 +281,7 @@ export function createFileSystemStore(config: {
       await ensureDir();
       await withIndexLock(async () => {
         const all = await allEntries();
-        for (const entry of all) {
-          await unlink(entryPath(entry.id));
-        }
+        await batchUnlink(all.map(e => entryPath(e.id)));
         await writeIndex({ keys: {} });
       });
     },

@@ -42,6 +42,8 @@ export interface AgentOrchestrator {
   onEvent(handler: (event: OrchestratorEvent) => void): () => void;
   /** Get children of an agent (hierarchical mode). */
   getChildren(parentId: string): AgentRegistration[];
+  /** Dispose the orchestrator, clearing all agents, queues, and handlers. */
+  dispose(): void;
   /** Get the orchestration mode. */
   readonly mode: OrchestrationMode;
 }
@@ -281,6 +283,13 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
         }
       }
       return result;
+    },
+
+    dispose(): void {
+      agents.clear();
+      messageQueues.clear();
+      eventHandlers.length = 0;
+      contextStore.clear();
     },
   };
 

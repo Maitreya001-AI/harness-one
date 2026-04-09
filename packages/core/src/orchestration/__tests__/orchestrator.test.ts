@@ -636,6 +636,41 @@ describe('createOrchestrator', () => {
     });
   });
 
+  describe('dispose', () => {
+    it('clears all agents, message queues, event handlers, and context', () => {
+      const events: OrchestratorEvent[] = [];
+      const orch = createOrchestrator();
+      orch.register('a1', 'Worker1');
+      orch.register('a2', 'Worker2');
+      orch.send({ from: 'a1', to: 'a2', type: 'request', content: 'hello' });
+      orch.context.set('key1', 'value1');
+      orch.onEvent((e) => events.push(e));
+
+      // Verify state exists before dispose
+      expect(orch.listAgents()).toHaveLength(2);
+      expect(orch.getMessages('a2')).toHaveLength(1);
+      expect(orch.context.get('key1')).toBe('value1');
+
+      orch.dispose();
+
+      // After dispose: agents cleared
+      expect(orch.listAgents()).toHaveLength(0);
+      expect(orch.getAgent('a1')).toBeUndefined();
+
+      // After dispose: message queues cleared
+      expect(orch.getMessages('a2')).toHaveLength(0);
+
+      // After dispose: context cleared
+      expect(orch.context.get('key1')).toBeUndefined();
+      expect(orch.context.entries().size).toBe(0);
+
+      // After dispose: event handlers cleared — registering a new agent should not emit to old handler
+      const eventsBeforeDispose = events.length;
+      orch.register('a3', 'Worker3');
+      expect(events.length).toBe(eventsBeforeDispose);
+    });
+  });
+
   describe('default configuration', () => {
     it('defaults to peer mode', () => {
       const orch = createOrchestrator();

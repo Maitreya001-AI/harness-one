@@ -253,6 +253,44 @@ describe('createRelay', () => {
     });
   });
 
+  describe('corrupted relay data', () => {
+    it('returns null when cached relay entry has corrupted JSON', async () => {
+      // Write valid state first so the relay caches the ID
+      await relay.save({
+        progress: { step: 1 },
+        artifacts: [],
+        checkpoint: 'cp1',
+        timestamp: 1000,
+      });
+      const loaded = await relay.load();
+      expect(loaded).not.toBeNull();
+
+      // Corrupt the entry directly in the store
+      const entries = await store.query({});
+      const relayEntry = entries.find((e) => e.key === '__relay__');
+      expect(relayEntry).toBeDefined();
+      await store.update(relayEntry!.id, { content: '{invalid json!!!' });
+
+      // Load should return null instead of throwing SyntaxError
+      const result = await relay.load();
+      expect(result).toBeNull();
+    });
+
+    it('returns null when query-path relay entry has corrupted JSON', async () => {
+      // Write corrupted content directly to the store
+      await store.write({
+        key: '__relay__',
+        content: 'NOT_VALID_JSON{{{',
+        grade: 'critical',
+      });
+
+      // Fresh relay instance — no cached ID, must use query path
+      const freshRelay = createRelay({ store, relayKey: '__relay__' });
+      const result = await freshRelay.load();
+      expect(result).toBeNull();
+    });
+  });
+
   describe('H3: stale cache invalidation', () => {
     it('clears cached ID when entry is deleted externally and re-created', async () => {
       // Save state to populate the cache

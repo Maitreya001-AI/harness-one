@@ -246,6 +246,9 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): Co
   const alertHandlers: ((alert: CostAlert) => void)[] = [];
   let budget: number | undefined;
   let runningTotal = 0;
+  const maxRecords = 10_000;
+  const RECALIBRATE_INTERVAL = 1000;
+  let recordsSinceRecalibrate = 0;
   const warningThreshold = config.warningThreshold ?? 0.8;
   const criticalThreshold = config.criticalThreshold ?? 0.95;
 
@@ -286,6 +289,17 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): Co
       };
       records.push(record);
       runningTotal += estimatedCost;
+      if (records.length > maxRecords) {
+        const evicted = records.shift()!;
+        runningTotal -= evicted.estimatedCost;
+      }
+
+      // Periodic recalibration to correct floating point drift
+      recordsSinceRecalibrate++;
+      if (recordsSinceRecalibrate >= RECALIBRATE_INTERVAL) {
+        runningTotal = records.reduce((sum, r) => sum + r.estimatedCost, 0);
+        recordsSinceRecalibrate = 0;
+      }
 
       // Export to Langfuse as a generation with cost metadata
       const trace = client.trace({ id: usage.traceId, name: 'cost-tracking' });
@@ -368,6 +382,7 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): Co
     reset(): void {
       records.length = 0;
       runningTotal = 0;
+      recordsSinceRecalibrate = 0;
     },
 
     getAlertMessage(): string | null {

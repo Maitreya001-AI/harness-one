@@ -314,6 +314,31 @@ describe('createAnthropicAdapter', () => {
       );
     });
 
+    it('passes topP and stopSequences to stream call', async () => {
+      const mockStream = createMockStream([]);
+      mockStream.finalMessage.mockResolvedValue({
+        usage: { input_tokens: 10, output_tokens: 5 },
+      });
+      mock.mocks.stream.mockReturnValue(mockStream);
+
+      const adapter = createAnthropicAdapter({ client: mock.client });
+      const chunks: unknown[] = [];
+      for await (const chunk of adapter.stream!({
+        messages: [{ role: 'user', content: 'Hi' }],
+        config: { topP: 0.9, stopSequences: ['STOP', 'END'] },
+      })) {
+        chunks.push(chunk);
+      }
+
+      expect(mock.mocks.stream).toHaveBeenCalledWith(
+        expect.objectContaining({
+          top_p: 0.9,
+          stop_sequences: ['STOP', 'END'],
+        }),
+        expect.any(Object),
+      );
+    });
+
     it('emits only one done event (from finalMessage, not message_delta)', async () => {
       const mockStream = createMockStream([
         { type: 'content_block_start', content_block: { type: 'text' } },

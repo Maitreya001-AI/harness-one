@@ -140,6 +140,38 @@ describe('createFallbackAdapter', () => {
       expect(collected).toEqual(chunks);
     });
 
+    it('falls back to next adapter when stream fails', async () => {
+      const fallbackChunks: StreamChunk[] = [
+        { type: 'text_delta', text: 'Fallback stream' },
+        { type: 'done', usage: USAGE },
+      ];
+
+      const primary: AgentAdapter = {
+        async chat() {
+          return { message: { role: 'assistant', content: 'hi' }, usage: USAGE };
+        },
+        async *stream() {
+          throw new Error('primary stream failure');
+        },
+      };
+
+      const fallback: AgentAdapter = {
+        async chat() {
+          return { message: { role: 'assistant', content: 'fb' }, usage: USAGE };
+        },
+        async *stream() {
+          for (const chunk of fallbackChunks) yield chunk;
+        },
+      };
+
+      const adapter = createFallbackAdapter({ adapters: [primary, fallback], maxFailures: 1 });
+      const collected: StreamChunk[] = [];
+      for await (const chunk of adapter.stream!(PARAMS)) {
+        collected.push(chunk);
+      }
+      expect(collected).toEqual(fallbackChunks);
+    });
+
     it('throws STREAM_NOT_SUPPORTED when adapter has no stream method', async () => {
       const primary: AgentAdapter = {
         async chat() {

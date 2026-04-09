@@ -48,6 +48,25 @@ describe('createEventBus', () => {
       expect(handler).toHaveBeenNthCalledWith(3, 3);
     });
 
+    it('does not break other handlers when one throws', () => {
+      const bus = createEventBus();
+      const h1 = vi.fn();
+      const h2 = vi.fn(() => { throw new Error('handler error'); });
+      const h3 = vi.fn();
+
+      bus.on('evt', h1);
+      bus.on('evt', h2);
+      bus.on('evt', h3);
+
+      // Should not throw despite h2 throwing
+      expect(() => bus.emit('evt', 'data')).not.toThrow();
+
+      // All handlers should have been called
+      expect(h1).toHaveBeenCalledWith('data');
+      expect(h2).toHaveBeenCalledWith('data');
+      expect(h3).toHaveBeenCalledWith('data');
+    });
+
     it('handles emit with no subscribers gracefully', () => {
       const bus = createEventBus();
       // Should not throw

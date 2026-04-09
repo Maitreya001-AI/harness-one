@@ -35,7 +35,8 @@ export function packContext(
 
   const headTokens = countTokens(m, layout.head);
   const tailTokens = countTokens(m, layout.tail);
-  const totalBudget = layout.budget.totalTokens;
+  const responseReserve = layout.budget.responseReserve ?? 0;
+  const totalBudget = layout.budget.totalTokens - responseReserve;
 
   // H6: Clamp midBudget to 0 when HEAD+TAIL exceed total budget
   const midBudget = Math.max(0, totalBudget - headTokens - tailTokens);

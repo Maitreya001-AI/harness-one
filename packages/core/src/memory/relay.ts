@@ -37,7 +37,13 @@ export function createRelay(config: {
     if (currentId) {
       const entry = await store.read(currentId);
       if (entry) {
-        return { id: entry.id, state: JSON.parse(entry.content) as RelayState };
+        try {
+          return { id: entry.id, state: JSON.parse(entry.content) as RelayState };
+        } catch {
+          // Corrupted relay data — clear cache and treat as missing
+          currentId = null;
+          return null;
+        }
       }
       // Cache miss: entry was deleted externally. Clear stale cached ID and re-query.
       currentId = null;
@@ -46,8 +52,14 @@ export function createRelay(config: {
     // Look for an entry with our relay key
     for (const entry of results) {
       if (entry.key === relayKey) {
-        currentId = entry.id;
-        return { id: entry.id, state: JSON.parse(entry.content) as RelayState };
+        try {
+          const state = JSON.parse(entry.content) as RelayState;
+          currentId = entry.id;
+          return { id: entry.id, state };
+        } catch {
+          // Corrupted entry — skip it
+          continue;
+        }
       }
     }
     return null;

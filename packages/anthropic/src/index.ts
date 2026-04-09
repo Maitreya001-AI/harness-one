@@ -96,8 +96,10 @@ function toTokenUsage(usage: Anthropic.Usage): TokenUsage {
   return {
     inputTokens: usage.input_tokens,
     outputTokens: usage.output_tokens,
-    cacheReadTokens: 'cache_read_input_tokens' in usage ? (usage as Record<string, number>).cache_read_input_tokens : 0,
-    cacheWriteTokens: 'cache_creation_input_tokens' in usage ? (usage as Record<string, number>).cache_creation_input_tokens : 0,
+    cacheReadTokens: typeof (usage as unknown as Record<string, unknown>).cache_read_input_tokens === 'number'
+      ? (usage as unknown as Record<string, number>).cache_read_input_tokens : 0,
+    cacheWriteTokens: typeof (usage as unknown as Record<string, unknown>).cache_creation_input_tokens === 'number'
+      ? (usage as unknown as Record<string, number>).cache_creation_input_tokens : 0,
   };
 }
 
@@ -165,6 +167,8 @@ export function createAnthropicAdapter(config: AnthropicAdapterConfig): AgentAda
         messages: rest.map(toAnthropicMessage),
         ...(params.tools && { tools: params.tools.map(toAnthropicTool) }),
         ...(params.config?.temperature !== undefined && { temperature: params.config.temperature }),
+        ...(params.config?.topP !== undefined && { top_p: params.config.topP }),
+        ...(params.config?.stopSequences !== undefined && { stop_sequences: params.config.stopSequences as string[] }),
       }, { signal: params.signal });
 
       let currentToolId: string | undefined;

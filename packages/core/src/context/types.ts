@@ -24,6 +24,7 @@ export interface BudgetConfig {
 /** Token budget tracker with segment-level allocation. */
 export interface TokenBudget {
   readonly totalTokens: number;
+  readonly responseReserve: number;
   remaining(segmentName: string): number;
   allocate(segmentName: string, tokens: number): void;
   reset(segmentName: string): void;

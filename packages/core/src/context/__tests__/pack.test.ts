@@ -86,6 +86,53 @@ describe('packContext', () => {
     expect(result.usage.mid).toBe(0);
   });
 
+  describe('responseReserve reduces available budget', () => {
+    it('subtracts responseReserve from totalBudget when packing', () => {
+      // Without responseReserve: 100 tokens total, plenty of room for MID
+      const budgetNoReserve = createBudget({
+        totalTokens: 100,
+        segments: [{ name: 'all', maxTokens: 100 }],
+      });
+      const layout = {
+        head: [msg('system', 'System')],
+        mid: [msg('user', 'Hello world'), msg('assistant', 'Hi there')],
+        tail: [msg('user', 'Bye')],
+      };
+      const resultNoReserve = packContext({ ...layout, budget: budgetNoReserve });
+
+      // With responseReserve: 100 tokens total but 80 reserved for response
+      // This should leave only 20 tokens for context, forcing MID trimming
+      const budgetWithReserve = createBudget({
+        totalTokens: 100,
+        segments: [{ name: 'all', maxTokens: 100 }],
+        responseReserve: 80,
+      });
+      const resultWithReserve = packContext({ ...layout, budget: budgetWithReserve });
+
+      // The reserved version should have fewer MID messages or be truncated
+      // while the non-reserved version should fit everything
+      expect(resultWithReserve.usage.mid).toBeLessThanOrEqual(resultNoReserve.usage.mid);
+      // With such a large reserve, MID should be heavily trimmed or empty
+      expect(resultWithReserve.truncated).toBe(true);
+    });
+
+    it('defaults responseReserve to 0 when not specified', () => {
+      const budget = createBudget({
+        totalTokens: 100000,
+        segments: [{ name: 'all', maxTokens: 100000 }],
+      });
+      expect(budget.responseReserve).toBe(0);
+
+      const result = packContext({
+        head: [msg('system', 'S')],
+        mid: [msg('user', 'Hi')],
+        tail: [msg('user', 'Bye')],
+        budget,
+      });
+      expect(result.truncated).toBe(false);
+    });
+  });
+
   describe('C3: O(N^2) token recounting fix — uses index-based trimming', () => {
     it('pre-computes per-message token counts and uses index-based trimming', () => {
       // The bug: mid.shift() + countTokens([removed]) in a loop is O(N^2) due to
