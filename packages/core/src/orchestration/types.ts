@@ -4,6 +4,28 @@
  * @module
  */
 
+import type { AgentAdapter, Message, TokenUsage, ToolCallRequest, ToolSchema } from '../core/types.js';
+import type { DoneReason } from '../core/events.js';
+
+/** Configuration for spawning a sub-agent. */
+export interface SpawnSubAgentConfig {
+  readonly adapter: AgentAdapter;
+  readonly messages: readonly Message[];
+  readonly tools?: readonly ToolSchema[];
+  readonly onToolCall?: (call: ToolCallRequest) => Promise<unknown>;
+  readonly maxIterations?: number;
+  readonly maxTotalTokens?: number;
+  readonly signal?: AbortSignal;
+  readonly streaming?: boolean;
+}
+
+/** Result returned by a completed sub-agent. */
+export interface SpawnSubAgentResult {
+  readonly messages: readonly Message[];
+  readonly usage: TokenUsage;
+  readonly doneReason: DoneReason;
+}
+
 /** Status of an agent in the orchestrator. */
 export type AgentStatus = 'idle' | 'running' | 'completed' | 'failed';
 
