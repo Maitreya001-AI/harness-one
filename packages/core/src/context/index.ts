@@ -20,8 +20,8 @@ export { createBudget } from './budget.js';
 export { packContext } from './pack.js';
 
 // Compress
-export { compress } from './compress.js';
-export type { CompressOptions } from './compress.js';
+export { compress, compactIfNeeded } from './compress.js';
+export type { CompressOptions, CompactOptions } from './compress.js';
 
 // Cache stability
 export { analyzeCacheStability } from './cache-stability.js';

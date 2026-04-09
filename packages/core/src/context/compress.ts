@@ -203,6 +203,50 @@ function createSummarizeStrategy(
   };
 }
 
+/** Options for conditional compaction. */
+export interface CompactOptions {
+  readonly budget: number;
+  readonly threshold?: number;
+  readonly strategy: string | CompressionStrategy;
+  readonly windowSize?: number;
+  readonly preserve?: (msg: Message) => boolean;
+  readonly summarizer?: (messages: Message[]) => Promise<string>;
+  /** Custom token counter. Default: built-in heuristic (~20-40% margin). */
+  readonly countTokens?: (messages: readonly Message[]) => number;
+}
+
+/**
+ * Compress messages if estimated token count exceeds budget threshold.
+ * Returns messages unchanged if under threshold.
+ *
+ * Note: The default token estimator has ~20-40% margin.
+ * For precise counting, pass a custom `countTokens` function
+ * or register a tokenizer via `registerTokenizer()`.
+ */
+export async function compactIfNeeded(
+  messages: readonly Message[],
+  options: CompactOptions,
+): Promise<Message[]> {
+  const threshold = options.threshold ?? 0.75;
+  const triggerAt = options.budget * threshold;
+
+  const currentTokens = options.countTokens
+    ? options.countTokens(messages)
+    : messages.reduce((sum, msg) => sum + msgTokens(msg), 0);
+
+  if (currentTokens <= triggerAt) {
+    return [...messages];
+  }
+
+  return compress(messages, {
+    strategy: options.strategy,
+    budget: options.budget,
+    preserve: options.preserve,
+    summarizer: options.summarizer,
+    windowSize: options.windowSize,
+  });
+}
+
 function createPreserveFailuresStrategy(): CompressionStrategy {
   return {
     name: 'preserve-failures',

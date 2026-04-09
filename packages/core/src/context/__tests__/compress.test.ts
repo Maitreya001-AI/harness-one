@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { compress } from '../compress.js';
+import { compress, compactIfNeeded } from '../compress.js';
 import type { Message } from '../../core/types.js';
 import { estimateTokens } from '../../_internal/token-estimator.js';
 
@@ -440,5 +440,84 @@ describe('compress', () => {
         expect(result[3].content).toBe('C');
       });
     });
+  });
+});
+
+describe('compactIfNeeded', () => {
+  function msg(role: Message['role'], content: string, meta?: Message['meta']): Message {
+    return { role, content, meta };
+  }
+
+  const messages: Message[] = [
+    msg('user', 'Hello world'),
+    msg('assistant', 'Hi there, how can I help you today?'),
+    msg('user', 'Tell me about TypeScript'),
+    msg('assistant', 'TypeScript is a typed superset of JavaScript'),
+  ];
+
+  it('returns messages unchanged when under threshold (75% budget)', async () => {
+    // Use a very large budget so tokens are well under 75%
+    const result = await compactIfNeeded(messages, {
+      budget: 10000,
+      strategy: 'truncate',
+    });
+    expect(result).toHaveLength(messages.length);
+    expect(result.map((m) => m.content)).toEqual(messages.map((m) => m.content));
+  });
+
+  it('compresses messages when over threshold', async () => {
+    // Use a tiny budget so tokens exceed 75%
+    const result = await compactIfNeeded(messages, {
+      budget: 10,
+      strategy: 'truncate',
+    });
+    expect(result.length).toBeLessThan(messages.length);
+  });
+
+  it('respects custom threshold', async () => {
+    // With default threshold 0.75, budget 10000 would NOT trigger compression.
+    // With threshold 0.5, trigger is at 50% of budget.
+    // countTokens returns 60, budget is 100, so triggerAt = 50. 60 > 50 → compress.
+    // Use a small budget so truncate actually removes messages.
+    const result = await compactIfNeeded(messages, {
+      budget: 10,
+      threshold: 0.5,
+      strategy: 'truncate',
+      countTokens: () => 6, // 6 > 10*0.5=5, should trigger compression
+    });
+    // Budget of 10 tokens with truncate strategy should reduce messages
+    expect(result.length).toBeLessThan(messages.length);
+  });
+
+  it('uses custom countTokens function', async () => {
+    const mockCounter = vi.fn(() => 5); // returns 5, well under any budget
+    const result = await compactIfNeeded(messages, {
+      budget: 10000,
+      strategy: 'truncate',
+      countTokens: mockCounter,
+    });
+    expect(mockCounter).toHaveBeenCalledWith(messages);
+    expect(result).toHaveLength(messages.length);
+  });
+
+  it('passes preserve predicate to compress', async () => {
+    const systemMsg = msg('system', 'You are a helpful assistant');
+    const testMessages = [systemMsg, ...messages];
+
+    const result = await compactIfNeeded(testMessages, {
+      budget: 10,
+      strategy: 'truncate',
+      preserve: (m) => m.role === 'system',
+    });
+    // System message should be preserved even after compression
+    expect(result.some((m) => m.content === 'You are a helpful assistant')).toBe(true);
+  });
+
+  it('returns empty array for empty messages', async () => {
+    const result = await compactIfNeeded([], {
+      budget: 100,
+      strategy: 'truncate',
+    });
+    expect(result).toHaveLength(0);
   });
 });
