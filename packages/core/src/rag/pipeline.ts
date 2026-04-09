@@ -25,6 +25,7 @@ import { HarnessError } from '../core/errors.js';
  */
 export function createRAGPipeline(config: RAGPipelineConfig): RAGPipeline {
   const allChunks: DocumentChunk[] = [];
+  const contentHashes = new Set<string>();
 
   async function chunkAndIndex(documents: Document[]): Promise<number> {
     // Chunk each document (or treat as single chunks if no chunking strategy)
@@ -42,6 +43,45 @@ export function createRAGPipeline(config: RAGPipelineConfig): RAGPipeline {
         documentId: doc.id ?? `doc-${i}`,
         index: i,
       }));
+    }
+
+    // Deduplicate: filter out chunks whose content is already indexed
+    const uniqueChunks: DocumentChunk[] = [];
+    const batchSeen = new Set<string>();
+    for (const chunk of chunks) {
+      if (contentHashes.has(chunk.content) || batchSeen.has(chunk.content)) {
+        config.onWarning?.({
+          message: `Duplicate chunk skipped: "${chunk.id}" (content already indexed)`,
+          type: 'duplicate',
+        });
+        continue;
+      }
+      batchSeen.add(chunk.content);
+      uniqueChunks.push(chunk);
+    }
+    chunks = uniqueChunks;
+
+    // Capacity check: enforce maxChunks limit
+    if (config.maxChunks !== undefined) {
+      const remaining = config.maxChunks - allChunks.length;
+      if (remaining <= 0) {
+        config.onWarning?.({
+          message: `Pipeline capacity reached (maxChunks: ${config.maxChunks}). No new chunks added.`,
+          type: 'capacity',
+        });
+        return 0;
+      }
+      if (chunks.length > remaining) {
+        config.onWarning?.({
+          message: `Pipeline capacity exceeded: only ${remaining} of ${chunks.length} chunks will be added (maxChunks: ${config.maxChunks})`,
+          type: 'capacity',
+        });
+        chunks = chunks.slice(0, remaining);
+      }
+    }
+
+    if (chunks.length === 0) {
+      return 0;
     }
 
     // Embed all chunks
@@ -64,6 +104,11 @@ export function createRAGPipeline(config: RAGPipelineConfig): RAGPipeline {
 
     // Index for retrieval
     await config.retriever.index(embeddedChunks);
+
+    // Commit content hashes only after successful embedding+indexing
+    for (const chunk of embeddedChunks) {
+      contentHashes.add(chunk.content);
+    }
     allChunks.push(...embeddedChunks);
 
     return embeddedChunks.length;
@@ -102,6 +147,7 @@ export function createRAGPipeline(config: RAGPipelineConfig): RAGPipeline {
 
     clear() {
       allChunks.length = 0;
+      contentHashes.clear();
     },
   });
 }

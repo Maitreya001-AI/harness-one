@@ -265,6 +265,72 @@ describe('createDriftDetector', () => {
     });
   });
 
+  describe('circular reference protection', () => {
+    it('does not infinite-loop on circular references in baseline', () => {
+      const detector = createDriftDetector();
+      const circularA: Record<string, unknown> = { name: 'a' };
+      circularA.self = circularA;
+
+      const circularB: Record<string, unknown> = { name: 'a' };
+      circularB.self = circularB;
+
+      detector.setBaseline('comp-1', { nested: circularA });
+      // Should not hang — completes in finite time
+      const report = detector.check('comp-1', { nested: circularB });
+      expect(report.driftDetected).toBe(false);
+    });
+
+    it('detects drift with circular references when values differ', () => {
+      const detector = createDriftDetector();
+      const circularA: Record<string, unknown> = { name: 'a' };
+      circularA.self = circularA;
+
+      const circularB: Record<string, unknown> = { name: 'b' };
+      circularB.self = circularB;
+
+      detector.setBaseline('comp-1', { nested: circularA });
+      const report = detector.check('comp-1', { nested: circularB });
+      expect(report.driftDetected).toBe(true);
+    });
+
+    it('handles mutual circular references', () => {
+      const detector = createDriftDetector();
+      const a: Record<string, unknown> = { value: 1 };
+      const b: Record<string, unknown> = { value: 2, ref: a };
+      a.ref = b;
+
+      const a2: Record<string, unknown> = { value: 1 };
+      const b2: Record<string, unknown> = { value: 2, ref: a2 };
+      a2.ref = b2;
+
+      detector.setBaseline('comp-1', { data: a });
+      const report = detector.check('comp-1', { data: a2 });
+      // Should complete without infinite loop
+      expect(report).toBeDefined();
+    });
+  });
+
+  describe('isRecord type guard', () => {
+    it('does not treat arrays as records during deep comparison', () => {
+      const detector = createDriftDetector();
+      detector.setBaseline('comp-1', { items: [1, 2, 3] });
+      // Array vs object — should detect drift
+      const report = detector.check('comp-1', { items: { 0: 1, 1: 2, 2: 3 } });
+      expect(report.driftDetected).toBe(true);
+    });
+
+    it('handles mixed nested arrays and objects correctly', () => {
+      const detector = createDriftDetector();
+      detector.setBaseline('comp-1', { data: { list: [1, 2], meta: { key: 'value' } } });
+
+      const same = detector.check('comp-1', { data: { list: [1, 2], meta: { key: 'value' } } });
+      expect(same.driftDetected).toBe(false);
+
+      const diff = detector.check('comp-1', { data: { list: [1, 3], meta: { key: 'value' } } });
+      expect(diff.driftDetected).toBe(true);
+    });
+  });
+
   describe('edge cases', () => {
     it('custom thresholds change severity classification', () => {
       // With very tight thresholds (low=0.01, medium=0.05)

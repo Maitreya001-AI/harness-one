@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createRelay } from '../relay.js';
 import { createInMemoryStore } from '../store.js';
 import type { ContextRelay } from '../relay.js';
 import type { MemoryStore } from '../store.js';
+import { HarnessError } from '../../core/errors.js';
 
 describe('createRelay', () => {
   let store: MemoryStore;
@@ -191,12 +192,12 @@ describe('createRelay', () => {
         checkpoint: 'cp1',
         timestamp: 5000,
       };
-      // Content must contain relayKey string for the search filter to match
-      const content = JSON.stringify({ ...state, _relayKey: relayKey });
+      const content = JSON.stringify({ ...state });
       await store.write({
         key: relayKey,
         content,
         grade: 'critical',
+        tags: [relayKey],
       });
 
       // Create a FRESH relay instance with currentId === null.
@@ -219,8 +220,9 @@ describe('createRelay', () => {
       };
       await store.write({
         key: relayKey,
-        content: JSON.stringify({ ...state, _relayKey: relayKey }),
+        content: JSON.stringify({ ...state }),
         grade: 'critical',
+        tags: [relayKey],
       });
 
       // Fresh instance checkpoints on top of existing state found via query
@@ -241,8 +243,9 @@ describe('createRelay', () => {
       };
       await store.write({
         key: relayKey,
-        content: JSON.stringify({ ...state, _relayKey: relayKey }),
+        content: JSON.stringify({ ...state }),
         grade: 'critical',
+        tags: [relayKey],
       });
 
       const freshRelay = createRelay({ store, relayKey });
@@ -282,6 +285,7 @@ describe('createRelay', () => {
         key: '__relay__',
         content: 'NOT_VALID_JSON{{{',
         grade: 'critical',
+        tags: ['__relay__'],
       });
 
       // Fresh relay instance — no cached ID, must use query path
@@ -333,6 +337,197 @@ describe('createRelay', () => {
       loaded = await relay.load();
       expect(loaded).not.toBeNull();
       expect(loaded!.progress.step).toBe(2);
+    });
+  });
+
+  describe('Fix 4: version-based conflict detection', () => {
+    it('save increments version on each update', async () => {
+      const state1 = {
+        progress: { step: 1 },
+        artifacts: [],
+        checkpoint: 'cp1',
+        timestamp: 1000,
+      };
+      await relay.save(state1);
+
+      // Read the raw stored content to verify version
+      const entries = await store.query({});
+      const relayEntry = entries.find(e => e.key === '__relay__');
+      expect(relayEntry).toBeDefined();
+      const parsed1 = JSON.parse(relayEntry!.content);
+      expect(parsed1._version).toBe(1);
+
+      // Save again
+      const state2 = { ...state1, progress: { step: 2 }, timestamp: 2000 };
+      await relay.save(state2);
+
+      const entries2 = await store.query({});
+      const relayEntry2 = entries2.find(e => e.key === '__relay__');
+      const parsed2 = JSON.parse(relayEntry2!.content);
+      expect(parsed2._version).toBe(2);
+    });
+
+    it('load returns state without _version field', async () => {
+      await relay.save({
+        progress: { step: 1 },
+        artifacts: [],
+        checkpoint: 'cp1',
+        timestamp: 1000,
+      });
+
+      const loaded = await relay.load();
+      expect(loaded).not.toBeNull();
+      // _version should be stripped from the returned state
+      expect((loaded as Record<string, unknown>)['_version']).toBeUndefined();
+      expect(loaded!.progress).toEqual({ step: 1 });
+    });
+
+    it('detects conflict when version has changed between read and write', async () => {
+      // Save initial state
+      await relay.save({
+        progress: { step: 1 },
+        artifacts: [],
+        checkpoint: 'cp1',
+        timestamp: 1000,
+      });
+
+      // Create a second relay instance pointing to the same store
+      const relay2 = createRelay({ store });
+
+      // Both relays load the current state (both see version 1)
+      await relay.load();
+      await relay2.load();
+
+      // relay2 saves, bumping version to 2
+      await relay2.save({
+        progress: { step: 2 },
+        artifacts: [],
+        checkpoint: 'cp2',
+        timestamp: 2000,
+      });
+
+      // relay1 tries to save with stale version (expects 1, finds 2)
+      await expect(
+        relay.save({
+          progress: { step: 3 },
+          artifacts: [],
+          checkpoint: 'cp3',
+          timestamp: 3000,
+        }),
+      ).rejects.toThrow(HarnessError);
+    });
+
+    it('conflict error has RELAY_CONFLICT code', async () => {
+      await relay.save({
+        progress: { step: 1 },
+        artifacts: [],
+        checkpoint: 'cp1',
+        timestamp: 1000,
+      });
+
+      const relay2 = createRelay({ store });
+      await relay.load();
+      await relay2.load();
+
+      await relay2.save({
+        progress: { step: 2 },
+        artifacts: [],
+        checkpoint: 'cp2',
+        timestamp: 2000,
+      });
+
+      try {
+        await relay.save({
+          progress: { step: 3 },
+          artifacts: [],
+          checkpoint: 'cp3',
+          timestamp: 3000,
+        });
+        expect.fail('Should have thrown');
+      } catch (err) {
+        expect(err).toBeInstanceOf(HarnessError);
+        expect((err as HarnessError).code).toBe('RELAY_CONFLICT');
+      }
+    });
+
+    it('checkpoint increments version', async () => {
+      await relay.checkpoint({ step: 1 });
+
+      const entries = await store.query({});
+      const relayEntry = entries.find(e => e.key === '__relay__');
+      const parsed = JSON.parse(relayEntry!.content);
+      expect(parsed._version).toBe(1);
+
+      await relay.checkpoint({ step: 2 });
+
+      const entries2 = await store.query({});
+      const relayEntry2 = entries2.find(e => e.key === '__relay__');
+      const parsed2 = JSON.parse(relayEntry2!.content);
+      expect(parsed2._version).toBe(2);
+    });
+
+    it('addArtifact increments version', async () => {
+      await relay.addArtifact('file1.txt');
+
+      const entries = await store.query({});
+      const relayEntry = entries.find(e => e.key === '__relay__');
+      const parsed = JSON.parse(relayEntry!.content);
+      expect(parsed._version).toBe(1);
+
+      await relay.addArtifact('file2.txt');
+
+      const entries2 = await store.query({});
+      const relayEntry2 = entries2.find(e => e.key === '__relay__');
+      const parsed2 = JSON.parse(relayEntry2!.content);
+      expect(parsed2._version).toBe(2);
+    });
+  });
+
+  describe('Fix 5: corrupted relay entry logging', () => {
+    it('logs warning when cached relay entry has corrupted JSON', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      await relay.save({
+        progress: { step: 1 },
+        artifacts: [],
+        checkpoint: 'cp1',
+        timestamp: 1000,
+      });
+
+      // Corrupt the entry
+      const entries = await store.query({});
+      const relayEntry = entries.find(e => e.key === '__relay__');
+      await store.update(relayEntry!.id, { content: '{invalid json!!!' });
+
+      await relay.load();
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('[harness-one] Corrupted relay entry skipped:'),
+      );
+
+      warnSpy.mockRestore();
+    });
+
+    it('logs warning when query-path relay entry has corrupted JSON', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      // Write corrupted content with relay tag so query finds it
+      await store.write({
+        key: '__relay__',
+        content: 'NOT_VALID_JSON{{{',
+        grade: 'critical',
+        tags: ['__relay__'],
+      });
+
+      // Fresh relay instance to force query path (no cached ID)
+      const freshRelay = createRelay({ store, relayKey: '__relay__' });
+      await freshRelay.load();
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('[harness-one] Corrupted relay entry skipped:'),
+      );
+
+      warnSpy.mockRestore();
     });
   });
 });

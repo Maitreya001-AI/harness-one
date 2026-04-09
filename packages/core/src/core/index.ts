@@ -17,6 +17,7 @@ export type {
   StreamChunk,
   ToolSchema,
   JsonSchema,
+  JsonSchemaType,
   LLMConfig,
   ResponseFormat,
   ToolExecutionResult,
@@ -35,6 +36,7 @@ export {
 
 // Events
 export type { AgentEvent, DoneReason } from './events.js';
+export { assertNever } from './events.js';
 
 // AgentLoop
 export { AgentLoop } from './agent-loop.js';
@@ -57,7 +59,7 @@ export type { SSEChunk } from './sse-stream.js';
 export { toSSEStream, formatSSE } from './sse-stream.js';
 
 // Event bus
-export type { EventHandler, EventBus } from './event-bus.js';
+export type { EventHandler, EventBus, EventBusOptions } from './event-bus.js';
 export { createEventBus } from './event-bus.js';
 
 // Execution strategies

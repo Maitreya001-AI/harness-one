@@ -512,18 +512,107 @@ describe('createSessionManager', () => {
       sm.dispose();
     });
 
-    it('dispose() prevents further GC runs from clearing active sessions', () => {
+    it('dispose() clears GC timer and all sessions', () => {
       const sm = createSessionManager({ ttlMs: 1, gcIntervalMs: 10 });
       const session = sm.create();
       sm.dispose();
-      // After dispose, GC timer is cleared, so even if we wait,
-      // manual gc() still works but auto-gc won't run
-      vi.spyOn(Date, 'now').mockReturnValue(session.createdAt + 1000);
-      // The session should still be accessible via get() (even though expired,
-      // it is not auto-removed because GC timer was disposed)
+      // After dispose, both the GC timer and all sessions are cleared
       const got = sm.get(session.id);
-      expect(got).toBeDefined();
-      expect(got!.status).toBe('expired');
+      expect(got).toBeUndefined();
+    });
+  });
+
+  // Fix 5: unlock() uses captured session reference for atomic check-and-modify
+  describe('unlock uses captured session reference', () => {
+    it('unlock operates on the session captured at lock time', () => {
+      const sm = createSessionManager({ gcIntervalMs: 0 });
+      const session = sm.create();
+      const { unlock } = sm.lock(session.id);
+
+      // Verify session is locked
+      expect(sm.get(session.id)!.status).toBe('locked');
+
+      // Unlock should use the captured reference
+      unlock();
+      expect(sm.get(session.id)!.status).toBe('active');
+      sm.dispose();
+    });
+
+    it('unlock is idempotent — second call is a no-op', () => {
+      const events: SessionEvent[] = [];
+      const sm = createSessionManager({ gcIntervalMs: 0 });
+      const session = sm.create();
+      sm.onEvent(e => events.push(e));
+      const { unlock } = sm.lock(session.id);
+
+      unlock(); // First unlock: sets to active
+      const unlockEvents1 = events.filter(e => e.type === 'unlocked');
+      expect(unlockEvents1).toHaveLength(1);
+
+      unlock(); // Second unlock: no-op (already active, not locked)
+      const unlockEvents2 = events.filter(e => e.type === 'unlocked');
+      expect(unlockEvents2).toHaveLength(1); // Still just 1
+
+      expect(sm.get(session.id)!.status).toBe('active');
+      sm.dispose();
+    });
+
+    it('captured reference prevents stale re-fetch from Map', () => {
+      const sm = createSessionManager({ gcIntervalMs: 0 });
+      const session = sm.create();
+      const { unlock } = sm.lock(session.id);
+
+      // Access the session through get() to confirm it's locked
+      const lockedSession = sm.get(session.id);
+      expect(lockedSession!.status).toBe('locked');
+
+      // Unlock uses captured ref, not a fresh Map lookup
+      unlock();
+      const afterUnlock = sm.get(session.id);
+      expect(afterUnlock!.status).toBe('active');
+      expect(afterUnlock!.lastAccessedAt).toBeGreaterThanOrEqual(lockedSession!.lastAccessedAt);
+      sm.dispose();
+    });
+  });
+
+  // Fix 6: dispose() clears all sessions and access order
+  describe('dispose clears all state', () => {
+    it('dispose clears all sessions from the manager', () => {
+      const sm = createSessionManager({ gcIntervalMs: 0 });
+      sm.create({ name: 'session-1' });
+      sm.create({ name: 'session-2' });
+      sm.create({ name: 'session-3' });
+
+      expect(sm.list()).toHaveLength(3);
+
+      sm.dispose();
+
+      // All sessions should be cleared
+      expect(sm.list()).toHaveLength(0);
+      expect(sm.activeSessions).toBe(0);
+    });
+
+    it('dispose is idempotent — safe to call multiple times', () => {
+      const sm = createSessionManager({ gcIntervalMs: 100 });
+      sm.create();
+
+      sm.dispose();
+      // Calling dispose again should not throw
+      expect(() => sm.dispose()).not.toThrow();
+      expect(sm.list()).toHaveLength(0);
+    });
+
+    it('new sessions can be created after dispose', () => {
+      const sm = createSessionManager({ gcIntervalMs: 0 });
+      sm.create();
+      sm.dispose();
+
+      // Creating new sessions after dispose should still work
+      // (the manager is still functional, just empty)
+      const newSession = sm.create();
+      expect(sm.get(newSession.id)).toBeDefined();
+      expect(sm.list()).toHaveLength(1);
+      sm.dispose();
     });
   });
 });

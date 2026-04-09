@@ -147,16 +147,40 @@ export interface ToolSchema {
   readonly responseFormat?: 'concise' | 'detailed';
 }
 
+/** Supported JSON Schema type values. */
+export type JsonSchemaType = 'string' | 'number' | 'integer' | 'boolean' | 'object' | 'array' | 'null';
+
 /** JSON Schema definition (supported subset). */
 export interface JsonSchema {
-  type: string;
+  type: JsonSchemaType;
   properties?: Record<string, JsonSchema>;
   required?: string[];
   items?: JsonSchema;
   enum?: unknown[];
   description?: string;
   default?: unknown;
-  [key: string]: unknown;
+  /** Minimum value for number/integer types. */
+  minimum?: number;
+  /** Maximum value for number/integer types. */
+  maximum?: number;
+  /** Minimum string length for string type. */
+  minLength?: number;
+  /** Maximum string length for string type. */
+  maxLength?: number;
+  /** Regex pattern for string type validation. */
+  pattern?: string;
+  /** Whether additional properties are allowed (object type), or a schema for them. */
+  additionalProperties?: boolean | JsonSchema;
+  /** Matches exactly one of the given schemas. */
+  oneOf?: JsonSchema[];
+  /** Matches any of the given schemas. */
+  anyOf?: JsonSchema[];
+  /** Matches all of the given schemas. */
+  allOf?: JsonSchema[];
+  /** Constant value the instance must equal. */
+  const?: unknown;
+  /** Semantic format hint (e.g., 'email', 'date-time'). */
+  format?: string;
 }
 
 /** Result of executing a single tool call within a batch. */

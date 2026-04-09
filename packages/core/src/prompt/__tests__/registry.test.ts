@@ -268,6 +268,74 @@ describe('createPromptRegistry', () => {
       expect(reg.has('safe')).toBe(true);
     });
   });
+
+  describe('semantic version comparison', () => {
+    it('treats "1.10" as newer than "1.2" (not lexicographic)', () => {
+      const reg = createPromptRegistry();
+      reg.register({ id: 'sv', version: '1.2', content: 'V1.2', variables: [] });
+      reg.register({ id: 'sv', version: '1.10', content: 'V1.10', variables: [] });
+      const latest = reg.get('sv');
+      expect(latest).toBeDefined();
+      expect(latest!.version).toBe('1.10');
+      expect(latest!.content).toBe('V1.10');
+    });
+
+    it('treats "2.0" as newer than "1.99"', () => {
+      const reg = createPromptRegistry();
+      reg.register({ id: 'sv2', version: '1.99', content: 'V1.99', variables: [] });
+      reg.register({ id: 'sv2', version: '2.0', content: 'V2.0', variables: [] });
+      const latest = reg.get('sv2');
+      expect(latest).toBeDefined();
+      expect(latest!.version).toBe('2.0');
+    });
+
+    it('treats "1.0.0" and "1.0" as equivalent — last registered wins', () => {
+      const reg = createPromptRegistry();
+      reg.register({ id: 'sv3', version: '1.0', content: 'V1.0', variables: [] });
+      reg.register({ id: 'sv3', version: '1.0.0', content: 'V1.0.0', variables: [] });
+      // Both represent the same semver, but they are different version strings
+      // Since 1.0.0 == 1.0 semantically, 1.0.0 (registered later) should not replace 1.0 as latest
+      // but also should not make 1.0 the latest since they are equal
+      // The key behavior: get without version returns the latest by semver
+      const latest = reg.get('sv3');
+      expect(latest).toBeDefined();
+      // 1.0.0 was registered second and equals 1.0 semantically, so latest stays at 1.0
+      // (no update when versions are equal)
+    });
+
+    it('handles multi-segment versions like "1.2.3" vs "1.10.1"', () => {
+      const reg = createPromptRegistry();
+      reg.register({ id: 'sv4', version: '1.10.1', content: 'V1.10.1', variables: [] });
+      reg.register({ id: 'sv4', version: '1.2.3', content: 'V1.2.3', variables: [] });
+      const latest = reg.get('sv4');
+      expect(latest).toBeDefined();
+      expect(latest!.version).toBe('1.10.1');
+    });
+
+    it('registers "1.10" before "1.2" and still resolves 1.10 as latest', () => {
+      const reg = createPromptRegistry();
+      // Register higher version first
+      reg.register({ id: 'sv5', version: '1.10', content: 'V1.10', variables: [] });
+      reg.register({ id: 'sv5', version: '1.2', content: 'V1.2', variables: [] });
+      const latest = reg.get('sv5');
+      expect(latest).toBeDefined();
+      expect(latest!.version).toBe('1.10');
+    });
+
+    it('removeExpired recomputes latest version using semver', () => {
+      const reg = createPromptRegistry();
+      const pastMs = Date.now() - 60_000;
+      reg.register({ id: 'svexp', version: '1.2', content: 'V1.2', variables: [] });
+      reg.register({ id: 'svexp', version: '1.10', content: 'V1.10', variables: [], expiresAt: pastMs });
+      reg.register({ id: 'svexp', version: '1.5', content: 'V1.5', variables: [] });
+      // Latest is 1.10, but it expires
+      reg.removeExpired();
+      // After removal, latest should be 1.5 (not 1.2) because 1.5 > 1.2 semantically
+      const latest = reg.get('svexp');
+      expect(latest).toBeDefined();
+      expect(latest!.version).toBe('1.5');
+    });
+  });
 });
 
 describe('createAsyncPromptRegistry', () => {

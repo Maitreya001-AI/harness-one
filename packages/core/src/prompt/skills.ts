@@ -8,8 +8,29 @@ import { HarnessError } from '../core/errors.js';
 import type {
   SkillDefinition,
   SkillStage,
+  TransitionCondition,
   TransitionContext,
 } from './types.js';
+
+/** Type guard: narrows to turn_count condition. */
+function isTurnCountCondition(c: TransitionCondition): c is { type: 'turn_count'; count: number } {
+  return c.type === 'turn_count';
+}
+
+/** Type guard: narrows to keyword condition. */
+function isKeywordCondition(c: TransitionCondition): c is { type: 'keyword'; keywords: string[] } {
+  return c.type === 'keyword';
+}
+
+/** Type guard: narrows to manual condition. */
+function isManualCondition(c: TransitionCondition): c is { type: 'manual' } {
+  return c.type === 'manual';
+}
+
+/** Type guard: narrows to custom condition. */
+function isCustomCondition(c: TransitionCondition): c is { type: 'custom'; check: (context: TransitionContext) => boolean } {
+  return c.type === 'custom';
+}
 
 /** Engine for managing multi-stage skill workflows. */
 export interface SkillEngine {
@@ -68,16 +89,18 @@ export interface SkillEngine {
  */
 export function createSkillEngine(): SkillEngine {
   const skills = new Map<string, SkillDefinition>();
+  const stageMaps = new Map<string, Map<string, SkillStage>>();
   let activeSkill: SkillDefinition | null = null;
+  let activeStageMap: Map<string, SkillStage> | null = null;
   let currentStageId: string | null = null;
   let turnCount = 0;
   let stageHistory: string[] = [];
 
   function getStage(stageId: string): SkillStage {
-    if (!activeSkill) {
+    if (!activeSkill || !activeStageMap) {
       throw new HarnessError('No active skill', 'NO_ACTIVE_SKILL', 'Call startSkill() first');
     }
-    const stage = activeSkill.stages.find(s => s.id === stageId);
+    const stage = activeStageMap.get(stageId);
     if (!stage) {
       throw new HarnessError(
         `Stage not found: ${stageId}`,
@@ -116,49 +139,54 @@ export function createSkillEngine(): SkillEngine {
     },
 
     registerSkill(skill: SkillDefinition): void {
-      // Validate all transitions have required fields
+      // Validate all transitions have required fields using type guards
       for (const stage of skill.stages) {
         for (const transition of stage.transitions) {
           const { condition } = transition;
-          switch (condition.type) {
-            case 'turn_count':
-              if (typeof (condition as any).count !== 'number') {
-                throw new HarnessError(
-                  `Stage "${stage.id}" transition to "${transition.to}": turn_count condition requires numeric "count" field`,
-                  'INVALID_TRANSITION',
-                  'Add a "count" field to the turn_count condition',
-                );
-              }
-              break;
-            case 'keyword':
-              if (!Array.isArray((condition as any).keywords) || (condition as any).keywords.length === 0) {
-                throw new HarnessError(
-                  `Stage "${stage.id}" transition to "${transition.to}": keyword condition requires non-empty "keywords" array`,
-                  'INVALID_TRANSITION',
-                  'Add a "keywords" array to the keyword condition',
-                );
-              }
-              break;
-            case 'custom':
-              if (typeof (condition as any).check !== 'function') {
-                throw new HarnessError(
-                  `Stage "${stage.id}" transition to "${transition.to}": custom condition requires "check" function`,
-                  'INVALID_TRANSITION',
-                  'Add a "check" function to the custom condition',
-                );
-              }
-              break;
-            case 'manual':
-              break; // No validation needed
-            default:
+          if (isTurnCountCondition(condition)) {
+            if (typeof condition.count !== 'number') {
               throw new HarnessError(
-                `Stage "${stage.id}" transition to "${transition.to}": unknown condition type "${(condition as any).type}"`,
+                `Stage "${stage.id}" transition to "${transition.to}": turn_count condition requires numeric "count" field`,
                 'INVALID_TRANSITION',
-                'Use one of: turn_count, keyword, custom, manual',
+                'Add a "count" field to the turn_count condition',
               );
+            }
+          } else if (isKeywordCondition(condition)) {
+            if (!Array.isArray(condition.keywords) || condition.keywords.length === 0) {
+              throw new HarnessError(
+                `Stage "${stage.id}" transition to "${transition.to}": keyword condition requires non-empty "keywords" array`,
+                'INVALID_TRANSITION',
+                'Add a "keywords" array to the keyword condition',
+              );
+            }
+          } else if (isCustomCondition(condition)) {
+            if (typeof condition.check !== 'function') {
+              throw new HarnessError(
+                `Stage "${stage.id}" transition to "${transition.to}": custom condition requires "check" function`,
+                'INVALID_TRANSITION',
+                'Add a "check" function to the custom condition',
+              );
+            }
+          } else if (isManualCondition(condition)) {
+            // No validation needed
+          } else {
+            // Exhaustive check — condition is `never` here if all types are handled
+            throw new HarnessError(
+              `Stage "${stage.id}" transition to "${transition.to}": unknown condition type "${(condition as { type: string }).type}"`,
+              'INVALID_TRANSITION',
+              'Use one of: turn_count, keyword, custom, manual',
+            );
           }
         }
       }
+
+      // Build stage lookup map for O(1) access
+      const stageMap = new Map<string, SkillStage>();
+      for (const stage of skill.stages) {
+        stageMap.set(stage.id, stage);
+      }
+      stageMaps.set(skill.id, stageMap);
+
       skills.set(skill.id, skill);
     },
 
@@ -172,6 +200,7 @@ export function createSkillEngine(): SkillEngine {
         );
       }
       activeSkill = skill;
+      activeStageMap = stageMaps.get(skillId) ?? null;
       currentStageId = skill.initialStage;
       turnCount = 0;
       stageHistory = [skill.initialStage];

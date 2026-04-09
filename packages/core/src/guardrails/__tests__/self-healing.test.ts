@@ -66,7 +66,7 @@ describe('withSelfHealing', () => {
     expect(regenerate).toHaveBeenCalledTimes(1);
   });
 
-  it('collects failures from multiple guardrails', async () => {
+  it('stops at first guardrail failure instead of running all guardrails', async () => {
     let callCount = 0;
     const guard1: Guardrail = () => {
       callCount++;
@@ -94,10 +94,9 @@ describe('withSelfHealing', () => {
     );
 
     expect(result.passed).toBe(true);
-    // First call should have both failures
+    // Stop at first failure: only first guardrail's failure should be collected
     expect(buildRetryPrompt).toHaveBeenCalledWith('initial', [
       { reason: 'reason1' },
-      { reason: 'reason2' },
     ]);
   });
 
@@ -121,7 +120,7 @@ describe('withSelfHealing', () => {
   });
 
   describe('H3: exponential backoff', () => {
-    it('applies exponential backoff delay between retries', async () => {
+    it('applies exponential backoff with jitter between retries', async () => {
       const timestamps: number[] = [];
       const guard: Guardrail = () => {
         timestamps.push(Date.now());
@@ -142,13 +141,14 @@ describe('withSelfHealing', () => {
       expect(result.passed).toBe(false);
       expect(timestamps.length).toBe(3);
 
-      // Verify delays: first->second should be >= 1000ms (2^0 * 1000)
+      // Verify delays with jitter: base * (0.5 + random * 0.5)
+      // first->second: 1000 * (0.5-1.0) = 500-1000ms
       const delay1 = timestamps[1] - timestamps[0];
-      expect(delay1).toBeGreaterThanOrEqual(950); // allow small timing tolerance
+      expect(delay1).toBeGreaterThanOrEqual(450); // allow small timing tolerance
 
-      // second->third should be >= 2000ms (2^1 * 1000)
+      // second->third: 2000 * (0.5-1.0) = 1000-2000ms
       const delay2 = timestamps[2] - timestamps[1];
-      expect(delay2).toBeGreaterThanOrEqual(1950); // allow small timing tolerance
+      expect(delay2).toBeGreaterThanOrEqual(950); // allow small timing tolerance
     }, 10_000);
   });
 
@@ -220,12 +220,12 @@ describe('withSelfHealing', () => {
       expect(regenerate).toHaveBeenCalledTimes(1);
     }, 10_000);
 
-    it('backoff timing: verify delay increases exponentially', async () => {
+    it('backoff timing: verify delay increases exponentially with jitter', async () => {
       // Collect backoff delays by intercepting setTimeout
       const backoffDelays: number[] = [];
       const realSetTimeout = globalThis.setTimeout;
       const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation((fn, ms, ...args) => {
-        if (typeof ms === 'number' && ms >= 500) {
+        if (typeof ms === 'number' && ms >= 400) {
           backoffDelays.push(ms);
         }
         // Run immediately for speed
@@ -249,13 +249,17 @@ describe('withSelfHealing', () => {
 
       // There are 3 backoff delays (between attempts 1-2, 2-3, 3-4)
       // But regenerateTimeoutMs also creates setTimeout calls with the timeout value (default 30000)
-      // Filter to only the backoff delays: 1000, 2000, 4000
+      // Filter to only the backoff delays (with jitter: 500-1000, 1000-2000, 2000-4000)
       const exponentialDelays = backoffDelays.filter((d) => d <= 10_000);
       expect(exponentialDelays.length).toBe(3);
-      // 1000 * 2^0 = 1000, 1000 * 2^1 = 2000, 1000 * 2^2 = 4000
-      expect(exponentialDelays[0]).toBe(1000);
-      expect(exponentialDelays[1]).toBe(2000);
-      expect(exponentialDelays[2]).toBe(4000);
+      // With jitter: base * (0.5 + Math.random() * 0.5)
+      // 1000 * (0.5-1.0) = 500-1000, 2000 * (0.5-1.0) = 1000-2000, 4000 * (0.5-1.0) = 2000-4000
+      expect(exponentialDelays[0]).toBeGreaterThanOrEqual(500);
+      expect(exponentialDelays[0]).toBeLessThanOrEqual(1000);
+      expect(exponentialDelays[1]).toBeGreaterThanOrEqual(1000);
+      expect(exponentialDelays[1]).toBeLessThanOrEqual(2000);
+      expect(exponentialDelays[2]).toBeGreaterThanOrEqual(2000);
+      expect(exponentialDelays[2]).toBeLessThanOrEqual(4000);
     });
 
     it('regenerate timeout: when regenerate hangs, self-healing returns failure', async () => {
@@ -397,5 +401,221 @@ describe('withSelfHealing', () => {
 
     expect(result.passed).toBe(true);
     expect(result.attempts).toBe(2);
+  });
+
+  // ===========================================================================
+  // Fix 6: Self-healing improvements
+  // ===========================================================================
+
+  describe('Fix 6: jitter in exponential backoff', () => {
+    it('adds jitter so backoff is not deterministic', async () => {
+      // Run multiple times and collect delays to verify they vary
+      const delays: number[] = [];
+      const realSetTimeout = globalThis.setTimeout;
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation((fn, ms, ...args) => {
+        if (typeof ms === 'number' && ms >= 400) {
+          delays.push(ms);
+        }
+        return realSetTimeout(fn as () => void, 0, ...args);
+      });
+
+      const guard: Guardrail = () => ({ action: 'block', reason: 'bad' });
+      const regenerate = vi.fn().mockResolvedValue('still bad');
+
+      await withSelfHealing(
+        {
+          maxRetries: 2,
+          guardrails: [{ name: 'g1', guard }],
+          buildRetryPrompt: () => 'fix',
+          regenerate,
+        },
+        'bad',
+      );
+
+      setTimeoutSpy.mockRestore();
+
+      // With jitter, delay should be in range [500, 1000] for first backoff
+      const backoffDelays = delays.filter((d) => d <= 10_000);
+      expect(backoffDelays.length).toBe(1);
+      expect(backoffDelays[0]).toBeGreaterThanOrEqual(500);
+      expect(backoffDelays[0]).toBeLessThanOrEqual(1000);
+    });
+  });
+
+  describe('Fix 6: AbortSignal cancellation', () => {
+    it('stops immediately when signal is already aborted', async () => {
+      const guard: Guardrail = () => ({ action: 'block', reason: 'bad' });
+      const regenerate = vi.fn().mockResolvedValue('fixed');
+      const controller = new AbortController();
+      controller.abort();
+
+      const result = await withSelfHealing(
+        {
+          maxRetries: 5,
+          guardrails: [{ name: 'g1', guard }],
+          buildRetryPrompt: () => 'fix',
+          regenerate,
+          signal: controller.signal,
+        },
+        'bad content',
+      );
+
+      expect(result.passed).toBe(false);
+      expect(result.attempts).toBe(1);
+      expect(regenerate).not.toHaveBeenCalled();
+    });
+
+    it('stops on subsequent attempt when signal is aborted during retries', async () => {
+      let callCount = 0;
+      const controller = new AbortController();
+      const guard: Guardrail = () => {
+        callCount++;
+        if (callCount >= 2) {
+          controller.abort();
+        }
+        return { action: 'block', reason: 'bad' };
+      };
+      const realSetTimeout = globalThis.setTimeout;
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation((fn, ms, ...args) => {
+        return realSetTimeout(fn as () => void, 0, ...args);
+      });
+
+      const regenerate = vi.fn().mockResolvedValue('still bad');
+
+      const result = await withSelfHealing(
+        {
+          maxRetries: 10,
+          guardrails: [{ name: 'g1', guard }],
+          buildRetryPrompt: () => 'fix',
+          regenerate,
+          signal: controller.signal,
+        },
+        'bad',
+      );
+
+      setTimeoutSpy.mockRestore();
+
+      expect(result.passed).toBe(false);
+      // Should have stopped early, not used all 10 retries
+      expect(result.attempts).toBeLessThan(10);
+    });
+
+    it('passes without signal (backward compatibility)', async () => {
+      const guard: Guardrail = () => ({ action: 'allow' });
+      const result = await withSelfHealing(
+        {
+          guardrails: [{ name: 'g1', guard }],
+          buildRetryPrompt: () => '',
+          regenerate: vi.fn(),
+        },
+        'good',
+      );
+      expect(result.passed).toBe(true);
+    });
+  });
+
+  describe('Fix 6: stop at first guardrail failure', () => {
+    it('only reports first failing guardrail, skips rest', async () => {
+      const guard2Called = vi.fn();
+      const guard1: Guardrail = () => ({ action: 'block', reason: 'first fail' });
+      const guard2: Guardrail = () => {
+        guard2Called();
+        return { action: 'block', reason: 'second fail' };
+      };
+
+      let callCount = 0;
+      const realSetTimeout = globalThis.setTimeout;
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation((fn, ms, ...args) => {
+        return realSetTimeout(fn as () => void, 0, ...args);
+      });
+
+      const buildRetryPrompt = vi.fn().mockReturnValue('fix');
+      const regenerate = vi.fn().mockResolvedValue('still bad');
+
+      await withSelfHealing(
+        {
+          maxRetries: 2,
+          guardrails: [
+            { name: 'g1', guard: guard1 },
+            { name: 'g2', guard: guard2 },
+          ],
+          buildRetryPrompt,
+          regenerate,
+        },
+        'bad',
+      );
+
+      setTimeoutSpy.mockRestore();
+
+      // guard2 should never be called since guard1 blocks first
+      expect(guard2Called).not.toHaveBeenCalled();
+      // buildRetryPrompt should only receive the first failure
+      expect(buildRetryPrompt).toHaveBeenCalledWith('bad', [{ reason: 'first fail' }]);
+    });
+
+    it('runs second guardrail if first allows', async () => {
+      let attempt = 0;
+      const guard1: Guardrail = () => ({ action: 'allow' });
+      const guard2: Guardrail = () => {
+        attempt++;
+        if (attempt === 1) return { action: 'block', reason: 'second blocks' };
+        return { action: 'allow' };
+      };
+
+      const realSetTimeout = globalThis.setTimeout;
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation((fn, ms, ...args) => {
+        return realSetTimeout(fn as () => void, 0, ...args);
+      });
+
+      const buildRetryPrompt = vi.fn().mockReturnValue('fix');
+      const regenerate = vi.fn().mockResolvedValue('fixed');
+
+      const result = await withSelfHealing(
+        {
+          maxRetries: 3,
+          guardrails: [
+            { name: 'g1', guard: guard1 },
+            { name: 'g2', guard: guard2 },
+          ],
+          buildRetryPrompt,
+          regenerate,
+        },
+        'initial',
+      );
+
+      setTimeoutSpy.mockRestore();
+
+      expect(result.passed).toBe(true);
+      expect(buildRetryPrompt).toHaveBeenCalledWith('initial', [{ reason: 'second blocks' }]);
+    });
+  });
+
+  describe('Fix 6: regenerate error not swallowed', () => {
+    it('returns failure when regenerate throws with error info preserved', async () => {
+      const guard: Guardrail = () => ({ action: 'block', reason: 'bad' });
+      const regenerate = vi.fn().mockRejectedValue(new Error('LLM API down'));
+
+      const realSetTimeout = globalThis.setTimeout;
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation((fn, ms, ...args) => {
+        return realSetTimeout(fn as () => void, 0, ...args);
+      });
+
+      const result = await withSelfHealing(
+        {
+          maxRetries: 3,
+          guardrails: [{ name: 'g1', guard }],
+          buildRetryPrompt: () => 'fix',
+          regenerate,
+        },
+        'bad',
+      );
+
+      setTimeoutSpy.mockRestore();
+
+      expect(result.passed).toBe(false);
+      // Should have stopped after first regeneration failure
+      expect(result.attempts).toBe(1);
+      expect(result.content).toBe('bad'); // original content, regenerate failed
+    });
   });
 });

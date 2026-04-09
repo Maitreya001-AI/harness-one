@@ -5,7 +5,7 @@
  */
 
 import type { Message, TokenUsage, ToolCallRequest } from './types.js';
-import type { HarnessError } from './errors.js';
+import { HarnessError } from './errors.js';
 
 /** Reason the agent loop terminated. */
 export type DoneReason = 'end_turn' | 'max_iterations' | 'token_budget' | 'aborted' | 'error';
@@ -30,3 +30,25 @@ export type AgentEvent =
   | { type: 'warning'; message: string }
   | { type: 'error'; error: HarnessError | Error }
   | { type: 'done'; reason: DoneReason; totalUsage: TokenUsage };
+
+/**
+ * Exhaustive check helper for discriminated unions.
+ *
+ * Use in the `default` case of a switch statement to ensure all variants
+ * are handled at compile time. Throws at runtime if an unexpected value
+ * reaches this point, indicating a bug.
+ *
+ * @example
+ * ```ts
+ * function handleEvent(event: AgentEvent) {
+ *   switch (event.type) {
+ *     case 'message': return;
+ *     // ... all other cases ...
+ *     default: assertNever(event.type);
+ *   }
+ * }
+ * ```
+ */
+export function assertNever(x: never): never {
+  throw new HarnessError(`Unexpected value: ${x}`, 'UNEXPECTED_VALUE', 'This is a bug in harness-one');
+}

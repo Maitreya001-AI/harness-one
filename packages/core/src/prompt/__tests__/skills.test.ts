@@ -458,6 +458,102 @@ describe('createSkillEngine', () => {
       expect(engine.getAvailableTools()).toEqual([]);
     });
 
+    it('two concurrent engines do not interfere with each other (instance isolation)', () => {
+      const skillA: SkillDefinition = {
+        id: 'skill-a',
+        name: 'Skill A',
+        description: 'test A',
+        initialStage: 'a1',
+        stages: [
+          { id: 'a1', name: 'A1', prompt: 'Prompt A1', tools: ['tool-a'], transitions: [
+            { to: 'a2', condition: { type: 'keyword', keywords: ['next'] } },
+          ]},
+          { id: 'a2', name: 'A2', prompt: 'Prompt A2', transitions: [] },
+        ],
+      };
+      const skillB: SkillDefinition = {
+        id: 'skill-b',
+        name: 'Skill B',
+        description: 'test B',
+        initialStage: 'b1',
+        stages: [
+          { id: 'b1', name: 'B1', prompt: 'Prompt B1', tools: ['tool-b'], transitions: [
+            { to: 'b2', condition: { type: 'keyword', keywords: ['advance'] } },
+          ]},
+          { id: 'b2', name: 'B2', prompt: 'Prompt B2', transitions: [] },
+        ],
+      };
+
+      const engine1 = createSkillEngine();
+      const engine2 = createSkillEngine();
+
+      engine1.registerSkill(skillA);
+      engine1.startSkill('skill-a');
+
+      engine2.registerSkill(skillB);
+      engine2.startSkill('skill-b');
+
+      // Both engines should be at their own initial stages
+      expect(engine1.currentStage.id).toBe('a1');
+      expect(engine2.currentStage.id).toBe('b1');
+
+      // Process a turn on engine1 -- should not affect engine2
+      engine1.processTurn('hello');
+      expect(engine1.turnCount).toBe(1);
+      expect(engine2.turnCount).toBe(0);
+
+      // Advance engine1
+      engine1.processTurn('next');
+      expect(engine1.currentStage.id).toBe('a2');
+      expect(engine2.currentStage.id).toBe('b1'); // engine2 unchanged
+
+      // Advance engine2
+      engine2.processTurn('advance');
+      expect(engine2.currentStage.id).toBe('b2');
+      expect(engine1.currentStage.id).toBe('a2'); // engine1 unchanged
+
+      // Stage histories are independent
+      expect(engine1.stageHistory).toEqual(['a1', 'a2']);
+      expect(engine2.stageHistory).toEqual(['b1', 'b2']);
+    });
+
+    it('stage lookup works correctly with many stages (Map-based O(1) lookup)', () => {
+      // Build a skill with many stages to verify Map-based lookup works
+      const stages = [];
+      for (let i = 0; i < 50; i++) {
+        stages.push({
+          id: `stage-${i}`,
+          name: `Stage ${i}`,
+          prompt: `Prompt for stage ${i}`,
+          transitions: i < 49
+            ? [{ to: `stage-${i + 1}`, condition: { type: 'keyword' as const, keywords: ['next'] } }]
+            : [],
+        });
+      }
+      const skill: SkillDefinition = {
+        id: 'many-stages',
+        name: 'Many Stages',
+        description: 'test with many stages',
+        initialStage: 'stage-0',
+        stages,
+      };
+      const engine = createSkillEngine();
+      engine.registerSkill(skill);
+      engine.startSkill('many-stages');
+
+      expect(engine.currentStage.id).toBe('stage-0');
+      // advanceTo a stage near the end
+      engine.advanceTo('stage-49');
+      expect(engine.currentStage.id).toBe('stage-49');
+      expect(engine.getCurrentPrompt()).toBe('Prompt for stage 49');
+      expect(engine.isComplete()).toBe(true);
+
+      // advanceTo a middle stage
+      engine.advanceTo('stage-25');
+      expect(engine.currentStage.id).toBe('stage-25');
+      expect(engine.getCurrentPrompt()).toBe('Prompt for stage 25');
+    });
+
     it('reset turn count after stage advance', () => {
       const skill: SkillDefinition = {
         id: 'turn-reset',

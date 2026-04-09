@@ -19,6 +19,17 @@ export interface EventBus {
   removeAll(event?: string): void;
 }
 
+/** Configuration options for creating an event bus. */
+export interface EventBusOptions {
+  /**
+   * Optional callback invoked when a handler throws during emit().
+   * Receives the event name and the error (normalized to an Error instance).
+   * If not provided, handler errors are silently caught to prevent
+   * one misbehaving handler from breaking event delivery.
+   */
+  onHandlerError?: (event: string, error: Error) => void;
+}
+
 /**
  * Create an in-process event bus.
  *
@@ -30,8 +41,9 @@ export interface EventBus {
  * unsub(); // unsubscribe
  * ```
  */
-export function createEventBus(): EventBus {
+export function createEventBus(options?: EventBusOptions): EventBus {
   const handlers = new Map<string, Set<EventHandler>>();
+  const onHandlerError = options?.onHandlerError;
 
   return {
     on<T>(event: string, handler: EventHandler<T>): () => void {
@@ -50,7 +62,13 @@ export function createEventBus(): EventBus {
       const set = handlers.get(event);
       if (set) {
         for (const h of set) {
-          try { h(data); } catch { /* Prevent misbehaving handler from breaking event delivery */ }
+          try {
+            h(data);
+          } catch (err) {
+            if (onHandlerError) {
+              onHandlerError(event, err instanceof Error ? err : new Error(String(err)));
+            }
+          }
         }
       }
     },

@@ -55,21 +55,29 @@ export function createFallbackAdapter(config: FallbackAdapterConfig): AgentAdapt
 
   return {
     async chat(params: ChatParams): Promise<ChatResponse> {
+      const adapterBefore = currentIndex;
       try {
         const result = await getAdapter().chat(params);
         handleSuccess();
         return result;
       } catch (err) {
         handleFailure();
-        if (currentIndex < adapters.length - 1 || failureCount === 0) {
-          // Retry with (possibly new) adapter
+        const switched = currentIndex !== adapterBefore;
+        if (switched) {
+          // We switched to a new adapter — retry with it
           return getAdapter().chat(params);
         }
+        if (currentIndex < adapters.length - 1) {
+          // Still under threshold but more adapters remain — retry same adapter
+          return getAdapter().chat(params);
+        }
+        // Last adapter and didn't switch — no more options
         throw err;
       }
     },
 
     async *stream(params: ChatParams): AsyncIterable<StreamChunk> {
+      const adapterBefore = currentIndex;
       try {
         const adapter = getAdapter();
         if (!adapter.stream) {
@@ -83,15 +91,25 @@ export function createFallbackAdapter(config: FallbackAdapterConfig): AgentAdapt
         handleSuccess();
       } catch (err) {
         handleFailure();
-        // Retry with (possibly new) adapter if we switched
-        if (currentIndex < adapters.length - 1 || failureCount === 0) {
+        const switched = currentIndex !== adapterBefore;
+        if (switched) {
+          // Switched to new adapter — retry with it
           const retryAdapter = getAdapter();
           if (!retryAdapter.stream) {
-            throw err; // No stream support on fallback adapter
+            throw err;
+          }
+          yield* retryAdapter.stream(params);
+          handleSuccess();
+        } else if (currentIndex < adapters.length - 1) {
+          // Under threshold, more adapters remain — retry same adapter
+          const retryAdapter = getAdapter();
+          if (!retryAdapter.stream) {
+            throw err;
           }
           yield* retryAdapter.stream(params);
           handleSuccess();
         } else {
+          // Last adapter and didn't switch — no more options
           throw err;
         }
       }

@@ -271,6 +271,81 @@ describe('createEvalRunner', () => {
       expect(report.results[1].scores['batch-scorer']).toBe(0.9);
     });
 
+    it('throws SCORER_MISMATCH when scoreBatch returns wrong number of results', async () => {
+      const mismatchBatchScorer: Scorer = {
+        name: 'mismatched-batch',
+        description: 'Returns wrong count',
+        async score() {
+          return { score: 0.5, explanation: 'individual' };
+        },
+        async scoreBatch() {
+          // Return 1 result for 3 cases
+          return [{ score: 0.9, explanation: 'only one' }];
+        },
+      };
+
+      const runner = createEvalRunner({ scorers: [mismatchBatchScorer] });
+      const cases = [
+        { id: 'c1', input: 'a' },
+        { id: 'c2', input: 'b' },
+        { id: 'c3', input: 'c' },
+      ];
+
+      await expect(
+        runner.run(cases, async (i) => i),
+      ).rejects.toThrow(HarnessError);
+
+      await expect(
+        runner.run(cases, async (i) => i),
+      ).rejects.toThrow(/scoreBatch\(\) returned 1 results but expected 3/);
+    });
+
+    it('throws SCORER_MISMATCH when scoreBatch returns empty array', async () => {
+      const emptyBatchScorer: Scorer = {
+        name: 'empty-batch',
+        description: 'Returns empty array',
+        async score() {
+          return { score: 0.5, explanation: 'individual' };
+        },
+        async scoreBatch() {
+          return [];
+        },
+      };
+
+      const runner = createEvalRunner({ scorers: [emptyBatchScorer] });
+      const cases = [{ id: 'c1', input: 'a' }];
+
+      await expect(
+        runner.run(cases, async (i) => i),
+      ).rejects.toThrow(HarnessError);
+
+      await expect(
+        runner.run(cases, async (i) => i),
+      ).rejects.toThrow(/scoreBatch\(\) returned 0 results but expected 1/);
+    });
+
+    it('accepts scoreBatch that returns exactly matching count', async () => {
+      const correctBatchScorer: Scorer = {
+        name: 'correct-batch',
+        description: 'Returns correct count',
+        async score() {
+          return { score: 0.5, explanation: 'individual' };
+        },
+        async scoreBatch(cases) {
+          return cases.map(() => ({ score: 0.8, explanation: 'batched' }));
+        },
+      };
+
+      const runner = createEvalRunner({ scorers: [correctBatchScorer] });
+      const cases = [
+        { id: 'c1', input: 'a' },
+        { id: 'c2', input: 'b' },
+      ];
+      const report = await runner.run(cases, async (i) => i);
+      expect(report.results[0].scores['correct-batch']).toBe(0.8);
+      expect(report.results[1].scores['correct-batch']).toBe(0.8);
+    });
+
     it('falls back to individual score when scoreBatch not available', async () => {
       const individualScorer: Scorer = {
         name: 'individual-scorer',

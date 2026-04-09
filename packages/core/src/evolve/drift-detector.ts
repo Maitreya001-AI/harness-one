@@ -102,21 +102,28 @@ export function createDriftDetector(config?: DriftDetectorConfig): DriftDetector
   };
 }
 
-function deepEqual(a: unknown, b: unknown): boolean {
+/** Type guard for plain objects (excludes arrays and null). */
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+function deepEqual(a: unknown, b: unknown, seen = new WeakSet<object>()): boolean {
   if (a === b) return true;
   if (a === null || b === null) return false;
   if (typeof a !== typeof b) return false;
 
   if (Array.isArray(a) && Array.isArray(b)) {
     if (a.length !== b.length) return false;
-    return a.every((v, i) => deepEqual(v, b[i]));
+    return a.every((v, i) => deepEqual(v, b[i], seen));
   }
 
-  if (typeof a === 'object' && typeof b === 'object') {
-    const aObj = a as Record<string, unknown>;
-    const bObj = b as Record<string, unknown>;
-    const keys = new Set([...Object.keys(aObj), ...Object.keys(bObj)]);
-    return Array.from(keys).every((k) => deepEqual(aObj[k], bObj[k]));
+  if (isRecord(a) && isRecord(b)) {
+    // Circular reference protection
+    if (seen.has(a)) return true; // already compared, assume equal
+    seen.add(a);
+
+    const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+    return Array.from(keys).every((k) => deepEqual(a[k], b[k], seen));
   }
 
   return false;

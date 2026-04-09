@@ -8,6 +8,7 @@
  */
 
 import type { JsonSchema } from './types.js';
+import { HarnessError } from './errors.js';
 
 /** Parses raw LLM text into a typed value. */
 export interface OutputParser<T = unknown> {
@@ -31,10 +32,39 @@ export interface OutputParser<T = unknown> {
 export function createJsonOutputParser<T = unknown>(schema?: JsonSchema): OutputParser<T> {
   return {
     parse(text: string): T {
+      // Handle empty string input
+      if (text.trim() === '') {
+        throw new HarnessError(
+          'Cannot parse empty string as JSON',
+          'PARSE_EMPTY_INPUT',
+          'Provide a non-empty string containing valid JSON',
+        );
+      }
+
       // Try to extract JSON from markdown code blocks first
       const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-      const jsonStr = jsonMatch ? jsonMatch[1].trim() : text.trim();
-      return JSON.parse(jsonStr) as T;
+      if (jsonMatch) {
+        const inner = jsonMatch[1].trim();
+        if (inner === '') {
+          throw new HarnessError(
+            'Empty code block contains no JSON',
+            'PARSE_EMPTY_CODEBLOCK',
+            'Provide valid JSON inside the code block',
+          );
+        }
+        return JSON.parse(inner) as T;
+      }
+
+      // Check for unclosed code block (``` without closing ```)
+      if (/```(?:json)?\s*[\s\S]+/.test(text) && !/```[\s\S]*```/.test(text)) {
+        throw new HarnessError(
+          'Unclosed markdown code block',
+          'PARSE_UNCLOSED_CODEBLOCK',
+          'Ensure the code block is properly closed with ```',
+        );
+      }
+
+      return JSON.parse(text.trim()) as T;
     },
     getFormatInstructions(): string {
       return schema

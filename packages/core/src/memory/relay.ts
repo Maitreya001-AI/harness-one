@@ -6,6 +6,7 @@
 
 import type { RelayState } from './types.js';
 import type { MemoryStore } from './store.js';
+import { HarnessError } from '../core/errors.js';
 
 /** Interface for cross-context relay operations. */
 export interface ContextRelay {
@@ -13,6 +14,11 @@ export interface ContextRelay {
   load(): Promise<RelayState | null>;
   checkpoint(progress: Record<string, unknown>): Promise<void>;
   addArtifact(path: string): Promise<void>;
+}
+
+/** Relay state with optimistic concurrency version. */
+interface VersionedRelayState extends RelayState {
+  _version: number;
 }
 
 /**
@@ -32,15 +38,23 @@ export function createRelay(config: {
   const store = config.store;
   const relayKey = config.relayKey ?? '__relay__';
   let currentId: string | null = null;
+  let lastKnownVersion: number = 0;
 
-  async function findRelay(): Promise<{ id: string; state: RelayState } | null> {
+  async function findRelay(): Promise<{ id: string; state: RelayState; version: number } | null> {
     if (currentId) {
       const entry = await store.read(currentId);
       if (entry) {
         try {
-          return { id: entry.id, state: JSON.parse(entry.content) as RelayState };
+          const parsed = JSON.parse(entry.content) as VersionedRelayState;
+          const version = parsed._version ?? 0;
+          const { _version: _, ...state } = parsed;
+          lastKnownVersion = version;
+          return { id: entry.id, state: state as RelayState, version };
         } catch {
-          // Corrupted relay data — clear cache and treat as missing
+          // Corrupted relay data — log warning, clear cache and treat as missing
+          if (typeof console !== 'undefined') {
+            console.warn(`[harness-one] Corrupted relay entry skipped: ${entry.id}`);
+          }
           currentId = null;
           return null;
         }
@@ -48,16 +62,22 @@ export function createRelay(config: {
       // Cache miss: entry was deleted externally. Clear stale cached ID and re-query.
       currentId = null;
     }
-    const results = await store.query({ search: relayKey, limit: 1 });
+    const results = await store.query({ tags: [relayKey], limit: 10 });
     // Look for an entry with our relay key
     for (const entry of results) {
       if (entry.key === relayKey) {
         try {
-          const state = JSON.parse(entry.content) as RelayState;
+          const parsed = JSON.parse(entry.content) as VersionedRelayState;
+          const version = parsed._version ?? 0;
+          const { _version: _, ...state } = parsed;
           currentId = entry.id;
-          return { id: entry.id, state };
+          lastKnownVersion = version;
+          return { id: entry.id, state: state as RelayState, version };
         } catch {
-          // Corrupted entry — skip it
+          // Log corruption for observability instead of silent skip
+          if (typeof console !== 'undefined') {
+            console.warn(`[harness-one] Corrupted relay entry skipped: ${entry.id}`);
+          }
           continue;
         }
       }
@@ -67,16 +87,33 @@ export function createRelay(config: {
 
   return {
     async save(state) {
+      // Capture the version we last knew about before reading fresh data
+      const expectedVersion = lastKnownVersion;
       const existing = await findRelay();
       if (existing) {
-        await store.update(existing.id, { content: JSON.stringify(state) });
+        // Optimistic concurrency: if the stored version has changed since our
+        // last read, another writer intervened — throw a conflict error.
+        if (expectedVersion > 0 && existing.version !== expectedVersion) {
+          throw new HarnessError(
+            `Relay state conflict: expected version ${expectedVersion} but found ${existing.version}`,
+            'RELAY_CONFLICT',
+            'Retry the save operation — another write occurred concurrently',
+          );
+        }
+        const newVersion = existing.version + 1;
+        const versioned: VersionedRelayState = { ...state, _version: newVersion };
+        await store.update(existing.id, { content: JSON.stringify(versioned) });
+        lastKnownVersion = newVersion;
       } else {
+        const versioned: VersionedRelayState = { ...state, _version: 1 };
         const entry = await store.write({
           key: relayKey,
-          content: JSON.stringify(state),
+          content: JSON.stringify(versioned),
           grade: 'critical',
+          tags: [relayKey],
         });
         currentId = entry.id;
+        lastKnownVersion = 1;
       }
     },
 
@@ -94,7 +131,9 @@ export function createRelay(config: {
           checkpoint: `checkpoint_${Date.now()}`,
           timestamp: Date.now(),
         };
-        await store.update(existing.id, { content: JSON.stringify(updated) });
+        const newVersion = existing.version + 1;
+        const versioned: VersionedRelayState = { ...updated, _version: newVersion };
+        await store.update(existing.id, { content: JSON.stringify(versioned) });
       } else {
         const state: RelayState = {
           progress,
@@ -102,10 +141,12 @@ export function createRelay(config: {
           checkpoint: `checkpoint_${Date.now()}`,
           timestamp: Date.now(),
         };
+        const versioned: VersionedRelayState = { ...state, _version: 1 };
         const entry = await store.write({
           key: relayKey,
-          content: JSON.stringify(state),
+          content: JSON.stringify(versioned),
           grade: 'critical',
+          tags: [relayKey],
         });
         currentId = entry.id;
       }
@@ -119,7 +160,9 @@ export function createRelay(config: {
           artifacts: [...existing.state.artifacts, path],
           timestamp: Date.now(),
         };
-        await store.update(existing.id, { content: JSON.stringify(updated) });
+        const newVersion = existing.version + 1;
+        const versioned: VersionedRelayState = { ...updated, _version: newVersion };
+        await store.update(existing.id, { content: JSON.stringify(versioned) });
       } else {
         const state: RelayState = {
           progress: {},
@@ -127,10 +170,12 @@ export function createRelay(config: {
           checkpoint: `artifact_${Date.now()}`,
           timestamp: Date.now(),
         };
+        const versioned: VersionedRelayState = { ...state, _version: 1 };
         const entry = await store.write({
           key: relayKey,
-          content: JSON.stringify(state),
+          content: JSON.stringify(versioned),
           grade: 'critical',
+          tags: [relayKey],
         });
         currentId = entry.id;
       }

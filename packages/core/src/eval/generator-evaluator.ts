@@ -49,7 +49,18 @@ export async function runGeneratorEvaluator(
       ? `${input}\n\nPrevious feedback: ${lastFeedback}`
       : input;
 
-    lastOutput = await generate(augmentedInput);
+    const generated = await generate(augmentedInput);
+
+    if (generated === null || generated === undefined || generated === '') {
+      return {
+        output: '',
+        attempts: attempt,
+        passed: false,
+        feedback: 'Generator returned empty or null output',
+      };
+    }
+
+    lastOutput = generated;
     const evalResult = await evaluate(input, lastOutput);
 
     if (evalResult.pass) {

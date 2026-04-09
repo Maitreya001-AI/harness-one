@@ -124,6 +124,18 @@ export function createEvalRunner(config: EvalConfig): EvalRunner {
         batchResults.set(scorer.name, batchScoreResults);
       }
 
+      // Validate batch results before indexing
+      for (const scorer of batchScorers) {
+        const batchResult = batchResults.get(scorer.name);
+        if (!batchResult || batchResult.length !== cases.length) {
+          throw new HarnessError(
+            `Scorer "${scorer.name}" scoreBatch() returned ${batchResult?.length ?? 0} results but expected ${cases.length}`,
+            'SCORER_MISMATCH',
+            'Ensure scoreBatch() returns exactly one result per case',
+          );
+        }
+      }
+
       // Build results per case
       for (let i = 0; i < cases.length; i++) {
         const caseStart = Date.now();

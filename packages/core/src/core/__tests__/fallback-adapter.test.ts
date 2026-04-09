@@ -189,6 +189,97 @@ describe('createFallbackAdapter', () => {
     });
   });
 
+  describe('retry uses correct adapter after failover', () => {
+    it('retries with the NEW adapter after handleFailure switches (chat)', async () => {
+      // With maxFailures=1, the first failure should switch to adapter 2 and retry with it
+      const callOrder: string[] = [];
+      const primary: AgentAdapter = {
+        async chat() {
+          callOrder.push('primary');
+          throw new Error('primary fail');
+        },
+      };
+      const fallback: AgentAdapter = {
+        async chat() {
+          callOrder.push('fallback');
+          return { message: { role: 'assistant', content: 'from fallback' }, usage: USAGE };
+        },
+      };
+
+      const adapter = createFallbackAdapter({ adapters: [primary, fallback], maxFailures: 1 });
+      const result = await adapter.chat(PARAMS);
+
+      expect(result.message.content).toBe('from fallback');
+      // Primary called once (fail), then fallback called once (success)
+      expect(callOrder).toEqual(['primary', 'fallback']);
+    });
+
+    it('does not retry when last adapter fails and no switch happened', async () => {
+      const callOrder: string[] = [];
+      const solo: AgentAdapter = {
+        async chat() {
+          callOrder.push('solo');
+          throw new Error('solo fail');
+        },
+      };
+
+      const adapter = createFallbackAdapter({ adapters: [solo], maxFailures: 1 });
+      await expect(adapter.chat(PARAMS)).rejects.toThrow('solo fail');
+      // Only called once -- no retry since it's the last (and only) adapter
+      expect(callOrder).toEqual(['solo']);
+    });
+
+    it('retries with the NEW adapter after handleFailure switches (stream)', async () => {
+      const callOrder: string[] = [];
+      const fallbackChunks: StreamChunk[] = [
+        { type: 'text_delta', text: 'fb' },
+        { type: 'done', usage: USAGE },
+      ];
+
+      const primary: AgentAdapter = {
+        async chat() { return { message: { role: 'assistant', content: '' }, usage: USAGE }; },
+        async *stream() {
+          callOrder.push('primary-stream');
+          throw new Error('primary stream fail');
+        },
+      };
+
+      const fallback: AgentAdapter = {
+        async chat() { return { message: { role: 'assistant', content: '' }, usage: USAGE }; },
+        async *stream() {
+          callOrder.push('fallback-stream');
+          for (const chunk of fallbackChunks) yield chunk;
+        },
+      };
+
+      const adapter = createFallbackAdapter({ adapters: [primary, fallback], maxFailures: 1 });
+      const collected: StreamChunk[] = [];
+      for await (const chunk of adapter.stream!(PARAMS)) {
+        collected.push(chunk);
+      }
+
+      expect(collected).toEqual(fallbackChunks);
+      expect(callOrder).toEqual(['primary-stream', 'fallback-stream']);
+    });
+
+    it('does not retry stream when last adapter fails and no switch happened', async () => {
+      const callOrder: string[] = [];
+      const solo: AgentAdapter = {
+        async chat() { return { message: { role: 'assistant', content: '' }, usage: USAGE }; },
+        async *stream() {
+          callOrder.push('solo-stream');
+          throw new Error('solo stream fail');
+        },
+      };
+
+      const adapter = createFallbackAdapter({ adapters: [solo], maxFailures: 1 });
+      await expect(
+        (async () => { for await (const _ of adapter.stream!(PARAMS)) {} })()
+      ).rejects.toThrow('solo stream fail');
+      expect(callOrder).toEqual(['solo-stream']);
+    });
+  });
+
   describe('circuit breaker behavior', () => {
     it('retries with same adapter when under failure threshold', async () => {
       let calls = 0;

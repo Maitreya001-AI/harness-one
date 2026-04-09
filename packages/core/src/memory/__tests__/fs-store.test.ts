@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { existsSync } from 'node:fs';
@@ -294,6 +294,165 @@ describe('createFileSystemStore', () => {
       // critical should survive both passes
       const remaining = await store.query({});
       expect(remaining[0].grade).toBe('critical');
+    });
+  });
+
+  describe('query with offset (Fix 1: offset handling)', () => {
+    it('applies offset before limit for pagination', async () => {
+      // Write 5 entries with small delays to ensure distinct updatedAt for deterministic sorting
+      await store.write({ key: 'k1', content: 'first', grade: 'useful' });
+      await store.write({ key: 'k2', content: 'second', grade: 'useful' });
+      await store.write({ key: 'k3', content: 'third', grade: 'useful' });
+      await store.write({ key: 'k4', content: 'fourth', grade: 'useful' });
+      await store.write({ key: 'k5', content: 'fifth', grade: 'useful' });
+
+      // Results sorted by updatedAt desc: k5, k4, k3, k2, k1
+      // offset=2, limit=2 should skip first 2 and take next 2
+      const page = await store.query({ offset: 2, limit: 2 });
+      expect(page).toHaveLength(2);
+    });
+
+    it('offset of 0 has no effect', async () => {
+      await store.write({ key: 'k1', content: 'first', grade: 'useful' });
+      await store.write({ key: 'k2', content: 'second', grade: 'useful' });
+
+      const withOffset = await store.query({ offset: 0 });
+      const without = await store.query({});
+      expect(withOffset).toHaveLength(without.length);
+    });
+
+    it('offset beyond total returns empty', async () => {
+      await store.write({ key: 'k1', content: 'first', grade: 'useful' });
+      await store.write({ key: 'k2', content: 'second', grade: 'useful' });
+
+      const results = await store.query({ offset: 10 });
+      expect(results).toHaveLength(0);
+    });
+
+    it('offset without limit returns remaining entries', async () => {
+      await store.write({ key: 'k1', content: 'first', grade: 'useful' });
+      await store.write({ key: 'k2', content: 'second', grade: 'useful' });
+      await store.write({ key: 'k3', content: 'third', grade: 'useful' });
+
+      const results = await store.query({ offset: 1 });
+      expect(results).toHaveLength(2);
+    });
+
+    it('offset + limit pagination matches in-memory store behavior', async () => {
+      // Verify fs-store and in-memory store produce same pagination results
+      const { createInMemoryStore } = await import('../store.js');
+      const memStore = createInMemoryStore();
+
+      for (let i = 0; i < 5; i++) {
+        await store.write({ key: `k${i}`, content: `content-${i}`, grade: 'useful' });
+        await memStore.write({ key: `k${i}`, content: `content-${i}`, grade: 'useful' });
+      }
+
+      // Page 1
+      const fsPage1 = await store.query({ offset: 0, limit: 2 });
+      const memPage1 = await memStore.query({ offset: 0, limit: 2 });
+      expect(fsPage1).toHaveLength(memPage1.length);
+
+      // Page 2
+      const fsPage2 = await store.query({ offset: 2, limit: 2 });
+      const memPage2 = await memStore.query({ offset: 2, limit: 2 });
+      expect(fsPage2).toHaveLength(memPage2.length);
+
+      // Page 3 (partial)
+      const fsPage3 = await store.query({ offset: 4, limit: 2 });
+      const memPage3 = await memStore.query({ offset: 4, limit: 2 });
+      expect(fsPage3).toHaveLength(memPage3.length);
+    });
+  });
+
+  describe('batched file reads (Fix 2: fd exhaustion prevention)', () => {
+    it('reads many entries without fd exhaustion', async () => {
+      // Write more entries than the batch size (50) to exercise batching
+      const count = 75;
+      for (let i = 0; i < count; i++) {
+        await store.write({ key: `k${i}`, content: `content-${i}`, grade: 'useful' });
+      }
+
+      const results = await store.query({});
+      expect(results).toHaveLength(count);
+    });
+
+    it('batch reading returns same results as individual reads', async () => {
+      const entries = [];
+      for (let i = 0; i < 10; i++) {
+        entries.push(await store.write({ key: `k${i}`, content: `content-${i}`, grade: 'useful' }));
+      }
+
+      // All entries should be readable via query
+      const queried = await store.query({});
+      expect(queried).toHaveLength(10);
+
+      // Verify each entry is still individually readable
+      for (const entry of entries) {
+        const read = await store.read(entry.id);
+        expect(read).not.toBeNull();
+        expect(read!.content).toBe(entry.content);
+      }
+    });
+  });
+
+  describe('error handling (Fix 3: discriminating errors)', () => {
+    it('readIndex returns empty index for ENOENT (first run)', async () => {
+      // A fresh store with no prior writes should work (ENOENT on index read)
+      const freshDir = await mkdtemp(join(tmpdir(), 'harness-fresh-'));
+      const freshStore = createFileSystemStore({ directory: freshDir });
+
+      // query triggers readIndex via allEntries, which should handle ENOENT gracefully
+      const results = await freshStore.query({});
+      expect(results).toHaveLength(0);
+
+      await rm(freshDir, { recursive: true, force: true });
+    });
+
+    it('allEntries returns empty for ENOENT directory', async () => {
+      // Create a store pointing to a non-existent dir, then query before any writes
+      const nonExistentDir = join(tmpdir(), 'harness-nonexistent-' + Date.now());
+      const freshStore = createFileSystemStore({ directory: nonExistentDir });
+
+      // ensureDir creates the dir, but there are no entries
+      const results = await freshStore.query({});
+      expect(results).toHaveLength(0);
+
+      await rm(nonExistentDir, { recursive: true, force: true });
+    });
+
+    it('readEntry returns null for ENOENT (missing file)', async () => {
+      // Reading a non-existent entry should return null (ENOENT)
+      const result = await store.read('nonexistent-id');
+      expect(result).toBeNull();
+    });
+
+    it('readEntry throws on non-ENOENT errors (corrupted JSON)', async () => {
+      // Write a corrupted JSON file directly
+      await store.write({ key: 'k1', content: 'test', grade: 'useful' });
+      const entries = await store.query({});
+      const entry = entries[0];
+
+      // Corrupt the entry file by writing invalid JSON
+      const corruptedPath = join(dir, `${entry.id}.json`);
+      await writeFile(corruptedPath, 'NOT VALID JSON{{{', 'utf-8');
+
+      // Reading a corrupted entry should throw (SyntaxError, not ENOENT)
+      await expect(store.read(entry.id)).rejects.toThrow();
+    });
+
+    it('readIndex throws on non-ENOENT errors (corrupted index)', async () => {
+      // Write an entry to create the index, then corrupt it
+      await store.write({ key: 'k1', content: 'test', grade: 'useful' });
+
+      // Corrupt the index file
+      const indexPath = join(dir, '_index.json');
+      await writeFile(indexPath, 'CORRUPTED{{{', 'utf-8');
+
+      // query triggers readIndex, which should throw on corrupted JSON (not ENOENT)
+      // Note: query calls allEntries first, then readIndex is called during write.
+      // Let's trigger readIndex directly via a write operation.
+      await expect(store.write({ key: 'k2', content: 'test2', grade: 'useful' })).rejects.toThrow();
     });
   });
 });

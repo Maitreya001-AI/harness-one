@@ -84,6 +84,20 @@ export function createTraceManager(config?: {
   }
 
   function evictIfNeeded(): void {
+    // First, evict ended traces that are no longer in traceOrder.
+    // These have already been exported and are safe to remove.
+    if (traces.size > maxTraces) {
+      for (const [id, trace] of traces) {
+        if (traces.size <= maxTraces) break;
+        if (trace.status !== 'running') {
+          for (const spanId of trace.spanIds) {
+            spans.delete(spanId);
+          }
+          traces.delete(id);
+        }
+      }
+    }
+    // Then, evict oldest running traces from the LRU order if still over capacity.
     while (traces.size > maxTraces && traceOrder.length > 0) {
       const oldestId = traceOrder.shift()!;
       const trace = traces.get(oldestId);
@@ -225,6 +239,13 @@ export function createTraceManager(config?: {
       trace.endTime = Date.now();
       trace.status = status ?? 'completed';
 
+      // Remove from traceOrder to prevent memory leak: ended traces that are
+      // not evicted would otherwise leave stale IDs in the array forever.
+      const orderIdx = traceOrder.indexOf(traceId);
+      if (orderIdx >= 0) {
+        traceOrder.splice(orderIdx, 1);
+      }
+
       // Export
       const readonlyTrace = toReadonlyTrace(trace);
       for (const exporter of exporters) {
@@ -259,10 +280,30 @@ export function createTraceManager(config?: {
     },
 
     async dispose(): Promise<void> {
-      // 1. Flush all pending exports
-      await Promise.all(exporters.map(e => e.flush()));
-      // 2. Call shutdown() on all exporters that support it
-      await Promise.all(exporters.map(e => e.shutdown ? e.shutdown() : Promise.resolve()));
+      // 1. Flush all pending exports — use allSettled so one failure doesn't block others
+      const flushResults = await Promise.allSettled(exporters.map(e => e.flush()));
+      for (const result of flushResults) {
+        if (result.status === 'rejected') {
+          if (onExportError) {
+            onExportError(result.reason);
+          } else if (typeof console !== 'undefined') {
+            const err = result.reason;
+            console.warn('[harness-one] Exporter flush failed during dispose:', err instanceof Error ? err.message : err);
+          }
+        }
+      }
+      // 2. Call shutdown() on all exporters that support it — use allSettled so one failure doesn't block others
+      const shutdownResults = await Promise.allSettled(exporters.map(e => e.shutdown ? e.shutdown() : Promise.resolve()));
+      for (const result of shutdownResults) {
+        if (result.status === 'rejected') {
+          if (onExportError) {
+            onExportError(result.reason);
+          } else if (typeof console !== 'undefined') {
+            const err = result.reason;
+            console.warn('[harness-one] Exporter shutdown failed during dispose:', err instanceof Error ? err.message : err);
+          }
+        }
+      }
       // 3. Clear internal maps
       traces.clear();
       spans.clear();

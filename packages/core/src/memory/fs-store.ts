@@ -58,8 +58,11 @@ export function createFileSystemStore(config: {
     try {
       const raw = await readFile(indexPath, 'utf-8');
       return JSON.parse(raw) as Index;
-    } catch {
-      return { keys: {} };
+    } catch (err: unknown) {
+      // ENOENT is expected on first run — return empty index
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { keys: {} };
+      // Re-throw permission errors, disk errors, etc.
+      throw err;
     }
   }
 
@@ -87,8 +90,11 @@ export function createFileSystemStore(config: {
     try {
       const raw = await readFile(entryPath(id), 'utf-8');
       return JSON.parse(raw) as MemoryEntry;
-    } catch {
-      return null;
+    } catch (err: unknown) {
+      // ENOENT means the entry file doesn't exist — return null
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      // Re-throw permission errors, disk errors, JSON parse errors, etc.
+      throw err;
     }
   }
 
@@ -99,16 +105,29 @@ export function createFileSystemStore(config: {
     await rename(tmpPath, path);
   }
 
+  /** Read entry files in parallel batches to avoid fd exhaustion. */
+  async function batchRead(files: string[], batchSize = 50): Promise<MemoryEntry[]> {
+    const results: MemoryEntry[] = [];
+    for (let i = 0; i < files.length; i += batchSize) {
+      const batch = files.slice(i, i + batchSize);
+      const entries = await Promise.all(
+        batch.map(file => readEntry(file.replace('.json', '')))
+      );
+      results.push(...entries.filter((e): e is MemoryEntry => e !== null));
+    }
+    return results;
+  }
+
   async function allEntries(): Promise<MemoryEntry[]> {
     try {
       const files = await readdir(dir);
       const jsonFiles = files.filter(f => f.endsWith('.json') && f !== indexFileName);
-      const results = await Promise.all(
-        jsonFiles.map(file => readEntry(file.replace('.json', '')))
-      );
-      return results.filter((e): e is MemoryEntry => e !== null);
-    } catch {
-      return [];
+      return batchRead(jsonFiles);
+    } catch (err: unknown) {
+      // ENOENT is expected when the directory doesn't exist yet
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      // Re-throw permission errors, disk errors, etc.
+      throw err;
     }
   }
 
@@ -162,6 +181,9 @@ export function createFileSystemStore(config: {
 
       results.sort((a, b) => b.updatedAt - a.updatedAt);
 
+      if (filter.offset !== undefined && filter.offset > 0) {
+        results = results.slice(filter.offset);
+      }
       if (filter.limit !== undefined && filter.limit > 0) {
         results = results.slice(0, filter.limit);
       }

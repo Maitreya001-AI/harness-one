@@ -198,6 +198,91 @@ describe('createTasteCodingRegistry', () => {
     });
   });
 
+  describe('word-boundary matching (false positive reduction)', () => {
+    it('does not match pattern as substring of larger word', () => {
+      const registry = createTasteCodingRegistry();
+      registry.addRule(makeRule({
+        id: 'tc-error',
+        pattern: 'Error',
+        rule: 'Use HarnessError',
+        enforcement: 'lint',
+      }));
+
+      // "ErrorHandler" contains "Error" as substring but is a different word
+      const violations = registry.checkCompliance('class ErrorHandler extends Base {}');
+      expect(violations).toHaveLength(0);
+    });
+
+    it('matches pattern when it appears as standalone word', () => {
+      const registry = createTasteCodingRegistry();
+      registry.addRule(makeRule({
+        id: 'tc-error',
+        pattern: 'Error',
+        rule: 'Use HarnessError',
+        enforcement: 'lint',
+      }));
+
+      const violations = registry.checkCompliance('throw new Error("something broke")');
+      expect(violations).toHaveLength(1);
+    });
+
+    it('does not false-positive on pattern embedded in identifier', () => {
+      const registry = createTasteCodingRegistry();
+      registry.addRule(makeRule({
+        id: 'tc-log',
+        pattern: 'log',
+        rule: 'Use structured logging',
+        enforcement: 'lint',
+      }));
+
+      // "blog" contains "log" as substring
+      const violations = registry.checkCompliance('const blog = createBlog();');
+      expect(violations).toHaveLength(0);
+    });
+
+    it('matches word-boundary pattern correctly in multi-word code', () => {
+      const registry = createTasteCodingRegistry();
+      registry.addRule(makeRule({
+        id: 'tc-log',
+        pattern: 'log',
+        rule: 'Use structured logging',
+        enforcement: 'lint',
+      }));
+
+      const violations = registry.checkCompliance('console.log("debug")');
+      expect(violations).toHaveLength(1);
+    });
+
+    it('escapes regex special characters in patterns', () => {
+      const registry = createTasteCodingRegistry();
+      registry.addRule(makeRule({
+        id: 'tc-eval',
+        pattern: 'eval(',
+        rule: 'Never use eval',
+        enforcement: 'lint',
+      }));
+
+      // The pattern "eval(" has a regex special char "(" — it should be escaped
+      const violations = registry.checkCompliance('eval(code)');
+      expect(violations).toHaveLength(1);
+    });
+
+    it('does not match escaped regex chars as wildcards', () => {
+      const registry = createTasteCodingRegistry();
+      registry.addRule(makeRule({
+        id: 'tc-dot',
+        pattern: 'a.b',
+        rule: 'Do not use a.b',
+        enforcement: 'lint',
+      }));
+
+      // "." in the pattern should be literal, not regex wildcard
+      // "axb" should NOT match "a.b"
+      const violations = registry.checkCompliance('const x = axb;');
+      expect(violations).toHaveLength(0);
+    });
+  });
+
   describe('edge cases', () => {
     it('checkCompliance with compliant code — empty violations', () => {
       const registry = createTasteCodingRegistry();

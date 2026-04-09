@@ -395,4 +395,80 @@ describe('createCostTracker', () => {
       expect(tracker.getTotalCost()).toBeCloseTo(10_000 * 0.001, 2);
     });
   });
+
+  // Fix 3: onAlert returns a cleanup function for deregistration
+  describe('alert handler deregistration', () => {
+    it('onAlert returns an unsubscribe function', () => {
+      const tracker = createCostTracker({ pricing, budget: 0.001 });
+      const handler = vi.fn();
+      const unsub = tracker.onAlert(handler);
+      expect(typeof unsub).toBe('function');
+
+      // First usage triggers alert
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      expect(handler).toHaveBeenCalledTimes(1);
+
+      // Unsubscribe
+      unsub();
+
+      // Second usage should NOT trigger handler
+      tracker.recordUsage({ traceId: 't2', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      expect(handler).toHaveBeenCalledTimes(1); // Still just 1 call
+    });
+
+    it('multiple handlers can be independently unsubscribed', () => {
+      const tracker = createCostTracker({ pricing, budget: 0.001 });
+      const handler1 = vi.fn();
+      const handler2 = vi.fn();
+      const unsub1 = tracker.onAlert(handler1);
+      tracker.onAlert(handler2);
+
+      // Unsubscribe only handler1
+      unsub1();
+
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+
+      // handler1 should NOT be called, handler2 should be called
+      expect(handler1).not.toHaveBeenCalled();
+      expect(handler2).toHaveBeenCalledTimes(1);
+    });
+
+    it('double-unsubscribe is safe (no-op)', () => {
+      const tracker = createCostTracker({ pricing, budget: 0.001 });
+      const handler = vi.fn();
+      const unsub = tracker.onAlert(handler);
+
+      unsub();
+      // Calling unsub again should not throw or corrupt state
+      expect(() => unsub()).not.toThrow();
+
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      expect(handler).not.toHaveBeenCalled();
+    });
+  });
+
+  // Fix 4: Recalibration triggered by getTotalCost()
+  describe('getTotalCost recalibration', () => {
+    it('recalibrates running total when called after recalibration interval', () => {
+      const tracker = createCostTracker({
+        pricing: [{ model: 'a', inputPer1kTokens: 0.001, outputPer1kTokens: 0 }],
+      });
+
+      // Record exactly 1000 entries (hits recalibration interval in recordUsage)
+      for (let i = 0; i < 1000; i++) {
+        tracker.recordUsage({ traceId: `t${i}`, model: 'a', inputTokens: 1, outputTokens: 0 });
+      }
+
+      // At this point recordsSinceRecalibrate was reset to 0 by recordUsage.
+      // Record 999 more (just under recalibration threshold)
+      for (let i = 0; i < 999; i++) {
+        tracker.recordUsage({ traceId: `t2-${i}`, model: 'a', inputTokens: 1, outputTokens: 0 });
+      }
+
+      // getTotalCost should still return an accurate value
+      const total = tracker.getTotalCost();
+      const expected = 1999 * 0.000001;
+      expect(Math.abs(total - expected)).toBeLessThan(1e-10);
+    });
+  });
 });

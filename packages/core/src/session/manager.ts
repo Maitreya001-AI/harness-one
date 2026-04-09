@@ -39,13 +39,18 @@ export interface SessionManager {
 /**
  * Create a new SessionManager instance.
  *
+ * **Important:** Always call `dispose()` when the manager is no longer needed.
+ * `dispose()` clears the auto-GC interval timer AND all stored sessions to
+ * prevent memory leaks. Failing to call `dispose()` will leak the GC interval
+ * timer and all session data.
+ *
  * @example
  * ```ts
  * const sm = createSessionManager({ maxSessions: 10, ttlMs: 60000 });
  * const session = sm.create({ userId: 'alice' });
  * const accessed = sm.access(session.id);
  * sm.destroy(session.id);
- * sm.dispose();
+ * sm.dispose(); // Always call dispose() when done!
  * ```
  */
 export function createSessionManager(config?: {
@@ -217,19 +222,25 @@ export function createSessionManager(config?: {
       session.status = 'locked';
       emit('locked', id);
 
+      // Capture the session reference at lock time so unlock operates on the
+      // same object without re-fetching from the Map. This makes the
+      // check-and-modify atomic: no window between fetching and mutating.
+      const lockedSession = session;
+
       return {
         unlock: () => {
-          const s = sessions.get(id);
-          if (!s) {
+          // Verify the session still exists in the map (not destroyed).
+          if (!sessions.has(id)) {
             throw new HarnessError(
               `Session was destroyed while locked: ${id}`,
               'SESSION_NOT_FOUND',
               'Do not destroy a session while it is locked',
             );
           }
-          if (s.status === 'locked') {
-            s.status = 'active';
-            s.lastAccessedAt = Date.now();
+          // Use the captured reference for atomic check-and-modify.
+          if (lockedSession.status === 'locked') {
+            lockedSession.status = 'active';
+            lockedSession.lastAccessedAt = Date.now();
             emit('unlocked', id);
           }
         },
@@ -291,6 +302,9 @@ export function createSessionManager(config?: {
 
     dispose(): void {
       if (gcTimer) clearInterval(gcTimer);
+      // Clear all sessions to release memory and prevent stale references.
+      sessions.clear();
+      accessOrder.clear();
     },
   };
 

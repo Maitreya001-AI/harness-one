@@ -593,3 +593,196 @@ describe('dispose', () => {
     expect(tm.getTrace(traceId)).toBeUndefined();
   });
 });
+
+// Fix 1: traceOrder memory leak — ended traces' IDs are removed from traceOrder
+describe('traceOrder memory leak fix', () => {
+  it('ended trace ID is removed from traceOrder to prevent unbounded growth', () => {
+    // The memory leak: without the fix, traceOrder grows forever because ended
+    // trace IDs stay in the array even though the trace is finished.
+    // With the fix, endTrace() removes the ID from traceOrder.
+    // Ended traces are also evicted from the Map when capacity is exceeded.
+    const tm = createTraceManager({ maxTraces: 5 });
+
+    // Create and immediately end traces in a loop (simulating a long-running server)
+    for (let i = 0; i < 20; i++) {
+      const id = tm.startTrace(`trace-${i}`);
+      tm.endTrace(id);
+    }
+
+    // Now create active traces — ended traces are evicted first when capacity is exceeded,
+    // so running traces should not be prematurely evicted
+    const activeIds: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      activeIds.push(tm.startTrace(`active-${i}`));
+    }
+
+    // All active traces should be retrievable
+    for (const id of activeIds) {
+      expect(tm.getTrace(id)).toBeDefined();
+    }
+  });
+
+  it('endTrace removes ID from traceOrder but trace stays in Map until eviction', () => {
+    // With no capacity pressure, ended traces remain queryable
+    const tm = createTraceManager({ maxTraces: 10 });
+    const id = tm.startTrace('my-trace');
+    tm.endTrace(id);
+
+    // Trace should still be in the Map (queryable) — no eviction has run
+    const trace = tm.getTrace(id);
+    expect(trace).toBeDefined();
+    expect(trace!.status).toBe('completed');
+  });
+
+  it('ended traces are evicted before running traces when capacity is exceeded', () => {
+    const tm = createTraceManager({ maxTraces: 2 });
+    const t1 = tm.startTrace('first');
+    const t2 = tm.startTrace('second');
+
+    // End t1 — removes from traceOrder
+    tm.endTrace(t1);
+
+    // Now traceOrder = [t2], traces Map = {t1, t2} (size 2, at capacity)
+    // Adding t3: traces.size becomes 3 > maxTraces. Eviction first removes ended
+    // traces (t1), bringing size to 2, which is at capacity. No more eviction needed.
+    const t3 = tm.startTrace('third');
+
+    // t1 was ended and evicted first (it's completed, not running)
+    expect(tm.getTrace(t1)).toBeUndefined();
+    // t2 and t3 should both exist (running traces preserved)
+    expect(tm.getTrace(t2)).toBeDefined();
+    expect(tm.getTrace(t3)).toBeDefined();
+  });
+
+  it('rapid create-end cycles do not grow traceOrder unboundedly', () => {
+    // This is the core memory leak scenario: a server handling many short requests.
+    // Without the fix, traceOrder would have 1000 entries after this loop.
+    // With the fix, traceOrder stays empty because all traces are ended,
+    // and ended traces are evicted when capacity is exceeded.
+    const tm = createTraceManager({ maxTraces: 5 });
+
+    for (let i = 0; i < 1000; i++) {
+      const id = tm.startTrace(`req-${i}`);
+      const spanId = tm.startSpan(id, `span-${i}`);
+      tm.endSpan(spanId);
+      tm.endTrace(id);
+    }
+
+    // Now add 5 new active traces — they should all be retained
+    const newIds: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      newIds.push(tm.startTrace(`new-${i}`));
+    }
+
+    // All 5 new traces should exist (no spurious eviction from stale traceOrder entries)
+    for (const id of newIds) {
+      expect(tm.getTrace(id)).toBeDefined();
+    }
+  });
+
+  it('spans of ended traces are cleaned up during eviction', () => {
+    const tm = createTraceManager({ maxTraces: 1 });
+    const t1 = tm.startTrace('first');
+    const spanId = tm.startSpan(t1, 'span-1');
+    tm.endSpan(spanId);
+    tm.endTrace(t1);
+
+    // Adding a second trace should evict t1 (ended) and its spans
+    tm.startTrace('second');
+
+    // Span from evicted trace should be gone
+    expect(() => tm.addSpanEvent(spanId, { name: 'test' })).toThrow(HarnessError);
+  });
+});
+
+// Fix 2: dispose() uses Promise.allSettled — one failing exporter doesn't block others
+describe('dispose error isolation', () => {
+  it('continues shutting down other exporters when one fails to flush', async () => {
+    const events: string[] = [];
+    const failingExporter: TraceExporter = {
+      name: 'failing',
+      async exportTrace() {},
+      async exportSpan() {},
+      async flush() { throw new Error('flush failed'); },
+      async shutdown() { events.push('failing-shutdown'); },
+    };
+    const healthyExporter: TraceExporter = {
+      name: 'healthy',
+      async exportTrace() {},
+      async exportSpan() {},
+      async flush() { events.push('healthy-flush'); },
+      async shutdown() { events.push('healthy-shutdown'); },
+    };
+
+    const errors: unknown[] = [];
+    const tm = createTraceManager({
+      exporters: [failingExporter, healthyExporter],
+      onExportError: (err) => errors.push(err),
+    });
+    tm.startTrace('t');
+
+    // Should not throw despite failing exporter
+    await tm.dispose();
+
+    // Healthy exporter should have completed flush and shutdown
+    expect(events).toContain('healthy-flush');
+    expect(events).toContain('healthy-shutdown');
+    // Failing exporter's shutdown should still be called
+    expect(events).toContain('failing-shutdown');
+    // Error from failed flush should be reported
+    expect(errors.length).toBeGreaterThan(0);
+  });
+
+  it('continues flushing other exporters when one fails to shut down', async () => {
+    const events: string[] = [];
+    const failingExporter: TraceExporter = {
+      name: 'failing',
+      async exportTrace() {},
+      async exportSpan() {},
+      async flush() { events.push('failing-flush'); },
+      async shutdown() { throw new Error('shutdown failed'); },
+    };
+    const healthyExporter: TraceExporter = {
+      name: 'healthy',
+      async exportTrace() {},
+      async exportSpan() {},
+      async flush() { events.push('healthy-flush'); },
+      async shutdown() { events.push('healthy-shutdown'); },
+    };
+
+    const errors: unknown[] = [];
+    const tm = createTraceManager({
+      exporters: [failingExporter, healthyExporter],
+      onExportError: (err) => errors.push(err),
+    });
+
+    await tm.dispose();
+
+    // Both exporters should have been flushed
+    expect(events).toContain('failing-flush');
+    expect(events).toContain('healthy-flush');
+    // Healthy exporter shutdown should still complete
+    expect(events).toContain('healthy-shutdown');
+    // Error from failed shutdown should be reported
+    expect(errors.some(e => (e as Error).message === 'shutdown failed')).toBe(true);
+  });
+
+  it('reports dispose errors to console.warn when no onExportError provided', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const failingExporter: TraceExporter = {
+      name: 'failing',
+      async exportTrace() {},
+      async exportSpan() {},
+      async flush() { throw new Error('flush boom'); },
+      async shutdown() { throw new Error('shutdown boom'); },
+    };
+
+    const tm = createTraceManager({ exporters: [failingExporter] });
+    await tm.dispose();
+
+    expect(warnSpy).toHaveBeenCalled();
+    const messages = warnSpy.mock.calls.map(c => c.join(' '));
+    expect(messages.some(m => m.includes('flush boom') || m.includes('shutdown boom'))).toBe(true);
+    warnSpy.mockRestore();
+  });
+});

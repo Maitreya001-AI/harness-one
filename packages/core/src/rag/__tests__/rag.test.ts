@@ -588,6 +588,118 @@ describe('createInMemoryRetriever', () => {
 });
 
 // ===========================================================================
+// Retriever — Vector Caching (Fix 4)
+// ===========================================================================
+
+describe('createInMemoryRetriever — vector caching', () => {
+  let embedding: EmbeddingModel;
+
+  beforeEach(() => {
+    embedding = createMockEmbeddingModel(4);
+  });
+
+  it('produces same similarity results as before caching optimization', async () => {
+    const retriever = createInMemoryRetriever({ embedding });
+
+    const chunks: DocumentChunk[] = [
+      { id: 'c1', documentId: 'd1', content: 'cat', index: 0, embedding: [1, 0, 0, 0] },
+      { id: 'c2', documentId: 'd1', content: 'dog', index: 1, embedding: [0, 1, 0, 0] },
+      { id: 'c3', documentId: 'd1', content: 'fish', index: 2, embedding: [0.5, 0.5, 0, 0] },
+    ];
+
+    await retriever.index(chunks);
+    const results = await retriever.retrieve('test', { limit: 10 });
+
+    // Results should be sorted by descending score
+    for (let i = 1; i < results.length; i++) {
+      expect(results[i - 1].score).toBeGreaterThanOrEqual(results[i].score);
+    }
+    // All 3 chunks should appear
+    expect(results).toHaveLength(3);
+  });
+
+  it('correctly handles unit vectors (pre-normalized inputs)', async () => {
+    const retriever = createInMemoryRetriever({ embedding });
+
+    // These are already unit vectors
+    const chunks: DocumentChunk[] = [
+      { id: 'c1', documentId: 'd1', content: 'a', index: 0, embedding: [1, 0, 0, 0] },
+      { id: 'c2', documentId: 'd1', content: 'b', index: 1, embedding: [0, 1, 0, 0] },
+    ];
+
+    await retriever.index(chunks);
+    const results = await retriever.retrieve('test', { limit: 10 });
+
+    // Scores should be valid numbers between -1 and 1
+    for (const r of results) {
+      expect(r.score).toBeGreaterThanOrEqual(-1);
+      expect(r.score).toBeLessThanOrEqual(1.0001); // small epsilon for floating point
+    }
+  });
+
+  it('handles zero-magnitude embeddings correctly with caching', async () => {
+    const retriever = createInMemoryRetriever({ embedding });
+
+    const chunks: DocumentChunk[] = [
+      { id: 'c1', documentId: 'd1', content: 'zero', index: 0, embedding: [0, 0, 0, 0] },
+      { id: 'c2', documentId: 'd1', content: 'normal', index: 1, embedding: [1, 0, 0, 0] },
+    ];
+
+    await retriever.index(chunks);
+    const results = await retriever.retrieve('test', { limit: 10 });
+
+    // Zero-magnitude chunk should get score 0
+    const zeroChunk = results.find((r) => r.chunk.id === 'c1');
+    if (zeroChunk) {
+      expect(zeroChunk.score).toBe(0);
+    }
+    // Normal chunk should still have a non-zero score
+    const normalChunk = results.find((r) => r.chunk.id === 'c2');
+    expect(normalChunk).toBeDefined();
+  });
+
+  it('caching does not affect multiple retrieve calls', async () => {
+    const retriever = createInMemoryRetriever({ embedding });
+
+    const chunks: DocumentChunk[] = [
+      { id: 'c1', documentId: 'd1', content: 'hello', index: 0, embedding: [1, 0, 0, 0] },
+      { id: 'c2', documentId: 'd1', content: 'world', index: 1, embedding: [0, 1, 0, 0] },
+    ];
+
+    await retriever.index(chunks);
+
+    const results1 = await retriever.retrieve('test', { limit: 10 });
+    const results2 = await retriever.retrieve('test', { limit: 10 });
+
+    // Same query should produce same results
+    expect(results1.length).toBe(results2.length);
+    for (let i = 0; i < results1.length; i++) {
+      expect(results1[i].chunk.id).toBe(results2[i].chunk.id);
+      expect(results1[i].score).toBeCloseTo(results2[i].score, 10);
+    }
+  });
+
+  it('handles incremental indexing with caching', async () => {
+    const retriever = createInMemoryRetriever({ embedding });
+
+    await retriever.index([
+      { id: 'c1', documentId: 'd1', content: 'first', index: 0, embedding: [1, 0, 0, 0] },
+    ]);
+
+    await retriever.index([
+      { id: 'c2', documentId: 'd1', content: 'second', index: 1, embedding: [0, 1, 0, 0] },
+    ]);
+
+    const results = await retriever.retrieve('test', { limit: 10 });
+    expect(results).toHaveLength(2);
+
+    const ids = results.map((r) => r.chunk.id);
+    expect(ids).toContain('c1');
+    expect(ids).toContain('c2');
+  });
+});
+
+// ===========================================================================
 // Pipeline (integration)
 // ===========================================================================
 
@@ -660,9 +772,15 @@ describe('createRAGPipeline', () => {
     expect(results).toEqual([]);
   });
 
-  it('supports multiple ingest calls', async () => {
+  it('supports multiple ingest calls with different content', async () => {
+    let callCount = 0;
     const pipeline = createRAGPipeline({
-      loader: createTextLoader(['first doc']),
+      loader: {
+        async load() {
+          callCount++;
+          return [{ id: `doc-${callCount}`, content: `doc content ${callCount}` }];
+        },
+      },
       chunking: createFixedSizeChunking({ chunkSize: 100 }),
       embedding,
       retriever: createInMemoryRetriever({ embedding }),
@@ -675,6 +793,26 @@ describe('createRAGPipeline', () => {
     expect(second.documents).toBe(1);
     // getChunks should accumulate
     expect(pipeline.getChunks()).toHaveLength(2);
+  });
+
+  it('deduplicates identical content across multiple ingest calls', async () => {
+    const pipeline = createRAGPipeline({
+      loader: createTextLoader(['first doc']),
+      chunking: createFixedSizeChunking({ chunkSize: 100 }),
+      embedding,
+      retriever: createInMemoryRetriever({ embedding }),
+    });
+
+    const first = await pipeline.ingest();
+    const second = await pipeline.ingest();
+
+    expect(first.documents).toBe(1);
+    expect(first.chunks).toBe(1);
+    expect(second.documents).toBe(1);
+    // Second ingest returns 0 chunks because content is duplicate
+    expect(second.chunks).toBe(0);
+    // Only 1 chunk stored due to deduplication
+    expect(pipeline.getChunks()).toHaveLength(1);
   });
 
   it('query passes options through to retriever', async () => {
@@ -879,5 +1017,202 @@ describe('createRAGPipeline', () => {
     pipeline.clear();
     await pipeline.ingest();
     expect(pipeline.getChunks()).toHaveLength(1);
+  });
+
+  // ==========================================================================
+  // Fix 3: Deduplication
+  // ==========================================================================
+
+  describe('deduplication', () => {
+    it('skips duplicate chunks within a single ingest call', async () => {
+      const pipeline = createRAGPipeline({
+        embedding,
+        retriever: createInMemoryRetriever({ embedding }),
+      });
+
+      // Two documents with identical content
+      const docs: Document[] = [
+        { id: 'doc-1', content: 'Same content' },
+        { id: 'doc-2', content: 'Same content' },
+      ];
+
+      const chunkCount = await pipeline.ingestDocuments(docs);
+      // Only 1 unique chunk should be added
+      expect(chunkCount).toBe(1);
+      expect(pipeline.getChunks()).toHaveLength(1);
+    });
+
+    it('skips duplicate chunks across multiple ingest calls', async () => {
+      const pipeline = createRAGPipeline({
+        embedding,
+        retriever: createInMemoryRetriever({ embedding }),
+      });
+
+      await pipeline.ingestDocuments([{ id: 'doc-1', content: 'hello world' }]);
+      const secondCount = await pipeline.ingestDocuments([{ id: 'doc-2', content: 'hello world' }]);
+
+      expect(secondCount).toBe(0);
+      expect(pipeline.getChunks()).toHaveLength(1);
+    });
+
+    it('emits onWarning callback for duplicate chunks', async () => {
+      const warnings: { message: string; type: string }[] = [];
+      const pipeline = createRAGPipeline({
+        embedding,
+        retriever: createInMemoryRetriever({ embedding }),
+        onWarning: (w) => warnings.push(w),
+      });
+
+      await pipeline.ingestDocuments([{ id: 'doc-1', content: 'duplicate' }]);
+      await pipeline.ingestDocuments([{ id: 'doc-2', content: 'duplicate' }]);
+
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0].type).toBe('duplicate');
+      expect(warnings[0].message).toContain('Duplicate chunk skipped');
+    });
+
+    it('allows same content after clear()', async () => {
+      const pipeline = createRAGPipeline({
+        embedding,
+        retriever: createInMemoryRetriever({ embedding }),
+      });
+
+      await pipeline.ingestDocuments([{ id: 'doc-1', content: 'repeated' }]);
+      expect(pipeline.getChunks()).toHaveLength(1);
+
+      pipeline.clear();
+
+      const count = await pipeline.ingestDocuments([{ id: 'doc-2', content: 'repeated' }]);
+      expect(count).toBe(1);
+      expect(pipeline.getChunks()).toHaveLength(1);
+    });
+
+    it('does not deduplicate chunks with different content', async () => {
+      const pipeline = createRAGPipeline({
+        embedding,
+        retriever: createInMemoryRetriever({ embedding }),
+      });
+
+      await pipeline.ingestDocuments([
+        { id: 'doc-1', content: 'unique one' },
+        { id: 'doc-2', content: 'unique two' },
+      ]);
+
+      expect(pipeline.getChunks()).toHaveLength(2);
+    });
+  });
+
+  // ==========================================================================
+  // Fix 3: Capacity (maxChunks)
+  // ==========================================================================
+
+  describe('maxChunks capacity', () => {
+    it('limits total chunks to maxChunks', async () => {
+      const pipeline = createRAGPipeline({
+        embedding,
+        retriever: createInMemoryRetriever({ embedding }),
+        maxChunks: 2,
+      });
+
+      const count = await pipeline.ingestDocuments([
+        { id: 'doc-1', content: 'alpha' },
+        { id: 'doc-2', content: 'beta' },
+        { id: 'doc-3', content: 'gamma' },
+      ]);
+
+      expect(count).toBe(2);
+      expect(pipeline.getChunks()).toHaveLength(2);
+      expect(pipeline.getChunks()[0].content).toBe('alpha');
+      expect(pipeline.getChunks()[1].content).toBe('beta');
+    });
+
+    it('emits capacity warning when maxChunks exceeded', async () => {
+      const warnings: { message: string; type: string }[] = [];
+      const pipeline = createRAGPipeline({
+        embedding,
+        retriever: createInMemoryRetriever({ embedding }),
+        maxChunks: 1,
+        onWarning: (w) => warnings.push(w),
+      });
+
+      await pipeline.ingestDocuments([
+        { id: 'doc-1', content: 'first' },
+        { id: 'doc-2', content: 'second' },
+      ]);
+
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0].type).toBe('capacity');
+      expect(warnings[0].message).toContain('maxChunks');
+    });
+
+    it('returns 0 when capacity is already full', async () => {
+      const warnings: { message: string; type: string }[] = [];
+      const pipeline = createRAGPipeline({
+        embedding,
+        retriever: createInMemoryRetriever({ embedding }),
+        maxChunks: 1,
+        onWarning: (w) => warnings.push(w),
+      });
+
+      await pipeline.ingestDocuments([{ id: 'doc-1', content: 'first' }]);
+      const count = await pipeline.ingestDocuments([{ id: 'doc-2', content: 'second' }]);
+
+      expect(count).toBe(0);
+      expect(pipeline.getChunks()).toHaveLength(1);
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0].type).toBe('capacity');
+      expect(warnings[0].message).toContain('capacity reached');
+    });
+
+    it('maxChunks works across multiple ingest calls', async () => {
+      const pipeline = createRAGPipeline({
+        embedding,
+        retriever: createInMemoryRetriever({ embedding }),
+        maxChunks: 3,
+      });
+
+      await pipeline.ingestDocuments([
+        { id: 'doc-1', content: 'one' },
+        { id: 'doc-2', content: 'two' },
+      ]);
+      const count = await pipeline.ingestDocuments([
+        { id: 'doc-3', content: 'three' },
+        { id: 'doc-4', content: 'four' },
+      ]);
+
+      expect(count).toBe(1); // Only room for 1 more
+      expect(pipeline.getChunks()).toHaveLength(3);
+    });
+
+    it('clear() resets capacity allowing new chunks', async () => {
+      const pipeline = createRAGPipeline({
+        embedding,
+        retriever: createInMemoryRetriever({ embedding }),
+        maxChunks: 1,
+      });
+
+      await pipeline.ingestDocuments([{ id: 'doc-1', content: 'first' }]);
+      pipeline.clear();
+      const count = await pipeline.ingestDocuments([{ id: 'doc-2', content: 'second' }]);
+
+      expect(count).toBe(1);
+      expect(pipeline.getChunks()).toHaveLength(1);
+    });
+
+    it('pipeline works normally without maxChunks (no limit)', async () => {
+      const pipeline = createRAGPipeline({
+        embedding,
+        retriever: createInMemoryRetriever({ embedding }),
+      });
+
+      // Should accept many chunks without issue
+      const docs: Document[] = [];
+      for (let i = 0; i < 50; i++) {
+        docs.push({ id: `doc-${i}`, content: `content ${i}` });
+      }
+      const count = await pipeline.ingestDocuments(docs);
+      expect(count).toBe(50);
+      expect(pipeline.getChunks()).toHaveLength(50);
+    });
   });
 });

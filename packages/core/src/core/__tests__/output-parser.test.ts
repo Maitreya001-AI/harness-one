@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { createJsonOutputParser, parseWithRetry } from '../output-parser.js';
 import type { OutputParser } from '../output-parser.js';
 import type { JsonSchema } from '../types.js';
+import { HarnessError } from '../errors.js';
 
 describe('createJsonOutputParser', () => {
   describe('parse', () => {
@@ -38,9 +39,16 @@ describe('createJsonOutputParser', () => {
       expect(() => parser.parse('not json at all')).toThrow();
     });
 
-    it('throws on empty string', () => {
+    it('throws HarnessError on empty string with descriptive message', () => {
       const parser = createJsonOutputParser();
-      expect(() => parser.parse('')).toThrow();
+      expect(() => parser.parse('')).toThrow(HarnessError);
+      expect(() => parser.parse('')).toThrow('Cannot parse empty string as JSON');
+    });
+
+    it('throws HarnessError on whitespace-only string', () => {
+      const parser = createJsonOutputParser();
+      expect(() => parser.parse('   \n\t  ')).toThrow(HarnessError);
+      expect(() => parser.parse('   \n\t  ')).toThrow('Cannot parse empty string as JSON');
     });
 
     it('parses nested objects', () => {
@@ -53,6 +61,34 @@ describe('createJsonOutputParser', () => {
       const parser = createJsonOutputParser();
       const input = '```json\n{"first":true}\n```\nsome text\n```json\n{"second":true}\n```';
       expect(parser.parse(input)).toEqual({ first: true });
+    });
+
+    it('throws HarnessError on unclosed code block', () => {
+      const parser = createJsonOutputParser();
+      const input = '```json\n{"incomplete": true';
+      expect(() => parser.parse(input)).toThrow(HarnessError);
+      expect(() => parser.parse(input)).toThrow('Unclosed markdown code block');
+    });
+
+    it('throws HarnessError on empty code block', () => {
+      const parser = createJsonOutputParser();
+      const input = '```json\n```';
+      expect(() => parser.parse(input)).toThrow(HarnessError);
+      expect(() => parser.parse(input)).toThrow('Empty code block contains no JSON');
+    });
+
+    it('throws HarnessError on code block with only whitespace', () => {
+      const parser = createJsonOutputParser();
+      const input = '```json\n   \n```';
+      expect(() => parser.parse(input)).toThrow(HarnessError);
+      expect(() => parser.parse(input)).toThrow('Empty code block contains no JSON');
+    });
+
+    it('throws HarnessError on empty code block without json tag', () => {
+      const parser = createJsonOutputParser();
+      const input = '```\n```';
+      expect(() => parser.parse(input)).toThrow(HarnessError);
+      expect(() => parser.parse(input)).toThrow('Empty code block contains no JSON');
     });
   });
 

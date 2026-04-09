@@ -31,8 +31,8 @@ export interface CostTracker {
   setBudget(budget: number): void;
   /** Check if budget thresholds have been crossed. */
   checkBudget(): CostAlert | null;
-  /** Register an alert handler. */
-  onAlert(handler: (alert: CostAlert) => void): void;
+  /** Register an alert handler. Returns a cleanup function to unsubscribe. */
+  onAlert(handler: (alert: CostAlert) => void): () => void;
   /** Reset all usage records. */
   reset(): void;
   /** Get a prompt-injectable alert message based on budget usage, or null if under threshold. */
@@ -179,6 +179,13 @@ export function createCostTracker(config?: {
     },
 
     getTotalCost(): number {
+      // Trigger recalibration if enough records have accumulated since last
+      // recalibration, ensuring budget checks always use accurate totals
+      // even when getTotalCost() is called without intervening recordUsage().
+      if (recordsSinceRecalibrate >= RECALIBRATE_INTERVAL) {
+        runningTotal = records.reduce((sum, r) => sum + r.estimatedCost, 0);
+        recordsSinceRecalibrate = 0;
+      }
       return runningTotal;
     },
 
@@ -207,8 +214,12 @@ export function createCostTracker(config?: {
 
     checkBudget: checkBudgetFn,
 
-    onAlert(handler: (alert: CostAlert) => void): void {
+    onAlert(handler: (alert: CostAlert) => void): () => void {
       alertHandlers.push(handler);
+      return () => {
+        const idx = alertHandlers.indexOf(handler);
+        if (idx >= 0) alertHandlers.splice(idx, 1);
+      };
     },
 
     reset(): void {

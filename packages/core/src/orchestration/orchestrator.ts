@@ -54,6 +54,10 @@ export interface OrchestratorConfig {
   readonly strategy?: DelegationStrategy;
   readonly maxAgents?: number;
   readonly maxQueueSize?: number;
+  /** Called when messages are dropped due to queue overflow. */
+  readonly onWarning?: (warning: { message: string; droppedCount: number; queueSize: number }) => void;
+  /** Called when an event handler throws an exception. If not provided, falls back to console.warn. */
+  readonly onHandlerError?: (error: unknown, event: OrchestratorEvent) => void;
 }
 
 /**
@@ -89,8 +93,12 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
     for (const handler of eventHandlers) {
       try {
         handler(event);
-      } catch {
-        // Prevent misbehaving handler from breaking event delivery
+      } catch (err: unknown) {
+        if (config?.onHandlerError) {
+          config.onHandlerError(err, event);
+        } else {
+          console.warn('Orchestrator event handler threw an error:', err);
+        }
       }
     }
   }
@@ -123,7 +131,16 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
       queue.push(message);
       const maxQueueSize = config?.maxQueueSize ?? 1000;
       if (queue.length > maxQueueSize) {
-        queue.splice(0, queue.length - maxQueueSize);
+        const droppedCount = queue.length - maxQueueSize;
+        queue.splice(0, droppedCount);
+        const warning = {
+          message: `Dropped ${droppedCount} message(s) from queue for agent "${agentId}" (maxQueueSize: ${maxQueueSize})`,
+          droppedCount,
+          queueSize: maxQueueSize,
+        };
+        if (config?.onWarning) {
+          config.onWarning(warning);
+        }
       }
     }
   }

@@ -60,6 +60,10 @@ export interface RAGPipelineConfig {
   readonly chunking?: ChunkingStrategy;
   readonly embedding: EmbeddingModel;
   readonly retriever: Retriever;
+  /** Maximum number of chunks the pipeline will store. When exceeded, new chunks are not added and a warning is emitted. */
+  readonly maxChunks?: number;
+  /** Called when the pipeline encounters a non-fatal issue (e.g., duplicate chunks, capacity exceeded). */
+  readonly onWarning?: (warning: { message: string; type: 'duplicate' | 'capacity' }) => void;
 }
 
 /** A fully-wired RAG pipeline. */

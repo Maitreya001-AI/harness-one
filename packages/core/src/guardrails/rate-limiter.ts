@@ -48,13 +48,15 @@ export function createRateLimiter(config: {
       buckets.set(key, timestamps);
     }
 
-    // Remove expired timestamps
-    let expiredCount = 0;
-    while (expiredCount < timestamps.length && timestamps[expiredCount] <= windowStart) {
-      expiredCount++;
+    // Remove expired timestamps using binary search (O(log N) + single splice)
+    let lo = 0, hi = timestamps.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (timestamps[mid] <= windowStart) lo = mid + 1;
+      else hi = mid;
     }
-    if (expiredCount > 0) {
-      timestamps.splice(0, expiredCount);
+    if (lo > 0) {
+      timestamps.splice(0, lo);
     }
 
     touchKey(key);

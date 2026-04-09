@@ -33,6 +33,11 @@ export interface TasteCodingRegistry {
   getMetrics(): TasteMetrics;
 }
 
+/** Escape special regex characters in a string for safe use in `new RegExp()`. */
+function escapeRegExp(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 /**
  * Create a taste-coding registry for managing incident-derived coding rules.
  *
@@ -108,7 +113,8 @@ export function createTasteCodingRegistry(): TasteCodingRegistry {
       const violations: TasteViolation[] = [];
       for (const rule of rules.values()) {
         if (rule.enforcement !== 'lint' && rule.enforcement !== 'ci') continue;
-        if (code.includes(rule.pattern)) {
+        const regex = new RegExp(`\\b${escapeRegExp(rule.pattern)}\\b`);
+        if (regex.test(code)) {
           violations.push({
             ruleId: rule.id,
             rule: rule.rule,

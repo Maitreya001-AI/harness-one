@@ -68,24 +68,26 @@ async function runGuardrails(
   ctx: GuardrailContext,
 ): Promise<PipelineResult> {
   const results: GuardrailEvent[] = [];
-  let currentCtx = { ...ctx };
+  let currentCtx = { ...ctx, meta: ctx.meta ? { ...ctx.meta } : undefined };
   let lastModifyVerdict: GuardrailEvent['verdict'] | undefined;
   let hasModified = false;
 
   for (const entry of guards) {
     const start = performance.now();
     let verdict: GuardrailEvent['verdict'];
+    // Deep clone meta for each guard to prevent cross-guard mutation
+    const guardCtx = { ...currentCtx, meta: currentCtx.meta ? { ...currentCtx.meta } : undefined };
 
     try {
       if (entry.timeoutMs !== undefined) {
         verdict = await Promise.race([
-          Promise.resolve(entry.guard(currentCtx)),
+          Promise.resolve(entry.guard(guardCtx)),
           new Promise<never>((_, reject) =>
             setTimeout(() => reject(new Error(`Guardrail "${entry.name}" timed out after ${entry.timeoutMs}ms`)), entry.timeoutMs),
           ),
         ]);
       } else {
-        verdict = await entry.guard(currentCtx);
+        verdict = await entry.guard(guardCtx);
       }
     } catch (err) {
       if (pipeline.failClosed) {
@@ -131,7 +133,7 @@ async function runGuardrails(
       hasModified = true;
       lastModifyVerdict = verdict;
       if (verdict.modified !== undefined) {
-        currentCtx = { ...currentCtx, content: verdict.modified };
+        currentCtx = { ...currentCtx, content: verdict.modified, meta: currentCtx.meta ? { ...currentCtx.meta } : undefined };
       }
       // Continue to next guardrail instead of short-circuiting
     }

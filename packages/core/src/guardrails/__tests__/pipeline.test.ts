@@ -462,3 +462,120 @@ describe('Gap 2: permissionLevel in GuardrailContext', () => {
     }
   });
 });
+
+// =============================================================================
+// Fix 7: Pipeline shallow copy fix - deep clone meta
+// =============================================================================
+
+describe('Fix 7: Pipeline deep clones meta on modify', () => {
+  it('does not allow guardrail to mutate shared meta between pipeline stages', async () => {
+    const originalMeta = { toolName: 'readFile', sensitive: true };
+    const mutatingGuard: Guardrail = (ctx) => {
+      // Attempt to mutate meta
+      if (ctx.meta) {
+        (ctx.meta as Record<string, unknown>).injected = 'malicious';
+      }
+      return { action: 'modify', modified: ctx.content + ' [cleaned]', reason: 'cleaned' };
+    };
+    const inspectingGuard: Guardrail = (ctx) => {
+      // The inspecting guardrail should NOT see the mutation from the previous guardrail
+      expect(ctx.meta).toBeDefined();
+      expect((ctx.meta as Record<string, unknown>).injected).toBeUndefined();
+      return { action: 'allow' };
+    };
+
+    const pipeline = createPipeline({
+      input: [
+        { name: 'mutator', guard: mutatingGuard },
+        { name: 'inspector', guard: inspectingGuard },
+      ],
+    });
+
+    const result = await runInput(pipeline, { content: 'hello', meta: originalMeta });
+    expect(result.passed).toBe(true);
+    // Original meta should not be mutated
+    expect((originalMeta as Record<string, unknown>).injected).toBeUndefined();
+  });
+
+  it('preserves meta values through modify verdicts', async () => {
+    const modGuard: Guardrail = (ctx) => {
+      return { action: 'modify', modified: 'changed', reason: 'modified' };
+    };
+    const checkGuard: Guardrail = (ctx) => {
+      expect(ctx.meta).toEqual({ userId: '123', role: 'admin' });
+      return { action: 'allow' };
+    };
+
+    const pipeline = createPipeline({
+      input: [
+        { name: 'mod', guard: modGuard },
+        { name: 'check', guard: checkGuard },
+      ],
+    });
+
+    const result = await runInput(pipeline, {
+      content: 'original',
+      meta: { userId: '123', role: 'admin' },
+    });
+    expect(result.passed).toBe(true);
+    expect(result.modifiedContent).toBe('changed');
+  });
+
+  it('handles undefined meta gracefully during modify', async () => {
+    const modGuard: Guardrail = () => {
+      return { action: 'modify', modified: 'changed', reason: 'modified' };
+    };
+    const checkGuard: Guardrail = (ctx) => {
+      // meta should remain undefined, not become {}
+      expect(ctx.meta).toBeUndefined();
+      return { action: 'allow' };
+    };
+
+    const pipeline = createPipeline({
+      input: [
+        { name: 'mod', guard: modGuard },
+        { name: 'check', guard: checkGuard },
+      ],
+    });
+
+    // No meta provided
+    const result = await runInput(pipeline, { content: 'hello' });
+    expect(result.passed).toBe(true);
+  });
+
+  it('each modify creates independent meta copies', async () => {
+    const metas: Record<string, unknown>[] = [];
+    const modGuard1: Guardrail = (ctx) => {
+      if (ctx.meta) metas.push(ctx.meta);
+      return { action: 'modify', modified: 'v1', reason: 'mod1' };
+    };
+    const modGuard2: Guardrail = (ctx) => {
+      if (ctx.meta) {
+        metas.push(ctx.meta);
+        // Mutate meta - should not affect guard1's captured meta
+        (ctx.meta as Record<string, unknown>).guard2Added = true;
+      }
+      return { action: 'modify', modified: 'v2', reason: 'mod2' };
+    };
+    const finalGuard: Guardrail = (ctx) => {
+      if (ctx.meta) metas.push(ctx.meta);
+      return { action: 'allow' };
+    };
+
+    const pipeline = createPipeline({
+      input: [
+        { name: 'mod1', guard: modGuard1 },
+        { name: 'mod2', guard: modGuard2 },
+        { name: 'final', guard: finalGuard },
+      ],
+    });
+
+    await runInput(pipeline, { content: 'start', meta: { original: true } });
+    // guard2's mutation should not leak to guard3's meta
+    expect(metas.length).toBe(3);
+    // guard1 sees original meta
+    expect(metas[0]).toEqual({ original: true });
+    // guard3 sees a fresh copy that doesn't have guard2's mutation
+    expect((metas[2] as Record<string, unknown>).guard2Added).toBeUndefined();
+  });
+});

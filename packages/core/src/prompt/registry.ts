@@ -7,6 +7,22 @@
 import { HarnessError } from '../core/errors.js';
 import type { PromptTemplate, PromptBackend } from './types.js';
 
+/**
+ * Compare two semantic version strings (e.g. "1.10.2" vs "1.2.3").
+ * Returns a positive number if a > b, negative if a < b, or 0 if equal.
+ */
+function compareSemver(a: string, b: string): number {
+  const pa = a.split('.').map(Number);
+  const pb = b.split('.').map(Number);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const na = pa[i] ?? 0;
+    const nb = pb[i] ?? 0;
+    if (na !== nb) return na - nb;
+  }
+  return 0;
+}
+
 /** Registry for storing and resolving versioned prompt templates. */
 export interface PromptRegistry {
   /** Register a prompt template (immutable after registration). */
@@ -61,7 +77,7 @@ export function createPromptRegistry(): PromptRegistry {
       versions.set(template.version, frozen);
 
       const existing = latestVersions.get(template.id);
-      if (!existing || template.version > existing) {
+      if (!existing || compareSemver(template.version, existing) > 0) {
         latestVersions.set(template.id, template.version);
       }
     },
@@ -149,7 +165,7 @@ export function createPromptRegistry(): PromptRegistry {
           if (currentLatest && !versions.has(currentLatest)) {
             let newLatest: string | undefined;
             for (const ver of versions.keys()) {
-              if (!newLatest || ver > newLatest) {
+              if (!newLatest || compareSemver(ver, newLatest) > 0) {
                 newLatest = ver;
               }
             }

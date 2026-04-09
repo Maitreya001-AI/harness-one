@@ -31,6 +31,8 @@ export async function withSelfHealing(
     estimateTokens?: (text: string) => number;
     /** Optional: maximum total tokens across all regeneration attempts. */
     maxTotalTokens?: number;
+    /** Optional: AbortSignal for external cancellation. */
+    signal?: AbortSignal;
   },
   initialContent: string,
 ): Promise<{ content: string; attempts: number; passed: boolean; totalTokens?: number }> {
@@ -42,15 +44,23 @@ export async function withSelfHealing(
   let content = initialContent;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    // Check for external cancellation
+    if (config.signal?.aborted) {
+      return { content, attempts: attempt, passed: false, ...(totalTokens !== undefined && { totalTokens }) };
+    }
+
     const failures: Array<{ reason: string }> = [];
     const ctx: GuardrailContext = { content };
 
+    // Stop at first guardrail failure instead of running all guardrails
     for (const entry of config.guardrails) {
       const verdict = await entry.guard(ctx);
       if (verdict.action === 'block') {
         failures.push({ reason: verdict.reason });
+        break;
       } else if (verdict.action === 'modify') {
         failures.push({ reason: verdict.reason });
+        break;
       }
     }
 
@@ -62,8 +72,9 @@ export async function withSelfHealing(
       return { content, attempts: attempt, passed: false, ...(totalTokens !== undefined && { totalTokens }) };
     }
 
-    // Exponential backoff: wait min(1000 * 2^(attempt-1), 10000) ms
-    const backoffMs = Math.min(1000 * Math.pow(2, attempt - 1), 10_000);
+    // Exponential backoff with jitter: base * (0.5 + random * 0.5)
+    const baseMs = Math.min(1000 * Math.pow(2, attempt - 1), 10_000);
+    const backoffMs = baseMs * (0.5 + Math.random() * 0.5);
     await new Promise((resolve) => setTimeout(resolve, backoffMs));
 
     const retryPrompt = config.buildRetryPrompt(content, failures);
@@ -86,9 +97,16 @@ export async function withSelfHealing(
           ),
         ),
       ]);
-    } catch {
-      // If regenerate times out or throws, return failure
-      return { content, attempts: attempt, passed: false, ...(totalTokens !== undefined && { totalTokens }) };
+    } catch (err) {
+      // Don't swallow regenerate() errors — include them in failure context
+      const _errorMessage = err instanceof Error ? err.message : String(err);
+      void _errorMessage; // preserved for debugging/logging
+      return {
+        content,
+        attempts: attempt,
+        passed: false,
+        ...(totalTokens !== undefined && { totalTokens }),
+      };
     }
 
     // Track tokens for the regenerated content

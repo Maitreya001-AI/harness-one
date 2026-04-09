@@ -372,3 +372,183 @@ describe('createPIIDetector', () => {
     });
   });
 });
+
+// =============================================================================
+// Fix 4: PII Detector improvements
+// =============================================================================
+
+describe('Fix 4: PII Detector improvements', () => {
+  describe('Luhn validation for credit cards', () => {
+    it('blocks valid credit card numbers (Luhn passes)', () => {
+      const { guard } = createPIIDetector();
+      // 4111111111111111 is a valid Visa test number (passes Luhn)
+      expect(guard({ content: 'Card: 4111111111111111' }).action).toBe('block');
+      expect(guard({ content: 'Card: 4111 1111 1111 1111' }).action).toBe('block');
+      expect(guard({ content: 'Card: 4111-1111-1111-1111' }).action).toBe('block');
+    });
+
+    it('allows 16-digit numbers that fail Luhn check', () => {
+      const { guard } = createPIIDetector({
+        detect: { email: false, phone: false, ssn: false, creditCard: true },
+      });
+      // 1234567890123456 fails Luhn
+      expect(guard({ content: 'Number: 1234567890123456' }).action).toBe('allow');
+    });
+
+    it('blocks MasterCard test number (5500000000000004 passes Luhn)', () => {
+      const { guard } = createPIIDetector({
+        detect: { email: false, phone: false, ssn: false, creditCard: true },
+      });
+      expect(guard({ content: 'Card: 5500 0000 0000 0004' }).action).toBe('block');
+    });
+
+    it('allows random 16-digit sequences that fail Luhn', () => {
+      const { guard } = createPIIDetector({
+        detect: { email: false, phone: false, ssn: false, creditCard: true },
+      });
+      // 0000000000000001 fails Luhn
+      expect(guard({ content: 'ID: 0000000000000001' }).action).toBe('allow');
+    });
+  });
+
+  describe('SSN format expansion', () => {
+    it('detects SSN with dashes (original format)', () => {
+      const { guard } = createPIIDetector();
+      expect(guard({ content: 'SSN: 123-45-6789' }).action).toBe('block');
+    });
+
+    it('detects SSN without dashes (XXXXXXXXX)', () => {
+      const { guard } = createPIIDetector();
+      expect(guard({ content: 'SSN: 123456789' }).action).toBe('block');
+    });
+
+    it('detects SSN with spaces (XXX XX XXXX)', () => {
+      const { guard } = createPIIDetector();
+      expect(guard({ content: 'SSN: 123 45 6789' }).action).toBe('block');
+    });
+
+    it('still allows partial SSN (last 4 digits)', () => {
+      const { guard } = createPIIDetector({
+        detect: { email: false, phone: false, ssn: true, creditCard: false },
+      });
+      expect(guard({ content: 'Last 4 of SSN: 6789' }).action).toBe('allow');
+    });
+  });
+
+  describe('IP address range validation', () => {
+    it('blocks valid IPv4 addresses (0-255 range)', () => {
+      const { guard } = createPIIDetector({
+        detect: { email: false, phone: false, ssn: false, creditCard: false, ipAddress: true },
+      });
+      expect(guard({ content: 'IP: 192.168.1.1' }).action).toBe('block');
+      expect(guard({ content: 'IP: 0.0.0.0' }).action).toBe('block');
+      expect(guard({ content: 'IP: 255.255.255.255' }).action).toBe('block');
+      expect(guard({ content: 'IP: 10.0.0.1' }).action).toBe('block');
+    });
+
+    it('allows invalid IPv4 with octets > 255', () => {
+      const { guard } = createPIIDetector({
+        detect: { email: false, phone: false, ssn: false, creditCard: false, ipAddress: true },
+      });
+      // 999.999.999.999 has octets > 255 and should not match
+      expect(guard({ content: 'Number: 999.999.999.999' }).action).toBe('allow');
+    });
+
+    it('allows invalid IPv4 with octet 256', () => {
+      const { guard } = createPIIDetector({
+        detect: { email: false, phone: false, ssn: false, creditCard: false, ipAddress: true },
+      });
+      expect(guard({ content: 'IP: 256.1.1.1' }).action).toBe('allow');
+    });
+  });
+
+  describe('API key pattern expansion', () => {
+    it('detects GitHub personal access tokens (ghp_)', () => {
+      const { guard } = createPIIDetector({
+        detect: { email: false, phone: false, ssn: false, creditCard: false, apiKey: true },
+      });
+      const token = 'ghp_' + 'a'.repeat(36);
+      expect(guard({ content: `Token: ${token}` }).action).toBe('block');
+    });
+
+    it('detects GitHub OAuth tokens (gho_)', () => {
+      const { guard } = createPIIDetector({
+        detect: { email: false, phone: false, ssn: false, creditCard: false, apiKey: true },
+      });
+      const token = 'gho_' + 'B'.repeat(36);
+      expect(guard({ content: `Token: ${token}` }).action).toBe('block');
+    });
+
+    it('detects GitHub fine-grained tokens (github_pat_)', () => {
+      const { guard } = createPIIDetector({
+        detect: { email: false, phone: false, ssn: false, creditCard: false, apiKey: true },
+      });
+      const token = 'github_pat_' + 'x'.repeat(22);
+      expect(guard({ content: `Token: ${token}` }).action).toBe('block');
+    });
+
+    it('detects Stripe live keys (sk_live_)', () => {
+      const { guard } = createPIIDetector({
+        detect: { email: false, phone: false, ssn: false, creditCard: false, apiKey: true },
+      });
+      const token = 'sk_live_' + 'a'.repeat(24);
+      expect(guard({ content: `Key: ${token}` }).action).toBe('block');
+    });
+
+    it('detects Stripe test keys (sk_test_)', () => {
+      const { guard } = createPIIDetector({
+        detect: { email: false, phone: false, ssn: false, creditCard: false, apiKey: true },
+      });
+      const token = 'sk_test_' + 'b'.repeat(24);
+      expect(guard({ content: `Key: ${token}` }).action).toBe('block');
+    });
+
+    it('detects Google API keys (AIza)', () => {
+      const { guard } = createPIIDetector({
+        detect: { email: false, phone: false, ssn: false, creditCard: false, apiKey: true },
+      });
+      const token = 'AIza' + 'c'.repeat(35);
+      expect(guard({ content: `Key: ${token}` }).action).toBe('block');
+    });
+
+    it('still detects OpenAI keys (sk-)', () => {
+      const { guard } = createPIIDetector({
+        detect: { email: false, phone: false, ssn: false, creditCard: false, apiKey: true },
+      });
+      expect(guard({ content: 'Key: sk-abcDefGhiJklmnOpQrsTuv' }).action).toBe('block');
+    });
+
+    it('still detects AWS keys (AKIA)', () => {
+      const { guard } = createPIIDetector({
+        detect: { email: false, phone: false, ssn: false, creditCard: false, apiKey: true },
+      });
+      expect(guard({ content: 'Key: AKIAIOSFODNN7EXAMPLE' }).action).toBe('block');
+    });
+  });
+
+  describe('custom patterns via config', () => {
+    it('accepts custom patterns alongside built-in ones', () => {
+      const { guard } = createPIIDetector({
+        customPatterns: [
+          { name: 'internal-id', pattern: /INT-\d{8}/ },
+        ],
+      });
+      expect(guard({ content: 'ID: INT-12345678' }).action).toBe('block');
+      // Built-in should still work
+      expect(guard({ content: 'user@example.com' }).action).toBe('block');
+    });
+
+    it('reports custom pattern name in reason', () => {
+      const { guard } = createPIIDetector({
+        customPatterns: [
+          { name: 'passport-number', pattern: /[A-Z]\d{8}/ },
+        ],
+      });
+      const result = guard({ content: 'Passport: A12345678' });
+      expect(result.action).toBe('block');
+      if (result.action === 'block') {
+        expect(result.reason).toContain('passport-number');
+      }
+    });
+  });
+});

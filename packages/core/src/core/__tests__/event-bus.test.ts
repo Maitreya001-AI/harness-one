@@ -192,6 +192,89 @@ describe('createEventBus', () => {
     });
   });
 
+  describe('onHandlerError callback', () => {
+    it('forwards handler errors to onHandlerError callback', () => {
+      const errorHandler = vi.fn();
+      const bus = createEventBus({ onHandlerError: errorHandler });
+      const badHandler = () => { throw new Error('handler boom'); };
+
+      bus.on('test', badHandler);
+      bus.emit('test', 'data');
+
+      expect(errorHandler).toHaveBeenCalledTimes(1);
+      expect(errorHandler).toHaveBeenCalledWith('test', expect.any(Error));
+      expect(errorHandler.mock.calls[0][1].message).toBe('handler boom');
+    });
+
+    it('normalizes non-Error throws to Error instances', () => {
+      const errorHandler = vi.fn();
+      const bus = createEventBus({ onHandlerError: errorHandler });
+      const badHandler = () => { throw 'string error'; };
+
+      bus.on('test', badHandler);
+      bus.emit('test', 'data');
+
+      expect(errorHandler).toHaveBeenCalledTimes(1);
+      expect(errorHandler.mock.calls[0][1]).toBeInstanceOf(Error);
+      expect(errorHandler.mock.calls[0][1].message).toBe('string error');
+    });
+
+    it('still delivers events to remaining handlers when one fails', () => {
+      const errorHandler = vi.fn();
+      const bus = createEventBus({ onHandlerError: errorHandler });
+      const h1 = vi.fn();
+      const h2 = vi.fn(() => { throw new Error('boom'); });
+      const h3 = vi.fn();
+
+      bus.on('evt', h1);
+      bus.on('evt', h2);
+      bus.on('evt', h3);
+      bus.emit('evt', 'data');
+
+      expect(h1).toHaveBeenCalledWith('data');
+      expect(h2).toHaveBeenCalledWith('data');
+      expect(h3).toHaveBeenCalledWith('data');
+      expect(errorHandler).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports multiple handler errors in a single emit', () => {
+      const errorHandler = vi.fn();
+      const bus = createEventBus({ onHandlerError: errorHandler });
+
+      bus.on('evt', () => { throw new Error('error-1'); });
+      bus.on('evt', () => { throw new Error('error-2'); });
+      bus.emit('evt', 'data');
+
+      expect(errorHandler).toHaveBeenCalledTimes(2);
+      expect(errorHandler.mock.calls[0][1].message).toBe('error-1');
+      expect(errorHandler.mock.calls[1][1].message).toBe('error-2');
+    });
+
+    it('does not call onHandlerError when no handlers throw', () => {
+      const errorHandler = vi.fn();
+      const bus = createEventBus({ onHandlerError: errorHandler });
+      bus.on('evt', vi.fn());
+      bus.emit('evt', 'data');
+
+      expect(errorHandler).not.toHaveBeenCalled();
+    });
+
+    it('does not crash when no onHandlerError is provided (default behavior)', () => {
+      const bus = createEventBus();
+      bus.on('evt', () => { throw new Error('ignored'); });
+      expect(() => bus.emit('evt', 'data')).not.toThrow();
+    });
+
+    it('passes the correct event name to onHandlerError', () => {
+      const errorHandler = vi.fn();
+      const bus = createEventBus({ onHandlerError: errorHandler });
+      bus.on('my-event', () => { throw new Error('boom'); });
+      bus.emit('my-event', 'data');
+
+      expect(errorHandler.mock.calls[0][0]).toBe('my-event');
+    });
+  });
+
   describe('unsubscribe safety after removeAll', () => {
     it('does not throw when unsubscribing after removeAll clears the event', () => {
       const bus = createEventBus();

@@ -316,6 +316,69 @@ describe('createComponentRegistry', () => {
     });
   });
 
+  describe('operator parsing order (longest-first)', () => {
+    it('correctly parses >= without conflicting with >', () => {
+      const registry = createComponentRegistry();
+      registry.register(makeMeta({
+        id: 'ge-test',
+        retirementCondition: 'value >= 100',
+      }));
+      // value=100 should trigger >= 100 (true), but if parsed as > with "=100" leftover, it would fail
+      expect(registry.validate('ge-test', { value: 100 }).valid).toBe(false);
+      expect(registry.validate('ge-test', { value: 99 }).valid).toBe(true);
+    });
+
+    it('correctly parses <= without conflicting with <', () => {
+      const registry = createComponentRegistry();
+      registry.register(makeMeta({
+        id: 'le-test',
+        retirementCondition: 'value <= 50',
+      }));
+      expect(registry.validate('le-test', { value: 50 }).valid).toBe(false);
+      expect(registry.validate('le-test', { value: 51 }).valid).toBe(true);
+    });
+
+    it('correctly parses != without conflicting with other operators', () => {
+      const registry = createComponentRegistry();
+      registry.register(makeMeta({
+        id: 'ne-test',
+        retirementCondition: 'version != 3',
+      }));
+      expect(registry.validate('ne-test', { version: 5 }).valid).toBe(false);
+      expect(registry.validate('ne-test', { version: 3 }).valid).toBe(true);
+    });
+
+    it('correctly parses > as strict greater-than', () => {
+      const registry = createComponentRegistry();
+      registry.register(makeMeta({
+        id: 'gt-test',
+        retirementCondition: 'count > 10',
+      }));
+      expect(registry.validate('gt-test', { count: 10 }).valid).toBe(true); // 10 is not > 10
+      expect(registry.validate('gt-test', { count: 11 }).valid).toBe(false);
+    });
+
+    it('correctly parses < as strict less-than', () => {
+      const registry = createComponentRegistry();
+      registry.register(makeMeta({
+        id: 'lt-test',
+        retirementCondition: 'score < 0.5',
+      }));
+      expect(registry.validate('lt-test', { score: 0.5 }).valid).toBe(true); // 0.5 is not < 0.5
+      expect(registry.validate('lt-test', { score: 0.3 }).valid).toBe(false);
+    });
+
+    it('correctly parses == as equality', () => {
+      const registry = createComponentRegistry();
+      registry.register(makeMeta({
+        id: 'eq-test',
+        retirementCondition: 'version == 5',
+      }));
+      expect(registry.validate('eq-test', { version: 5 }).valid).toBe(false);
+      expect(registry.validate('eq-test', { version: 4 }).valid).toBe(true);
+    });
+  });
+
   describe('list without filter returns all', () => {
     it('returns all components when no filter is provided', () => {
       const registry = createComponentRegistry();

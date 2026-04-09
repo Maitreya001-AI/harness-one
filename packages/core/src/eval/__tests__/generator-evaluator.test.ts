@@ -165,6 +165,76 @@ describe('runGeneratorEvaluator', () => {
     });
   });
 
+  describe('generator output validation', () => {
+    it('returns failed result when generator returns null', async () => {
+      const result = await runGeneratorEvaluator(
+        {
+          generate: async () => null as unknown as string,
+          evaluate: async () => ({ pass: true, feedback: '' }),
+        },
+        'input',
+      );
+      expect(result.passed).toBe(false);
+      expect(result.output).toBe('');
+      expect(result.feedback).toBe('Generator returned empty or null output');
+    });
+
+    it('returns failed result when generator returns undefined', async () => {
+      const result = await runGeneratorEvaluator(
+        {
+          generate: async () => undefined as unknown as string,
+          evaluate: async () => ({ pass: true, feedback: '' }),
+        },
+        'input',
+      );
+      expect(result.passed).toBe(false);
+      expect(result.output).toBe('');
+      expect(result.feedback).toBe('Generator returned empty or null output');
+    });
+
+    it('returns failed result when generator returns empty string', async () => {
+      const result = await runGeneratorEvaluator(
+        {
+          generate: async () => '',
+          evaluate: async () => ({ pass: true, feedback: '' }),
+        },
+        'input',
+      );
+      expect(result.passed).toBe(false);
+      expect(result.output).toBe('');
+      expect(result.feedback).toBe('Generator returned empty or null output');
+    });
+
+    it('returns attempt count when generator returns null on first try', async () => {
+      const result = await runGeneratorEvaluator(
+        {
+          generate: async () => null as unknown as string,
+          evaluate: async () => ({ pass: true, feedback: '' }),
+          maxRetries: 5,
+        },
+        'input',
+      );
+      expect(result.attempts).toBe(1);
+      expect(result.passed).toBe(false);
+    });
+
+    it('does not call evaluate when generator returns empty output', async () => {
+      let evaluateCalled = false;
+      const result = await runGeneratorEvaluator(
+        {
+          generate: async () => '',
+          evaluate: async () => {
+            evaluateCalled = true;
+            return { pass: true, feedback: '' };
+          },
+        },
+        'input',
+      );
+      expect(evaluateCalled).toBe(false);
+      expect(result.passed).toBe(false);
+    });
+  });
+
   // H1: Generator-Evaluator feedback accumulates in prompt
   it('does not accumulate previous feedback across retries', async () => {
     const inputs: string[] = [];

@@ -130,7 +130,10 @@ const OPERATORS = ['>=', '<=', '==', '!=', '>', '<'] as const;
  * Returns false if the condition cannot be parsed or the key is missing from context.
  */
 function evaluateCondition(condition: string, context: Record<string, unknown>): boolean {
-  for (const op of OPERATORS) {
+  // Check operators in order of length (longest first) to avoid
+  // '>=' being matched as '>' with '=' left in the value string.
+  const operators = ['>=', '<=', '!=', '==', '>', '<'] as const;
+  for (const op of operators) {
     const idx = condition.indexOf(op);
     if (idx === -1) continue;
 
