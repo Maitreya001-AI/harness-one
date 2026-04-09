@@ -8,6 +8,7 @@
  */
 
 import type { AgentAdapter, ChatParams, ChatResponse, StreamChunk } from './types.js';
+import { HarnessError } from './errors.js';
 
 /** Configuration for the fallback adapter. */
 export interface FallbackAdapterConfig {
@@ -70,7 +71,15 @@ export function createFallbackAdapter(config: FallbackAdapterConfig): AgentAdapt
 
     async *stream(params: ChatParams): AsyncIterable<StreamChunk> {
       // Streaming doesn't auto-retry -- just use current adapter
-      yield* getAdapter().stream!(params);
+      const adapter = getAdapter();
+      if (!adapter.stream) {
+        throw new HarnessError(
+          'Current adapter does not support streaming',
+          'STREAM_NOT_SUPPORTED',
+          'Use an adapter that implements stream()',
+        );
+      }
+      yield* adapter.stream(params);
     },
   };
 }

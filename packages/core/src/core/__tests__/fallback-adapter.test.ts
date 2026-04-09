@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createFallbackAdapter } from '../fallback-adapter.js';
+import { HarnessError } from '../errors.js';
 import type { AgentAdapter, ChatParams, ChatResponse, StreamChunk } from '../types.js';
 
 const USAGE = { inputTokens: 10, outputTokens: 5 };
@@ -137,6 +138,22 @@ describe('createFallbackAdapter', () => {
         collected.push(chunk);
       }
       expect(collected).toEqual(chunks);
+    });
+
+    it('throws STREAM_NOT_SUPPORTED when adapter has no stream method', async () => {
+      const primary: AgentAdapter = {
+        async chat() {
+          return { message: { role: 'assistant', content: 'hi' }, usage: USAGE };
+        },
+        // No stream method
+      };
+
+      const adapter = createFallbackAdapter({ adapters: [primary] });
+      const gen = adapter.stream!(PARAMS);
+      await expect(gen.next()).rejects.toThrow(HarnessError);
+      await expect(
+        (async () => { for await (const _ of adapter.stream!(PARAMS)) {} })()
+      ).rejects.toThrow('Current adapter does not support streaming');
     });
   });
 

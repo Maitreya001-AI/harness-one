@@ -45,8 +45,8 @@ export function createInMemoryConversationStore(): ConversationStore {
       return messages ? [...messages] : [];
     },
     async append(sessionId, message) {
-      const messages = store.get(sessionId) ?? [];
-      messages.push(message);
+      const existing = store.get(sessionId) ?? [];
+      const messages = [...existing, message];
       store.set(sessionId, messages);
     },
     async delete(sessionId) {

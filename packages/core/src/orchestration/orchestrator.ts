@@ -42,6 +42,8 @@ export interface AgentOrchestrator {
   onEvent(handler: (event: OrchestratorEvent) => void): () => void;
   /** Get children of an agent (hierarchical mode). */
   getChildren(parentId: string): AgentRegistration[];
+  /** Get the orchestration mode. */
+  readonly mode: OrchestrationMode;
 }
 
 /** Configuration for creating an orchestrator. */
@@ -122,6 +124,8 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
   };
 
   const orchestrator: AgentOrchestrator = {
+    mode,
+
     register(id: string, name: string, options?: { parentId?: string; metadata?: Record<string, unknown> }): AgentRegistration {
       if (agents.has(id)) {
         throw new HarnessError(

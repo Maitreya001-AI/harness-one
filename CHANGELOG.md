@@ -8,6 +8,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed — harness-one-full
+
+- `Harness` interface now includes `eventBus`, `logger`, `conversations`, and
+  `middleware` fields, auto-configured by `createHarness()`.
+
 ### Added — Multi-Agent Orchestration (`harness-one/orchestration`)
 
 - New `orchestration` module for managing multiple agents with lifecycle tracking,

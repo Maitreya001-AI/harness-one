@@ -99,4 +99,24 @@ describe('createConfigFromEnv', () => {
     expect(config).toBeDefined();
     expect(typeof config).toBe('object');
   });
+
+  it('ignores invalid HARNESS_PROVIDER values', () => {
+    const config = createConfigFromEnv({ HARNESS_PROVIDER: 'invalid-provider' });
+    expect(config.provider).toBeUndefined();
+  });
+
+  it('ignores empty string for HARNESS_PROVIDER', () => {
+    const config = createConfigFromEnv({ HARNESS_PROVIDER: '' });
+    expect(config.provider).toBeUndefined();
+  });
+
+  it('accepts "anthropic" as valid HARNESS_PROVIDER', () => {
+    const config = createConfigFromEnv({ HARNESS_PROVIDER: 'anthropic' });
+    expect(config.provider).toBe('anthropic');
+  });
+
+  it('accepts "openai" as valid HARNESS_PROVIDER', () => {
+    const config = createConfigFromEnv({ HARNESS_PROVIDER: 'openai' });
+    expect(config.provider).toBe('openai');
+  });
 });

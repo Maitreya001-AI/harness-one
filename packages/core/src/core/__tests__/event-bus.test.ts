@@ -172,4 +172,28 @@ describe('createEventBus', () => {
       expect(handler).toHaveBeenCalledWith({ userId: 'u-1' });
     });
   });
+
+  describe('unsubscribe safety after removeAll', () => {
+    it('does not throw when unsubscribing after removeAll clears the event', () => {
+      const bus = createEventBus();
+      const handler = vi.fn();
+      const unsub = bus.on('test', handler);
+
+      // removeAll deletes the Set from the Map
+      bus.removeAll('test');
+
+      // Unsubscribe should not throw even though the Set no longer exists
+      expect(() => unsub()).not.toThrow();
+    });
+
+    it('does not throw when unsubscribing after removeAll clears all events', () => {
+      const bus = createEventBus();
+      const handler = vi.fn();
+      const unsub = bus.on('test', handler);
+
+      bus.removeAll();
+
+      expect(() => unsub()).not.toThrow();
+    });
+  });
 });

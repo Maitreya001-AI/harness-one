@@ -40,9 +40,10 @@ export function createEventBus(): EventBus {
         set = new Set();
         handlers.set(event, set);
       }
-      set.add(handler as EventHandler);
+      const h = handler as EventHandler;
+      set.add(h);
       return () => {
-        set!.delete(handler as EventHandler);
+        handlers.get(event)?.delete(h);
       };
     },
     emit<T>(event: string, data: T): void {

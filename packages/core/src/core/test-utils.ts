@@ -4,12 +4,12 @@
  * @module
  */
 
-import type { AgentAdapter, ChatParams, ChatResponse, Message, TokenUsage } from './types.js';
+import type { AgentAdapter, AssistantMessage, ChatParams, ChatResponse, Message, TokenUsage } from './types.js';
 
 /** Configuration for the mock adapter. */
 export interface MockAdapterConfig {
   /** Ordered list of responses the mock will return. The last response repeats. */
-  responses: Array<{ content: string; toolCalls?: Message['toolCalls'] }>;
+  responses: Array<{ content: string; toolCalls?: AssistantMessage['toolCalls'] }>;
 }
 
 /**

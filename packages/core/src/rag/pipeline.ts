@@ -5,6 +5,7 @@
  */
 
 import type { DocumentChunk, RAGPipeline, RAGPipelineConfig } from './types.js';
+import { HarnessError } from '../core/errors.js';
 
 /**
  * Create a RAG pipeline that wires together a loader, chunking strategy,
@@ -40,6 +41,14 @@ export function createRAGPipeline(config: RAGPipelineConfig): RAGPipeline {
       const texts = chunks.map((c) => c.content);
       const embeddings = await config.embedding.embed(texts);
 
+      if (embeddings.length !== chunks.length) {
+        throw new HarnessError(
+          `Embedding model returned ${embeddings.length} embeddings for ${chunks.length} chunks`,
+          'RAG_EMBEDDING_MISMATCH',
+          'Ensure the embedding model returns one embedding per input text',
+        );
+      }
+
       // 4. Attach embeddings to chunks
       const embeddedChunks: DocumentChunk[] = chunks.map((chunk, i) => ({
         ...chunk,
@@ -53,12 +62,16 @@ export function createRAGPipeline(config: RAGPipelineConfig): RAGPipeline {
       return { documents: documents.length, chunks: embeddedChunks.length };
     },
 
-    async query(text, options) {
+    async query(text: string, options?: { limit?: number; minScore?: number }) {
       return config.retriever.retrieve(text, options);
     },
 
     getChunks() {
       return [...allChunks];
+    },
+
+    clear() {
+      allChunks.length = 0;
     },
   });
 }

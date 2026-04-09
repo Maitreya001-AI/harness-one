@@ -32,7 +32,8 @@ export function createConfigFromEnv(
 ): Partial<HarnessConfig> {
   const e = env ?? process.env;
 
-  const provider = e['HARNESS_PROVIDER'] as 'anthropic' | 'openai' | undefined;
+  const rawProvider = e['HARNESS_PROVIDER'];
+  const provider = rawProvider === 'anthropic' || rawProvider === 'openai' ? rawProvider : undefined;
   const model = e['HARNESS_MODEL'];
   const maxIterations = e['HARNESS_MAX_ITERATIONS']
     ? parseInt(e['HARNESS_MAX_ITERATIONS'], 10)

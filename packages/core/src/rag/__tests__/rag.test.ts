@@ -751,4 +751,54 @@ describe('createRAGPipeline', () => {
     const chunks = pipeline.getChunks();
     expect(chunks[0].documentId).toBe('custom-1');
   });
+
+  it('throws RAG_EMBEDDING_MISMATCH when embedding count differs from chunk count', async () => {
+    // Create a broken embedding model that returns fewer embeddings than inputs
+    const brokenEmbedding: EmbeddingModel = {
+      dimensions: 4,
+      async embed(texts: readonly string[]) {
+        // Return only one embedding regardless of input count
+        return [[1, 0, 0, 0]];
+      },
+    };
+
+    const pipeline = createRAGPipeline({
+      loader: createTextLoader(['Hello world', 'Another doc']),
+      chunking: createFixedSizeChunking({ chunkSize: 100 }),
+      embedding: brokenEmbedding,
+      retriever: createInMemoryRetriever({ embedding }),
+    });
+
+    await expect(pipeline.ingest()).rejects.toThrow(HarnessError);
+    await expect(pipeline.ingest()).rejects.toThrow(/1 embeddings for 2 chunks/);
+  });
+
+  it('clear() removes all indexed chunks', async () => {
+    const pipeline = createRAGPipeline({
+      loader: createTextLoader(['Hello world']),
+      chunking: createFixedSizeChunking({ chunkSize: 100 }),
+      embedding,
+      retriever: createInMemoryRetriever({ embedding }),
+    });
+
+    await pipeline.ingest();
+    expect(pipeline.getChunks()).toHaveLength(1);
+
+    pipeline.clear();
+    expect(pipeline.getChunks()).toHaveLength(0);
+  });
+
+  it('clear() allows re-ingestion from empty state', async () => {
+    const pipeline = createRAGPipeline({
+      loader: createTextLoader(['doc one']),
+      chunking: createFixedSizeChunking({ chunkSize: 100 }),
+      embedding,
+      retriever: createInMemoryRetriever({ embedding }),
+    });
+
+    await pipeline.ingest();
+    pipeline.clear();
+    await pipeline.ingest();
+    expect(pipeline.getChunks()).toHaveLength(1);
+  });
 });

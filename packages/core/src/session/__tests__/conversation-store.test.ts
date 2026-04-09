@@ -75,6 +75,16 @@ describe('createInMemoryConversationStore', () => {
       const loaded = await store.load('s1');
       expect(loaded).toHaveLength(3);
     });
+
+    it('does not mutate previously loaded arrays after append', async () => {
+      const store = createInMemoryConversationStore();
+      await store.save('s1', [userMsg]);
+      const before = await store.load('s1');
+      await store.append('s1', assistantMsg);
+      // The previously loaded array should not have been mutated
+      expect(before).toEqual([userMsg]);
+      expect(before).toHaveLength(1);
+    });
   });
 
   describe('delete', () => {

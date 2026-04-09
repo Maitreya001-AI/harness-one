@@ -63,6 +63,11 @@
       "types": "./dist/orchestration/index.d.ts",
       "import": "./dist/orchestration/index.js",
       "require": "./dist/cjs/orchestration/index.cjs"
+    },
+    "./cli": {
+      "types": "./dist/cli/index.d.ts",
+      "import": "./dist/cli/index.js",
+      "require": "./dist/cli/index.cjs"
     }
   },
   "bin": {

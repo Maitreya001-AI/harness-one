@@ -7,18 +7,18 @@
  * @module
  */
 
-import { AgentLoop, HarnessError } from 'harness-one/core';
-import type { AgentAdapter, Message, AgentEvent } from 'harness-one/core';
-import { createTraceManager, createConsoleExporter, createCostTracker } from 'harness-one/observe';
-import type { TraceExporter, TraceManager, CostTracker, ModelPricing } from 'harness-one/observe';
+import { AgentLoop, HarnessError, createEventBus, createMiddlewareChain } from 'harness-one/core';
+import type { AgentAdapter, Message, AgentEvent, EventBus, MiddlewareChain } from 'harness-one/core';
+import { createTraceManager, createConsoleExporter, createCostTracker, createLogger } from 'harness-one/observe';
+import type { TraceExporter, TraceManager, CostTracker, ModelPricing, Logger } from 'harness-one/observe';
 import { createPromptBuilder } from 'harness-one/prompt';
 import type { PromptBuilder } from 'harness-one/prompt';
 import { createRegistry } from 'harness-one/tools';
 import type { ToolRegistry, SchemaValidator } from 'harness-one/tools';
 import { createPipeline, createInjectionDetector, createRateLimiter, createContentFilter } from 'harness-one/guardrails';
 import type { GuardrailPipeline, Guardrail } from 'harness-one/guardrails';
-import { createSessionManager } from 'harness-one/session';
-import type { SessionManager } from 'harness-one/session';
+import { createSessionManager, createInMemoryConversationStore } from 'harness-one/session';
+import type { SessionManager, ConversationStore } from 'harness-one/session';
 import { createInMemoryStore } from 'harness-one/memory';
 import type { MemoryStore } from 'harness-one/memory';
 import { createEvalRunner, createRelevanceScorer } from 'harness-one/eval';
@@ -102,6 +102,10 @@ export interface Harness {
   readonly memory: MemoryStore;
   readonly prompts: PromptBuilder;
   readonly eval: EvalRunner;
+  readonly eventBus: EventBus;
+  readonly logger: Logger;
+  readonly conversations: ConversationStore;
+  readonly middleware: MiddlewareChain;
 
   /** Run the agent loop with full pipeline. */
   run(messages: Message[]): AsyncGenerator<AgentEvent>;
@@ -183,18 +187,25 @@ export function createHarness(config: HarnessConfig): Harness {
   // 12. Eval runner (default relevance scorer)
   const evalRunner = createEvalRunner({ scorers: [createRelevanceScorer()] });
 
-  // 13. Agent loop
+  // 13. Event bus
+  const eventBus = createEventBus();
+
+  // 14. Logger
+  const logger = createLogger();
+
+  // 15. Conversation store
+  const conversations = createInMemoryConversationStore();
+
+  // 16. Middleware chain
+  const middleware = createMiddlewareChain();
+
+  // 17. Agent loop
   const loop = new AgentLoop({
     adapter,
     maxIterations: config.maxIterations,
     maxTotalTokens: config.maxTotalTokens,
     onToolCall: async (call) => {
-      const parsed = {
-        id: call.id,
-        name: call.name,
-        arguments: JSON.parse(call.arguments),
-      };
-      return tools.execute(parsed);
+      return tools.execute(call);
     },
   });
 
@@ -208,6 +219,10 @@ export function createHarness(config: HarnessConfig): Harness {
     memory,
     prompts,
     eval: evalRunner,
+    eventBus,
+    logger,
+    conversations,
+    middleware,
 
     run(messages: Message[]): AsyncGenerator<AgentEvent> {
       return loop.run(messages);
@@ -224,13 +239,8 @@ export function createHarness(config: HarnessConfig): Harness {
 
     async drain(timeoutMs = 30_000): Promise<void> {
       loop.abort();
-      const deadline = Date.now() + timeoutMs;
-      // Poll until the loop's abort signal settles (short spin)
-      while (Date.now() < deadline) {
-        // Give pending microtasks a chance to complete
-        await new Promise((r) => setTimeout(r, 50));
-        break; // Single tick is sufficient after abort()
-      }
+      // Allow a tick for the abort to propagate through pending async operations
+      await new Promise((r) => setTimeout(r, 50));
       await this.shutdown();
     },
   };

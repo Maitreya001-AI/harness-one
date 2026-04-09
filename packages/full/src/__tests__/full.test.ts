@@ -134,6 +134,14 @@ describe('createHarness', () => {
     expect(typeof harness.shutdown).toBe('function');
   });
 
+  it('creates a harness with new infrastructure fields', () => {
+    const harness = createHarness(baseConfig);
+    expect(harness.eventBus).toBeDefined();
+    expect(harness.logger).toBeDefined();
+    expect(harness.conversations).toBeDefined();
+    expect(harness.middleware).toBeDefined();
+  });
+
   describe('adapter wiring', () => {
     it('creates Anthropic adapter when provider is "anthropic"', () => {
       createHarness({ ...baseConfig, provider: 'anthropic' });
@@ -297,25 +305,37 @@ describe('createHarness', () => {
   });
 
   describe('onToolCall callback', () => {
-    it('parses tool call arguments and delegates to tools.execute', async () => {
+    it('delegates tool call to tools.execute with raw arguments string', async () => {
       const harness = createHarness(baseConfig);
 
       // Get the captured onToolCall callback from AgentLoop constructor
       const onToolCall = mocks.getCapturedOnToolCall();
       expect(onToolCall).toBeDefined();
 
-      // Call it with a mock tool call
+      // Call it with a mock tool call -- tools.execute handles JSON parsing
+      // internally, so onToolCall should pass the call through directly
       await onToolCall!({
         id: 'tc-1',
         name: 'search',
         arguments: '{"query":"test"}',
       });
+    });
 
-      // tools.execute should have been called but since it's a real registry
-      // with no registered tools, it may throw. The important thing is that
-      // the callback correctly parses JSON and calls execute.
-      // Since harness.tools is a real ToolRegistry, let's just verify
-      // the callback doesn't crash on valid JSON
+    it('does not throw on invalid JSON arguments (tools.execute handles it)', async () => {
+      const harness = createHarness(baseConfig);
+
+      const onToolCall = mocks.getCapturedOnToolCall();
+      expect(onToolCall).toBeDefined();
+
+      // Invalid JSON should not crash -- tools.execute returns a validation error
+      const result = await onToolCall!({
+        id: 'tc-2',
+        name: 'search',
+        arguments: 'not valid json{{{',
+      });
+
+      // tools.execute returns a ToolResult with error status for invalid JSON
+      expect(result).toBeDefined();
     });
   });
 

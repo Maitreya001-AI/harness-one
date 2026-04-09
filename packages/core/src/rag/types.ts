@@ -70,4 +70,6 @@ export interface RAGPipeline {
   query(text: string, options?: { limit?: number; minScore?: number }): Promise<RetrievalResult[]>;
   /** Get all indexed chunks. */
   getChunks(): DocumentChunk[];
+  /** Clear all indexed chunks. */
+  clear(): void;
 }
