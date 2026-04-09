@@ -110,9 +110,15 @@ export function createRegistry(config?: {
       );
     }
 
+    // Reserve slot immediately to prevent TOCTOU races on concurrent execute() calls.
+    turnCalls++;
+    sessionCalls++;
+
     // Lookup
     const tool = tools.get(call.name);
     if (!tool) {
+      turnCalls--;
+      sessionCalls--;
       return toolError(
         `Tool "${call.name}" not found`,
         'not_found',
@@ -125,6 +131,8 @@ export function createRegistry(config?: {
     try {
       params = JSON.parse(call.arguments);
     } catch {
+      turnCalls--;
+      sessionCalls--;
       return toolError(
         'Invalid JSON in tool call arguments',
         'validation',
@@ -137,6 +145,8 @@ export function createRegistry(config?: {
       ? customValidator.validate(tool.parameters, params)
       : validateToolCall(tool.parameters, params);
     if (!validation.valid) {
+      turnCalls--;
+      sessionCalls--;
       const messages = validation.errors.map((e) => `${e.path}: ${e.message}`).join('; ');
       return toolError(
         `Validation failed: ${messages}`,
@@ -147,6 +157,8 @@ export function createRegistry(config?: {
 
     // Permission check (after parsing and validation so params are available)
     if (permissions && !permissions.check(call.name, { toolCallId: call.id, params })) {
+      turnCalls--;
+      sessionCalls--;
       return toolError(
         `Permission denied for tool "${call.name}"`,
         'permission',
@@ -155,8 +167,6 @@ export function createRegistry(config?: {
     }
 
     // Execute with optional timeout
-    turnCalls++;
-    sessionCalls++;
     if (timeoutMs !== undefined) {
       const ac = new AbortController();
       const timer = setTimeout(() => ac.abort(), timeoutMs);

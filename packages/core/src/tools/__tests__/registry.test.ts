@@ -446,6 +446,148 @@ describe('createRegistry', () => {
     });
   });
 
+  describe('TOCTOU rate-limit fix', () => {
+    it('concurrent execute() calls respect maxCallsPerTurn', async () => {
+      // Tool that yields the event loop to simulate async work
+      const asyncTool = defineTool({
+        name: 'slow',
+        description: 'Async tool',
+        parameters: { type: 'object' },
+        execute: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          return toolSuccess('ok');
+        },
+      });
+      const registry = createRegistry({ maxCallsPerTurn: 1 });
+      registry.register(asyncTool);
+
+      const call = { id: '1', name: 'slow', arguments: '{}' };
+      // Launch 5 concurrent calls — only 1 should succeed
+      const results = await Promise.all([
+        registry.execute(call),
+        registry.execute(call),
+        registry.execute(call),
+        registry.execute(call),
+        registry.execute(call),
+      ]);
+
+      const successes = results.filter((r) => r.success);
+      const failures = results.filter((r) => !r.success);
+      expect(successes).toHaveLength(1);
+      expect(failures).toHaveLength(4);
+    });
+
+    it('releases rate-limit slot on JSON parse failure', async () => {
+      const registry = createRegistry({ maxCallsPerTurn: 1 });
+      registry.register(makeEchoTool());
+
+      // Invalid JSON should NOT consume a slot
+      const bad = await registry.execute({
+        id: '1',
+        name: 'echo',
+        arguments: 'not json',
+      });
+      expect(bad.success).toBe(false);
+
+      // Valid call should still succeed (slot was released)
+      const good = await registry.execute({
+        id: '2',
+        name: 'echo',
+        arguments: '{"text":"hi"}',
+      });
+      expect(good.success).toBe(true);
+    });
+
+    it('releases rate-limit slot on tool-not-found', async () => {
+      const registry = createRegistry({ maxCallsPerTurn: 1 });
+      registry.register(makeEchoTool());
+
+      // Missing tool should NOT consume a slot
+      const bad = await registry.execute({
+        id: '1',
+        name: 'missing',
+        arguments: '{}',
+      });
+      expect(bad.success).toBe(false);
+
+      const good = await registry.execute({
+        id: '2',
+        name: 'echo',
+        arguments: '{"text":"hi"}',
+      });
+      expect(good.success).toBe(true);
+    });
+
+    it('releases rate-limit slot on validation failure', async () => {
+      const registry = createRegistry({ maxCallsPerTurn: 1 });
+      registry.register(makeEchoTool());
+
+      // Invalid params should NOT consume a slot
+      const bad = await registry.execute({
+        id: '1',
+        name: 'echo',
+        arguments: '{"text": 123}',
+      });
+      expect(bad.success).toBe(false);
+
+      const good = await registry.execute({
+        id: '2',
+        name: 'echo',
+        arguments: '{"text":"hi"}',
+      });
+      expect(good.success).toBe(true);
+    });
+
+    it('releases rate-limit slot on permission denied', async () => {
+      let callCount = 0;
+      const registry = createRegistry({
+        maxCallsPerTurn: 1,
+        permissions: {
+          check: () => {
+            callCount++;
+            // Deny first call, allow second
+            return callCount > 1;
+          },
+        },
+      });
+      registry.register(makeEchoTool());
+
+      const bad = await registry.execute({
+        id: '1',
+        name: 'echo',
+        arguments: '{"text":"hi"}',
+      });
+      expect(bad.success).toBe(false);
+
+      const good = await registry.execute({
+        id: '2',
+        name: 'echo',
+        arguments: '{"text":"hi"}',
+      });
+      expect(good.success).toBe(true);
+    });
+
+    it('does NOT release slot when tool.execute() fails', async () => {
+      const failTool = defineTool({
+        name: 'fail',
+        description: 'Failing tool',
+        parameters: { type: 'object' },
+        execute: async () => ({ success: false as const, error: { message: 'boom', category: 'execution' as const } }),
+      });
+      const registry = createRegistry({ maxCallsPerTurn: 1 });
+      registry.register(failTool);
+
+      // Tool execution failure should still consume the slot
+      await registry.execute({ id: '1', name: 'fail', arguments: '{}' });
+
+      const blocked = await registry.execute({ id: '2', name: 'fail', arguments: '{}' });
+      expect(blocked.success).toBe(false);
+      if (!blocked.success) {
+        expect(blocked.error.message).toContain('per turn');
+      }
+    });
+  });
+
   describe('handler', () => {
     it('returns a function compatible with onToolCall', async () => {
       const registry = createRegistry();
