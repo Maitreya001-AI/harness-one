@@ -73,9 +73,17 @@ export function createComponentRegistry(): ComponentRegistry {
       }
       // Evaluate retirement condition against provided context
       if (context && component.retirementCondition) {
-        const conditionMet = evaluateCondition(component.retirementCondition, context);
+        let conditionMet = false;
+        if (typeof component.retirementCondition === 'function') {
+          conditionMet = component.retirementCondition(context);
+        } else {
+          conditionMet = evaluateCondition(component.retirementCondition, context);
+        }
         if (conditionMet) {
-          return { valid: false, reason: `Retirement condition met: ${component.retirementCondition}` };
+          const desc = typeof component.retirementCondition === 'function'
+            ? 'Function condition met'
+            : component.retirementCondition;
+          return { valid: false, reason: `Retirement condition met: ${desc}` };
         }
       }
       if (!component.lastValidated) {

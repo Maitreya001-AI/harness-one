@@ -32,7 +32,7 @@ export interface AgentRegistration {
 /** Strategy for delegating tasks to agents. */
 export interface DelegationStrategy {
   /** Select which agent should handle a task. Returns agent ID or undefined if none suitable. */
-  select(agents: readonly AgentRegistration[], task: DelegationTask): string | undefined;
+  select(agents: readonly AgentRegistration[], task: DelegationTask): Promise<string | undefined> | string | undefined;
 }
 
 /** A task to delegate to an agent. */

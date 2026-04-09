@@ -68,6 +68,9 @@ async function runGuardrails(
   ctx: GuardrailContext,
 ): Promise<PipelineResult> {
   const results: GuardrailEvent[] = [];
+  let currentCtx = { ...ctx };
+  let lastModifyVerdict: GuardrailEvent['verdict'] | undefined;
+  let hasModified = false;
 
   for (const entry of guards) {
     const start = performance.now();
@@ -76,13 +79,13 @@ async function runGuardrails(
     try {
       if (entry.timeoutMs !== undefined) {
         verdict = await Promise.race([
-          Promise.resolve(entry.guard(ctx)),
+          Promise.resolve(entry.guard(currentCtx)),
           new Promise<never>((_, reject) =>
             setTimeout(() => reject(new Error(`Guardrail "${entry.name}" timed out after ${entry.timeoutMs}ms`)), entry.timeoutMs),
           ),
         ]);
       } else {
-        verdict = await entry.guard(ctx);
+        verdict = await entry.guard(currentCtx);
       }
     } catch (err) {
       if (pipeline.failClosed) {
@@ -120,13 +123,27 @@ async function runGuardrails(
     results.push(event);
     pipeline.onEvent?.(event);
 
-    if (verdict.action === 'block' || verdict.action === 'modify') {
-      return {
-        passed: verdict.action !== 'block',
-        verdict,
-        results,
-      };
+    if (verdict.action === 'block') {
+      return { passed: false, verdict, results };
     }
+
+    if (verdict.action === 'modify') {
+      hasModified = true;
+      lastModifyVerdict = verdict;
+      if (verdict.modified !== undefined) {
+        currentCtx = { ...currentCtx, content: verdict.modified };
+      }
+      // Continue to next guardrail instead of short-circuiting
+    }
+  }
+
+  if (hasModified && lastModifyVerdict) {
+    return {
+      passed: true,
+      verdict: lastModifyVerdict,
+      results,
+      modifiedContent: currentCtx.content,
+    };
   }
 
   const allowVerdict: GuardrailEvent['verdict'] = { action: 'allow' };

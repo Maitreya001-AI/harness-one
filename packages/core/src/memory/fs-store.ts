@@ -34,6 +34,18 @@ export function createFileSystemStore(config: {
   const indexPath = join(dir, indexFileName);
   let idCounter = 0;
 
+  // Simple in-process mutex for index operations.
+  // Prevents concurrent read-modify-write corruption of the index file.
+  let indexLock: Promise<void> = Promise.resolve();
+
+  function withIndexLock<T>(fn: () => Promise<T>): Promise<T> {
+    let release!: () => void;
+    const next = new Promise<void>(resolve => { release = resolve; });
+    const prev = indexLock;
+    indexLock = next;
+    return prev.then(fn).finally(() => release());
+  }
+
   function generateId(): string {
     return `mem_${Date.now()}_${++idCounter}_${Math.random().toString(36).slice(2, 8)}`;
   }
@@ -107,9 +119,11 @@ export function createFileSystemStore(config: {
         ...(input.tags !== undefined && { tags: input.tags }),
       };
       await writeEntry(entry);
-      const index = await readIndex();
-      index.keys[entry.key] = entry.id;
-      await writeIndex(index);
+      await withIndexLock(async () => {
+        const index = await readIndex();
+        index.keys[entry.key] = entry.id;
+        await writeIndex(index);
+      });
       return entry;
     },
 
@@ -168,78 +182,82 @@ export function createFileSystemStore(config: {
 
     async delete(id) {
       await ensureDir();
-      try {
-        await unlink(entryPath(id));
-        const index = await readIndex();
-        for (const [key, val] of Object.entries(index.keys)) {
-          if (val === id) {
-            delete index.keys[key];
+      return withIndexLock(async () => {
+        try {
+          await unlink(entryPath(id));
+          const index = await readIndex();
+          for (const [key, val] of Object.entries(index.keys)) {
+            if (val === id) {
+              delete index.keys[key];
+            }
           }
+          await writeIndex(index);
+          return true;
+        } catch {
+          return false;
         }
-        await writeIndex(index);
-        return true;
-      } catch {
-        return false;
-      }
+      });
     },
 
     async compact(policy) {
       await ensureDir();
-      // Read all entries once to avoid repeated I/O (was called 3 times before)
-      let all = await allEntries();
-      const now = Date.now();
-      const weights = policy.gradeWeights ?? {
-        critical: 1.0,
-        useful: 0.5,
-        ephemeral: 0.1,
-      };
-      const freed: string[] = [];
+      return withIndexLock(async () => {
+        // Read all entries once to avoid repeated I/O (was called 3 times before)
+        let all = await allEntries();
+        const now = Date.now();
+        const weights = policy.gradeWeights ?? {
+          critical: 1.0,
+          useful: 0.5,
+          ephemeral: 0.1,
+        };
+        const freed: string[] = [];
 
-      // Remove entries older than maxAge
-      if (policy.maxAge !== undefined) {
-        const survivors: MemoryEntry[] = [];
+        // Remove entries older than maxAge
+        if (policy.maxAge !== undefined) {
+          const survivors: MemoryEntry[] = [];
+          for (const entry of all) {
+            if (now - entry.createdAt > policy.maxAge && weights[entry.grade] < 1.0) {
+              await unlink(entryPath(entry.id));
+              freed.push(entry.id);
+            } else {
+              survivors.push(entry);
+            }
+          }
+          all = survivors;
+        }
+
+        // Trim to maxEntries
+        if (policy.maxEntries !== undefined && all.length > policy.maxEntries) {
+          const sorted = [...all].sort(
+            (a, b) => weights[a.grade] - weights[b.grade] || a.updatedAt - b.updatedAt,
+          );
+          let current = all.length;
+          const removedIds = new Set<string>();
+          for (const victim of sorted) {
+            if (current <= policy.maxEntries) break;
+            if (weights[victim.grade] < 1.0) {
+              await unlink(entryPath(victim.id));
+              freed.push(victim.id);
+              removedIds.add(victim.id);
+              current--;
+            }
+          }
+          all = all.filter((e) => !removedIds.has(e.id));
+        }
+
+        // Rebuild index from remaining entries (no extra I/O needed)
+        const newIndex: Index = { keys: {} };
         for (const entry of all) {
-          if (now - entry.createdAt > policy.maxAge && weights[entry.grade] < 1.0) {
-            await unlink(entryPath(entry.id));
-            freed.push(entry.id);
-          } else {
-            survivors.push(entry);
-          }
+          newIndex.keys[entry.key] = entry.id;
         }
-        all = survivors;
-      }
+        await writeIndex(newIndex);
 
-      // Trim to maxEntries
-      if (policy.maxEntries !== undefined && all.length > policy.maxEntries) {
-        const sorted = [...all].sort(
-          (a, b) => weights[a.grade] - weights[b.grade] || a.updatedAt - b.updatedAt,
-        );
-        let current = all.length;
-        const removedIds = new Set<string>();
-        for (const victim of sorted) {
-          if (current <= policy.maxEntries) break;
-          if (weights[victim.grade] < 1.0) {
-            await unlink(entryPath(victim.id));
-            freed.push(victim.id);
-            removedIds.add(victim.id);
-            current--;
-          }
-        }
-        all = all.filter((e) => !removedIds.has(e.id));
-      }
-
-      // Rebuild index from remaining entries (no extra I/O needed)
-      const newIndex: Index = { keys: {} };
-      for (const entry of all) {
-        newIndex.keys[entry.key] = entry.id;
-      }
-      await writeIndex(newIndex);
-
-      return {
-        removed: freed.length,
-        remaining: all.length,
-        freedEntries: freed,
-      };
+        return {
+          removed: freed.length,
+          remaining: all.length,
+          freedEntries: freed,
+        };
+      });
     },
 
     async count() {
@@ -249,11 +267,13 @@ export function createFileSystemStore(config: {
 
     async clear() {
       await ensureDir();
-      const all = await allEntries();
-      for (const entry of all) {
-        await unlink(entryPath(entry.id));
-      }
-      await writeIndex({ keys: {} });
+      await withIndexLock(async () => {
+        const all = await allEntries();
+        for (const entry of all) {
+          await unlink(entryPath(entry.id));
+        }
+        await writeIndex({ keys: {} });
+      });
     },
   };
 }

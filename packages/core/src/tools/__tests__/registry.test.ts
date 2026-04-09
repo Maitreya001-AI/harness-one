@@ -218,6 +218,44 @@ describe('createRegistry', () => {
     });
   });
 
+  describe('resetSession', () => {
+    it('resets both session and turn counters', async () => {
+      const registry = createRegistry({ maxCallsPerSession: 2, maxCallsPerTurn: 5 });
+      registry.register(makeEchoTool());
+      const call = { id: '1', name: 'echo', arguments: '{"text":"hi"}' };
+
+      // Use up the session limit
+      await registry.execute(call);
+      await registry.execute(call);
+      const blocked = await registry.execute(call);
+      expect(blocked.success).toBe(false);
+      if (!blocked.success) {
+        expect(blocked.error.message).toContain('per session');
+      }
+
+      // Reset session and verify both counters are cleared
+      registry.resetSession();
+      const pass = await registry.execute(call);
+      expect(pass.success).toBe(true);
+    });
+
+    it('also resets turn counter when session is reset', async () => {
+      const registry = createRegistry({ maxCallsPerTurn: 1, maxCallsPerSession: 10 });
+      registry.register(makeEchoTool());
+      const call = { id: '1', name: 'echo', arguments: '{"text":"hi"}' };
+
+      await registry.execute(call);
+      // Turn limit reached
+      const turnBlocked = await registry.execute(call);
+      expect(turnBlocked.success).toBe(false);
+
+      // resetSession should also reset turn counter
+      registry.resetSession();
+      const pass = await registry.execute(call);
+      expect(pass.success).toBe(true);
+    });
+  });
+
   describe('C6: permission validation', () => {
     it('blocks execution when permissions.check returns false', async () => {
       const registry = createRegistry({
@@ -264,7 +302,7 @@ describe('createRegistry', () => {
         name: 'echo',
         arguments: '{"text":"hello"}',
       });
-      expect(checkFn).toHaveBeenCalledWith('echo', undefined);
+      expect(checkFn).toHaveBeenCalledWith('echo', { toolCallId: '1' });
     });
 
     it('executes without permissions config (backward compatible)', async () => {
@@ -324,6 +362,54 @@ describe('createRegistry', () => {
         arguments: '{"text":"hello"}',
       });
       expect(result.success).toBe(true);
+    });
+
+    it('clears timeout timer after successful execution', async () => {
+      vi.useFakeTimers();
+      const registry = createRegistry({ timeoutMs: 5000 });
+      registry.register(makeEchoTool());
+      const promise = registry.execute({
+        id: '1',
+        name: 'echo',
+        arguments: '{"text":"hello"}',
+      });
+      // Fast-forward past tool execution (echo resolves immediately)
+      await vi.advanceTimersByTimeAsync(0);
+      const result = await promise;
+      expect(result.success).toBe(true);
+
+      // Advancing timers past timeout should not cause issues
+      // (timer was cleared via finally block)
+      await vi.advanceTimersByTimeAsync(10000);
+      vi.useRealTimers();
+    });
+
+    it('passes abort signal to tool.execute on timeout', async () => {
+      let receivedSignal: AbortSignal | undefined;
+      const slowTool = defineTool({
+        name: 'abortable',
+        description: 'Abortable tool',
+        parameters: { type: 'object' },
+        execute: async (_params, signal) => {
+          receivedSignal = signal;
+          await new Promise((resolve) => setTimeout(resolve, 5000));
+          return toolSuccess('done');
+        },
+      });
+      const registry = createRegistry({ timeoutMs: 50 });
+      registry.register(slowTool);
+      const result = await registry.execute({
+        id: '1',
+        name: 'abortable',
+        arguments: '{}',
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.category).toBe('timeout');
+      }
+      // The signal should have been passed and aborted
+      expect(receivedSignal).toBeDefined();
+      expect(receivedSignal!.aborted).toBe(true);
     });
   });
 

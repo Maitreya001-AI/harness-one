@@ -35,7 +35,7 @@ export interface AgentOrchestrator {
   /** Broadcast a message to all agents (or children of a parent). */
   broadcast(from: string, content: string, options?: { parentId?: string; metadata?: Record<string, unknown> }): void;
   /** Delegate a task using the configured strategy. Returns the selected agent ID or undefined. */
-  delegate(task: DelegationTask): string | undefined;
+  delegate(task: DelegationTask): Promise<string | undefined>;
   /** Get the shared context. */
   readonly context: SharedContext;
   /** Subscribe to orchestrator events. Returns unsubscribe function. */
@@ -51,6 +51,7 @@ export interface OrchestratorConfig {
   readonly mode?: OrchestrationMode;
   readonly strategy?: DelegationStrategy;
   readonly maxAgents?: number;
+  readonly maxQueueSize?: number;
 }
 
 /**
@@ -84,7 +85,11 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
 
   function emit(event: OrchestratorEvent): void {
     for (const handler of eventHandlers) {
-      handler(event);
+      try {
+        handler(event);
+      } catch {
+        // Prevent misbehaving handler from breaking event delivery
+      }
     }
   }
 
@@ -108,6 +113,17 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
       );
     }
     return agent;
+  }
+
+  function pushToQueue(agentId: string, message: AgentMessage): void {
+    const queue = messageQueues.get(agentId);
+    if (queue) {
+      queue.push(message);
+      const maxQueueSize = config?.maxQueueSize ?? 1000;
+      if (queue.length > maxQueueSize) {
+        queue.splice(0, queue.length - maxQueueSize);
+      }
+    }
   }
 
   const sharedContext: SharedContext = {
@@ -196,10 +212,7 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
         ...message,
         timestamp: Date.now(),
       };
-      const queue = messageQueues.get(message.to);
-      if (queue) {
-        queue.push(fullMessage);
-      }
+      pushToQueue(message.to, fullMessage);
       emit({ type: 'message_sent', message: fullMessage });
     },
 
@@ -233,18 +246,15 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
           ...(options?.metadata !== undefined && { metadata: { ...options.metadata } }),
           timestamp: Date.now(),
         };
-        const queue = messageQueues.get(target.id);
-        if (queue) {
-          queue.push(message);
-        }
+        pushToQueue(target.id, message);
         emit({ type: 'message_sent', message });
       }
     },
 
-    delegate(task: DelegationTask): string | undefined {
+    async delegate(task: DelegationTask): Promise<string | undefined> {
       if (!strategy) return undefined;
       const allAgents = Array.from(agents.values()).map(toReadonly);
-      const selectedId = strategy.select(allAgents, task);
+      const selectedId = await strategy.select(allAgents, task);
       if (selectedId !== undefined) {
         emit({ type: 'task_delegated', agentId: selectedId, task });
       }

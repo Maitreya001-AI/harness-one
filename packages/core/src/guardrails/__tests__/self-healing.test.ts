@@ -308,6 +308,75 @@ describe('withSelfHealing', () => {
     });
   });
 
+  describe('token budget awareness', () => {
+    it('returns passed: false early when maxTotalTokens is exceeded', async () => {
+      const guard: Guardrail = () => ({ action: 'block', reason: 'bad' });
+      const regenerate = vi.fn().mockResolvedValue('still bad');
+      // estimateTokens returns string length as token count
+      const estimateTokens = (text: string) => text.length;
+
+      const result = await withSelfHealing(
+        {
+          maxRetries: 5,
+          guardrails: [{ name: 'g1', guard }],
+          buildRetryPrompt: (content, failures) => `Fix this long prompt that will exceed budget: ${content} ${failures[0].reason}`,
+          regenerate,
+          estimateTokens,
+          maxTotalTokens: 50, // very low budget
+        },
+        'initial content that uses some tokens',
+      );
+
+      // Should have stopped early due to token budget, not exhausted all retries
+      expect(result.passed).toBe(false);
+      expect(result.totalTokens).toBeDefined();
+      expect(result.totalTokens!).toBeLessThanOrEqual(50);
+      // Should NOT have used all 5 retries
+      expect(result.attempts).toBeLessThan(5);
+    });
+
+    it('tracks totalTokens across successful regeneration attempts', async () => {
+      let callCount = 0;
+      const guard: Guardrail = () => {
+        callCount++;
+        if (callCount <= 2) return { action: 'block', reason: 'bad' };
+        return { action: 'allow' };
+      };
+      const regenerate = vi.fn().mockResolvedValue('fixed');
+      const estimateTokens = (text: string) => text.length;
+
+      const result = await withSelfHealing(
+        {
+          maxRetries: 5,
+          guardrails: [{ name: 'g1', guard }],
+          buildRetryPrompt: () => 'fix',
+          regenerate,
+          estimateTokens,
+          maxTotalTokens: 10000, // high budget, won't be exceeded
+        },
+        'initial',
+      );
+
+      expect(result.passed).toBe(true);
+      expect(result.totalTokens).toBeDefined();
+      // initial (7) + fixed (5) + fixed (5) = 17
+      expect(result.totalTokens).toBe('initial'.length + 'fixed'.length + 'fixed'.length);
+    });
+
+    it('returns totalTokens as undefined when estimateTokens is not provided', async () => {
+      const guard: Guardrail = () => ({ action: 'allow' });
+      const result = await withSelfHealing(
+        {
+          guardrails: [{ name: 'g1', guard }],
+          buildRetryPrompt: () => '',
+          regenerate: vi.fn(),
+        },
+        'content',
+      );
+      expect(result.totalTokens).toBeUndefined();
+    });
+  });
+
   it('treats modify verdict as a failure for retry', async () => {
     let callCount = 0;
     const guard: Guardrail = () => {

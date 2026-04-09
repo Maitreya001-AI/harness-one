@@ -112,10 +112,53 @@ export function createSkillEngine(): SkillEngine {
     },
 
     get stageHistory(): readonly string[] {
-      return stageHistory;
+      return [...stageHistory];
     },
 
     registerSkill(skill: SkillDefinition): void {
+      // Validate all transitions have required fields
+      for (const stage of skill.stages) {
+        for (const transition of stage.transitions) {
+          const { condition } = transition;
+          switch (condition.type) {
+            case 'turn_count':
+              if (typeof (condition as any).count !== 'number') {
+                throw new HarnessError(
+                  `Stage "${stage.id}" transition to "${transition.to}": turn_count condition requires numeric "count" field`,
+                  'INVALID_TRANSITION',
+                  'Add a "count" field to the turn_count condition',
+                );
+              }
+              break;
+            case 'keyword':
+              if (!Array.isArray((condition as any).keywords) || (condition as any).keywords.length === 0) {
+                throw new HarnessError(
+                  `Stage "${stage.id}" transition to "${transition.to}": keyword condition requires non-empty "keywords" array`,
+                  'INVALID_TRANSITION',
+                  'Add a "keywords" array to the keyword condition',
+                );
+              }
+              break;
+            case 'custom':
+              if (typeof (condition as any).check !== 'function') {
+                throw new HarnessError(
+                  `Stage "${stage.id}" transition to "${transition.to}": custom condition requires "check" function`,
+                  'INVALID_TRANSITION',
+                  'Add a "check" function to the custom condition',
+                );
+              }
+              break;
+            case 'manual':
+              break; // No validation needed
+            default:
+              throw new HarnessError(
+                `Stage "${stage.id}" transition to "${transition.to}": unknown condition type "${(condition as any).type}"`,
+                'INVALID_TRANSITION',
+                'Use one of: turn_count, keyword, custom, manual',
+              );
+          }
+        }
+      }
       skills.set(skill.id, skill);
     },
 

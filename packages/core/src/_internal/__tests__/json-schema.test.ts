@@ -297,6 +297,25 @@ describe('validateJsonSchema', () => {
       const nullSchema = { enum: ['a', null] };
       expect(validateJsonSchema(nullSchema, null)).toEqual({ valid: true, errors: [] });
     });
+
+    it('supports object values in enum', () => {
+      const objSchema = { enum: [{ a: 1 }, { b: 2 }] };
+      expect(validateJsonSchema(objSchema, { a: 1 })).toEqual({ valid: true, errors: [] });
+      expect(validateJsonSchema(objSchema, { c: 3 }).valid).toBe(false);
+    });
+
+    it('supports array values in enum', () => {
+      const arrSchema = { enum: [[1, 2], [3, 4]] };
+      expect(validateJsonSchema(arrSchema, [1, 2])).toEqual({ valid: true, errors: [] });
+      expect(validateJsonSchema(arrSchema, [5, 6]).valid).toBe(false);
+    });
+
+    it('supports nested object values in enum', () => {
+      const nestedSchema = { enum: [{ a: { b: { c: 1 } } }, { x: [1, 2] }] };
+      expect(validateJsonSchema(nestedSchema, { a: { b: { c: 1 } } })).toEqual({ valid: true, errors: [] });
+      expect(validateJsonSchema(nestedSchema, { x: [1, 2] })).toEqual({ valid: true, errors: [] });
+      expect(validateJsonSchema(nestedSchema, { a: { b: { c: 2 } } }).valid).toBe(false);
+    });
   });
 
   // ─── Pattern ──────────────────────────────────────────────

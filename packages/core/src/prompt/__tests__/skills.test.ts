@@ -211,6 +211,104 @@ describe('createSkillEngine', () => {
     });
   });
 
+  describe('registerSkill validation', () => {
+    it('throws when turn_count transition is missing count field', () => {
+      const skill: SkillDefinition = {
+        id: 'bad-tc',
+        name: 'Bad TC',
+        description: 'test',
+        initialStage: 'a',
+        stages: [
+          {
+            id: 'a',
+            name: 'A',
+            prompt: 'A',
+            transitions: [
+              { to: 'b', condition: { type: 'turn_count' } as any },
+            ],
+          },
+          { id: 'b', name: 'B', prompt: 'B', transitions: [] },
+        ],
+      };
+      const engine = createSkillEngine();
+      expect(() => engine.registerSkill(skill)).toThrow(HarnessError);
+      expect(() => engine.registerSkill(skill)).toThrow(/turn_count condition requires numeric "count" field/);
+    });
+
+    it('throws when keyword transition is missing keywords array', () => {
+      const skill: SkillDefinition = {
+        id: 'bad-kw',
+        name: 'Bad KW',
+        description: 'test',
+        initialStage: 'a',
+        stages: [
+          {
+            id: 'a',
+            name: 'A',
+            prompt: 'A',
+            transitions: [
+              { to: 'b', condition: { type: 'keyword' } as any },
+            ],
+          },
+          { id: 'b', name: 'B', prompt: 'B', transitions: [] },
+        ],
+      };
+      const engine = createSkillEngine();
+      expect(() => engine.registerSkill(skill)).toThrow(HarnessError);
+      expect(() => engine.registerSkill(skill)).toThrow(/keyword condition requires non-empty "keywords" array/);
+    });
+
+    it('throws when keyword transition has empty keywords array', () => {
+      const skill: SkillDefinition = {
+        id: 'empty-kw',
+        name: 'Empty KW',
+        description: 'test',
+        initialStage: 'a',
+        stages: [
+          {
+            id: 'a',
+            name: 'A',
+            prompt: 'A',
+            transitions: [
+              { to: 'b', condition: { type: 'keyword', keywords: [] } as any },
+            ],
+          },
+          { id: 'b', name: 'B', prompt: 'B', transitions: [] },
+        ],
+      };
+      const engine = createSkillEngine();
+      expect(() => engine.registerSkill(skill)).toThrow(HarnessError);
+    });
+
+    it('throws when custom transition is missing check function', () => {
+      const skill: SkillDefinition = {
+        id: 'bad-custom',
+        name: 'Bad Custom',
+        description: 'test',
+        initialStage: 'a',
+        stages: [
+          {
+            id: 'a',
+            name: 'A',
+            prompt: 'A',
+            transitions: [
+              { to: 'b', condition: { type: 'custom' } as any },
+            ],
+          },
+          { id: 'b', name: 'B', prompt: 'B', transitions: [] },
+        ],
+      };
+      const engine = createSkillEngine();
+      expect(() => engine.registerSkill(skill)).toThrow(HarnessError);
+      expect(() => engine.registerSkill(skill)).toThrow(/custom condition requires "check" function/);
+    });
+
+    it('accepts valid skill definitions without throwing', () => {
+      const engine = createSkillEngine();
+      expect(() => engine.registerSkill(twoStageSkill)).not.toThrow();
+    });
+  });
+
   describe('edge cases', () => {
     it('maxTurns with only manual transitions — no auto-advance', () => {
       const skill: SkillDefinition = {

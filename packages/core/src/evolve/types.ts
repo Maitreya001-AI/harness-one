@@ -25,7 +25,7 @@ export interface ComponentMeta {
   readonly name: string;
   readonly description: string;
   readonly modelAssumption: string;
-  readonly retirementCondition: string;
+  readonly retirementCondition: string | ((context: Record<string, unknown>) => boolean);
   readonly createdAt: string;
   readonly lastValidated?: string;
   readonly tags?: string[];

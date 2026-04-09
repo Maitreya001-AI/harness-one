@@ -197,6 +197,57 @@ describe('createFileSystemStore', () => {
     });
   });
 
+  describe('concurrent write safety (index mutex)', () => {
+    it('concurrent writes do not corrupt index — all entries accessible', async () => {
+      // Fire 10 writes concurrently; without a mutex the read-modify-write
+      // on the index file races and last-writer-wins, orphaning earlier entries.
+      const writes = Array.from({ length: 10 }, (_, i) =>
+        store.write({ key: `concurrent_${i}`, content: `value_${i}`, grade: 'useful' }),
+      );
+      const entries = await Promise.all(writes);
+
+      // Every entry file should be readable
+      for (const entry of entries) {
+        const read = await store.read(entry.id);
+        expect(read).not.toBeNull();
+        expect(read!.content).toBe(entry.content);
+      }
+
+      // The index must reference ALL 10 keys (no orphans)
+      const indexPath = join(dir, '_index.json');
+      const raw = await readFile(indexPath, 'utf-8');
+      const index = JSON.parse(raw);
+      for (let i = 0; i < 10; i++) {
+        expect(index.keys[`concurrent_${i}`]).toBeDefined();
+      }
+    });
+
+    it('concurrent write + delete does not corrupt index', async () => {
+      // Seed an entry, then concurrently write new entries and delete the seed.
+      const seed = await store.write({ key: 'seed', content: 'seed', grade: 'useful' });
+
+      const ops = [
+        store.write({ key: 'w1', content: 'a', grade: 'useful' }),
+        store.write({ key: 'w2', content: 'b', grade: 'useful' }),
+        store.delete(seed.id),
+        store.write({ key: 'w3', content: 'c', grade: 'useful' }),
+      ];
+      await Promise.all(ops);
+
+      // Seed should be deleted
+      expect(await store.read(seed.id)).toBeNull();
+
+      // The three new writes should all be in the index
+      const indexPath = join(dir, '_index.json');
+      const raw = await readFile(indexPath, 'utf-8');
+      const index = JSON.parse(raw);
+      expect(index.keys['w1']).toBeDefined();
+      expect(index.keys['w2']).toBeDefined();
+      expect(index.keys['w3']).toBeDefined();
+      expect(index.keys['seed']).toBeUndefined();
+    });
+  });
+
   describe('compact with maxAge', () => {
     it('removes non-critical entries older than maxAge', async () => {
       // Write entries that will be "old" (maxAge: 0 means anything older than 0ms)

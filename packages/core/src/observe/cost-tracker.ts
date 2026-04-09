@@ -66,6 +66,10 @@ export function createCostTracker(config?: {
   const maxRecords = 10_000;
   let runningTotal = 0;
 
+  // Issue 2: Recalibration to prevent floating point drift
+  const RECALIBRATE_INTERVAL = 1000;
+  let recordsSinceRecalibrate = 0;
+
   if (config?.pricing) {
     for (const p of config.pricing) {
       pricing.set(p.model, p);
@@ -85,13 +89,54 @@ export function createCostTracker(config?: {
     if (usage.cacheWriteTokens && p.cacheWritePer1kTokens) {
       cost += (usage.cacheWriteTokens / 1000) * p.cacheWritePer1kTokens;
     }
-    return cost;
+    return Math.round(cost * 1_000_000) / 1_000_000;  // Round to 6 decimal places (micro-dollar precision)
   }
 
   function emitAlert(alert: CostAlert): void {
     for (const handler of alertHandlers) {
       handler(alert);
     }
+  }
+
+  // Issue 1: Standalone functions using closure references instead of `this`
+  function checkBudgetFn(): CostAlert | null {
+    if (budget === undefined || budget <= 0) return null;
+    const currentCost = runningTotal;
+    const percentUsed = currentCost / budget;
+
+    if (percentUsed >= criticalThreshold) {
+      return {
+        type: 'critical',
+        currentCost,
+        budget,
+        percentUsed,
+        message: `Critical: ${(percentUsed * 100).toFixed(1)}% of budget used ($${currentCost.toFixed(4)} / $${budget.toFixed(2)})`,
+      };
+    }
+    if (percentUsed >= warningThreshold) {
+      return {
+        type: 'warning',
+        currentCost,
+        budget,
+        percentUsed,
+        message: `Warning: ${(percentUsed * 100).toFixed(1)}% of budget used ($${currentCost.toFixed(4)} / $${budget.toFixed(2)})`,
+      };
+    }
+    return null;
+  }
+
+  function getAlertMessageFn(): string | null {
+    if (budget === undefined) return null;
+    const currentCost = runningTotal;
+    const percentUsed = currentCost / budget;
+
+    if (percentUsed >= criticalThreshold) {
+      return `[BUDGET CRITICAL] You have used ${(percentUsed * 100).toFixed(0)}% of your token budget. Be extremely concise.`;
+    }
+    if (percentUsed >= warningThreshold) {
+      return `[BUDGET WARNING] You have used ${(percentUsed * 100).toFixed(0)}% of your token budget. Please be concise.`;
+    }
+    return null;
   }
 
   return {
@@ -115,9 +160,16 @@ export function createCostTracker(config?: {
         runningTotal -= evicted.estimatedCost;
       }
 
+      // Issue 2: Periodic recalibration to correct floating point drift
+      recordsSinceRecalibrate++;
+      if (recordsSinceRecalibrate >= RECALIBRATE_INTERVAL) {
+        runningTotal = records.reduce((sum, r) => sum + r.estimatedCost, 0);
+        recordsSinceRecalibrate = 0;
+      }
+
       // Check budget alerts after recording
       if (budget !== undefined) {
-        const alert = this.checkBudget();
+        const alert = checkBudgetFn();
         if (alert) {
           emitAlert(alert);
         }
@@ -130,6 +182,11 @@ export function createCostTracker(config?: {
       return runningTotal;
     },
 
+    // Issue 3: Note — getCostByModel() and getCostByTrace() only reflect records
+    // currently in the buffer (up to maxRecords). After eviction, they will not
+    // include costs from evicted records. Use getTotalCost() for the cumulative
+    // total which includes residual cost from evicted records. Use reset() to
+    // zero everything and bring all totals back into agreement.
     getCostByModel(): Record<string, number> {
       const result: Record<string, number> = {};
       for (const r of records) {
@@ -148,31 +205,7 @@ export function createCostTracker(config?: {
       budget = newBudget;
     },
 
-    checkBudget(): CostAlert | null {
-      if (budget === undefined) return null;
-      const currentCost = this.getTotalCost();
-      const percentUsed = currentCost / budget;
-
-      if (percentUsed >= criticalThreshold) {
-        return {
-          type: 'critical',
-          currentCost,
-          budget,
-          percentUsed,
-          message: `Critical: ${(percentUsed * 100).toFixed(1)}% of budget used ($${currentCost.toFixed(4)} / $${budget.toFixed(2)})`,
-        };
-      }
-      if (percentUsed >= warningThreshold) {
-        return {
-          type: 'warning',
-          currentCost,
-          budget,
-          percentUsed,
-          message: `Warning: ${(percentUsed * 100).toFixed(1)}% of budget used ($${currentCost.toFixed(4)} / $${budget.toFixed(2)})`,
-        };
-      }
-      return null;
-    },
+    checkBudget: checkBudgetFn,
 
     onAlert(handler: (alert: CostAlert) => void): void {
       alertHandlers.push(handler);
@@ -181,20 +214,9 @@ export function createCostTracker(config?: {
     reset(): void {
       records.length = 0;
       runningTotal = 0;
+      recordsSinceRecalibrate = 0;
     },
 
-    getAlertMessage(): string | null {
-      if (budget === undefined) return null;
-      const currentCost = this.getTotalCost();
-      const percentUsed = currentCost / budget;
-
-      if (percentUsed >= criticalThreshold) {
-        return `[BUDGET CRITICAL] You have used ${(percentUsed * 100).toFixed(0)}% of your token budget. Be extremely concise.`;
-      }
-      if (percentUsed >= warningThreshold) {
-        return `[BUDGET WARNING] You have used ${(percentUsed * 100).toFixed(0)}% of your token budget. Please be concise.`;
-      }
-      return null;
-    },
+    getAlertMessage: getAlertMessageFn,
   };
 }

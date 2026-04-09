@@ -524,6 +524,44 @@ describe('edge cases', () => {
   });
 });
 
+describe('parentId validation', () => {
+  it('throws SPAN_NOT_FOUND when startSpan called with invalid parentId', () => {
+    const tm = createTraceManager();
+    const traceId = tm.startTrace('t');
+    expect(() => tm.startSpan(traceId, 'child', 'non-existent-parent')).toThrow(HarnessError);
+    try {
+      tm.startSpan(traceId, 'child', 'non-existent-parent');
+    } catch (e) {
+      expect((e as HarnessError).code).toBe('SPAN_NOT_FOUND');
+    }
+  });
+
+  it('throws when parentId belongs to a different trace', () => {
+    const tm = createTraceManager();
+    const traceId1 = tm.startTrace('trace-1');
+    const traceId2 = tm.startTrace('trace-2');
+    const spanInTrace1 = tm.startSpan(traceId1, 'parent-span');
+    // parentId from trace1 should not be valid in trace2
+    expect(() => tm.startSpan(traceId2, 'child', spanInTrace1)).toThrow(HarnessError);
+  });
+});
+
+describe('getActiveSpans', () => {
+  it('returns running spans and excludes completed ones', () => {
+    const tm = createTraceManager();
+    const traceId = tm.startTrace('t');
+    const span1 = tm.startSpan(traceId, 'running-span');
+    const span2 = tm.startSpan(traceId, 'completed-span');
+    tm.endSpan(span2);
+    const active = tm.getActiveSpans();
+    expect(active).toHaveLength(1);
+    expect(active[0].id).toBe(span1);
+    expect(active[0].name).toBe('running-span');
+    expect(active[0].traceId).toBe(traceId);
+    expect(active[0].startTime).toBeGreaterThan(0);
+  });
+});
+
 // Architecture: TraceManager needs dispose()
 describe('dispose', () => {
   it('flushes and shuts down all exporters', async () => {

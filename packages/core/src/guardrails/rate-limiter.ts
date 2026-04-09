@@ -49,8 +49,12 @@ export function createRateLimiter(config: {
     }
 
     // Remove expired timestamps
-    while (timestamps.length > 0 && timestamps[0] <= windowStart) {
-      timestamps.shift();
+    let expiredCount = 0;
+    while (expiredCount < timestamps.length && timestamps[expiredCount] <= windowStart) {
+      expiredCount++;
+    }
+    if (expiredCount > 0) {
+      timestamps.splice(0, expiredCount);
     }
 
     touchKey(key);

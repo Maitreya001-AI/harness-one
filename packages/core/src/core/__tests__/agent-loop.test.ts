@@ -1428,4 +1428,89 @@ describe('AgentLoop', () => {
       expect(types).toContain('done');
     });
   });
+
+  describe('dispose() method', () => {
+    it('marks the loop as aborted via the abort controller signal', async () => {
+      const adapter = createMockAdapter([
+        { message: { role: 'assistant', content: 'Hello!' }, usage: USAGE },
+      ]);
+      const loop = new AgentLoop({ adapter });
+
+      // Before dispose, running should work normally
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'Hi' }]));
+      const done = events.find((e) => e.type === 'done') as Extract<AgentEvent, { type: 'done' }>;
+      expect(done.reason).toBe('end_turn');
+
+      // Dispose the loop
+      loop.dispose();
+
+      // After dispose, a new run should immediately abort
+      const events2 = await collectEvents(loop.run([{ role: 'user', content: 'Hi again' }]));
+      const done2 = events2.find((e) => e.type === 'done') as Extract<AgentEvent, { type: 'done' }>;
+      expect(done2).toBeDefined();
+      expect(done2.reason).toBe('aborted');
+    });
+
+    it('cancels an in-flight adapter call when dispose() is called', async () => {
+      let receivedSignal: AbortSignal | undefined;
+      let resolveChat: ((value: ChatResponse) => void) | undefined;
+
+      const adapter: AgentAdapter = {
+        chat(params) {
+          receivedSignal = params.signal;
+          return new Promise((resolve) => {
+            resolveChat = resolve;
+          });
+        },
+      };
+
+      const loop = new AgentLoop({ adapter });
+      const gen = loop.run([{ role: 'user', content: 'test' }]);
+
+      // Get past iteration_start to the adapter.chat() call
+      const first = await gen.next();
+      expect(first.value).toEqual({ type: 'iteration_start', iteration: 1 });
+
+      const secondPromise = gen.next();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(receivedSignal).toBeDefined();
+      expect(receivedSignal!.aborted).toBe(false);
+
+      // Dispose should abort the signal
+      loop.dispose();
+      expect(receivedSignal!.aborted).toBe(true);
+
+      // Resolve the chat to let the generator proceed
+      resolveChat!({ message: { role: 'assistant', content: 'Hi' }, usage: USAGE });
+
+      // Drain remaining events
+      const events: AgentEvent[] = [];
+      let result = await secondPromise;
+      if (!result.done) events.push(result.value);
+      while (true) {
+        result = await gen.next();
+        if (result.done) break;
+        events.push(result.value);
+      }
+
+      const doneEvt = events.find((e) => e.type === 'done') as Extract<AgentEvent, { type: 'done' }>;
+      expect(doneEvt).toBeDefined();
+      expect(doneEvt.reason).toBe('aborted');
+    });
+  });
+
+  describe('single source of truth for abort state', () => {
+    it('uses only abortController.signal.aborted, no redundant boolean', async () => {
+      const adapter = createMockAdapter([
+        { message: { role: 'assistant', content: 'Hi' }, usage: USAGE },
+      ]);
+      const loop = new AgentLoop({ adapter });
+
+      // Verify there is no 'aborted' boolean property on the instance
+      // (only abortController should exist for abort state)
+      const ownProps = Object.getOwnPropertyNames(loop);
+      expect(ownProps).not.toContain('aborted');
+    });
+  });
 });

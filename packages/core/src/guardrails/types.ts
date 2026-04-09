@@ -36,4 +36,6 @@ export interface PipelineResult {
   passed: boolean;
   verdict: GuardrailVerdict;
   results: GuardrailEvent[];
+  /** Final content after all modify verdicts have been applied. */
+  modifiedContent?: string;
 }

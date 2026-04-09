@@ -19,6 +19,7 @@ export interface ToolRegistry {
   execute(call: ToolCallRequest): Promise<ToolResult>;
   handler(): (call: ToolCallRequest) => Promise<unknown>;
   resetTurn(): void;
+  resetSession(): void;
 }
 
 const TOOL_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_.]*$/;
@@ -120,7 +121,7 @@ export function createRegistry(config?: {
     }
 
     // Permission check
-    if (permissions && !permissions.check(call.name, undefined)) {
+    if (permissions && !permissions.check(call.name, { toolCallId: call.id })) {
       return toolError(
         `Permission denied for tool "${call.name}"`,
         'permission',
@@ -157,11 +158,13 @@ export function createRegistry(config?: {
     turnCalls++;
     sessionCalls++;
     if (timeoutMs !== undefined) {
-      const result = await Promise.race([
-        tool.execute(params),
-        new Promise<ToolResult>((resolve) =>
-          setTimeout(
-            () =>
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), timeoutMs);
+      try {
+        const result = await Promise.race([
+          tool.execute(params, ac.signal),
+          new Promise<ToolResult>((resolve) => {
+            ac.signal.addEventListener('abort', () => {
               resolve(
                 toolError(
                   `Tool "${call.name}" timed out after ${timeoutMs}ms`,
@@ -169,12 +172,14 @@ export function createRegistry(config?: {
                   'Consider increasing the timeout or optimizing the tool',
                   true,
                 ),
-              ),
-            timeoutMs,
-          ),
-        ),
-      ]);
-      return result;
+              );
+            });
+          }),
+        ]);
+        return result;
+      } finally {
+        clearTimeout(timer);
+      }
     }
     return tool.execute(params);
   }
@@ -190,5 +195,10 @@ export function createRegistry(config?: {
     turnCalls = 0;
   }
 
-  return { register, get, list, schemas, execute, handler, resetTurn };
+  function resetSession(): void {
+    sessionCalls = 0;
+    turnCalls = 0;
+  }
+
+  return { register, get, list, schemas, execute, handler, resetTurn, resetSession };
 }

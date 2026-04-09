@@ -213,6 +213,25 @@ describe('createPromptBuilder', () => {
     });
   });
 
+  describe('hash format and quality', () => {
+    it('hash is a 16-char hex string', () => {
+      const builder = createPromptBuilder();
+      builder.addLayer({ name: 'sys', content: 'System prompt', priority: 0, cacheable: true });
+      const hash = builder.getStablePrefixHash();
+      expect(hash).toMatch(/^[0-9a-f]{16}$/);
+    });
+
+    it('hash is deterministic — same input produces same hash', () => {
+      const builder1 = createPromptBuilder();
+      builder1.addLayer({ name: 'sys', content: 'Identical content', priority: 0, cacheable: true });
+
+      const builder2 = createPromptBuilder();
+      builder2.addLayer({ name: 'sys', content: 'Identical content', priority: 0, cacheable: true });
+
+      expect(builder1.getStablePrefixHash()).toBe(builder2.getStablePrefixHash());
+    });
+  });
+
   describe('edge cases', () => {
     it('cache hash stability: changing variable value does not change hash', () => {
       const builder = createPromptBuilder();

@@ -193,19 +193,19 @@ export function createRedisStore(config: RedisStoreConfig): MemoryStore {
         useful: 0.5,
         ephemeral: 0.1,
       };
-      const freed: string[] = [];
+      const freedSet = new Set<string>();
 
       if (policy.maxAge !== undefined) {
         for (const entry of entries) {
           if (now - entry.createdAt > policy.maxAge && weights[entry.grade] < 1.0) {
             await client.del(entryKey(entry.id));
             await client.srem(indexKey, entry.id);
-            freed.push(entry.id);
+            freedSet.add(entry.id);
           }
         }
       }
 
-      const remaining = entries.filter((e) => !freed.includes(e.id));
+      const remaining = entries.filter((e) => !freedSet.has(e.id));
       if (policy.maxEntries !== undefined && remaining.length > policy.maxEntries) {
         remaining.sort(
           (a, b) => weights[a.grade] - weights[b.grade] || a.updatedAt - b.updatedAt,
@@ -215,7 +215,7 @@ export function createRedisStore(config: RedisStoreConfig): MemoryStore {
           if (weights[victim.grade] < 1.0) {
             await client.del(entryKey(victim.id));
             await client.srem(indexKey, victim.id);
-            freed.push(victim.id);
+            freedSet.add(victim.id);
           } else {
             break;
           }
@@ -223,9 +223,9 @@ export function createRedisStore(config: RedisStoreConfig): MemoryStore {
       }
 
       return {
-        removed: freed.length,
+        removed: freedSet.size,
         remaining: await client.scard(indexKey),
-        freedEntries: freed,
+        freedEntries: [...freedSet],
       };
     },
 

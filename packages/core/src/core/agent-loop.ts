@@ -45,7 +45,6 @@ export class AgentLoop {
   private readonly streaming: boolean;
 
   private abortController: AbortController;
-  private aborted = false;
   private cumulativeUsage: { inputTokens: number; outputTokens: number } = {
     inputTokens: 0,
     outputTokens: 0,
@@ -84,8 +83,11 @@ export class AgentLoop {
 
   /** Abort the loop at the next safe point and cancel in-flight adapter calls. */
   abort(): void {
-    this.aborted = true;
-    // H3: Also abort the internal controller to cancel in-flight adapter.chat() calls
+    this.abortController.abort();
+  }
+
+  /** Dispose the loop, releasing resources and cancelling any pending operations. */
+  dispose(): void {
     this.abortController.abort();
   }
 
@@ -265,7 +267,7 @@ export class AgentLoop {
       if (!yieldedDone) {
         // Generator was closed externally via .return() or .throw()
         // Mark as aborted for cleanup
-        this.aborted = true;
+        this.abortController.abort();
       }
     }
   }
@@ -365,7 +367,7 @@ export class AgentLoop {
   }
 
   private isAborted(): boolean {
-    return this.aborted || this.abortController.signal.aborted;
+    return this.abortController.signal.aborted;
   }
 
   private doneEvent(reason: DoneReason): AgentEvent {

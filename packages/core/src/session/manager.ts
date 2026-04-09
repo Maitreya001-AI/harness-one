@@ -66,9 +66,13 @@ export function createSessionManager(config?: {
   }
 
   const sessions = new Map<string, MutableSession>();
-  const accessOrder: string[] = []; // For LRU
+  const accessOrder = new Map<string, true>(); // Map insertion order for O(1) LRU
   const eventHandlers: ((event: SessionEvent) => void)[] = [];
   let nextId = 1;
+
+  // Emit reentry protection: queue events if already emitting
+  let emitting = false;
+  const pendingEvents: SessionEvent[] = [];
 
   function genId(): string {
     return `sess-${nextId++}-${Date.now().toString(36)}`;
@@ -76,8 +80,23 @@ export function createSessionManager(config?: {
 
   function emit(type: SessionEvent['type'], sessionId: string): void {
     const event: SessionEvent = { type, sessionId, timestamp: Date.now() };
-    for (const handler of eventHandlers) {
-      handler(event);
+    if (emitting) {
+      pendingEvents.push(event);
+      return;
+    }
+    emitting = true;
+    try {
+      for (const handler of eventHandlers) {
+        try { handler(event); } catch { /* Prevent misbehaving handler from breaking event delivery */ }
+      }
+      while (pendingEvents.length > 0) {
+        const queued = pendingEvents.shift()!;
+        for (const handler of eventHandlers) {
+          try { handler(queued); } catch { /* ignore */ }
+        }
+      }
+    } finally {
+      emitting = false;
     }
   }
 
@@ -85,17 +104,16 @@ export function createSessionManager(config?: {
     return Date.now() - session.lastAccessedAt > ttlMs;
   }
 
-  // O(N) indexOf + splice — acceptable for typical session counts (maxSessions default=100).
-  // If needed for very large session pools, consider switching to a doubly-linked list.
+  // O(1) LRU using Map insertion order: delete + re-set moves entry to end.
   function touchAccessOrder(id: string): void {
-    const idx = accessOrder.indexOf(id);
-    if (idx !== -1) accessOrder.splice(idx, 1);
-    accessOrder.push(id);
+    accessOrder.delete(id);
+    accessOrder.set(id, true);
   }
 
   function evictLRU(): void {
-    while (sessions.size > maxSessions && accessOrder.length > 0) {
-      const oldestId = accessOrder.shift()!;
+    while (sessions.size > maxSessions && accessOrder.size > 0) {
+      const oldestId = accessOrder.keys().next().value as string;
+      accessOrder.delete(oldestId);
       const session = sessions.get(oldestId);
       if (session) {
         sessions.delete(oldestId);
@@ -136,7 +154,7 @@ export function createSessionManager(config?: {
         status: 'active',
       };
       sessions.set(id, session);
-      accessOrder.push(id);
+      accessOrder.set(id, true);
       evictLRU();
       emit('created', id);
       return toReadonly(session);
@@ -219,8 +237,7 @@ export function createSessionManager(config?: {
     },
 
     destroy(id: string): void {
-      const idx = accessOrder.indexOf(id);
-      if (idx !== -1) accessOrder.splice(idx, 1);
+      accessOrder.delete(id);
       sessions.delete(id);
       emit('destroyed', id);
     },
@@ -241,8 +258,7 @@ export function createSessionManager(config?: {
       let count = 0;
       for (const [id, session] of sessions) {
         if (session.status === 'expired' || (session.status === 'active' && isExpired(session))) {
-          const idx = accessOrder.indexOf(id);
-          if (idx !== -1) accessOrder.splice(idx, 1);
+          accessOrder.delete(id);
           sessions.delete(id);
           emit('destroyed', id);
           count++;

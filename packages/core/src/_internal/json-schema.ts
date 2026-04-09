@@ -104,7 +104,9 @@ function validate(
   // String constraints
   if (typeof data === 'string') {
     if (schema.pattern !== undefined) {
-      if (!isSafePattern(schema.pattern)) {
+      if (schema.pattern.length > 1000) {
+        errors.push({ path, message: 'Pattern rejected: exceeds maximum length (1000)' });
+      } else if (!isSafePattern(schema.pattern)) {
         errors.push({ path, message: 'Pattern rejected: potential ReDoS' });
       } else {
         const re = new RegExp(schema.pattern);
@@ -193,6 +195,23 @@ function typeOf(data: unknown): string {
 }
 
 function strictEqual(a: unknown, b: unknown): boolean {
-  if (a === null && b === null) return true;
-  return a === b;
+  if (a === b) return true;
+  if (a === null || b === null) return a === b;
+  if (typeof a !== typeof b) return false;
+
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) return false;
+    return a.every((v, i) => strictEqual(v, b[i]));
+  }
+
+  if (typeof a === 'object' && typeof b === 'object') {
+    const aObj = a as Record<string, unknown>;
+    const bObj = b as Record<string, unknown>;
+    const aKeys = Object.keys(aObj);
+    const bKeys = Object.keys(bObj);
+    if (aKeys.length !== bKeys.length) return false;
+    return aKeys.every(k => strictEqual(aObj[k], bObj[k]));
+  }
+
+  return false;
 }

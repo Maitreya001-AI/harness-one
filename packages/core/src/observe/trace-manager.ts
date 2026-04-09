@@ -23,6 +23,8 @@ export interface TraceManager {
   endTrace(traceId: string, status?: 'completed' | 'error'): void;
   /** Get a trace by ID. */
   getTrace(traceId: string): Trace | undefined;
+  /** Get spans that are still running (not yet ended). Useful for leak detection. */
+  getActiveSpans(): Array<{ id: string; traceId: string; name: string; startTime: number }>;
   /** Flush all exporters. */
   flush(): Promise<void>;
   /** Dispose: flush all exporters, shut them down, and clear internal state. */
@@ -137,6 +139,17 @@ export function createTraceManager(config?: {
           'Start a trace before creating spans',
         );
       }
+      // Validate parentId exists as a span in this trace
+      if (parentId !== undefined) {
+        const parentSpan = spans.get(parentId);
+        if (!parentSpan || parentSpan.traceId !== traceId) {
+          throw new HarnessError(
+            `Parent span not found: ${parentId} in trace ${traceId}`,
+            'SPAN_NOT_FOUND',
+            'Start the parent span before creating child spans',
+          );
+        }
+      }
       const id = genId();
       spans.set(id, {
         id,
@@ -193,6 +206,8 @@ export function createTraceManager(config?: {
         exporter.exportSpan({ ...span, events: [...span.events] }).catch((err) => {
           if (onExportError) {
             onExportError(err);
+          } else if (typeof console !== 'undefined') {
+            console.warn('[harness-one] Trace exporter failed:', err instanceof Error ? err.message : err);
           }
         });
       }
@@ -216,6 +231,8 @@ export function createTraceManager(config?: {
         exporter.exportTrace(readonlyTrace).catch((err) => {
           if (onExportError) {
             onExportError(err);
+          } else if (typeof console !== 'undefined') {
+            console.warn('[harness-one] Trace exporter failed:', err instanceof Error ? err.message : err);
           }
         });
       }
@@ -225,6 +242,16 @@ export function createTraceManager(config?: {
       const trace = traces.get(traceId);
       if (!trace) return undefined;
       return toReadonlyTrace(trace);
+    },
+
+    getActiveSpans(): Array<{ id: string; traceId: string; name: string; startTime: number }> {
+      const active: Array<{ id: string; traceId: string; name: string; startTime: number }> = [];
+      for (const span of spans.values()) {
+        if (span.status === 'running') {
+          active.push({ id: span.id, traceId: span.traceId, name: span.name, startTime: span.startTime });
+        }
+      }
+      return active;
     },
 
     async flush(): Promise<void> {

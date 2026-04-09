@@ -273,6 +273,49 @@ describe('createComponentRegistry', () => {
     });
   });
 
+  describe('function-based retirement conditions', () => {
+    it('evaluates function-based retirement condition', () => {
+      const registry = createComponentRegistry();
+      registry.register(makeMeta({
+        id: 'func-cond',
+        retirementCondition: (ctx: Record<string, unknown>) => (ctx.contextWindow as number) > 1000000,
+      }));
+      const resultRetire = registry.validate('func-cond', { contextWindow: 2000000 });
+      expect(resultRetire.valid).toBe(false);
+      expect(resultRetire.reason).toContain('Function condition met');
+
+      const resultKeep = registry.validate('func-cond', { contextWindow: 500 });
+      expect(resultKeep.valid).toBe(true);
+    });
+
+    it('supports complex AND/OR logic via function condition', () => {
+      const registry = createComponentRegistry();
+      registry.register(makeMeta({
+        id: 'complex-cond',
+        retirementCondition: (ctx: Record<string, unknown>) =>
+          (ctx.contextWindow as number) > 1000000 && (ctx.accuracy as number) > 0.95,
+      }));
+
+      // Both conditions met -> retire
+      expect(registry.validate('complex-cond', { contextWindow: 2000000, accuracy: 0.99 }).valid).toBe(false);
+      // Only one condition met -> keep
+      expect(registry.validate('complex-cond', { contextWindow: 2000000, accuracy: 0.5 }).valid).toBe(true);
+      expect(registry.validate('complex-cond', { contextWindow: 500, accuracy: 0.99 }).valid).toBe(true);
+      // Neither met -> keep
+      expect(registry.validate('complex-cond', { contextWindow: 500, accuracy: 0.5 }).valid).toBe(true);
+    });
+
+    it('string-based conditions still work alongside function conditions', () => {
+      const registry = createComponentRegistry();
+      registry.register(makeMeta({
+        id: 'string-cond',
+        retirementCondition: 'score >= 100',
+      }));
+      expect(registry.validate('string-cond', { score: 150 }).valid).toBe(false);
+      expect(registry.validate('string-cond', { score: 50 }).valid).toBe(true);
+    });
+  });
+
   describe('list without filter returns all', () => {
     it('returns all components when no filter is provided', () => {
       const registry = createComponentRegistry();

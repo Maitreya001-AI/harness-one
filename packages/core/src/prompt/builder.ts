@@ -4,6 +4,8 @@
  * @module
  */
 
+import { createHash } from 'node:crypto';
+
 import type { PromptLayer, AssembledPrompt } from './types.js';
 import { estimateTokens as estimateTokensInternal } from '../_internal/token-estimator.js';
 
@@ -56,12 +58,7 @@ export function createPromptBuilder(config?: {
   }
 
   function hashString(str: string): string {
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-      const char = str.charCodeAt(i);
-      hash = ((hash << 5) - hash + char) | 0;
-    }
-    return (hash >>> 0).toString(16).padStart(8, '0');
+    return createHash('sha256').update(str).digest('hex').slice(0, 16);
   }
 
   function getSortedLayers(): PromptLayer[] {
@@ -89,7 +86,10 @@ export function createPromptBuilder(config?: {
     build(): AssembledPrompt {
       let sorted = getSortedLayers();
 
-      // Compute stable prefix hash from raw (unreplaced) cacheable content
+      // Compute stable prefix hash from raw (unreplaced) cacheable content.
+      // Using raw templates (with {{variables}}) ensures that variable replacement
+      // doesn't invalidate the KV-cache prefix — the cacheable structure is stable
+      // even as variable values change between calls.
       const rawCacheableContent = sorted
         .filter(l => l.cacheable)
         .map(l => l.content)
@@ -102,9 +102,20 @@ export function createPromptBuilder(config?: {
         content: replaceVariables(l.content),
       }));
 
+      // Cache token counts to avoid recomputation
+      const tokenCounts = new Map<string, number>();
+      function getTokens(content: string): number {
+        let count = tokenCounts.get(content);
+        if (count === undefined) {
+          count = estimateTokens(content);
+          tokenCounts.set(content, count);
+        }
+        return count;
+      }
+
       // Trim if maxTokens set — remove non-cacheable layers from highest priority number first
       if (maxTokens !== undefined) {
-        let totalTokens = sorted.reduce((sum, l) => sum + estimateTokens(l.content), 0);
+        let totalTokens = sorted.reduce((sum, l) => sum + getTokens(l.content), 0);
         if (totalTokens > maxTokens) {
           // Sort non-cacheable layers by priority ascending (lowest priority number = most important = added first)
           const cacheableLayers = sorted.filter(l => l.cacheable);
@@ -112,10 +123,10 @@ export function createPromptBuilder(config?: {
             .sort((a, b) => a.priority - b.priority);
 
           const kept: PromptLayer[] = [...cacheableLayers];
-          totalTokens = cacheableLayers.reduce((sum, l) => sum + estimateTokens(l.content), 0);
+          totalTokens = cacheableLayers.reduce((sum, l) => sum + getTokens(l.content), 0);
 
           for (const layer of nonCacheable) {
-            const layerTokens = estimateTokens(layer.content);
+            const layerTokens = getTokens(layer.content);
             if (totalTokens + layerTokens <= maxTokens) {
               kept.push(layer);
               totalTokens += layerTokens;
@@ -132,8 +143,8 @@ export function createPromptBuilder(config?: {
 
       const systemPrompt = sorted.map(l => l.content).join(separator);
       const cacheableContent = sorted.filter(l => l.cacheable).map(l => l.content).join(separator);
-      const totalTokens = estimateTokens(systemPrompt);
-      const cacheableTokens = estimateTokens(cacheableContent);
+      const totalTokens = getTokens(systemPrompt);
+      const cacheableTokens = getTokens(cacheableContent);
 
       return Object.freeze({
         systemPrompt,

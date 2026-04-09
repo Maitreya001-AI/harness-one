@@ -292,6 +292,93 @@ describe('createCostTracker', () => {
     });
   });
 
+  describe('destructured functions', () => {
+    it('recordUsage and checkBudget work when destructured', () => {
+      const { recordUsage, checkBudget, getTotalCost } = createCostTracker({
+        pricing,
+        budget: 0.001,
+      });
+      recordUsage({
+        traceId: 't1',
+        model: 'claude-3',
+        inputTokens: 1000,
+        outputTokens: 0,
+      });
+      expect(getTotalCost()).toBeCloseTo(0.003, 4);
+      const alert = checkBudget();
+      expect(alert).not.toBeNull();
+      expect(alert!.type).toBe('critical');
+    });
+
+    it('getAlertMessage works when destructured', () => {
+      const { recordUsage, getAlertMessage } = createCostTracker({
+        pricing,
+        budget: 0.003,
+      });
+      recordUsage({
+        traceId: 't1',
+        model: 'claude-3',
+        inputTokens: 1000,
+        outputTokens: 0,
+      });
+      const msg = getAlertMessage();
+      expect(msg).not.toBeNull();
+      expect(msg).toContain('BUDGET CRITICAL');
+    });
+
+    it('onAlert fires correctly when recordUsage is destructured', () => {
+      const tracker = createCostTracker({ pricing, budget: 0.001 });
+      const handler = vi.fn();
+      tracker.onAlert(handler);
+
+      const { recordUsage } = tracker;
+      recordUsage({
+        traceId: 't1',
+        model: 'claude-3',
+        inputTokens: 1000,
+        outputTokens: 0,
+      });
+      expect(handler).toHaveBeenCalled();
+      expect(handler.mock.calls[0][0].type).toBe('critical');
+    });
+  });
+
+  describe('floating point precision recalibration', () => {
+    it('maintains precision after many operations', () => {
+      const tracker = createCostTracker({
+        pricing: [{ model: 'a', inputPer1kTokens: 0.001, outputPer1kTokens: 0 }],
+      });
+
+      // Record 1500 entries (crosses the 1000 recalibration threshold)
+      for (let i = 0; i < 1500; i++) {
+        tracker.recordUsage({ traceId: `t${i}`, model: 'a', inputTokens: 1, outputTokens: 0 });
+      }
+
+      // Each record costs 1/1000 * 0.001 = 0.000001
+      // Expected total: 1500 * 0.000001 = 0.0015
+      const total = tracker.getTotalCost();
+      const expected = 1500 * 0.000001;
+      // After recalibration, should be very close
+      expect(Math.abs(total - expected)).toBeLessThan(1e-10);
+    });
+
+    it('recalibration counter resets on tracker reset', () => {
+      const tracker = createCostTracker({
+        pricing: [{ model: 'a', inputPer1kTokens: 1.0, outputPer1kTokens: 0 }],
+      });
+
+      for (let i = 0; i < 500; i++) {
+        tracker.recordUsage({ traceId: `t${i}`, model: 'a', inputTokens: 1, outputTokens: 0 });
+      }
+      tracker.reset();
+      expect(tracker.getTotalCost()).toBe(0);
+
+      // After reset, recording should work normally
+      tracker.recordUsage({ traceId: 'after', model: 'a', inputTokens: 1000, outputTokens: 0 });
+      expect(tracker.getTotalCost()).toBeCloseTo(1.0, 4);
+    });
+  });
+
   describe('records cap', () => {
     it('evicts oldest records when exceeding maxRecords (10,000) and adjusts running total', () => {
       const tracker = createCostTracker({

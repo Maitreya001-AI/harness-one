@@ -336,6 +336,94 @@ describe('createSessionManager', () => {
     });
   });
 
+  describe('Map-based LRU eviction order', () => {
+    it('evicts sessions in correct LRU order using Map', () => {
+      const sm = createSessionManager({ maxSessions: 3, gcIntervalMs: 0 });
+      const s1 = sm.create();
+      const s2 = sm.create();
+      const s3 = sm.create();
+
+      // Access s1 so it becomes most recently used
+      sm.access(s1.id);
+
+      // Create a new session, should evict s2 (oldest untouched)
+      sm.create();
+      expect(sm.get(s2.id)).toBeUndefined();
+      expect(sm.get(s1.id)).toBeDefined();
+      expect(sm.get(s3.id)).toBeDefined();
+      sm.dispose();
+    });
+
+    it('evicts multiple sessions in correct LRU order', () => {
+      const sm = createSessionManager({ maxSessions: 2, gcIntervalMs: 0 });
+      const s1 = sm.create();
+      const s2 = sm.create();
+
+      // Access s1 so s2 is now least recently used
+      sm.access(s1.id);
+
+      // Create two more, should evict s2 first then s1
+      const s3 = sm.create(); // evicts s2
+      expect(sm.get(s2.id)).toBeUndefined();
+      expect(sm.get(s1.id)).toBeDefined();
+
+      sm.create(); // evicts s1
+      expect(sm.get(s1.id)).toBeUndefined();
+      expect(sm.get(s3.id)).toBeDefined();
+      sm.dispose();
+    });
+  });
+
+  describe('Reentrant event handler safety', () => {
+    it('handles event handler that calls access() during emit without corruption', () => {
+      const sm = createSessionManager({ gcIntervalMs: 0 });
+      const s1 = sm.create();
+      const s2 = sm.create();
+      const events: SessionEvent[] = [];
+
+      // Register a reentrant handler: when s2 is accessed, also access s1
+      sm.onEvent(e => {
+        events.push(e);
+        if (e.type === 'accessed' && e.sessionId === s2.id) {
+          // This triggers emit('accessed', s1.id) recursively
+          sm.access(s1.id);
+        }
+      });
+
+      // This should not throw or corrupt state
+      sm.access(s2.id);
+
+      // The reentrant access event for s1 should have been queued and delivered
+      const accessedEvents = events.filter(e => e.type === 'accessed');
+      expect(accessedEvents).toHaveLength(2);
+      expect(accessedEvents[0].sessionId).toBe(s2.id);
+      expect(accessedEvents[1].sessionId).toBe(s1.id);
+      sm.dispose();
+    });
+
+    it('handles event handler that calls create() during emit without infinite loop', () => {
+      const sm = createSessionManager({ maxSessions: 10, gcIntervalMs: 0 });
+      let createCount = 0;
+      const events: SessionEvent[] = [];
+
+      sm.onEvent(e => {
+        events.push(e);
+        // Only create one extra session to avoid infinite loop
+        if (e.type === 'created' && createCount === 0) {
+          createCount++;
+          sm.create({ nested: true });
+        }
+      });
+
+      sm.create({ original: true });
+
+      // Should have created events for both sessions
+      const createdEvents = events.filter(e => e.type === 'created');
+      expect(createdEvents).toHaveLength(2);
+      sm.dispose();
+    });
+  });
+
   describe('C11: GC timer lifecycle', () => {
     it('dispose clears the GC interval timer', () => {
       const sm = createSessionManager({ gcIntervalMs: 100 });

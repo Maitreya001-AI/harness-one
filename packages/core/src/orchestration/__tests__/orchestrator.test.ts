@@ -398,6 +398,22 @@ describe('createOrchestrator', () => {
       expect(() => orch.broadcast('nope', 'hello')).toThrow(HarnessError);
     });
 
+    it('enforces maxQueueSize limit on broadcast messages', () => {
+      const orch = createOrchestrator({ maxQueueSize: 3 });
+      orch.register('lead', 'Lead');
+      orch.register('w1', 'Worker1');
+      // Send 5 broadcasts, queue should be capped at 3
+      for (let i = 0; i < 5; i++) {
+        orch.broadcast('lead', `msg-${i}`);
+      }
+      const messages = orch.getMessages('w1');
+      expect(messages).toHaveLength(3);
+      // Should keep the most recent messages (drop oldest)
+      expect(messages[0].content).toBe('msg-2');
+      expect(messages[1].content).toBe('msg-3');
+      expect(messages[2].content).toBe('msg-4');
+    });
+
     it('emits message_sent events for each recipient', () => {
       const events: OrchestratorEvent[] = [];
       const orch = createOrchestrator();
@@ -486,33 +502,33 @@ describe('createOrchestrator', () => {
   });
 
   describe('delegate', () => {
-    it('returns undefined when no strategy is configured', () => {
+    it('returns undefined when no strategy is configured', async () => {
       const orch = createOrchestrator();
       orch.register('a1', 'Worker');
-      expect(orch.delegate({ description: 'task1' })).toBeUndefined();
+      expect(await orch.delegate({ description: 'task1' })).toBeUndefined();
     });
 
-    it('calls strategy.select and returns the agent ID', () => {
+    it('calls strategy.select and returns the agent ID', async () => {
       const strategy: DelegationStrategy = {
         select: vi.fn((_agents: readonly AgentRegistration[], _task: DelegationTask) => 'a1'),
       };
       const orch = createOrchestrator({ strategy });
       orch.register('a1', 'Worker');
-      const result = orch.delegate({ description: 'task1' });
+      const result = await orch.delegate({ description: 'task1' });
       expect(result).toBe('a1');
       expect(strategy.select).toHaveBeenCalledOnce();
     });
 
-    it('returns undefined when strategy returns undefined', () => {
+    it('returns undefined when strategy returns undefined', async () => {
       const strategy: DelegationStrategy = {
         select: vi.fn(() => undefined),
       };
       const orch = createOrchestrator({ strategy });
       orch.register('a1', 'Worker');
-      expect(orch.delegate({ description: 'task1' })).toBeUndefined();
+      expect(await orch.delegate({ description: 'task1' })).toBeUndefined();
     });
 
-    it('emits task_delegated event when delegation succeeds', () => {
+    it('emits task_delegated event when delegation succeeds', async () => {
       const events: OrchestratorEvent[] = [];
       const strategy: DelegationStrategy = {
         select: () => 'a1',
@@ -520,7 +536,7 @@ describe('createOrchestrator', () => {
       const orch = createOrchestrator({ strategy });
       orch.register('a1', 'Worker');
       orch.onEvent((e) => events.push(e));
-      orch.delegate({ description: 'build it' });
+      await orch.delegate({ description: 'build it' });
       expect(events).toHaveLength(1);
       expect(events[0].type).toBe('task_delegated');
       if (events[0].type === 'task_delegated') {
@@ -529,25 +545,47 @@ describe('createOrchestrator', () => {
       }
     });
 
-    it('does not emit task_delegated when strategy returns undefined', () => {
+    it('does not emit task_delegated when strategy returns undefined', async () => {
       const events: OrchestratorEvent[] = [];
       const strategy: DelegationStrategy = {
         select: () => undefined,
       };
       const orch = createOrchestrator({ strategy });
       orch.onEvent((e) => events.push(e));
-      orch.delegate({ description: 'task1' });
+      await orch.delegate({ description: 'task1' });
       expect(events).toHaveLength(0);
     });
 
-    it('passes all registered agents to strategy.select', () => {
+    it('supports async strategy.select and returns a Promise', async () => {
+      const strategy: DelegationStrategy = {
+        select: async (_agents: readonly AgentRegistration[], _task: DelegationTask) => {
+          return 'a1';
+        },
+      };
+      const orch = createOrchestrator({ strategy });
+      orch.register('a1', 'Worker');
+      const result = await orch.delegate({ description: 'async task' });
+      expect(result).toBe('a1');
+    });
+
+    it('delegate returns a Promise', () => {
+      const strategy: DelegationStrategy = {
+        select: () => 'a1',
+      };
+      const orch = createOrchestrator({ strategy });
+      orch.register('a1', 'Worker');
+      const result = orch.delegate({ description: 'task1' });
+      expect(result).toBeInstanceOf(Promise);
+    });
+
+    it('passes all registered agents to strategy.select', async () => {
       const strategy: DelegationStrategy = {
         select: vi.fn((_agents: readonly AgentRegistration[], _task: DelegationTask) => undefined),
       };
       const orch = createOrchestrator({ strategy });
       orch.register('a1', 'Worker1');
       orch.register('a2', 'Worker2');
-      orch.delegate({ description: 'task1', requirements: ['typescript'] });
+      await orch.delegate({ description: 'task1', requirements: ['typescript'] });
       expect(strategy.select).toHaveBeenCalledWith(
         expect.arrayContaining([
           expect.objectContaining({ id: 'a1' }),
@@ -660,13 +698,13 @@ describe('createRoundRobinStrategy', () => {
     expect(strategy.select([], { description: 'task' })).toBeUndefined();
   });
 
-  it('integrates with orchestrator', () => {
+  it('integrates with orchestrator', async () => {
     const orch = createOrchestrator({ strategy: createRoundRobinStrategy() });
     orch.register('a1', 'Worker1');
     orch.register('a2', 'Worker2');
-    expect(orch.delegate({ description: 'task1' })).toBe('a1');
-    expect(orch.delegate({ description: 'task2' })).toBe('a2');
-    expect(orch.delegate({ description: 'task3' })).toBe('a1');
+    expect(await orch.delegate({ description: 'task1' })).toBe('a1');
+    expect(await orch.delegate({ description: 'task2' })).toBe('a2');
+    expect(await orch.delegate({ description: 'task3' })).toBe('a1');
   });
 });
 
@@ -718,12 +756,12 @@ describe('createRandomStrategy', () => {
     expect(strategy.select(agents, { description: 'task' })).toBe('a2');
   });
 
-  it('integrates with orchestrator', () => {
+  it('integrates with orchestrator', async () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.5);
     const orch = createOrchestrator({ strategy: createRandomStrategy() });
     orch.register('a1', 'Worker1');
     orch.register('a2', 'Worker2');
-    const result = orch.delegate({ description: 'task' });
+    const result = await orch.delegate({ description: 'task' });
     expect(result).toBeDefined();
     expect(['a1', 'a2']).toContain(result);
   });
@@ -764,12 +802,12 @@ describe('createFirstAvailableStrategy', () => {
     expect(strategy.select(agents, { description: 't2' })).toBe('a1');
   });
 
-  it('integrates with orchestrator', () => {
+  it('integrates with orchestrator', async () => {
     const orch = createOrchestrator({ strategy: createFirstAvailableStrategy() });
     orch.register('a1', 'Worker1');
     orch.register('a2', 'Worker2');
-    expect(orch.delegate({ description: 'task' })).toBe('a1');
+    expect(await orch.delegate({ description: 'task' })).toBe('a1');
     orch.setStatus('a1', 'running');
-    expect(orch.delegate({ description: 'task2' })).toBe('a2');
+    expect(await orch.delegate({ description: 'task2' })).toBe('a2');
   });
 });

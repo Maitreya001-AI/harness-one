@@ -44,7 +44,7 @@ describe('createPipeline + runInput', () => {
     expect(secondGuard).not.toHaveBeenCalled();
   });
 
-  it('short-circuits on first modify verdict', async () => {
+  it('propagates modified content to subsequent guardrails instead of short-circuiting', async () => {
     const secondGuard = vi.fn(allowGuard);
     const pipeline = createPipeline({
       input: [
@@ -55,8 +55,9 @@ describe('createPipeline + runInput', () => {
     const result = await runInput(pipeline, { content: 'hello' });
     expect(result.passed).toBe(true);
     expect(result.verdict).toEqual({ action: 'modify', modified: 'changed', reason: 'modified' });
-    expect(result.results).toHaveLength(1);
-    expect(secondGuard).not.toHaveBeenCalled();
+    expect(result.results).toHaveLength(2);
+    expect(secondGuard).toHaveBeenCalled();
+    expect(result.modifiedContent).toBe('changed');
   });
 
   it('blocks on throw when failClosed is true (default)', async () => {
@@ -194,7 +195,7 @@ describe('FIX-6: budget.ts throws HarnessError', () => {
 });
 
 describe('pipeline edge cases', () => {
-  it('modify verdict: pipeline returns modified content and short-circuits', async () => {
+  it('modify verdict: pipeline returns modified content and propagates to next guardrail', async () => {
     const modifierGuard: Guardrail = (ctx) => {
       if (ctx.content.includes('bad')) {
         return { action: 'modify', modified: ctx.content.replace('bad', 'good'), reason: 'cleaned up' };
@@ -214,8 +215,9 @@ describe('pipeline edge cases', () => {
     if (result.verdict.action === 'modify') {
       expect(result.verdict.modified).toBe('this is good content');
     }
-    // Second guardrail should NOT have been called (short-circuit on modify)
-    expect(secondGuard).not.toHaveBeenCalled();
+    // Second guardrail SHOULD be called with modified content
+    expect(secondGuard).toHaveBeenCalled();
+    expect(result.modifiedContent).toBe('this is good content');
   });
 
   it('first allows, second blocks: verifies short-circuit on second guardrail', async () => {
@@ -304,6 +306,75 @@ describe('pipeline edge cases', () => {
     });
     await runInput(pipeline, { content: 'test', permissionLevel: 'permissive' });
     expect(receivedLevels).toEqual(['permissive', 'permissive']);
+  });
+});
+
+describe('modify verdict propagation', () => {
+  it('passes modified content to subsequent guardrails instead of short-circuiting', async () => {
+    const receivedContents: string[] = [];
+    const piiRedactor: Guardrail = (ctx) => {
+      receivedContents.push(ctx.content);
+      if (ctx.content.includes('SSN:123')) {
+        return { action: 'modify', modified: ctx.content.replace('SSN:123', 'SSN:[REDACTED]'), reason: 'PII redacted' };
+      }
+      return { action: 'allow' };
+    };
+    const toxicityChecker: Guardrail = (ctx) => {
+      receivedContents.push(ctx.content);
+      return { action: 'allow' };
+    };
+    const pipeline = createPipeline({
+      input: [
+        { name: 'pii', guard: piiRedactor },
+        { name: 'toxicity', guard: toxicityChecker },
+      ],
+    });
+    const result = await runInput(pipeline, { content: 'my SSN:123 is secret' });
+    expect(result.passed).toBe(true);
+    // The toxicity checker should have received the redacted content
+    expect(receivedContents[1]).toBe('my SSN:[REDACTED] is secret');
+    // Result should carry the modified content
+    expect(result.modifiedContent).toBe('my SSN:[REDACTED] is secret');
+  });
+
+  it('chains multiple modify verdicts correctly', async () => {
+    const guardA: Guardrail = (ctx) => {
+      return { action: 'modify', modified: ctx.content.replace('foo', 'bar'), reason: 'replaced foo' };
+    };
+    const guardB: Guardrail = (ctx) => {
+      return { action: 'modify', modified: ctx.content.replace('bar', 'baz'), reason: 'replaced bar' };
+    };
+    const pipeline = createPipeline({
+      input: [
+        { name: 'a', guard: guardA },
+        { name: 'b', guard: guardB },
+      ],
+    });
+    const result = await runInput(pipeline, { content: 'hello foo world' });
+    expect(result.passed).toBe(true);
+    expect(result.modifiedContent).toBe('hello baz world');
+    // Final verdict should reflect modify
+    expect(result.verdict.action).toBe('modify');
+  });
+
+  it('block after modify still blocks', async () => {
+    const modifier: Guardrail = (ctx) => {
+      return { action: 'modify', modified: ctx.content + ' [modified]', reason: 'appended' };
+    };
+    const blocker: Guardrail = (ctx) => {
+      // Should receive modified content
+      expect(ctx.content).toBe('hello [modified]');
+      return { action: 'block', reason: 'blocked after modify' };
+    };
+    const pipeline = createPipeline({
+      input: [
+        { name: 'modifier', guard: modifier },
+        { name: 'blocker', guard: blocker },
+      ],
+    });
+    const result = await runInput(pipeline, { content: 'hello' });
+    expect(result.passed).toBe(false);
+    expect(result.verdict.action).toBe('block');
   });
 });
 
