@@ -11,9 +11,9 @@ Harness engineering is the discipline of building robust, production-grade infra
 ## Why harness-one?
 
 - **Framework-agnostic** -- works with any LLM provider (OpenAI, Anthropic, local models) through a simple adapter interface
-- **Composable primitives** -- use one module or all ten; no all-or-nothing framework lock-in
+- **Composable primitives** -- use one module or all twelve; no all-or-nothing framework lock-in
 - **Zero runtime dependencies** -- pure TypeScript, nothing to audit or worry about in production
-- **Complete coverage** -- addresses all 9 layers of the harness reference architecture in a single, cohesive package
+- **Complete coverage** -- addresses all 9 layers of the harness reference architecture in a single, cohesive package, plus RAG, multi-agent orchestration, and more
 
 ## Quick Start
 
@@ -81,6 +81,10 @@ The execution engine. Calls your LLM adapter in a loop, dispatches tool calls, a
 
 Adapters receive `ChatParams.signal` (an `AbortSignal`) and should forward it to their underlying SDK to cancel in-flight requests when the loop is aborted. `LLMConfig.extra` accepts a `Record<string, unknown>` for provider-specific options that fall outside the standard fields.
 
+`maxConversationMessages` defaults to **200** — the loop automatically trims conversation history once it exceeds this length. Pass `maxConversationMessages: Infinity` to disable.
+
+Pass an optional `traceManager` to get automatic observability: one trace per `run()`, one span per iteration, child spans per tool call.
+
 ```typescript
 import { AgentLoop } from 'harness-one/core';
 import type { AgentAdapter, Message } from 'harness-one/core';
@@ -99,7 +103,9 @@ const loop = new AgentLoop({
   adapter,
   maxIterations: 10,
   maxTotalTokens: 100_000,
+  maxConversationMessages: 200,  // default; trims history automatically
   onToolCall: async (call) => ({ result: `Executed ${call.name}` }),
+  traceManager: myTraceManager,  // optional; auto-creates spans
 });
 
 const messages: Message[] = [
@@ -236,6 +242,34 @@ const healed = await withSelfHealing({
 }, initialContent);
 ```
 
+#### Auto-wiring in createHarness()
+
+When using `harness-one-full`, guardrails are automatically applied inside `harness.run()` — no manual `runInput`/`runOutput` calls required:
+
+- **Input guardrails** run on every `user` role message before the agent loop starts.
+- **Output guardrails** run on every `assistant` message and every `tool_result` yielded by the loop.
+
+Configure them in `createHarness()`:
+
+```typescript
+const harness = createHarness({
+  provider: 'anthropic',
+  client: anthropicClient,
+  model: 'claude-sonnet-4-20250514',
+  guardrails: {
+    injection: { sensitivity: 'medium' }, // or true for defaults
+    rateLimit: { max: 10, windowMs: 60_000 },
+    contentFilter: { blocked: ['confidential'] }, // applied to output
+  },
+});
+
+// Guardrails fire automatically — blocked input/output yields an 'error' event
+for await (const event of harness.run(messages)) {
+  if (event.type === 'error') console.error('Blocked:', event.error.message);
+  if (event.type === 'message') console.log(event.message.content);
+}
+```
+
 ### harness-one/observe -- Observability
 
 Structured tracing with spans and exporters, plus token cost tracking with budget alerts.
@@ -307,9 +341,11 @@ await store.write({
   content: 'Prefers TypeScript',
   grade: 'critical',
   tags: ['preference'],
+  metadata: { sessionId: 'sess_abc123' }, // tag entries with session
 });
 
-const results = await store.query({ tags: ['preference'], limit: 10 });
+// sessionId filter: retrieve only entries belonging to a specific session
+const results = await store.query({ sessionId: 'sess_abc123', limit: 10 });
 await store.compact({ maxEntries: 1000, maxAge: 86400000 });
 
 // Cross-context relay for agent handoff
@@ -321,6 +357,8 @@ await relay.save({
   timestamp: Date.now(),
 });
 ```
+
+**File-system store**: `createFileSystemStore` serializes each entry as an individual JSON file. An index file maps keys to IDs. All writes (including `update()`) run inside an in-process index lock that prevents concurrent read-modify-write corruption. Raw I/O is delegated to `fs-io.ts`, keeping the business logic layer testable in isolation.
 
 ### harness-one/eval -- Evaluation & Validation
 
@@ -399,43 +437,117 @@ checker.addRule(layerDependencyRule({
 
 ### harness-one/orchestration -- Multi-Agent Orchestration
 
-Manage multiple agents with hierarchical or peer-to-peer communication, shared context, delegation strategies, and lifecycle events.
+Manage multiple agents with hierarchical or peer-to-peer communication, shared context, delegation strategies, and lifecycle events. Includes AgentPool, Handoff protocol, ContextBoundary, and MessageQueue.
 
 ```typescript
 import {
   createOrchestrator,
   createRoundRobinStrategy,
+  createAgentPool,
+  createHandoff,
+  createContextBoundary,
 } from 'harness-one/orchestration';
+import { AgentLoop } from 'harness-one/core';
 
-// Create orchestrator with round-robin delegation
+// Orchestrator — agent registration, routing, delegation
 const orch = createOrchestrator({
   mode: 'hierarchical',
   strategy: createRoundRobinStrategy(),
   maxAgents: 10,
 });
 
-// Register agents
 orch.register('coordinator', 'Coordinator');
 orch.register('researcher', 'Researcher', { parentId: 'coordinator' });
-orch.register('writer', 'Writer', { parentId: 'coordinator' });
 
-// Shared context across all agents
 orch.context.set('topic', 'AI safety');
-
-// Delegate a task (round-robin selects an idle agent)
-orch.setStatus('researcher', 'idle');
-const agentId = orch.delegate({ description: 'Research latest papers' });
-
-// Send messages between agents
 orch.send({ from: 'coordinator', to: 'researcher', type: 'request', content: 'Find papers on RLHF' });
 
-// Broadcast to all children
-orch.broadcast('coordinator', 'Deadline in 1 hour', { parentId: 'coordinator' });
+// AgentPool — lifecycle management for reusable AgentLoop instances
+const pool = createAgentPool({
+  factory: (role) => new AgentLoop({ adapter }),
+  min: 2,    // keep 2 agents warm
+  max: 10,   // hard cap
+  idleTimeout: 60_000,
+});
+
+const agent = pool.acquire('researcher');
+// ... use agent.loop
+pool.release(agent);
+console.log(pool.stats); // { idle, active, total, created, recycled }
+await pool.drain();      // wait for all active agents to be released
+
+// Handoff — structured inter-agent messaging
+// Accepts any MessageTransport (AgentOrchestrator satisfies this interface)
+const handoff = createHandoff(orch);
+const receipt = handoff.send('coordinator', 'researcher', {
+  summary: 'Research RLHF papers',
+  artifacts: [{ type: 'url', content: 'https://...', label: 'survey' }],
+  acceptanceCriteria: ['At least 5 papers', 'Include 2024 publications'],
+});
+
+const payload = handoff.receive('researcher'); // FIFO dequeue
+const { passed, violations } = handoff.verify(receipt.id, output, myVerifier);
+
+// ContextBoundary — advisory access control on SharedContext
+const boundary = createContextBoundary(orch.context, [
+  { agent: 'planner', allowWrite: ['plan.'], denyWrite: ['config.'] },
+  { agent: 'worker',  allowRead: ['plan.', 'shared.'], denyWrite: ['plan.'] },
+]);
+
+const workerView = boundary.forAgent('worker');
+workerView.get('plan.step');      // allowed
+workerView.set('plan.step', 2);   // throws BOUNDARY_WRITE_DENIED
+```
+
+**MessageTransport interface**: `createHandoff` accepts any object with a `send(message)` method — the full orchestrator, a custom pub/sub channel, or a test double all work equally.
+
+```typescript
+import type { MessageTransport } from 'harness-one/orchestration';
+
+const transport: MessageTransport = {
+  send(msg) { myEventBus.publish(msg); },
+};
+const handoff = createHandoff(transport);
 ```
 
 ### harness-one/rag -- RAG Pipeline
 
-Document loading, chunking, embedding, and retrieval pipeline with built-in strategies and in-memory vector search.
+Document loading, chunking, embedding, and retrieval pipeline with built-in strategies, in-memory vector search, deduplication, and token-count estimates on results.
+
+**Loaders** — convert raw data into `Document` objects:
+
+```typescript
+import { createTextLoader, createDocumentArrayLoader } from 'harness-one/rag';
+
+// From string array
+const loader = createTextLoader(['Doc A', 'Doc B'], { source: 'my-corpus' });
+
+// From pre-built Document objects
+const loader2 = createDocumentArrayLoader([
+  { id: 'custom-1', content: 'Pre-built doc', metadata: { version: 2 } },
+]);
+```
+
+**Chunking strategies** — split documents into indexable pieces:
+
+```typescript
+import {
+  createFixedSizeChunking,
+  createParagraphChunking,
+  createSlidingWindowChunking,
+} from 'harness-one/rag';
+
+// Fixed character size with optional overlap
+const fixedChunking = createFixedSizeChunking({ chunkSize: 512, overlap: 64 });
+
+// Split on double newlines; sub-split oversized paragraphs
+const paraChunking = createParagraphChunking({ maxChunkSize: 500 });
+
+// Overlapping sliding windows
+const slidingChunking = createSlidingWindowChunking({ windowSize: 300, stepSize: 150 });
+```
+
+**Full pipeline** — wire all stages together:
 
 ```typescript
 import {
@@ -445,26 +557,33 @@ import {
   createRAGPipeline,
 } from 'harness-one/rag';
 
-// Create a RAG pipeline
 const pipeline = createRAGPipeline({
   loader: createTextLoader([
     'TypeScript is a typed superset of JavaScript.',
     'Harness engineering builds infrastructure around LLMs.',
   ]),
   chunking: createParagraphChunking({ maxChunkSize: 500 }),
-  embedding: myEmbeddingModel, // implements EmbeddingModel interface
+  embedding: myEmbeddingModel,     // implement EmbeddingModel interface
   retriever: createInMemoryRetriever({ embedding: myEmbeddingModel }),
+  maxChunks: 10_000,               // optional capacity cap
+  onWarning: ({ type, message }) => console.warn(type, message),
 });
 
-// Ingest: load → chunk → embed → index
+// Ingest: load → chunk → deduplicate → embed → index
 const { documents, chunks } = await pipeline.ingest();
 
-// Query: embed query → retrieve relevant chunks
+// Or ingest pre-loaded documents directly (skips loader step)
+await pipeline.ingestDocuments([{ id: 'd1', content: '...' }]);
+
+// Query: embed query → cosine similarity → top-k
+// Each result includes `tokens` (heuristic: content.length / 4)
 const results = await pipeline.query('What is harness engineering?', { limit: 3 });
-for (const { chunk, score } of results) {
-  console.log(`[${score.toFixed(2)}] ${chunk.content}`);
+for (const { chunk, score, tokens } of results) {
+  console.log(`[${score.toFixed(2)}] ~${tokens} tokens: ${chunk.content.slice(0, 80)}`);
 }
 ```
+
+`RetrievalResult.tokens` gives a token estimate so you can stay within your context budget when injecting retrieved chunks into a prompt.
 
 ## harness-one-full — Batteries Included
 
@@ -474,13 +593,36 @@ for (const { chunk, score } of results) {
 npm install harness-one-full @anthropic-ai/sdk
 ```
 
+**Preferred pattern — inject a pre-built adapter** (`AdapterHarnessConfig`):
+
+```typescript
+import { createAnthropicAdapter } from '@harness-one/anthropic';
+import { createHarness } from 'harness-one-full';
+
+const adapter = createAnthropicAdapter({
+  client: anthropicClient,
+  model: 'claude-sonnet-4-20250514',
+});
+
+const harness = createHarness({
+  adapter,  // no provider/client fields needed
+  maxIterations: 20,
+  guardrails: {
+    injection: { sensitivity: 'medium' },
+    rateLimit: { max: 10, windowMs: 60_000 },
+  },
+  budget: 5.0,
+});
+```
+
+**Provider-based shorthand** (still supported):
+
 ```typescript
 import Anthropic from '@anthropic-ai/sdk';
 import { createHarness } from 'harness-one-full';
 
 // HarnessConfig is a discriminated union keyed by `provider`.
-// Pass `provider: 'anthropic'` or `provider: 'openai'` — TypeScript
-// narrows the required `client` field accordingly.
+// TypeScript narrows the required `client` field by provider.
 const harness = createHarness({
   provider: 'anthropic',
   client: new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }),
@@ -492,11 +634,15 @@ const harness = createHarness({
   },
   budget: 5.0,
 });
+```
 
-// Register tools, then run
+**harness.run() auto-wiring**: guardrails fire on every user message (input) and every assistant message + tool result (output). The `AgentLoop` is created internally with `maxConversationMessages: 200` by default.
+
+```typescript
 harness.tools.register(myTool);
 for await (const event of harness.run(messages)) {
   if (event.type === 'message') console.log(event.message.content);
+  if (event.type === 'error') console.error('Blocked:', event.error.message);
   if (event.type === 'done') break;
 }
 
@@ -521,7 +667,22 @@ const harness = createHarness({
 |-------|------|--------|
 | `langfuse` | `Langfuse` instance | Enables Langfuse trace export and cost tracking |
 | `redis` | `Redis` instance | Enables Redis-backed persistent memory |
-| `tokenizer` | `'tiktoken'` | Registers tiktoken for exact token counts |
+| `tokenizer` | `'tiktoken'` \| `(text) => number` \| `{ encode }` | Token counting — string enables tiktoken globally; function/object avoids global side-effects |
+
+**Observability auto-wiring**: pass a `traceManager` to `AgentLoop` directly if you need per-iteration and per-tool spans without managing traces manually:
+
+```typescript
+import { createTraceManager, createConsoleExporter } from 'harness-one/observe';
+import { AgentLoop } from 'harness-one/core';
+
+const tm = createTraceManager({ exporters: [createConsoleExporter()] });
+const loop = new AgentLoop({
+  adapter,
+  traceManager: tm, // creates trace on run(), span per iteration, child span per tool call
+});
+```
+
+**Event bus deprecation**: `harness.eventBus` is deprecated. Each module exposes its own `onEvent()` subscription (sessions, orchestrator, traces). Use per-module subscriptions for new code.
 
 All auto-configured components can be replaced by passing the explicit override field (`adapter`, `exporters`, `memoryStore`, `schemaValidator`).
 
@@ -531,7 +692,7 @@ Scaffold harness-one boilerplate into your project with a single command:
 
 ```bash
 npx harness-one init          # Interactive -- choose which modules to scaffold
-npx harness-one init --all    # Generate boilerplate for all 10 modules
+npx harness-one init --all    # Generate boilerplate for all available modules
 npx harness-one init --modules core,tools,guardrails
 npx harness-one audit         # Scan project for harness-one usage and coverage gaps
 ```
@@ -543,33 +704,30 @@ The `init` command creates working starter files in a `harness/` directory. The 
 ### Module Dependency Graph
 
 ```
-                    +----------+
-                    |   core   |  (types, errors, AgentLoop)
-                    +----+-----+
-                         |
-          +--------------+--------------+
-          |              |              |
-     +----+----+   +----+----+   +-----+-----+
-     | context |   |  tools  |   |  prompt    |
-     +---------+   +---------+   +-----------+
-          |              |              |
-     +----+--------------+--------------+----+
-     |                                       |
-+----+------+  +-----------+  +----------+   |
-| guardrails|  |  observe  |  | session  |   |
-+-----------+  +-----------+  +----------+   |
-     |              |              |          |
-     +--------------+--------------+----+    |
-                    |                   |    |
-               +----+----+        +----+----+
-               |  memory |        |   eval  |
-               +---------+        +---------+
-                    |                   |
-                    +--------+----------+
-                             |
-                       +-----+-----+
-                       |   evolve  |
-                       +-----------+
+               +------------+
+               |  _internal |  (JSON Schema, token estimator, LRU cache)
+               +-----+------+
+                     |
+               +-----+------+
+               |    core    |  (types, errors, AgentLoop + traceManager opt.)
+               +-----+------+
+                     |
+     +---------------+---------------+---------------+
+     |          |         |          |               |
++----+----+ +---+---+ +---+---+ +----+----+    +-----+------+
+| context | | tools | |prompt | |guardrails|   | orchestration|
++---------+ +-------+ +-------+ +-----------+  +----- -------+
+                                     |           (AgentPool,
++----------+  +--------+  +-------+  |            Handoff,
+|  observe |  | session|  | memory|  |            ContextBoundary,
++----------+  +--------+  +-------+  |            MessageQueue)
+                               |
+                           +---+---+
+                           | fs-io |  (extracted I/O layer)
+                           +-------+
++------+    +-------+    +-----+
+|  rag |    |  eval |    |evolve|
++------+    +-------+    +------+
 ```
 
 ### Key Design Decisions
@@ -581,20 +739,22 @@ The `init` command creates working starter files in a `harness/` directory. The 
 - **Immutable data** -- `Object.freeze()` on all returned structures to prevent accidental mutation
 - **Zero dependencies** -- pure TypeScript with only `node:fs`, `node:path`, and `node:readline` for the CLI
 
-## 9-Layer Reference Architecture
+## 12+ Layer Reference Architecture
 
 | Layer | Module | Purpose |
 |-------|--------|---------|
-| 1. Agent Loop | `core` | LLM calling, tool dispatch, safety valves |
+| 1. Agent Loop | `core` | LLM calling, tool dispatch, safety valves, optional traceManager |
 | 2. Prompt Engineering | `prompt` | Multi-layer assembly, KV-cache optimization, skills |
 | 3. Context Engineering | `context` | Token budgets, packing, cache stability |
 | 4. Tool System | `tools` | Definition, validation, registry, rate limiting |
-| 5. Safety & Guardrails | `guardrails` | Input/output filtering, injection detection, self-healing |
+| 5. Safety & Guardrails | `guardrails` | Input/output filtering, injection detection, auto-wired in createHarness() |
 | 6. Observability | `observe` | Tracing, spans, cost tracking, budget alerts |
 | 7. Session Management | `session` | TTL, LRU eviction, locking, garbage collection |
-| 8. Memory & Persistence | `memory` | Graded storage, compaction, cross-context relay |
+| 8. Memory & Persistence | `memory` | Graded storage, sessionId filter, atomic fs writes, cross-context relay |
 | 9. Evaluation | `eval` | Scorers, quality gates, generator-evaluator, flywheel |
-| +. Evolution | `evolve` | Component registry, drift detection, architecture rules |
+| 10. Evolution | `evolve` | Component registry, drift detection, architecture rules |
+| 11. Multi-Agent Orchestration | `orchestration` | AgentPool, Handoff, MessageTransport, ContextBoundary, MessageQueue |
+| 12. RAG Pipeline | `rag` | Document loading, chunking, embedding, retrieval, token estimates |
 
 ## Contributing
 
