@@ -8,6 +8,10 @@ export type {
   ContextLayout,
   CompressionStrategy,
   CacheStabilityReport,
+  Checkpoint,
+  CheckpointStorage,
+  CheckpointManagerConfig,
+  CheckpointManager,
 } from './types.js';
 
 // Token counting
@@ -25,3 +29,6 @@ export type { CompressOptions, CompactOptions } from './compress.js';
 
 // Cache stability
 export { analyzeCacheStability } from './cache-stability.js';
+
+// Checkpoint
+export { createCheckpointManager } from './checkpoint.js';

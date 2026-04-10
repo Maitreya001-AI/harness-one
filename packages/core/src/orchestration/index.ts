@@ -12,6 +12,18 @@ export type {
   OrchestratorEvent,
   SpawnSubAgentConfig,
   SpawnSubAgentResult,
+  PoolConfig,
+  PoolStats,
+  PooledAgent,
+  AgentPool,
+  HandoffArtifact,
+  HandoffPayload,
+  HandoffReceipt,
+  HandoffVerificationResult,
+  HandoffManager,
+  BoundaryPolicy,
+  BoundaryViolation,
+  BoundedContext,
 } from './types.js';
 
 // Spawn
@@ -27,3 +39,12 @@ export {
   createRandomStrategy,
   createFirstAvailableStrategy,
 } from './strategies.js';
+
+// Agent Pool
+export { createAgentPool } from './agent-pool.js';
+
+// Handoff Protocol
+export { createHandoff } from './handoff.js';
+
+// Context Boundary
+export { createContextBoundary } from './context-boundary.js';

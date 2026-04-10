@@ -46,7 +46,7 @@ export function createAgentPool(config: PoolConfig): AgentPool {
       id,
       loop,
       createdAt: Date.now(),
-      role,
+      ...(role !== undefined && { role }),
     };
     totalCreated++;
     return { agent, state: 'idle', idleTimer: null };

@@ -8,6 +8,15 @@ export type {
   TokenUsageRecord,
   CostAlert,
   TraceExporter,
+  FailureMode,
+  FailureClassification,
+  FailureDetector,
+  FailureTaxonomyConfig,
+  FailureTaxonomy,
+  CacheMetrics,
+  CacheMetricsBucket,
+  CacheMonitorConfig,
+  CacheMonitor,
 } from './types.js';
 
 // Trace manager
@@ -21,3 +30,9 @@ export { createCostTracker } from './cost-tracker.js';
 // Logger
 export type { LogLevel, Logger, LoggerConfig } from './logger.js';
 export { createLogger } from './logger.js';
+
+// Failure Taxonomy
+export { createFailureTaxonomy } from './failure-taxonomy.js';
+
+// Cache Monitor
+export { createCacheMonitor } from './cache-monitor.js';
