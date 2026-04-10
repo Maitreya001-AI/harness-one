@@ -58,6 +58,7 @@ export class AgentLoop {
   };
   private _iteration = 0;
   private _totalToolCalls = 0;
+  private _status: 'idle' | 'running' | 'completed' | 'disposed' = 'idle';
 
   // If executionStrategy is explicitly provided, it takes precedence over the parallel flag.
   // parallel: true is a shorthand that creates a default parallel strategy.
@@ -110,6 +111,7 @@ export class AgentLoop {
 
   /** Dispose the loop, releasing resources and cancelling any pending operations. */
   dispose(): void {
+    this._status = 'disposed';
     this.abortController.abort();
   }
 
@@ -120,6 +122,11 @@ export class AgentLoop {
       totalToolCalls: this._totalToolCalls,
       usage: this.usage,
     };
+  }
+
+  /** Current lifecycle status of the loop. */
+  get status(): 'idle' | 'running' | 'completed' | 'disposed' {
+    return this._status;
   }
 
   /**
@@ -134,6 +141,7 @@ export class AgentLoop {
    */
   async *run(messages: Message[]): AsyncGenerator<AgentEvent> {
     const conversation = [...messages];
+    this._status = 'running';
     let iteration = 0;
     let yieldedDone = false;
 
@@ -429,6 +437,7 @@ export class AgentLoop {
   }
 
   private doneEvent(reason: DoneReason): AgentEvent {
+    this._status = 'completed';
     return { type: 'done', reason, totalUsage: this.usage };
   }
 }

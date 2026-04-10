@@ -200,3 +200,6 @@ export interface ExecutionStrategy {
     },
   ): Promise<readonly ToolExecutionResult[]>;
 }
+
+/** Lifecycle status of an AgentLoop instance. */
+export type AgentLoopStatus = 'idle' | 'running' | 'completed' | 'disposed';
