@@ -118,6 +118,15 @@ describe('createHandoff', () => {
     expect(history.length).toBeLessThanOrEqual(10_000);
   });
 
+  it('send() throws HANDOFF_SERIALIZATION_ERROR for non-serializable payload', () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+
+    expect(() =>
+      handoff.send('agent-a', 'agent-b', { summary: 'test', context: circular }),
+    ).toThrow(/HANDOFF_SERIALIZATION_ERROR|serialize/i);
+  });
+
   it('inbox per agent is pruned when exceeding max capacity', () => {
     for (let i = 0; i < 1_050; i++) {
       handoff.send('agent-a', 'agent-b', { summary: `msg-${i}` });

@@ -193,6 +193,37 @@ describe('AgentPool', () => {
     expect(Object.isFrozen(agent)).toBe(true);
   });
 
+  it('resize() trims idle agents down to target', () => {
+    pool = makePool({ max: 10 });
+    const a1 = pool.acquire();
+    const a2 = pool.acquire();
+    const a3 = pool.acquire();
+    pool.release(a1);
+    pool.release(a2);
+    pool.release(a3);
+    expect(pool.stats.idle).toBe(3);
+
+    pool.resize(1);
+    expect(pool.stats.total).toBe(1);
+    expect(pool.stats.idle).toBe(1);
+  });
+
+  it('resize() pre-warms up to target', () => {
+    pool = makePool({ max: 10 });
+    expect(pool.stats.total).toBe(0);
+
+    pool.resize(3);
+    expect(pool.stats.total).toBe(3);
+    expect(pool.stats.idle).toBe(3);
+    expect(pool.stats.active).toBe(0);
+  });
+
+  it('resize() does not exceed max', () => {
+    pool = makePool({ max: 2 });
+    pool.resize(5);
+    expect(pool.stats.total).toBe(2);
+  });
+
   it('timer leak prevention: after dispose, no pending timers', () => {
     vi.useFakeTimers();
     try {

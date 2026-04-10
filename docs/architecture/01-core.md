@@ -13,7 +13,7 @@ core 模块定义了 harness-one 的共享类型契约（Message、TokenUsage、
 | `src/core/types.ts` | 共享类型定义：Message、AgentAdapter、ToolSchema、ExecutionStrategy 等 | ~130 |
 | `src/core/errors.ts` | HarnessError 基类 + 5 个子类 | ~135 |
 | `src/core/events.ts` | AgentEvent 判别联合 + DoneReason | ~30 |
-| `src/core/agent-loop.ts` | AgentLoop 类——核心执行循环（支持并行工具执行） | ~230 |
+| `src/core/agent-loop.ts` | AgentLoop 类——核心执行循环（支持并行工具执行、流式响应） | ~440 |
 | `src/core/execution-strategies.ts` | 工具执行策略：顺序 + 并行（worker pool 并发控制） | ~100 |
 | `src/core/index.ts` | 公共导出桶文件 | ~38 |
 
@@ -58,13 +58,23 @@ core 模块定义了 harness-one 的共享类型契约（Message、TokenUsage、
 class AgentLoop {
   constructor(config: AgentLoopConfig)
   get usage(): TokenUsage
+  get status(): 'idle' | 'running' | 'completed' | 'disposed'
+  getMetrics(): { iteration: number; totalToolCalls: number; usage: TokenUsage }
   abort(): void
   dispose(): void
   async *run(messages: Message[]): AsyncGenerator<AgentEvent>
 }
 ```
 
-**行为**：在循环中调用 `adapter.chat()`，如果 LLM 返回 toolCalls，则依次调用 `onToolCall` 并将结果回填，继续循环直到 LLM 不再请求工具或触发安全阀（maxIterations / maxTotalTokens / abort）。
+**行为**：在循环中调用 `adapter.chat()`（或 `adapter.stream()`），如果 LLM 返回 toolCalls，则依次调用 `onToolCall` 并将结果回填，继续循环直到 LLM 不再请求工具或触发安全阀（maxIterations / maxTotalTokens / abort）。
+
+**生命周期状态**（`status` getter）：
+- `idle` — 构造后未运行
+- `running` — `run()` 正在执行中
+- `completed` — `run()` 正常结束（end_turn / max_iterations / token_budget）
+- `disposed` — 调用 `dispose()` 后
+
+**指标**（`getMetrics()`）：返回当前迭代次数、累计工具调用数和 token 用量的快照。
 
 ## 内部实现
 

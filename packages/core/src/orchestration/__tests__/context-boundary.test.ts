@@ -132,6 +132,15 @@ describe('createContextBoundary', () => {
     expect(boundary.getPolicies('unknown')).toBeUndefined();
   });
 
+  it('forAgent caches and returns same view instance', () => {
+    boundary = createContextBoundary(context, [
+      { agent: 'worker', allowRead: ['shared.'] },
+    ]);
+    const view1 = boundary.forAgent('worker');
+    const view2 = boundary.forAgent('worker');
+    expect(view1).toBe(view2);
+  });
+
   it('forAgent returns scoped view even for unknown agents (never raw context)', () => {
     boundary = createContextBoundary(context);
     const view = boundary.forAgent('unknown');
