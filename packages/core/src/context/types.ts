@@ -82,3 +82,53 @@ export interface CacheStabilityReport {
   readonly stablePrefixTokens: number;
   readonly recommendations: string[];
 }
+
+// ---------------------------------------------------------------------------
+// Checkpoint Manager types
+// ---------------------------------------------------------------------------
+
+/** A saved checkpoint of conversation state. */
+export interface Checkpoint {
+  readonly id: string;
+  readonly label?: string;
+  readonly messages: readonly Message[];
+  readonly tokenCount: number;
+  readonly timestamp: number;
+  readonly metadata?: Readonly<Record<string, unknown>>;
+}
+
+/** Pluggable storage backend for checkpoints (sync interface). */
+export interface CheckpointStorage {
+  /** Save a checkpoint. */
+  save(checkpoint: Checkpoint): void;
+  /** Load a checkpoint by ID. Returns undefined if not found. */
+  load(id: string): Checkpoint | undefined;
+  /** List all checkpoints in insertion order (oldest first). */
+  list(): readonly Checkpoint[];
+  /** Delete a checkpoint by ID. Returns true if it existed. */
+  delete(id: string): boolean;
+}
+
+/** Configuration for creating a CheckpointManager. */
+export interface CheckpointManagerConfig {
+  /** Maximum number of checkpoints to retain. Oldest evicted on overflow. Default: 5. */
+  readonly maxCheckpoints?: number;
+  /** Custom token counting function. Default: heuristic estimate. */
+  readonly countTokens?: (messages: readonly Message[]) => number;
+  /** Pluggable storage backend. Default: in-memory. */
+  readonly storage?: CheckpointStorage;
+}
+
+/** Checkpoint manager for saving and restoring conversation state. */
+export interface CheckpointManager {
+  /** Save current messages as a checkpoint. Auto-prunes if at capacity. */
+  save(messages: readonly Message[], label?: string, metadata?: Record<string, unknown>): Checkpoint;
+  /** Restore messages from a checkpoint. Returns a fresh copy. Throws if not found. */
+  restore(checkpointId: string): readonly Message[];
+  /** List all checkpoints (oldest first). */
+  list(): readonly Checkpoint[];
+  /** Prune checkpoints by count and/or age. Returns number pruned. */
+  prune(options?: { maxCheckpoints?: number; maxAge?: number }): number;
+  /** Dispose the manager and clear all checkpoints. */
+  dispose(): void;
+}
