@@ -251,9 +251,10 @@ function createPreserveFailuresStrategy(): CompressionStrategy {
   return {
     name: 'preserve-failures',
     async compress(messages, targetTokens) {
-      // Like truncate, but never drop messages with isFailureTrace
-      // H5: Track by index instead of reference identity
+      // Single-pass: classify messages and compute tokens simultaneously.
+      // Keep all failure traces, then fill remaining budget from end of non-failures.
       const nonFailureIndices: number[] = [];
+      const nonFailureTokens: number[] = []; // parallel to nonFailureIndices
       let failureTokens = 0;
 
       for (let i = 0; i < messages.length; i++) {
@@ -261,24 +262,23 @@ function createPreserveFailuresStrategy(): CompressionStrategy {
           failureTokens += msgTokens(messages[i]);
         } else {
           nonFailureIndices.push(i);
+          nonFailureTokens.push(msgTokens(messages[i]));
         }
       }
 
-      // Keep all failures, then fill remaining token budget from end of non-failures
+      // Fill remaining budget from end of non-failures (reuse pre-computed tokens)
       const remainingBudget = Math.max(0, targetTokens - failureTokens);
-      // C4: Use a Set<number> for O(1) lookup instead of Array.includes O(N)
       const keptNonFailureIndices: Set<number> = new Set();
-      let nonFailureTokens = 0;
+      let usedBudget = 0;
       for (let i = nonFailureIndices.length - 1; i >= 0; i--) {
-        const idx = nonFailureIndices[i];
-        const tokens = msgTokens(messages[idx]);
-        if (nonFailureTokens + tokens <= remainingBudget) {
-          keptNonFailureIndices.add(idx);
-          nonFailureTokens += tokens;
+        const tokens = nonFailureTokens[i];
+        if (usedBudget + tokens <= remainingBudget) {
+          keptNonFailureIndices.add(nonFailureIndices[i]);
+          usedBudget += tokens;
         }
       }
 
-      // Reconstruct in original order using index-based lookup
+      // Reconstruct in original order (single pass over messages)
       const result: Message[] = [];
       for (let i = 0; i < messages.length; i++) {
         if (messages[i].meta?.isFailureTrace || keptNonFailureIndices.has(i)) {

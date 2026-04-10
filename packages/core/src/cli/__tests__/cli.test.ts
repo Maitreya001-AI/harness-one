@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { parseArgs, getTemplate, auditProject, ALL_MODULES } from '../index.js';
+import { scanFiles } from '../audit.js';
 import type { ModuleName } from '../index.js';
-import { mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, rmSync, existsSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 
 describe('CLI argument parser', () => {
@@ -62,11 +63,10 @@ describe('CLI argument parser', () => {
     expect(result.command).toBe('help');
   });
 
-  it('handles conflicting --all and --modules by preferring --all', () => {
-    const result = parseArgs(['node', 'harness-one', 'init', '--all', '--modules', 'core,tools']);
-    expect(result.command).toBe('init');
-    expect(result.all).toBe(true);
-    expect(result.modules).toEqual([...ALL_MODULES]);
+  it('throws when both --all and --modules are specified', () => {
+    expect(() =>
+      parseArgs(['node', 'harness-one', 'init', '--all', '--modules', 'core,tools']),
+    ).toThrow('Conflicting flags: --all and --modules cannot be used together');
   });
 
   it('returns empty modules when --modules flag has no value', () => {
@@ -91,11 +91,10 @@ describe('CLI argument parser', () => {
     expect(result.modules).toEqual(['core', 'tools']);
   });
 
-  it('audit command ignores --all and --modules flags', () => {
-    const result = parseArgs(['node', 'harness-one', 'audit', '--all', '--modules', 'core']);
-    expect(result.command).toBe('audit');
-    // --all still gets parsed, but audit doesn't use modules interactively
-    expect(result.all).toBe(true);
+  it('audit command also throws when both --all and --modules are specified', () => {
+    expect(() =>
+      parseArgs(['node', 'harness-one', 'audit', '--all', '--modules', 'core']),
+    ).toThrow('Conflicting flags: --all and --modules cannot be used together');
   });
 
   it('returns help for unknown commands like "deploy"', () => {
@@ -287,5 +286,26 @@ describe('Audit logic', () => {
 
     const result = auditProject(AUDIT_TMP_DIR);
     expect(result.used).toEqual(['memory']);
+  });
+
+  it('handles symlink cycles without infinite recursion', () => {
+    // Create a directory structure with a symlink cycle: subdir -> parent
+    const subDir = join(AUDIT_TMP_DIR, 'subdir');
+    mkdirSync(subDir, { recursive: true });
+    writeFileSync(join(subDir, 'code.ts'), `import { AgentLoop } from 'harness-one/core';\n`);
+
+    // Create symlink: subdir/loop -> AUDIT_TMP_DIR (cycle)
+    try {
+      symlinkSync(AUDIT_TMP_DIR, join(subDir, 'loop'), 'dir');
+    } catch {
+      // Skip test if symlinks not supported on this OS/filesystem
+      return;
+    }
+
+    // This should complete without hanging or throwing
+    const files = scanFiles(AUDIT_TMP_DIR);
+    expect(files.length).toBeGreaterThanOrEqual(1);
+    // Should find the code.ts file
+    expect(files.some(f => f.includes('code.ts'))).toBe(true);
   });
 });

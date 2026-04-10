@@ -268,7 +268,13 @@ export function createSessionManager(config?: {
     gc(): number {
       let count = 0;
       for (const [id, session] of sessions) {
-        if (session.status === 'expired' || (session.status === 'active' && isExpired(session))) {
+        // Locked sessions are excluded — they are actively in use.
+        if (session.status === 'locked') continue;
+        const alreadyExpired = session.status === 'expired';
+        if (alreadyExpired || (session.status === 'active' && isExpired(session))) {
+          if (!alreadyExpired) {
+            session.status = 'expired';
+          }
           accessOrder.delete(id);
           sessions.delete(id);
           emit('destroyed', id);
@@ -305,6 +311,9 @@ export function createSessionManager(config?: {
       // Clear all sessions to release memory and prevent stale references.
       sessions.clear();
       accessOrder.clear();
+      // Clear event handlers to prevent memory leaks when handlers close over
+      // external state that would otherwise be retained by the disposed manager.
+      eventHandlers.length = 0;
     },
   };
 

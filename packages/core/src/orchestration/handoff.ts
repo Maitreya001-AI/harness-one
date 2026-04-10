@@ -10,6 +10,7 @@ import type {
   HandoffPayload,
   HandoffReceipt,
   HandoffVerificationResult,
+  MessageTransport,
 } from './types.js';
 import type { AgentOrchestrator } from './orchestrator.js';
 
@@ -19,7 +20,10 @@ const MAX_INBOX_PER_AGENT = 1_000;
 
 /**
  * Create a HandoffManager that layers structured handoff semantics
- * on top of an existing AgentOrchestrator.
+ * on top of any {@link MessageTransport}.
+ *
+ * The transport only needs `send()` — the full {@link AgentOrchestrator}
+ * satisfies this interface, but lightweight custom transports work too.
  *
  * @example
  * ```ts
@@ -28,8 +32,23 @@ const MAX_INBOX_PER_AGENT = 1_000;
  * const receipt = handoff.send('agent-a', 'agent-b', { summary: 'Do X' });
  * const payload = handoff.receive('agent-b');
  * ```
+ *
+ * @example Custom transport
+ * ```ts
+ * const transport: MessageTransport = {
+ *   send(msg) { channel.publish(msg); },
+ * };
+ * const handoff = createHandoff(transport);
+ * ```
  */
-export function createHandoff(orchestrator: AgentOrchestrator): HandoffManager {
+export function createHandoff(transport: MessageTransport): HandoffManager;
+/**
+ * @deprecated Pass a {@link MessageTransport} instead of a full AgentOrchestrator.
+ *             AgentOrchestrator already satisfies MessageTransport, so no code
+ *             changes are needed — this overload exists for backward compatibility.
+ */
+export function createHandoff(orchestrator: AgentOrchestrator): HandoffManager;
+export function createHandoff(transport: MessageTransport): HandoffManager {
   const receipts = new Map<string, HandoffReceipt>();
   const inbox = new Map<string, HandoffPayload[]>();
   let nextId = 0;
@@ -50,7 +69,7 @@ export function createHandoff(orchestrator: AgentOrchestrator): HandoffManager {
     send(from: string, to: string, payload: HandoffPayload): HandoffReceipt {
       const content = serializePayload(payload);
 
-      orchestrator.send({
+      transport.send({
         from,
         to,
         type: 'request',

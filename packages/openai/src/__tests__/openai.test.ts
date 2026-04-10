@@ -175,6 +175,70 @@ describe('createOpenAIAdapter', () => {
       });
     });
 
+    it('maps all JsonSchema fields to OpenAI parameters without double assertions', async () => {
+      mock.mocks.create.mockResolvedValue({
+        choices: [{ message: { role: 'assistant', content: 'OK' } }],
+        usage: { prompt_tokens: 10, completion_tokens: 3 },
+      });
+
+      const adapter = createOpenAIAdapter({ client: mock.client });
+      await adapter.chat({
+        messages: [{ role: 'user', content: 'Hi' }],
+        tools: [{
+          name: 'advanced_tool',
+          description: 'A tool with many schema fields',
+          parameters: {
+            type: 'object',
+            properties: {
+              name: { type: 'string', minLength: 1, maxLength: 100, pattern: '^[a-z]+$' },
+              count: { type: 'integer', minimum: 0, maximum: 10 },
+              tags: { type: 'array', items: { type: 'string' } },
+            },
+            required: ['name'],
+            additionalProperties: false,
+            description: 'The input schema',
+          },
+        }],
+      });
+
+      const calledTools = mock.mocks.create.mock.calls[0][0].tools;
+      const params = calledTools[0].function.parameters;
+      expect(params.type).toBe('object');
+      expect(params.properties).toBeDefined();
+      expect(params.required).toEqual(['name']);
+      expect(params.additionalProperties).toBe(false);
+      expect(params.description).toBe('The input schema');
+      // Verify nested schema fields are preserved
+      expect(params.properties.name.minLength).toBe(1);
+      expect(params.properties.name.maxLength).toBe(100);
+      expect(params.properties.name.pattern).toBe('^[a-z]+$');
+      expect(params.properties.count.minimum).toBe(0);
+      expect(params.properties.count.maximum).toBe(10);
+      expect(params.properties.tags.items).toEqual({ type: 'string' });
+    });
+
+    it('omits undefined JsonSchema fields from OpenAI parameters', async () => {
+      mock.mocks.create.mockResolvedValue({
+        choices: [{ message: { role: 'assistant', content: 'OK' } }],
+        usage: { prompt_tokens: 10, completion_tokens: 3 },
+      });
+
+      const adapter = createOpenAIAdapter({ client: mock.client });
+      await adapter.chat({
+        messages: [{ role: 'user', content: 'Hi' }],
+        tools: [{
+          name: 'simple_tool',
+          description: 'Minimal schema',
+          parameters: { type: 'object' },
+        }],
+      });
+
+      const calledTools = mock.mocks.create.mock.calls[0][0].tools;
+      const params = calledTools[0].function.parameters;
+      // Only 'type' should be present; no extra undefined keys
+      expect(Object.keys(params)).toEqual(['type']);
+    });
+
     it('throws HarnessError when no choices returned', async () => {
       mock.mocks.create.mockResolvedValue({
         choices: [],

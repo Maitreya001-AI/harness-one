@@ -96,6 +96,35 @@ function toOpenAIMessage(
   return { role: 'user', content: msg.content };
 }
 
+/**
+ * Convert a harness-one JsonSchema to OpenAI's FunctionParameters (Record<string, unknown>).
+ *
+ * OpenAI expects `Record<string, unknown>` for tool parameters.
+ * Rather than using a double assertion (`as unknown as Record<string, unknown>`),
+ * we explicitly map the known JsonSchema fields to produce a clean record.
+ */
+function toOpenAIParameters(schema: ToolSchema['parameters']): Record<string, unknown> {
+  const result: Record<string, unknown> = { type: schema.type };
+  if (schema.properties !== undefined) result.properties = schema.properties;
+  if (schema.required !== undefined) result.required = schema.required;
+  if (schema.items !== undefined) result.items = schema.items;
+  if (schema.enum !== undefined) result.enum = schema.enum;
+  if (schema.description !== undefined) result.description = schema.description;
+  if (schema.default !== undefined) result.default = schema.default;
+  if (schema.minimum !== undefined) result.minimum = schema.minimum;
+  if (schema.maximum !== undefined) result.maximum = schema.maximum;
+  if (schema.minLength !== undefined) result.minLength = schema.minLength;
+  if (schema.maxLength !== undefined) result.maxLength = schema.maxLength;
+  if (schema.pattern !== undefined) result.pattern = schema.pattern;
+  if (schema.additionalProperties !== undefined) result.additionalProperties = schema.additionalProperties;
+  if (schema.oneOf !== undefined) result.oneOf = schema.oneOf;
+  if (schema.anyOf !== undefined) result.anyOf = schema.anyOf;
+  if (schema.allOf !== undefined) result.allOf = schema.allOf;
+  if (schema.const !== undefined) result.const = schema.const;
+  if (schema.format !== undefined) result.format = schema.format;
+  return result;
+}
+
 /** Convert a harness-one ToolSchema to OpenAI's tool format. */
 function toOpenAITool(
   tool: ToolSchema,
@@ -105,7 +134,7 @@ function toOpenAITool(
     function: {
       name: tool.name,
       description: tool.description,
-      parameters: tool.parameters as unknown as Record<string, unknown>,
+      parameters: toOpenAIParameters(tool.parameters),
     },
   };
 }

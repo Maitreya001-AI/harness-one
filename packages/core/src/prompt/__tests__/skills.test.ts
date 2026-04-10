@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { createSkillEngine } from '../skills.js';
 import { HarnessError } from '../../core/errors.js';
-import type { SkillDefinition } from '../types.js';
+import type { SkillDefinition, TransitionCondition } from '../types.js';
 
 const twoStageSkill: SkillDefinition = {
   id: 'onboarding',
@@ -224,7 +224,7 @@ describe('createSkillEngine', () => {
             name: 'A',
             prompt: 'A',
             transitions: [
-              { to: 'b', condition: { type: 'turn_count' } as any },
+              { to: 'b', condition: { type: 'turn_count' } as unknown as TransitionCondition },
             ],
           },
           { id: 'b', name: 'B', prompt: 'B', transitions: [] },
@@ -247,7 +247,7 @@ describe('createSkillEngine', () => {
             name: 'A',
             prompt: 'A',
             transitions: [
-              { to: 'b', condition: { type: 'keyword' } as any },
+              { to: 'b', condition: { type: 'keyword' } as unknown as TransitionCondition },
             ],
           },
           { id: 'b', name: 'B', prompt: 'B', transitions: [] },
@@ -270,7 +270,7 @@ describe('createSkillEngine', () => {
             name: 'A',
             prompt: 'A',
             transitions: [
-              { to: 'b', condition: { type: 'keyword', keywords: [] } as any },
+              { to: 'b', condition: { type: 'keyword', keywords: [] } },
             ],
           },
           { id: 'b', name: 'B', prompt: 'B', transitions: [] },
@@ -292,7 +292,7 @@ describe('createSkillEngine', () => {
             name: 'A',
             prompt: 'A',
             transitions: [
-              { to: 'b', condition: { type: 'custom' } as any },
+              { to: 'b', condition: { type: 'custom' } as unknown as TransitionCondition },
             ],
           },
           { id: 'b', name: 'B', prompt: 'B', transitions: [] },

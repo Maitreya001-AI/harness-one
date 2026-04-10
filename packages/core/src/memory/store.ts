@@ -103,6 +103,9 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
         const term = filter.search.toLowerCase();
         results = results.filter((e) => e.content.toLowerCase().includes(term));
       }
+      if (filter.sessionId !== undefined) {
+        results = results.filter((e) => e.metadata?.['sessionId'] === filter.sessionId);
+      }
 
       results.sort((a, b) => b.updatedAt - a.updatedAt);
 

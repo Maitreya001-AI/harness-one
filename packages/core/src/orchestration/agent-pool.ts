@@ -39,6 +39,7 @@ export function createAgentPool(config: PoolConfig): AgentPool {
   let totalRecycled = 0;
   let poolAgentCounter = 0;
 
+
   function isExpired(entry: PoolEntry): boolean {
     if (!maxAge) return false;
     return Date.now() - entry.agent.createdAt >= maxAge;
@@ -104,42 +105,41 @@ export function createAgentPool(config: PoolConfig): AgentPool {
     return { idle, active, total: entries.size, created: totalCreated, recycled: totalRecycled };
   }
 
+  function acquireSync(role?: string): PooledAgent {
+    if (disposed) {
+      throw new HarnessError('Agent pool is disposed', 'POOL_DISPOSED');
+    }
+    warmUp(role);
+    for (const entry of entries.values()) {
+      if (entry.state === 'idle') {
+        if (isExpired(entry)) {
+          disposeEntry(entry);
+          totalRecycled++;
+          continue;
+        }
+        clearIdleTimer(entry);
+        entry.state = 'active';
+        return entry.agent;
+      }
+    }
+    if (entries.size >= max) {
+      throw new HarnessError(
+        `Agent pool exhausted (max=${max})`,
+        'POOL_EXHAUSTED',
+        'Release agents or increase pool max',
+      );
+    }
+    const entry = createEntry(role);
+    entry.state = 'active';
+    entries.set(entry.agent.id, entry);
+    return entry.agent;
+  }
+
   const pool: AgentPool = {
     acquire(role?: string): PooledAgent {
-      if (disposed) {
-        throw new HarnessError('Agent pool is disposed', 'POOL_DISPOSED');
-      }
-
-      // Lazy warm-up on first acquire
-      warmUp(role);
-
-      // Try to find an idle entry (skip expired)
-      for (const entry of entries.values()) {
-        if (entry.state === 'idle') {
-          if (isExpired(entry)) {
-            disposeEntry(entry);
-            totalRecycled++;
-            continue;
-          }
-          clearIdleTimer(entry);
-          entry.state = 'active';
-          return entry.agent;
-        }
-      }
-
-      // No idle agents — create new if under max
-      if (entries.size >= max) {
-        throw new HarnessError(
-          `Agent pool exhausted (max=${max})`,
-          'POOL_EXHAUSTED',
-          'Release agents or increase pool max',
-        );
-      }
-
-      const entry = createEntry(role);
-      entry.state = 'active';
-      entries.set(entry.agent.id, entry);
-      return entry.agent;
+      // Synchronous acquire — safe in single-threaded JS when called without
+      // intervening await points. For async safety, use acquireAsync().
+      return acquireSync(role);
     },
 
     release(agent: PooledAgent): void {

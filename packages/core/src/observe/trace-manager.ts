@@ -220,9 +220,10 @@ export function createTraceManager(config?: {
         exporter.exportSpan({ ...span, events: [...span.events] }).catch((err) => {
           if (onExportError) {
             onExportError(err);
-          } else if (typeof console !== 'undefined') {
-            console.warn('[harness-one] Trace exporter failed:', err instanceof Error ? err.message : err);
           }
+          // When no onExportError callback is provided, silently discard the
+          // error to avoid unexpected console output from a library module.
+          // Consumers who need visibility should pass an onExportError handler.
         });
       }
     },
@@ -252,9 +253,10 @@ export function createTraceManager(config?: {
         exporter.exportTrace(readonlyTrace).catch((err) => {
           if (onExportError) {
             onExportError(err);
-          } else if (typeof console !== 'undefined') {
-            console.warn('[harness-one] Trace exporter failed:', err instanceof Error ? err.message : err);
           }
+          // When no onExportError callback is provided, silently discard the
+          // error to avoid unexpected console output from a library module.
+          // Consumers who need visibility should pass an onExportError handler.
         });
       }
     },
@@ -286,10 +288,8 @@ export function createTraceManager(config?: {
         if (result.status === 'rejected') {
           if (onExportError) {
             onExportError(result.reason);
-          } else if (typeof console !== 'undefined') {
-            const err = result.reason;
-            console.warn('[harness-one] Exporter flush failed during dispose:', err instanceof Error ? err.message : err);
           }
+          // Silent discard when no onExportError — see endSpan/endTrace comments.
         }
       }
       // 2. Call shutdown() on all exporters that support it — use allSettled so one failure doesn't block others
@@ -298,10 +298,8 @@ export function createTraceManager(config?: {
         if (result.status === 'rejected') {
           if (onExportError) {
             onExportError(result.reason);
-          } else if (typeof console !== 'undefined') {
-            const err = result.reason;
-            console.warn('[harness-one] Exporter shutdown failed during dispose:', err instanceof Error ? err.message : err);
           }
+          // Silent discard when no onExportError — see endSpan/endTrace comments.
         }
       }
       // 3. Clear internal maps

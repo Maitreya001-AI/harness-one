@@ -42,6 +42,8 @@ export interface MemoryFilter {
   readonly search?: string;
   /** Offset for pagination — skip this many results before applying limit. */
   readonly offset?: number;
+  /** When provided, only return entries tagged with this sessionId (via metadata.sessionId). */
+  readonly sessionId?: string;
 }
 
 /** Options for vector similarity search on embedding-backed stores. */

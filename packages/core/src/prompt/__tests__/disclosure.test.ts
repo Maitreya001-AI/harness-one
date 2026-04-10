@@ -105,7 +105,7 @@ describe('createDisclosureManager', () => {
 
   describe('destructured usage', () => {
     it('expand() works correctly when destructured from the manager', () => {
-      const { register, expand, getCurrentLevel, getContent } = createDisclosureManager();
+      const { register, expand, getCurrentLevel } = createDisclosureManager();
       register('auth', [
         { level: 0, content: 'Auth uses JWT.' },
         { level: 1, content: 'Tokens expire after 1h.' },

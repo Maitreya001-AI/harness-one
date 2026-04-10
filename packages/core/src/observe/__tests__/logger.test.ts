@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createLogger } from '../logger.js';
-import type { Logger, LogLevel } from '../logger.js';
+
 
 describe('createLogger', () => {
   function captureOutput() {

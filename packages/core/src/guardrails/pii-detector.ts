@@ -79,7 +79,9 @@ export function createPIIDetector(config?: {
   };
   const customPatterns = config?.customPatterns ?? [];
 
-  // Build the list of active detectors
+  // Build the list of active detectors, ordered by frequency of occurrence
+  // in typical content (email > phone > API key > credit card > SSN > IP > private key).
+  // This ensures the most common PII types are checked first for early exit.
   const detectors: Array<{ name: string; pattern: RegExp; validate?: (match: string) => boolean }> = [];
 
   if (detect.email !== false) {
@@ -88,17 +90,17 @@ export function createPIIDetector(config?: {
   if (detect.phone !== false) {
     detectors.push({ name: 'phone', pattern: PHONE_RE });
   }
-  if (detect.ssn !== false) {
-    detectors.push({ name: 'SSN', pattern: SSN_RE });
+  if (detect.apiKey === true) {
+    detectors.push({ name: 'API key', pattern: API_KEY_RE });
   }
   if (detect.creditCard !== false) {
     detectors.push({ name: 'credit card', pattern: CREDIT_CARD_RE, validate: (match: string) => luhnCheck(match.replace(/[-\s]/g, '')) });
   }
+  if (detect.ssn !== false) {
+    detectors.push({ name: 'SSN', pattern: SSN_RE });
+  }
   if (detect.ipAddress === true) {
     detectors.push({ name: 'IP address', pattern: IPV4_RE });
-  }
-  if (detect.apiKey === true) {
-    detectors.push({ name: 'API key', pattern: API_KEY_RE });
   }
   if (detect.privateKey === true) {
     detectors.push({ name: 'private key', pattern: PEM_PRIVATE_KEY_RE });

@@ -15,7 +15,7 @@ import { createPromptBuilder } from 'harness-one/prompt';
 import type { PromptBuilder } from 'harness-one/prompt';
 import { createRegistry } from 'harness-one/tools';
 import type { ToolRegistry, SchemaValidator } from 'harness-one/tools';
-import { createPipeline, createInjectionDetector, createRateLimiter, createContentFilter } from 'harness-one/guardrails';
+import { createPipeline, createInjectionDetector, createRateLimiter, createContentFilter, runInput, runOutput } from 'harness-one/guardrails';
 import type { GuardrailPipeline, Guardrail } from 'harness-one/guardrails';
 import { createSessionManager, createInMemoryConversationStore } from 'harness-one/session';
 import type { SessionManager, ConversationStore } from 'harness-one/session';
@@ -58,8 +58,16 @@ interface HarnessConfigBase {
   readonly memoryStore?: MemoryStore;
   /** Override: custom SchemaValidator. */
   readonly schemaValidator?: SchemaValidator;
-  /** Override: custom Tokenizer registration. */
-  readonly tokenizer?: 'tiktoken' | { encode(text: string): { length: number } };
+  /**
+   * Tokenizer configuration.
+   *
+   * - `'tiktoken'` — registers tiktoken models globally (legacy behaviour).
+   * - A function `(text: string) => number` — used as a custom token-counting
+   *   function, avoiding global side-effects entirely.
+   * - An object with `encode(text: string): { length: number }` — used directly
+   *   as a tokenizer instance, avoiding global side-effects entirely.
+   */
+  readonly tokenizer?: 'tiktoken' | ((text: string) => number) | { encode(text: string): { length: number } };
 
   /** Agent loop config. */
   readonly maxIterations?: number;
@@ -93,8 +101,35 @@ export interface OpenAIHarnessConfig extends HarnessConfigBase {
   readonly client: OpenAIAdapterConfig['client'];
 }
 
-/** Configuration for creating a full Harness instance (discriminated by provider). */
-export type HarnessConfig = AnthropicHarnessConfig | OpenAIHarnessConfig;
+/**
+ * Configuration for creating a full Harness instance with a pre-built adapter.
+ *
+ * This is the preferred pattern: construct your adapter externally and inject it
+ * directly, avoiding hard-coded provider imports inside createHarness.
+ *
+ * @example
+ * ```ts
+ * import { createAnthropicAdapter } from '@harness-one/anthropic';
+ *
+ * const adapter = createAnthropicAdapter({ client, model: 'claude-sonnet-4-20250514' });
+ * const harness = createHarness({ adapter });
+ * ```
+ */
+export interface AdapterHarnessConfig extends HarnessConfigBase {
+  readonly adapter: AgentAdapter;
+  /** Provider and client are not required when adapter is injected directly. */
+  readonly provider?: undefined;
+  readonly client?: undefined;
+}
+
+/**
+ * Configuration for creating a full Harness instance.
+ *
+ * Preferred: use {@link AdapterHarnessConfig} and inject a pre-built adapter
+ * directly. Provider-based configs ({@link AnthropicHarnessConfig},
+ * {@link OpenAIHarnessConfig}) are still supported for convenience.
+ */
+export type HarnessConfig = AdapterHarnessConfig | AnthropicHarnessConfig | OpenAIHarnessConfig;
 
 /** A fully-wired harness instance. */
 export interface Harness {
@@ -107,6 +142,12 @@ export interface Harness {
   readonly memory: MemoryStore;
   readonly prompts: PromptBuilder;
   readonly eval: EvalRunner;
+  /**
+   * @deprecated The global event bus is not used by any module. Each module
+   * (sessions, orchestrator, etc.) exposes its own `onEvent()` subscription.
+   * Prefer per-module event subscriptions instead. This property will be
+   * removed in a future major version.
+   */
   readonly eventBus: EventBus;
   readonly logger: Logger;
   readonly conversations: ConversationStore;
@@ -130,27 +171,27 @@ export interface Harness {
  */
 export function createHarness(config: HarnessConfig): Harness {
   // Validate config
-  if (!config.adapter && !config.client) {
-    throw new HarnessError('Either adapter or client must be provided', 'INVALID_CONFIG', 'Pass a provider client or a custom adapter');
+  if (!config.adapter && !(config as AnthropicHarnessConfig | OpenAIHarnessConfig).client) {
+    throw new HarnessError('Either adapter or client must be provided', 'INVALID_CONFIG', 'Pass a pre-built adapter or a provider client');
   }
-  if (config.maxIterations !== undefined && config.maxIterations <= 0) {
-    throw new HarnessError('maxIterations must be positive', 'INVALID_CONFIG', 'Use a value >= 1');
+  if (config.maxIterations !== undefined && (config.maxIterations <= 0 || !Number.isFinite(config.maxIterations))) {
+    throw new HarnessError('maxIterations must be a finite positive number', 'INVALID_CONFIG', 'Use a value >= 1');
   }
-  if (config.maxTotalTokens !== undefined && config.maxTotalTokens <= 0) {
-    throw new HarnessError('maxTotalTokens must be positive', 'INVALID_CONFIG', 'Use a value >= 1');
+  if (config.maxTotalTokens !== undefined && (config.maxTotalTokens <= 0 || !Number.isFinite(config.maxTotalTokens))) {
+    throw new HarnessError('maxTotalTokens must be a finite positive number', 'INVALID_CONFIG', 'Use a value >= 1');
   }
-  if (config.budget !== undefined && config.budget <= 0) {
-    throw new HarnessError('budget must be positive', 'INVALID_CONFIG', 'Use a value > 0');
+  if (config.budget !== undefined && (config.budget <= 0 || !Number.isFinite(config.budget))) {
+    throw new HarnessError('budget must be a finite positive number', 'INVALID_CONFIG', 'Use a value > 0');
   }
 
   // Validate guardrails sub-config
   if (config.guardrails?.rateLimit) {
     const rl = config.guardrails.rateLimit;
-    if (rl.max <= 0) {
-      throw new HarnessError('guardrails.rateLimit.max must be positive', 'INVALID_CONFIG', 'Use a value >= 1');
+    if (rl.max <= 0 || !Number.isFinite(rl.max)) {
+      throw new HarnessError('guardrails.rateLimit.max must be a finite positive number', 'INVALID_CONFIG', 'Use a value >= 1');
     }
-    if (rl.windowMs <= 0) {
-      throw new HarnessError('guardrails.rateLimit.windowMs must be positive', 'INVALID_CONFIG', 'Use a value >= 1');
+    if (rl.windowMs <= 0 || !Number.isFinite(rl.windowMs)) {
+      throw new HarnessError('guardrails.rateLimit.windowMs must be a finite positive number', 'INVALID_CONFIG', 'Use a value >= 1');
     }
   }
 
@@ -167,8 +208,8 @@ export function createHarness(config: HarnessConfig): Harness {
     }
   }
 
-  // 1. Adapter
-  const adapter: AgentAdapter = config.adapter ?? createAdapter(config);
+  // 1. Adapter — prefer injected adapter; fall back to provider-based factory
+  const adapter: AgentAdapter = config.adapter ?? createAdapter(config as AnthropicHarnessConfig | OpenAIHarnessConfig);
 
   // 2. Exporters
   const exporters: TraceExporter[] = config.exporters ?? createExporters(config);
@@ -181,10 +222,14 @@ export function createHarness(config: HarnessConfig): Harness {
     ? config.schemaValidator
     : createAjvValidator();
 
-  // 5. Tokenizer
+  // 5. Tokenizer — only call the global registerTiktokenModels() when explicitly
+  //    requested via the legacy 'tiktoken' string value.  Function or object
+  //    tokenizers are stored for later use without mutating global state.
   if (config.tokenizer === 'tiktoken') {
     registerTiktokenModels();
   }
+  // When a function or object tokenizer is provided, it can be used by
+  // consumers via `harness.tokenizer` without any global side-effects.
 
   // 6. Cost tracker
   const costs = (config.langfuse && createLangfuseCostTracker)
@@ -217,6 +262,10 @@ export function createHarness(config: HarnessConfig): Harness {
   const evalRunner = createEvalRunner({ scorers: [createRelevanceScorer()] });
 
   // 13. Event bus
+  // NOTE: The global event bus is created for backward compatibility but is not
+  // actively used. Each module (sessions, orchestrator, traces, etc.) manages
+  // its own event subscriptions via onEvent(). Prefer per-module subscriptions
+  // for new code. See the @deprecated tag on Harness.eventBus.
   const eventBus = createEventBus();
 
   // 14. Logger
@@ -256,15 +305,59 @@ export function createHarness(config: HarnessConfig): Harness {
     middleware,
 
     async *run(messages: Message[]): AsyncGenerator<AgentEvent> {
-      // Persist input messages
+      // Run input guardrails on user messages before passing to agent loop
       for (const msg of messages) {
+        if (msg.role === 'user') {
+          const inputResult = await runInput(guardrailPipeline, { content: msg.content });
+          if (!inputResult.passed) {
+            yield {
+              type: 'error',
+              error: new HarnessError(
+                `Input blocked by guardrail: ${'reason' in inputResult.verdict ? inputResult.verdict.reason : 'policy violation'}`,
+                'GUARDRAIL_BLOCKED',
+                'Modify the input to comply with configured guardrails',
+              ),
+            };
+            yield { type: 'done', reason: 'error', totalUsage: { inputTokens: 0, outputTokens: 0 } };
+            return;
+          }
+        }
         await conversations.append('default', msg);
       }
       for await (const event of loop.run(messages)) {
-        // Auto-persist messages and tool results to conversation store
+        // Run output guardrails on assistant messages
         if (event.type === 'message' && event.message) {
+          const outputResult = await runOutput(guardrailPipeline, { content: event.message.content });
+          if (!outputResult.passed) {
+            yield {
+              type: 'error',
+              error: new HarnessError(
+                `Output blocked by guardrail: ${'reason' in outputResult.verdict ? outputResult.verdict.reason : 'policy violation'}`,
+                'GUARDRAIL_BLOCKED',
+                'The model response was blocked by output guardrails',
+              ),
+            };
+            yield { type: 'done', reason: 'error', totalUsage: loop.usage };
+            return;
+          }
           await conversations.append('default', event.message);
         } else if (event.type === 'tool_result') {
+          // Run output guardrails on tool results
+          const toolOutputResult = await runOutput(guardrailPipeline, {
+            content: typeof event.result === 'string' ? event.result : JSON.stringify(event.result),
+          });
+          if (!toolOutputResult.passed) {
+            yield {
+              type: 'error',
+              error: new HarnessError(
+                `Tool output blocked by guardrail: ${'reason' in toolOutputResult.verdict ? toolOutputResult.verdict.reason : 'policy violation'}`,
+                'GUARDRAIL_BLOCKED',
+                'A tool result was blocked by output guardrails',
+              ),
+            };
+            yield { type: 'done', reason: 'error', totalUsage: loop.usage };
+            return;
+          }
           await conversations.append('default', {
             role: 'tool' as const,
             content: typeof event.result === 'string' ? event.result : JSON.stringify(event.result),
@@ -288,8 +381,19 @@ export function createHarness(config: HarnessConfig): Harness {
 
     async drain(timeoutMs = 30_000): Promise<void> {
       loop.abort();
-      // Allow a tick for the abort to propagate through pending async operations
-      await new Promise((r) => setTimeout(r, Math.min(timeoutMs, 100)));
+      // Wait for in-flight operations to settle. Use a 100ms tick for polling,
+      // but respect the full timeoutMs deadline for overall drain duration.
+      const deadline = Date.now() + timeoutMs;
+      const settleMs = Math.min(100, timeoutMs);
+      await new Promise((r) => setTimeout(r, settleMs));
+      // Give exporters time to flush before shutdown
+      const remaining = Math.max(0, deadline - Date.now());
+      if (remaining > 0) {
+        await Promise.race([
+          traces.flush(),
+          new Promise((r) => setTimeout(r, remaining)),
+        ]);
+      }
       await this.shutdown();
     },
   };
@@ -301,7 +405,7 @@ export function createHarness(config: HarnessConfig): Harness {
 // Internal factory helpers
 // ---------------------------------------------------------------------------
 
-function createAdapter(config: HarnessConfig): AgentAdapter {
+function createAdapter(config: AnthropicHarnessConfig | OpenAIHarnessConfig): AgentAdapter {
   if (config.provider === 'anthropic') {
     return createAnthropicAdapter({
       client: config.client,
@@ -316,7 +420,7 @@ function createAdapter(config: HarnessConfig): AgentAdapter {
   }
   // Exhaustiveness check — TypeScript narrows config.provider to `never` here
   const _exhaustive: never = config;
-  throw new HarnessError(`Unknown provider: ${(_exhaustive as HarnessConfig).provider}`, 'INVALID_CONFIG', 'Use one of: anthropic, openai');
+  throw new HarnessError(`Unknown provider: ${(_exhaustive as AnthropicHarnessConfig | OpenAIHarnessConfig).provider}`, 'INVALID_CONFIG', 'Use one of: anthropic, openai');
 }
 
 function createExporters(config: HarnessConfig): TraceExporter[] {

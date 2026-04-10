@@ -4,7 +4,7 @@
  * @module
  */
 
-import type { AgentRegistration, DelegationStrategy, DelegationTask } from './types.js';
+import type { AgentRegistration, DelegationStrategy } from './types.js';
 
 /**
  * Round-robin delegation: cycles through available idle agents.
@@ -19,7 +19,7 @@ export function createRoundRobinStrategy(): DelegationStrategy {
   let lastIndex = -1;
 
   return {
-    select(agents: readonly AgentRegistration[], _task: DelegationTask): string | undefined {
+    select(agents: readonly AgentRegistration[]): string | undefined {
       const idle = agents.filter((a) => a.status === 'idle');
       if (idle.length === 0) return undefined;
       lastIndex = (lastIndex + 1) % idle.length;
@@ -39,7 +39,7 @@ export function createRoundRobinStrategy(): DelegationStrategy {
  */
 export function createRandomStrategy(): DelegationStrategy {
   return {
-    select(agents: readonly AgentRegistration[], _task: DelegationTask): string | undefined {
+    select(agents: readonly AgentRegistration[]): string | undefined {
       const idle = agents.filter((a) => a.status === 'idle');
       if (idle.length === 0) return undefined;
       const index = Math.floor(Math.random() * idle.length);
@@ -59,7 +59,7 @@ export function createRandomStrategy(): DelegationStrategy {
  */
 export function createFirstAvailableStrategy(): DelegationStrategy {
   return {
-    select(agents: readonly AgentRegistration[], _task: DelegationTask): string | undefined {
+    select(agents: readonly AgentRegistration[]): string | undefined {
       const idle = agents.filter((a) => a.status === 'idle');
       if (idle.length === 0) return undefined;
       return idle[0].id;

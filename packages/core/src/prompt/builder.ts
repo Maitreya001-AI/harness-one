@@ -45,6 +45,10 @@ export function createPromptBuilder(config?: {
   const model = config?.model ?? 'default';
   const layers = new Map<string, PromptLayer>();
   const variables = new Map<string, string>();
+  // Dirty flag: set when layers or variables change, cleared after build().
+  // Avoids recomputing sorted layers and token counts when nothing changed.
+  let dirty = true;
+  let cachedResult: AssembledPrompt | undefined;
 
   function estimateTokens(text: string): number {
     return estimateTokensInternal(model, text);
@@ -73,17 +77,24 @@ export function createPromptBuilder(config?: {
   return {
     addLayer(layer: PromptLayer): void {
       layers.set(layer.name, Object.freeze({ ...layer }));
+      dirty = true;
     },
 
     removeLayer(name: string): void {
       layers.delete(name);
+      dirty = true;
     },
 
     setVariable(key: string, value: string): void {
-      variables.set(key, value);
+      if (variables.get(key) !== value) {
+        variables.set(key, value);
+        dirty = true;
+      }
     },
 
     build(): AssembledPrompt {
+      // Return cached result if nothing changed since last build
+      if (!dirty && cachedResult) return cachedResult;
       let sorted = getSortedLayers();
 
       // Compute stable prefix hash from raw (unreplaced) cacheable content.
@@ -146,7 +157,7 @@ export function createPromptBuilder(config?: {
       const totalTokens = getTokens(systemPrompt);
       const cacheableTokens = getTokens(cacheableContent);
 
-      return Object.freeze({
+      cachedResult = Object.freeze({
         systemPrompt,
         layers: Object.freeze(sorted),
         stablePrefixHash,
@@ -156,6 +167,8 @@ export function createPromptBuilder(config?: {
           layerCount: sorted.length,
         }),
       });
+      dirty = false;
+      return cachedResult;
     },
 
     getStablePrefixHash(): string {

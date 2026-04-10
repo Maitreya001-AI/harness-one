@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createMiddlewareChain } from '../middleware.js';
-import type { MiddlewareContext, MiddlewareFn } from '../middleware.js';
+import type { MiddlewareContext } from '../middleware.js';
 
 describe('createMiddlewareChain', () => {
   it('executes handler directly with no middleware', async () => {

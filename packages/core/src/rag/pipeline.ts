@@ -138,7 +138,12 @@ export function createRAGPipeline(config: RAGPipelineConfig): RAGPipeline {
     },
 
     async query(text: string, options?: { limit?: number; minScore?: number }) {
-      return config.retriever.retrieve(text, options);
+      const results = await config.retriever.retrieve(text, options);
+      // Estimate token count using content length / 4 heuristic (no external tokenizer dependency)
+      return results.map((r) => ({
+        ...r,
+        tokens: Math.ceil(r.chunk.content.length / 4),
+      }));
     },
 
     getChunks() {

@@ -1,18 +1,15 @@
 /**
  * File-system backed memory store. Each entry is stored as one JSON file.
  *
+ * Business logic layer that delegates raw I/O to fs-io.ts.
+ *
  * @module
  */
 
-import { readFile, writeFile, mkdir, readdir, unlink, rename } from 'node:fs/promises';
-import { join } from 'node:path';
 import { HarnessError } from '../core/errors.js';
+import { createFileIO } from './fs-io.js';
 import type { MemoryEntry } from './types.js';
 import type { MemoryStore } from './store.js';
-
-interface Index {
-  keys: Record<string, string>; // key → id
-}
 
 /**
  * Create a file-system backed MemoryStore.
@@ -29,9 +26,7 @@ export function createFileSystemStore(config: {
   directory: string;
   indexFile?: string;
 }): MemoryStore {
-  const dir = config.directory;
-  const indexFileName = config.indexFile ?? '_index.json';
-  const indexPath = join(dir, indexFileName);
+  const io = createFileIO(config);
   let idCounter = 0;
 
   // Simple in-process mutex for index operations.
@@ -50,90 +45,14 @@ export function createFileSystemStore(config: {
     return `mem_${Date.now()}_${++idCounter}_${Math.random().toString(36).slice(2, 8)}`;
   }
 
-  async function ensureDir(): Promise<void> {
-    await mkdir(dir, { recursive: true });
-  }
-
-  async function readIndex(): Promise<Index> {
-    try {
-      const raw = await readFile(indexPath, 'utf-8');
-      return JSON.parse(raw) as Index;
-    } catch (err: unknown) {
-      // ENOENT is expected on first run — return empty index
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { keys: {} };
-      // Re-throw permission errors, disk errors, etc.
-      throw err;
-    }
-  }
-
-  async function writeIndex(index: Index): Promise<void> {
-    // Write-then-rename for atomicity: ensures the index is either
-    // the old version or the new version, never a partially-written file.
-    const tmpPath = indexPath + '.tmp';
-    await writeFile(tmpPath, JSON.stringify(index, null, 2), 'utf-8');
-    await rename(tmpPath, indexPath);
-  }
-
-  /** Delete files in parallel batches to avoid fd exhaustion. */
-  async function batchUnlink(paths: string[], batchSize = 50): Promise<void> {
-    for (let i = 0; i < paths.length; i += batchSize) {
-      const batch = paths.slice(i, i + batchSize);
-      await Promise.all(batch.map(p => unlink(p).catch(() => {})));
-    }
-  }
-
-  function entryPath(id: string): string {
-    return join(dir, `${id}.json`);
-  }
-
-  async function readEntry(id: string): Promise<MemoryEntry | null> {
-    try {
-      const raw = await readFile(entryPath(id), 'utf-8');
-      return JSON.parse(raw) as MemoryEntry;
-    } catch (err: unknown) {
-      // ENOENT means the entry file doesn't exist — return null
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
-      // Re-throw permission errors, disk errors, JSON parse errors, etc.
-      throw err;
-    }
-  }
-
-  async function writeEntry(entry: MemoryEntry): Promise<void> {
-    const path = entryPath(entry.id);
-    const tmpPath = path + '.tmp';
-    await writeFile(tmpPath, JSON.stringify(entry, null, 2), 'utf-8');
-    await rename(tmpPath, path);
-  }
-
-  /** Read entry files in parallel batches to avoid fd exhaustion. */
-  async function batchRead(files: string[], batchSize = 50): Promise<MemoryEntry[]> {
-    const results: MemoryEntry[] = [];
-    for (let i = 0; i < files.length; i += batchSize) {
-      const batch = files.slice(i, i + batchSize);
-      const entries = await Promise.all(
-        batch.map(file => readEntry(file.replace('.json', '')))
-      );
-      results.push(...entries.filter((e): e is MemoryEntry => e !== null));
-    }
-    return results;
-  }
-
   async function allEntries(): Promise<MemoryEntry[]> {
-    try {
-      const files = await readdir(dir);
-      const jsonFiles = files.filter(f => f.endsWith('.json') && f !== indexFileName);
-      return batchRead(jsonFiles);
-    } catch (err: unknown) {
-      // ENOENT is expected when the directory doesn't exist yet
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
-      // Re-throw permission errors, disk errors, etc.
-      throw err;
-    }
+    const jsonFiles = await io.listEntryFiles();
+    return io.batchRead(jsonFiles);
   }
 
   return {
     async write(input) {
-      await ensureDir();
+      await io.ensureDir();
       const now = Date.now();
       const entry: MemoryEntry = {
         id: generateId(),
@@ -145,38 +64,53 @@ export function createFileSystemStore(config: {
         ...(input.metadata !== undefined && { metadata: input.metadata }),
         ...(input.tags !== undefined && { tags: input.tags }),
       };
-      await writeEntry(entry);
+      // Write entry AND index inside the lock to prevent concurrent writes
+      // for the same key from creating orphan entry files.
       await withIndexLock(async () => {
-        const index = await readIndex();
+        await io.writeEntry(entry);
+        const index = await io.readIndex();
         index.keys[entry.key] = entry.id;
-        await writeIndex(index);
+        await io.writeIndex(index);
       });
       return entry;
     },
 
     async read(id) {
-      await ensureDir();
-      return readEntry(id);
+      await io.ensureDir();
+      return io.readEntry(id);
     },
 
     async query(filter) {
-      await ensureDir();
-      let results = await allEntries();
+      await io.ensureDir();
+      // Stream entries in batches instead of loading all into memory.
+      // Apply filters during read to minimize peak memory usage.
+      const hasFilter = filter.grade !== undefined || (filter.tags && filter.tags.length > 0)
+        || filter.since !== undefined || filter.search !== undefined;
 
-      if (filter.grade) {
-        results = results.filter((e) => e.grade === filter.grade);
-      }
-      if (filter.tags && filter.tags.length > 0) {
-        results = results.filter((e) =>
-          filter.tags!.some((t) => e.tags?.includes(t)),
-        );
-      }
-      if (filter.since !== undefined) {
-        results = results.filter((e) => e.updatedAt >= filter.since!);
-      }
-      if (filter.search) {
-        const term = filter.search.toLowerCase();
-        results = results.filter((e) => e.content.toLowerCase().includes(term));
+      let results: MemoryEntry[];
+      if (hasFilter) {
+        // Filter during batch read to avoid holding all entries
+        const allFiles = await io.listEntryFiles();
+
+        results = [];
+        const searchTerm = filter.search?.toLowerCase();
+        const batchSize = 50;
+        for (let i = 0; i < allFiles.length; i += batchSize) {
+          const batch = allFiles.slice(i, i + batchSize);
+          const entries = await Promise.all(
+            batch.map(file => io.readEntry(file.replace('.json', '')))
+          );
+          for (const e of entries) {
+            if (!e) continue;
+            if (filter.grade && e.grade !== filter.grade) continue;
+            if (filter.tags && filter.tags.length > 0 && !filter.tags.some(t => e.tags?.includes(t))) continue;
+            if (filter.since !== undefined && e.updatedAt < filter.since) continue;
+            if (searchTerm && !e.content.toLowerCase().includes(searchTerm)) continue;
+            results.push(e);
+          }
+        }
+      } else {
+        results = await allEntries();
       }
 
       results.sort((a, b) => b.updatedAt - a.updatedAt);
@@ -192,36 +126,41 @@ export function createFileSystemStore(config: {
     },
 
     async update(id, updates) {
-      await ensureDir();
-      const existing = await readEntry(id);
-      if (!existing) {
-        throw new HarnessError(
-          `Memory entry not found: ${id}`,
-          'MEMORY_NOT_FOUND',
-          'Check that the entry ID is correct',
-        );
-      }
-      const updated: MemoryEntry = {
-        ...existing,
-        ...updates,
-        updatedAt: Date.now(),
-      };
-      await writeEntry(updated);
-      return updated;
+      await io.ensureDir();
+      // Lock the entire read-modify-write to prevent concurrent updates
+      // from causing lost writes (classic read-modify-write race).
+      return withIndexLock(async () => {
+        const existing = await io.readEntry(id);
+        if (!existing) {
+          throw new HarnessError(
+            `Memory entry not found: ${id}`,
+            'MEMORY_NOT_FOUND',
+            'Check that the entry ID is correct',
+          );
+        }
+        const updated: MemoryEntry = {
+          ...existing,
+          ...updates,
+          updatedAt: Date.now(),
+        };
+        await io.writeEntry(updated);
+        return updated;
+      });
     },
 
     async delete(id) {
-      await ensureDir();
+      await io.ensureDir();
       return withIndexLock(async () => {
         try {
-          await unlink(entryPath(id));
-          const index = await readIndex();
+          const { unlink } = await import('node:fs/promises');
+          await unlink(io.entryPath(id));
+          const index = await io.readIndex();
           for (const [key, val] of Object.entries(index.keys)) {
             if (val === id) {
               delete index.keys[key];
             }
           }
-          await writeIndex(index);
+          await io.writeIndex(index);
           return true;
         } catch {
           return false;
@@ -230,7 +169,7 @@ export function createFileSystemStore(config: {
     },
 
     async compact(policy) {
-      await ensureDir();
+      await io.ensureDir();
       return withIndexLock(async () => {
         // Read all entries once to avoid repeated I/O (was called 3 times before)
         let all = await allEntries();
@@ -248,13 +187,13 @@ export function createFileSystemStore(config: {
           const toDelete: string[] = [];
           for (const entry of all) {
             if (now - entry.createdAt > policy.maxAge && weights[entry.grade] < 1.0) {
-              toDelete.push(entryPath(entry.id));
+              toDelete.push(io.entryPath(entry.id));
               freed.push(entry.id);
             } else {
               survivors.push(entry);
             }
           }
-          await batchUnlink(toDelete);
+          await io.batchUnlink(toDelete);
           all = survivors;
         }
 
@@ -269,22 +208,22 @@ export function createFileSystemStore(config: {
           for (const victim of sorted) {
             if (current <= policy.maxEntries) break;
             if (weights[victim.grade] < 1.0) {
-              toDelete.push(entryPath(victim.id));
+              toDelete.push(io.entryPath(victim.id));
               freed.push(victim.id);
               removedIds.add(victim.id);
               current--;
             }
           }
-          await batchUnlink(toDelete);
+          await io.batchUnlink(toDelete);
           all = all.filter((e) => !removedIds.has(e.id));
         }
 
         // Rebuild index from remaining entries (no extra I/O needed)
-        const newIndex: Index = { keys: {} };
+        const newIndex = { keys: {} as Record<string, string> };
         for (const entry of all) {
           newIndex.keys[entry.key] = entry.id;
         }
-        await writeIndex(newIndex);
+        await io.writeIndex(newIndex);
 
         return {
           removed: freed.length,
@@ -295,16 +234,17 @@ export function createFileSystemStore(config: {
     },
 
     async count() {
-      await ensureDir();
-      return (await allEntries()).length;
+      await io.ensureDir();
+      const files = await io.listEntryFiles();
+      return files.length;
     },
 
     async clear() {
-      await ensureDir();
+      await io.ensureDir();
       await withIndexLock(async () => {
         const all = await allEntries();
-        await batchUnlink(all.map(e => entryPath(e.id)));
-        await writeIndex({ keys: {} });
+        await io.batchUnlink(all.map(e => io.entryPath(e.id)));
+        await io.writeIndex({ keys: {} });
       });
     },
   };

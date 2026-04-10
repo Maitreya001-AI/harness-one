@@ -16,6 +16,7 @@ export type {
   PoolStats,
   PooledAgent,
   AgentPool,
+  MessageTransport,
   HandoffArtifact,
   HandoffPayload,
   HandoffReceipt,
@@ -48,3 +49,7 @@ export { createHandoff } from './handoff.js';
 
 // Context Boundary
 export { createContextBoundary } from './context-boundary.js';
+
+// Message Queue
+export { MessageQueue } from './message-queue.js';
+export type { QueueWarningHandler, QueueEventEmitter, MessageQueueConfig } from './message-queue.js';

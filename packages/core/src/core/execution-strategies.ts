@@ -6,7 +6,7 @@ import type { ToolCallRequest, ExecutionStrategy, ToolExecutionResult } from './
  */
 export function createSequentialStrategy(): ExecutionStrategy {
   return {
-    async execute(calls, handler, _options) {
+    async execute(calls, handler) {
       const results: ToolExecutionResult[] = [];
       for (const call of calls) {
         let result: unknown;

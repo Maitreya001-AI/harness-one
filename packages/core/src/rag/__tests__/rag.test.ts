@@ -973,7 +973,7 @@ describe('createRAGPipeline', () => {
     // Create a broken embedding model that returns fewer embeddings than inputs
     const brokenEmbedding: EmbeddingModel = {
       dimensions: 4,
-      async embed(texts: readonly string[]) {
+      async embed() {
         // Return only one embedding regardless of input count
         return [[1, 0, 0, 0]];
       },

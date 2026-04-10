@@ -378,7 +378,7 @@ describe('modify verdict propagation', () => {
   });
 });
 
-describe('getInternal validation: invalid pipeline object', () => {
+describe('getInternal validation: symbol-based brand pattern', () => {
   it('throws HarnessError when runInput is called with a non-createPipeline object', async () => {
     const fakePipeline = { input: [], output: [], failClosed: true } as unknown as import('../pipeline.js').GuardrailPipeline;
     await expect(runInput(fakePipeline, { content: 'hello' })).rejects.toThrow('Invalid GuardrailPipeline');
@@ -387,6 +387,21 @@ describe('getInternal validation: invalid pipeline object', () => {
   it('throws HarnessError when runOutput is called with a non-createPipeline object', async () => {
     const fakePipeline = {} as unknown as import('../pipeline.js').GuardrailPipeline;
     await expect(runOutput(fakePipeline, { content: 'hello' })).rejects.toThrow('Invalid GuardrailPipeline');
+  });
+
+  it('rejects objects with a string key matching the brand name (symbol-based brand is unforgeable)', async () => {
+    const forgedPipeline = {
+      GuardrailPipeline: { input: [], output: [], failClosed: true },
+    } as unknown as import('../pipeline.js').GuardrailPipeline;
+    await expect(runInput(forgedPipeline, { content: 'hello' })).rejects.toThrow('Invalid GuardrailPipeline');
+  });
+
+  it('accepts a pipeline created by createPipeline (symbol brand present)', async () => {
+    const validPipeline = createPipeline({
+      input: [{ name: 'g1', guard: allowGuard }],
+    });
+    const result = await runInput(validPipeline, { content: 'hello' });
+    expect(result.passed).toBe(true);
   });
 });
 
@@ -408,7 +423,7 @@ describe('runToolOutput', () => {
   });
 
   it('passes tool name in meta', async () => {
-    let receivedMeta: any;
+    let receivedMeta: Record<string, unknown> | undefined;
     const pipeline = createPipeline({
       output: [{ name: 'spy', guard: (ctx) => { receivedMeta = ctx.meta; return { action: 'allow' }; } }],
     });
@@ -498,7 +513,7 @@ describe('Fix 7: Pipeline deep clones meta on modify', () => {
   });
 
   it('preserves meta values through modify verdicts', async () => {
-    const modGuard: Guardrail = (ctx) => {
+    const modGuard: Guardrail = () => {
       return { action: 'modify', modified: 'changed', reason: 'modified' };
     };
     const checkGuard: Guardrail = (ctx) => {

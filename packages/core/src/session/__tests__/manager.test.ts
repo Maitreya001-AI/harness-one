@@ -318,7 +318,7 @@ describe('createSessionManager', () => {
       const sm = createSessionManager({ maxSessions: 5, gcIntervalMs: 0 });
       const s1 = sm.create();
       const s2 = sm.create();
-      const s3 = sm.create();
+      sm.create();
 
       // Access s1 to move it to the end of LRU
       sm.access(s1.id);

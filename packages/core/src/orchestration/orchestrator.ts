@@ -5,6 +5,7 @@
  */
 
 import { HarnessError } from '../core/errors.js';
+import { MessageQueue } from './message-queue.js';
 import type {
   AgentMessage,
   AgentRegistration,
@@ -85,12 +86,14 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
   }
 
   const agents = new Map<string, MutableAgentRegistration>();
-  const messageQueues = new Map<string, AgentMessage[]>();
   const eventHandlers: ((event: OrchestratorEvent) => void)[] = [];
   const contextStore = new Map<string, unknown>();
 
   function emit(event: OrchestratorEvent): void {
-    for (const handler of eventHandlers) {
+    // Iterate over a snapshot so that handlers can safely unsubscribe
+    // (or add new handlers) during iteration without mutating the live array.
+    const snapshot = [...eventHandlers];
+    for (const handler of snapshot) {
       try {
         handler(event);
       } catch (err: unknown) {
@@ -102,6 +105,21 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
       }
     }
   }
+
+  const mqConfig: {
+    maxQueueSize?: number;
+    onWarning?: (warning: { message: string; droppedCount: number; queueSize: number }) => void;
+    onEvent?: (event: { type: 'message_dropped'; agentId: string; droppedCount: number }) => void;
+  } = {
+    onEvent: (event) => emit(event),
+  };
+  if (config?.maxQueueSize !== undefined) {
+    mqConfig.maxQueueSize = config.maxQueueSize;
+  }
+  if (config?.onWarning !== undefined) {
+    mqConfig.onWarning = config.onWarning;
+  }
+  const messageQueue = new MessageQueue(mqConfig);
 
   function toReadonly(agent: MutableAgentRegistration): AgentRegistration {
     return {
@@ -123,26 +141,6 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
       );
     }
     return agent;
-  }
-
-  function pushToQueue(agentId: string, message: AgentMessage): void {
-    const queue = messageQueues.get(agentId);
-    if (queue) {
-      queue.push(message);
-      const maxQueueSize = config?.maxQueueSize ?? 1000;
-      if (queue.length > maxQueueSize) {
-        const droppedCount = queue.length - maxQueueSize;
-        queue.splice(0, droppedCount);
-        const warning = {
-          message: `Dropped ${droppedCount} message(s) from queue for agent "${agentId}" (maxQueueSize: ${maxQueueSize})`,
-          droppedCount,
-          queueSize: maxQueueSize,
-        };
-        if (config?.onWarning) {
-          config.onWarning(warning);
-        }
-      }
-    }
   }
 
   const sharedContext: SharedContext = {
@@ -187,7 +185,7 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
         ...(options?.metadata !== undefined && { metadata: { ...options.metadata } }),
       };
       agents.set(id, agent);
-      messageQueues.set(id, []);
+      messageQueue.createQueue(id);
       const registration = toReadonly(agent);
       emit({ type: 'agent_registered', agent: registration });
       return registration;
@@ -196,7 +194,7 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
     unregister(id: string): boolean {
       const existed = agents.delete(id);
       if (existed) {
-        messageQueues.delete(id);
+        messageQueue.deleteQueue(id);
       }
       return existed;
     },
@@ -231,21 +229,14 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
         ...message,
         timestamp: Date.now(),
       };
-      pushToQueue(message.to, fullMessage);
-      emit({ type: 'message_sent', message: fullMessage });
+      const accepted = messageQueue.push(message.to, fullMessage);
+      if (accepted) {
+        emit({ type: 'message_sent', message: fullMessage });
+      }
     },
 
     getMessages(agentId: string, options?: { type?: AgentMessage['type']; since?: number }): AgentMessage[] {
-      const queue = messageQueues.get(agentId);
-      if (!queue) return [];
-      let messages = queue;
-      if (options?.type !== undefined) {
-        messages = messages.filter((m) => m.type === options.type);
-      }
-      if (options?.since !== undefined) {
-        messages = messages.filter((m) => m.timestamp >= options.since!);
-      }
-      return messages;
+      return messageQueue.getMessages(agentId, options);
     },
 
     broadcast(from: string, content: string, options?: { parentId?: string; metadata?: Record<string, unknown> }): void {
@@ -265,8 +256,10 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
           ...(options?.metadata !== undefined && { metadata: { ...options.metadata } }),
           timestamp: Date.now(),
         };
-        pushToQueue(target.id, message);
-        emit({ type: 'message_sent', message });
+        const accepted = messageQueue.push(target.id, message);
+        if (accepted) {
+          emit({ type: 'message_sent', message });
+        }
       }
     },
 
@@ -304,7 +297,7 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
 
     dispose(): void {
       agents.clear();
-      messageQueues.clear();
+      messageQueue.clear();
       eventHandlers.length = 0;
       contextStore.clear();
     },

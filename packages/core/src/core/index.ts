@@ -40,7 +40,7 @@ export { assertNever } from './events.js';
 
 // AgentLoop
 export { AgentLoop } from './agent-loop.js';
-export type { AgentLoopConfig } from './agent-loop.js';
+export type { AgentLoopConfig, AgentLoopTraceManager } from './agent-loop.js';
 
 // Output parser
 export type { OutputParser } from './output-parser.js';

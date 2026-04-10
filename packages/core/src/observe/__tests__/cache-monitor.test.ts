@@ -41,7 +41,6 @@ describe('createCacheMonitor', () => {
   it('getTimeSeries buckets correctly', () => {
     const monitor = createCacheMonitor();
     // Record at different times using Date.now mock
-    const now = Date.now();
     // We can't easily mock Date.now, so just verify bucketing works with real timestamps
     monitor.record(makeUsage());
     monitor.record(makeUsage());

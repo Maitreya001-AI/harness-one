@@ -16,7 +16,7 @@ vi.mock('harness-one/context', () => ({
   registerTokenizer: mockRegisterTokenizer,
 }));
 
-import { createTiktokenTokenizer, registerTiktokenModels } from '../index.js';
+import { createTiktokenTokenizer, registerTiktokenModels, isSupportedTiktokenModel } from '../index.js';
 
 describe('createTiktokenTokenizer', () => {
   beforeEach(() => {
@@ -54,6 +54,45 @@ describe('createTiktokenTokenizer', () => {
     const result = tokenizer.encode('');
 
     expect(result.length).toBe(0);
+  });
+
+  it('throws a clear error for unsupported model names before calling tiktoken', () => {
+    expect(() => createTiktokenTokenizer('totally-fake-model')).toThrow(
+      'Unsupported tiktoken model: "totally-fake-model"'
+    );
+    // encoding_for_model should NOT have been called because validation rejects early
+    expect(mockEncodingForModel).not.toHaveBeenCalled();
+  });
+
+  it('includes the model name in the error message for unsupported models', () => {
+    expect(() => createTiktokenTokenizer('claude-3-opus')).toThrow('claude-3-opus');
+    expect(mockEncodingForModel).not.toHaveBeenCalled();
+  });
+
+  it('lists supported models in the error message', () => {
+    try {
+      createTiktokenTokenizer('invalid-model');
+    } catch (err) {
+      expect((err as Error).message).toContain('gpt-4');
+      expect((err as Error).message).toContain('gpt-4o');
+      expect((err as Error).message).toContain('gpt-3.5-turbo');
+    }
+  });
+});
+
+describe('isSupportedTiktokenModel', () => {
+  it('returns true for known models', () => {
+    expect(isSupportedTiktokenModel('gpt-4')).toBe(true);
+    expect(isSupportedTiktokenModel('gpt-4o')).toBe(true);
+    expect(isSupportedTiktokenModel('gpt-4o-mini')).toBe(true);
+    expect(isSupportedTiktokenModel('gpt-3.5-turbo')).toBe(true);
+    expect(isSupportedTiktokenModel('text-davinci-003')).toBe(true);
+  });
+
+  it('returns false for unknown models', () => {
+    expect(isSupportedTiktokenModel('claude-3-opus')).toBe(false);
+    expect(isSupportedTiktokenModel('fake-model')).toBe(false);
+    expect(isSupportedTiktokenModel('')).toBe(false);
   });
 });
 

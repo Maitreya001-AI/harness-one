@@ -66,9 +66,9 @@ export function createCostTracker(config?: {
   const maxRecords = 10_000;
   let runningTotal = 0;
 
-  // Issue 2: Recalibration to prevent floating point drift
-  const RECALIBRATE_INTERVAL = 1000;
-  let recordsSinceRecalibrate = 0;
+  // Kahan summation compensation term to prevent floating-point drift
+  // without periodic O(N) recalibration.
+  let kahanCompensation = 0;
 
   if (config?.pricing) {
     for (const p of config.pricing) {
@@ -154,17 +154,20 @@ export function createCostTracker(config?: {
         timestamp: Date.now(),
       };
       records.push(record);
-      runningTotal += estimatedCost;
+
+      // Kahan summation: add with compensation to prevent floating-point drift
+      const y = estimatedCost - kahanCompensation;
+      const t = runningTotal + y;
+      kahanCompensation = (t - runningTotal) - y;
+      runningTotal = t;
+
       if (records.length > maxRecords) {
         const evicted = records.shift()!;
-        runningTotal -= evicted.estimatedCost;
-      }
-
-      // Issue 2: Periodic recalibration to correct floating point drift
-      recordsSinceRecalibrate++;
-      if (recordsSinceRecalibrate >= RECALIBRATE_INTERVAL) {
-        runningTotal = records.reduce((sum, r) => sum + r.estimatedCost, 0);
-        recordsSinceRecalibrate = 0;
+        // Kahan subtraction
+        const ys = -evicted.estimatedCost - kahanCompensation;
+        const ts = runningTotal + ys;
+        kahanCompensation = (ts - runningTotal) - ys;
+        runningTotal = ts;
       }
 
       // Check budget alerts after recording
@@ -179,13 +182,6 @@ export function createCostTracker(config?: {
     },
 
     getTotalCost(): number {
-      // Trigger recalibration if enough records have accumulated since last
-      // recalibration, ensuring budget checks always use accurate totals
-      // even when getTotalCost() is called without intervening recordUsage().
-      if (recordsSinceRecalibrate >= RECALIBRATE_INTERVAL) {
-        runningTotal = records.reduce((sum, r) => sum + r.estimatedCost, 0);
-        recordsSinceRecalibrate = 0;
-      }
       return runningTotal;
     },
 
@@ -225,7 +221,7 @@ export function createCostTracker(config?: {
     reset(): void {
       records.length = 0;
       runningTotal = 0;
-      recordsSinceRecalibrate = 0;
+      kahanCompensation = 0;
     },
 
     getAlertMessage: getAlertMessageFn,

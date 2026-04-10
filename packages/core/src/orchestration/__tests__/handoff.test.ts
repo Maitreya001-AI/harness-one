@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createHandoff } from '../handoff.js';
 import { createOrchestrator } from '../orchestrator.js';
 import type { AgentOrchestrator } from '../orchestrator.js';
-import type { HandoffManager, HandoffPayload } from '../types.js';
+import type { HandoffManager, HandoffPayload, MessageTransport } from '../types.js';
 
 describe('createHandoff', () => {
   let orchestrator: AgentOrchestrator;
@@ -137,5 +137,76 @@ describe('createHandoff', () => {
       count++;
     }
     expect(count).toBeLessThanOrEqual(1_000);
+  });
+
+  describe('MessageTransport interface', () => {
+    it('accepts a minimal MessageTransport instead of full orchestrator', () => {
+      const transport: MessageTransport = {
+        send: vi.fn(),
+      };
+      const h = createHandoff(transport);
+      const receipt = h.send('a', 'b', { summary: 'via transport' });
+
+      expect(receipt.from).toBe('a');
+      expect(receipt.to).toBe('b');
+      expect(transport.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          from: 'a',
+          to: 'b',
+          type: 'request',
+        }),
+      );
+    });
+
+    it('receive works with a minimal MessageTransport', () => {
+      const transport: MessageTransport = { send: vi.fn() };
+      const h = createHandoff(transport);
+
+      h.send('a', 'b', { summary: 'first' });
+      h.send('a', 'b', { summary: 'second' });
+
+      expect(h.receive('b')?.summary).toBe('first');
+      expect(h.receive('b')?.summary).toBe('second');
+      expect(h.receive('b')).toBeUndefined();
+    });
+
+    it('verify works with a minimal MessageTransport', () => {
+      const transport: MessageTransport = { send: vi.fn() };
+      const h = createHandoff(transport);
+
+      const receipt = h.send('a', 'b', {
+        summary: 'task',
+        acceptanceCriteria: ['must-pass', 'must-fail'],
+      });
+
+      const result = h.verify(receipt.id, 'output', (c) => c === 'must-pass');
+      expect(result.passed).toBe(false);
+      expect(result.violations).toEqual(['must-fail']);
+    });
+
+    it('history and dispose work with a minimal MessageTransport', () => {
+      const transport: MessageTransport = { send: vi.fn() };
+      const h = createHandoff(transport);
+
+      h.send('a', 'b', { summary: 'task' });
+      expect(h.history('a')).toHaveLength(1);
+
+      h.dispose();
+      expect(h.history('a')).toHaveLength(0);
+      expect(h.receive('b')).toBeUndefined();
+    });
+
+    it('AgentOrchestrator satisfies MessageTransport (backward compat)', () => {
+      // This is the existing pattern — it should continue to work
+      const orch = createOrchestrator();
+      orch.register('x', 'Agent X');
+      orch.register('y', 'Agent Y');
+
+      const h = createHandoff(orch);
+      const receipt = h.send('x', 'y', { summary: 'compat test' });
+
+      expect(receipt.from).toBe('x');
+      expect(h.receive('y')?.summary).toBe('compat test');
+    });
   });
 });

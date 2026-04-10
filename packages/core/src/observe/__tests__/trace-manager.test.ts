@@ -767,7 +767,7 @@ describe('dispose error isolation', () => {
     expect(errors.some(e => (e as Error).message === 'shutdown failed')).toBe(true);
   });
 
-  it('reports dispose errors to console.warn when no onExportError provided', async () => {
+  it('silently discards dispose errors when no onExportError provided (no console.warn)', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const failingExporter: TraceExporter = {
       name: 'failing',
@@ -778,11 +778,12 @@ describe('dispose error isolation', () => {
     };
 
     const tm = createTraceManager({ exporters: [failingExporter] });
+    // Should not throw
     await tm.dispose();
 
-    expect(warnSpy).toHaveBeenCalled();
-    const messages = warnSpy.mock.calls.map(c => c.join(' '));
-    expect(messages.some(m => m.includes('flush boom') || m.includes('shutdown boom'))).toBe(true);
+    // Library modules should not produce console output — errors are silently
+    // discarded when no onExportError callback is provided.
+    expect(warnSpy).not.toHaveBeenCalled();
     warnSpy.mockRestore();
   });
 });

@@ -31,7 +31,7 @@ describe('AgentLoop status', () => {
     let statusDuringRun: string | undefined;
 
     const capturingAdapter: AgentAdapter = {
-      async chat(_params) {
+      async chat() {
         // Capture status while the loop is actively running
         statusDuringRun = loopRef.status;
         return {

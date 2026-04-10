@@ -510,7 +510,7 @@ describe('createOrchestrator', () => {
 
     it('calls strategy.select and returns the agent ID', async () => {
       const strategy: DelegationStrategy = {
-        select: vi.fn((_agents: readonly AgentRegistration[], _task: DelegationTask) => 'a1'),
+        select: vi.fn(() => 'a1'),
       };
       const orch = createOrchestrator({ strategy });
       orch.register('a1', 'Worker');
@@ -558,7 +558,7 @@ describe('createOrchestrator', () => {
 
     it('supports async strategy.select and returns a Promise', async () => {
       const strategy: DelegationStrategy = {
-        select: async (_agents: readonly AgentRegistration[], _task: DelegationTask) => {
+        select: async () => {
           return 'a1';
         },
       };
@@ -580,7 +580,7 @@ describe('createOrchestrator', () => {
 
     it('passes all registered agents to strategy.select', async () => {
       const strategy: DelegationStrategy = {
-        select: vi.fn((_agents: readonly AgentRegistration[], _task: DelegationTask) => undefined),
+        select: vi.fn(() => undefined),
       };
       const orch = createOrchestrator({ strategy });
       orch.register('a1', 'Worker1');

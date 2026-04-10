@@ -49,6 +49,8 @@ export interface AgentRegistration {
   readonly parentId?: string;
   readonly status: AgentStatus;
   readonly metadata?: Record<string, unknown>;
+  /** Optional session identifier for per-agent session routing. */
+  readonly sessionId?: string;
 }
 
 /** Strategy for delegating tasks to agents. */
@@ -79,6 +81,7 @@ export type OrchestratorEvent =
   | { readonly type: 'agent_registered'; readonly agent: AgentRegistration }
   | { readonly type: 'agent_status_changed'; readonly agentId: string; readonly from: AgentStatus; readonly to: AgentStatus }
   | { readonly type: 'message_sent'; readonly message: AgentMessage }
+  | { readonly type: 'message_dropped'; readonly agentId: string; readonly droppedCount: number }
   | { readonly type: 'task_delegated'; readonly agentId: string; readonly task: DelegationTask }
   | { readonly type: 'context_updated'; readonly key: string };
 
@@ -131,6 +134,22 @@ export interface AgentPool {
   readonly stats: PoolStats;
   /** Dispose all agents and clear timers. */
   dispose(): void;
+}
+
+// ---------------------------------------------------------------------------
+// MessageTransport — minimal interface required by the handoff protocol
+// ---------------------------------------------------------------------------
+
+/**
+ * Minimal message transport abstraction used by {@link HandoffManager}.
+ *
+ * Any object that can send inter-agent messages satisfies this interface.
+ * The full {@link import('./orchestrator.js').AgentOrchestrator} implements it
+ * automatically, but lightweight custom transports can be used as well.
+ */
+export interface MessageTransport {
+  /** Send a message between agents. */
+  send(message: Omit<AgentMessage, 'timestamp'>): void;
 }
 
 // ---------------------------------------------------------------------------

@@ -12,20 +12,77 @@ import type { AgentEvent, DoneReason } from './events.js';
 import { AbortedError, HarnessError, MaxIterationsError, TokenBudgetExceededError } from './errors.js';
 import { createSequentialStrategy, createParallelStrategy } from './execution-strategies.js';
 
+/**
+ * Minimal tracing interface accepted by AgentLoop.
+ *
+ * Structurally compatible with the full `TraceManager` from the observe module
+ * so that consumers can pass one directly without importing it into the core
+ * module (avoids a circular dependency between core and observe).
+ */
+export interface AgentLoopTraceManager {
+  startTrace(name: string, metadata?: Record<string, unknown>): string;
+  startSpan(traceId: string, name: string, parentId?: string): string;
+  setSpanAttributes(spanId: string, attributes: Record<string, unknown>): void;
+  endSpan(spanId: string, status?: 'completed' | 'error'): void;
+  endTrace(traceId: string, status?: 'completed' | 'error'): void;
+}
+
 /** Configuration for the AgentLoop. */
 export interface AgentLoopConfig {
   readonly adapter: AgentAdapter;
   readonly maxIterations?: number;
   readonly maxTotalTokens?: number;
   readonly signal?: AbortSignal;
+  /**
+   * Callback invoked when the LLM requests a tool call.
+   *
+   * Returns `Promise<unknown>` intentionally: tool results are inherently
+   * dynamic — each tool produces its own result shape (string, object, error
+   * envelope, etc.), and the AgentLoop serializes the result to a string for
+   * the LLM regardless of type. Typing this more narrowly would force every
+   * tool handler to conform to a single return type, which would be incorrect.
+   *
+   * The AgentLoop treats the resolved value as opaque data: it is stringified
+   * via `JSON.stringify` (or `.toString()` for non-objects) and fed back as a
+   * tool-result message.
+   */
   readonly onToolCall?: (call: ToolCallRequest) => Promise<unknown>;
   readonly tools?: ToolSchema[];
   readonly maxConversationMessages?: number;
   readonly streaming?: boolean;
   readonly parallel?: boolean;
   readonly maxParallelToolCalls?: number;
+  /**
+   * Custom execution strategy for tool calls.
+   *
+   * When provided, this strategy takes precedence over the `parallel` flag.
+   * If omitted, a default strategy is selected automatically:
+   * - `parallel: true` creates a default parallel strategy (with
+   *   `maxParallelToolCalls` concurrency).
+   * - Otherwise a sequential strategy is used.
+   *
+   * Inject a custom strategy to control ordering, batching, retries,
+   * or any other execution concern without modifying the AgentLoop itself.
+   *
+   * @example
+   * ```ts
+   * const loop = new AgentLoop({
+   *   adapter,
+   *   executionStrategy: myCustomStrategy,
+   * });
+   * ```
+   */
   readonly executionStrategy?: ExecutionStrategy;
   readonly isSequentialTool?: (name: string) => boolean;
+  /**
+   * Optional trace manager for automatic observability.
+   *
+   * When provided, `run()` automatically creates a trace on start, a span for
+   * each iteration, child spans for each tool call, and ends the trace on
+   * completion. This wires the AgentLoop to the observability layer without
+   * requiring manual instrumentation.
+   */
+  readonly traceManager?: AgentLoopTraceManager;
 }
 
 /**
@@ -50,8 +107,10 @@ export class AgentLoop {
   private readonly streaming: boolean;
   private readonly executionStrategy: ExecutionStrategy;
   private readonly isSequentialTool?: ((name: string) => boolean) | undefined;
+  private readonly traceManager?: AgentLoopTraceManager | undefined;
 
   private abortController: AbortController;
+  private _externalAbortHandler: (() => void) | undefined;
   private cumulativeUsage: { inputTokens: number; outputTokens: number } = {
     inputTokens: 0,
     outputTokens: 0,
@@ -69,9 +128,10 @@ export class AgentLoop {
     this.externalSignal = config.signal;
     this.onToolCall = config.onToolCall;
     this.tools = config.tools;
-    this.maxConversationMessages = config.maxConversationMessages;
+    this.maxConversationMessages = config.maxConversationMessages ?? 200;
     this.streaming = config.streaming ?? false;
     this.isSequentialTool = config.isSequentialTool;
+    this.traceManager = config.traceManager;
 
     if (config.executionStrategy) {
       this.executionStrategy = config.executionStrategy;
@@ -89,9 +149,10 @@ export class AgentLoop {
       if (this.externalSignal.aborted) {
         this.abortController.abort();
       } else {
-        this.externalSignal.addEventListener('abort', () => {
+        this._externalAbortHandler = () => {
           this.abortController.abort();
-        }, { once: true });
+        };
+        this.externalSignal.addEventListener('abort', this._externalAbortHandler, { once: true });
       }
     }
   }
@@ -112,6 +173,12 @@ export class AgentLoop {
   /** Dispose the loop, releasing resources and cancelling any pending operations. */
   dispose(): void {
     this._status = 'disposed';
+    // Remove external signal listener to prevent memory leaks when the external
+    // signal outlives this loop instance.
+    if (this._externalAbortHandler && this.externalSignal) {
+      this.externalSignal.removeEventListener('abort', this._externalAbortHandler);
+      this._externalAbortHandler = undefined;
+    }
     this.abortController.abort();
   }
 
@@ -145,10 +212,16 @@ export class AgentLoop {
     let iteration = 0;
     let yieldedDone = false;
 
+    // Auto-tracing: create a trace for this run when a traceManager is wired.
+    const tm = this.traceManager;
+    const traceId = tm ? tm.startTrace('agent-loop-run', { messageCount: messages.length }) : undefined;
+    let iterationSpanId: string | undefined;
+
     try {
       while (true) {
         // Check abort
         if (this.isAborted()) {
+          if (iterationSpanId && tm) { tm.endSpan(iterationSpanId, 'error'); iterationSpanId = undefined; }
           yield { type: 'error', error: new AbortedError() };
           yieldedDone = true;
           yield this.doneEvent('aborted');
@@ -159,6 +232,7 @@ export class AgentLoop {
         iteration++;
         this._iteration = iteration;
         if (iteration > this.maxIterations) {
+          if (iterationSpanId && tm) { tm.endSpan(iterationSpanId, 'error'); iterationSpanId = undefined; }
           const err = new MaxIterationsError(this.maxIterations);
           yield { type: 'error', error: err };
           yieldedDone = true;
@@ -169,6 +243,7 @@ export class AgentLoop {
         // Check token budget before calling LLM
         const totalTokens = this.cumulativeUsage.inputTokens + this.cumulativeUsage.outputTokens;
         if (totalTokens > this.maxTotalTokens) {
+          if (iterationSpanId && tm) { tm.endSpan(iterationSpanId, 'error'); iterationSpanId = undefined; }
           const err = new TokenBudgetExceededError(totalTokens, this.maxTotalTokens);
           yield { type: 'error', error: err };
           yieldedDone = true;
@@ -189,6 +264,14 @@ export class AgentLoop {
           conversation.push(...head, ...tail);
         }
 
+        // End previous iteration span if one is still open
+        if (iterationSpanId && tm) { tm.endSpan(iterationSpanId); iterationSpanId = undefined; }
+
+        // Start a new span for this iteration
+        if (tm && traceId) {
+          iterationSpanId = tm.startSpan(traceId, `iteration-${iteration}`);
+        }
+
         yield { type: 'iteration_start', iteration };
 
         // C5: Wrap adapter call in try-catch to handle exceptions gracefully
@@ -200,6 +283,7 @@ export class AgentLoop {
           const streamResult = yield* this.handleStream(conversation);
           if (!streamResult) {
             // Stream error already handled via error event
+            if (iterationSpanId && tm) { tm.endSpan(iterationSpanId, 'error'); iterationSpanId = undefined; }
             yieldedDone = true;
             yield this.doneEvent('error');
             return;
@@ -218,6 +302,7 @@ export class AgentLoop {
             responseUsage = response.usage;
           } catch (err) {
             // C5: Emit error event and break gracefully
+            if (iterationSpanId && tm) { tm.endSpan(iterationSpanId, 'error'); iterationSpanId = undefined; }
             yield { type: 'error', error: err instanceof HarnessError ? err : new HarnessError(
               err instanceof Error ? err.message : String(err),
               AgentLoop.categorizeAdapterError(err),
@@ -230,8 +315,17 @@ export class AgentLoop {
           }
         }
 
+        // Record usage on the iteration span
+        if (iterationSpanId && tm) {
+          tm.setSpanAttributes(iterationSpanId, {
+            inputTokens: responseUsage.inputTokens,
+            outputTokens: responseUsage.outputTokens,
+          });
+        }
+
         // Check abort after adapter call (abort() may have been called during in-flight request)
         if (this.isAborted()) {
+          if (iterationSpanId && tm) { tm.endSpan(iterationSpanId, 'error'); iterationSpanId = undefined; }
           yield { type: 'error', error: new AbortedError() };
           yieldedDone = true;
           yield this.doneEvent('aborted');
@@ -247,6 +341,7 @@ export class AgentLoop {
         if (postCallTokens > this.maxTotalTokens) {
           // Budget exceeded after this response; emit message (for content) then stop
           yield { type: 'message', message: assistantMsg, usage: responseUsage };
+          if (iterationSpanId && tm) { tm.endSpan(iterationSpanId, 'error'); iterationSpanId = undefined; }
           const err = new TokenBudgetExceededError(postCallTokens, this.maxTotalTokens);
           yield { type: 'error', error: err };
           yieldedDone = true;
@@ -259,6 +354,7 @@ export class AgentLoop {
         // If no tool calls or empty tool calls -> end turn
         if (!toolCalls || toolCalls.length === 0) {
           yield { type: 'message', message: assistantMsg, usage: responseUsage };
+          if (iterationSpanId && tm) { tm.endSpan(iterationSpanId); iterationSpanId = undefined; }
           yieldedDone = true;
           yield this.doneEvent('end_turn');
           return;
@@ -272,14 +368,24 @@ export class AgentLoop {
           yield { type: 'tool_call', toolCall, iteration };
         }
 
-        // Execute via strategy
+        // Execute via strategy, with optional per-tool-call tracing
         const executionResults = await this.executionStrategy.execute(
           toolCalls,
           async (call) => {
-            if (this.onToolCall) {
-              return this.onToolCall(call);
+            // Create a child span for each tool call when tracing is enabled
+            const toolSpanId = (tm && traceId && iterationSpanId)
+              ? tm.startSpan(traceId, `tool:${call.name}`, iterationSpanId)
+              : undefined;
+            try {
+              const result = this.onToolCall
+                ? await this.onToolCall(call)
+                : { error: `No onToolCall handler registered for tool "${call.name}"` };
+              if (toolSpanId && tm) { tm.endSpan(toolSpanId); }
+              return result;
+            } catch (toolErr) {
+              if (toolSpanId && tm) { tm.endSpan(toolSpanId, 'error'); }
+              throw toolErr;
             }
-            return { error: `No onToolCall handler registered for tool "${call.name}"` };
           },
           Object.assign(
             { signal: this.abortController.signal },
@@ -313,6 +419,7 @@ export class AgentLoop {
 
         // Check abort after tool calls
         if (this.isAborted()) {
+          if (iterationSpanId && tm) { tm.endSpan(iterationSpanId, 'error'); iterationSpanId = undefined; }
           yield { type: 'error', error: new AbortedError() };
           yieldedDone = true;
           yield this.doneEvent('aborted');
@@ -320,6 +427,14 @@ export class AgentLoop {
         }
       }
     } finally {
+      // End any open iteration span
+      if (iterationSpanId && tm) {
+        try { tm.endSpan(iterationSpanId, 'error'); } catch { /* span may already be ended */ }
+      }
+      // End the trace
+      if (traceId && tm) {
+        try { tm.endTrace(traceId, yieldedDone ? 'completed' : 'error'); } catch { /* trace may already be ended */ }
+      }
       if (!yieldedDone) {
         // Generator was closed externally via .return() or .throw()
         // Mark as aborted for cleanup

@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import { createEvalRunner } from '../runner.js';
-import { createRelevanceScorer } from '../scorers.js';
 import { HarnessError } from '../../core/errors.js';
 import type { Scorer } from '../types.js';
 
@@ -248,7 +247,7 @@ describe('createEvalRunner', () => {
       const batchScorer: Scorer = {
         name: 'batch-scorer',
         description: 'Scorer with batch support',
-        async score(input, output) {
+        async score() {
           return { score: 0.5, explanation: 'individual' };
         },
         async scoreBatch(cases) {

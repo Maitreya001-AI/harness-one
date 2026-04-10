@@ -21,10 +21,15 @@ import type { DocumentChunk, EmbeddingModel, Retriever, RetrievalResult } from '
  */
 export function createInMemoryRetriever(config: {
   embedding: EmbeddingModel;
+  queryCacheSize?: number;
 }): Retriever {
   const chunks: DocumentChunk[] = [];
   /** Pre-computed normalized embeddings, parallel to chunks array. undefined for chunks without embeddings. */
   const normalizedEmbeddings: (readonly number[] | undefined)[] = [];
+
+  // LRU cache for query embeddings to avoid redundant API calls for repeated queries.
+  const queryCacheMax = config.queryCacheSize ?? 64;
+  const queryEmbeddingCache = new Map<string, readonly number[]>();
 
   function normalizeVector(embedding: readonly number[]): readonly number[] | undefined {
     if (embedding.length === 0) return undefined;
@@ -61,8 +66,24 @@ export function createInMemoryRetriever(config: {
       const limit = options?.limit ?? 5;
       const minScore = options?.minScore ?? 0;
 
-      // Embed the query
-      const [queryEmbedding] = await config.embedding.embed([query]);
+      // Check query embedding cache before calling the (potentially expensive) embedding API
+      let queryEmbedding: readonly number[];
+      const cached = queryEmbeddingCache.get(query);
+      if (cached) {
+        // LRU touch: move to end
+        queryEmbeddingCache.delete(query);
+        queryEmbeddingCache.set(query, cached);
+        queryEmbedding = cached;
+      } else {
+        [queryEmbedding] = await config.embedding.embed([query]);
+        // Insert into LRU cache
+        queryEmbeddingCache.set(query, queryEmbedding);
+        if (queryEmbeddingCache.size > queryCacheMax) {
+          // Evict oldest (first key in Map insertion order)
+          const oldest = queryEmbeddingCache.keys().next().value;
+          if (oldest !== undefined) queryEmbeddingCache.delete(oldest);
+        }
+      }
 
       // Normalize the query embedding once
       const normalizedQuery = normalizeVector(queryEmbedding);

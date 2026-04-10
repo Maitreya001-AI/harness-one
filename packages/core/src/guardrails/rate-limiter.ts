@@ -48,7 +48,8 @@ export function createRateLimiter(config: {
       buckets.set(key, timestamps);
     }
 
-    // Remove expired timestamps using binary search (O(log N) + single splice)
+    // Remove expired timestamps using binary search O(log N).
+    // Use copyWithin + length truncation instead of splice to avoid O(N) array shift.
     let lo = 0, hi = timestamps.length;
     while (lo < hi) {
       const mid = (lo + hi) >>> 1;
@@ -56,7 +57,9 @@ export function createRateLimiter(config: {
       else hi = mid;
     }
     if (lo > 0) {
-      timestamps.splice(0, lo);
+      // Shift remaining elements to front in-place (O(remaining) not O(total))
+      timestamps.copyWithin(0, lo);
+      timestamps.length -= lo;
     }
 
     touchKey(key);

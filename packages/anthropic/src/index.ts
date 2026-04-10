@@ -72,12 +72,41 @@ function toAnthropicMessage(msg: Message): Anthropic.MessageParam {
   };
 }
 
+/**
+ * Convert a harness-one JsonSchema to Anthropic's Tool.InputSchema.
+ *
+ * Anthropic expects `{ type: 'object'; properties?: unknown; [k: string]: unknown }`.
+ * Rather than casting with `as Anthropic.Tool.InputSchema`, we explicitly map
+ * the known JsonSchema fields to produce a conforming object.
+ */
+function toAnthropicInputSchema(schema: ToolSchema['parameters']): Anthropic.Tool.InputSchema {
+  const result: Record<string, unknown> = { type: schema.type as 'object' };
+  if (schema.properties !== undefined) result.properties = schema.properties;
+  if (schema.required !== undefined) result.required = schema.required;
+  if (schema.items !== undefined) result.items = schema.items;
+  if (schema.enum !== undefined) result.enum = schema.enum;
+  if (schema.description !== undefined) result.description = schema.description;
+  if (schema.default !== undefined) result.default = schema.default;
+  if (schema.minimum !== undefined) result.minimum = schema.minimum;
+  if (schema.maximum !== undefined) result.maximum = schema.maximum;
+  if (schema.minLength !== undefined) result.minLength = schema.minLength;
+  if (schema.maxLength !== undefined) result.maxLength = schema.maxLength;
+  if (schema.pattern !== undefined) result.pattern = schema.pattern;
+  if (schema.additionalProperties !== undefined) result.additionalProperties = schema.additionalProperties;
+  if (schema.oneOf !== undefined) result.oneOf = schema.oneOf;
+  if (schema.anyOf !== undefined) result.anyOf = schema.anyOf;
+  if (schema.allOf !== undefined) result.allOf = schema.allOf;
+  if (schema.const !== undefined) result.const = schema.const;
+  if (schema.format !== undefined) result.format = schema.format;
+  return result as Anthropic.Tool.InputSchema;
+}
+
 /** Convert a harness-one ToolSchema to Anthropic's tool format. */
 function toAnthropicTool(tool: ToolSchema): Anthropic.Tool {
   return {
     name: tool.name,
     description: tool.description,
-    input_schema: tool.parameters as Anthropic.Tool.InputSchema,
+    input_schema: toAnthropicInputSchema(tool.parameters),
   };
 }
 
@@ -91,13 +120,20 @@ function extractSystem(messages: readonly Message[]): {
   return { system: system?.content, rest };
 }
 
-/** Map Anthropic's usage response to harness-one's TokenUsage. */
+/**
+ * Map Anthropic's usage response to harness-one's TokenUsage.
+ *
+ * Anthropic's Usage type may include cache_read_input_tokens and
+ * cache_creation_input_tokens fields that are not in the base type definition.
+ * We safely extract them using 'in' checks instead of a double assertion.
+ */
 function toTokenUsage(usage: Anthropic.Usage): TokenUsage {
-  const ext = usage as unknown as Record<string, unknown>;
-  const cacheRead = typeof ext?.cache_read_input_tokens === 'number'
-    ? ext.cache_read_input_tokens : 0;
-  const cacheCreate = typeof ext?.cache_creation_input_tokens === 'number'
-    ? ext.cache_creation_input_tokens : 0;
+  const cacheRead = 'cache_read_input_tokens' in usage
+    && typeof usage.cache_read_input_tokens === 'number'
+    ? usage.cache_read_input_tokens : 0;
+  const cacheCreate = 'cache_creation_input_tokens' in usage
+    && typeof usage.cache_creation_input_tokens === 'number'
+    ? usage.cache_creation_input_tokens : 0;
   return {
     inputTokens: usage.input_tokens,
     outputTokens: usage.output_tokens,

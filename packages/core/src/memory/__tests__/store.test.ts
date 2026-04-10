@@ -227,6 +227,44 @@ describe('createInMemoryStore', () => {
     });
   });
 
+  describe('query with sessionId filter', () => {
+    it('returns only entries matching the given sessionId in metadata', async () => {
+      await store.write({ key: 'k1', content: 'session-a data', grade: 'useful', metadata: { sessionId: 'sess-a' } });
+      await store.write({ key: 'k2', content: 'session-b data', grade: 'useful', metadata: { sessionId: 'sess-b' } });
+      await store.write({ key: 'k3', content: 'no session data', grade: 'useful' });
+
+      const results = await store.query({ sessionId: 'sess-a' });
+      expect(results).toHaveLength(1);
+      expect(results[0].key).toBe('k1');
+    });
+
+    it('returns empty array when no entries match sessionId', async () => {
+      await store.write({ key: 'k1', content: 'data', grade: 'useful', metadata: { sessionId: 'other' } });
+
+      const results = await store.query({ sessionId: 'nonexistent' });
+      expect(results).toHaveLength(0);
+    });
+
+    it('excludes entries without metadata when sessionId filter is set', async () => {
+      await store.write({ key: 'k1', content: 'no metadata', grade: 'useful' });
+      await store.write({ key: 'k2', content: 'has session', grade: 'useful', metadata: { sessionId: 'x' } });
+
+      const results = await store.query({ sessionId: 'x' });
+      expect(results).toHaveLength(1);
+      expect(results[0].key).toBe('k2');
+    });
+
+    it('combines sessionId with other filters', async () => {
+      await store.write({ key: 'k1', content: 'alpha info', grade: 'critical', metadata: { sessionId: 's1' } });
+      await store.write({ key: 'k2', content: 'beta info', grade: 'useful', metadata: { sessionId: 's1' } });
+      await store.write({ key: 'k3', content: 'gamma info', grade: 'critical', metadata: { sessionId: 's2' } });
+
+      const results = await store.query({ sessionId: 's1', grade: 'critical' });
+      expect(results).toHaveLength(1);
+      expect(results[0].key).toBe('k1');
+    });
+  });
+
   describe('query with offset', () => {
     it('applies offset before limit', async () => {
       await store.write({ key: 'k1', content: 'first', grade: 'useful' });

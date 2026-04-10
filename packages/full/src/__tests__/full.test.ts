@@ -100,7 +100,7 @@ vi.mock('@harness-one/tiktoken', () => ({
 }));
 
 import { createHarness } from '../index.js';
-import type { AnthropicHarnessConfig } from '../index.js';
+import type { AnthropicHarnessConfig, AdapterHarnessConfig } from '../index.js';
 import { HarnessError } from 'harness-one/core';
 import type { AgentAdapter } from 'harness-one/core';
 import type { MemoryStore } from 'harness-one/memory';
@@ -162,6 +162,30 @@ describe('createHarness', () => {
       createHarness({ ...baseConfig, adapter: customAdapter as unknown as AgentAdapter });
       expect(mocks.createAnthropicAdapter).not.toHaveBeenCalled();
       expect(mocks.createOpenAIAdapter).not.toHaveBeenCalled();
+    });
+
+    it('creates harness with AdapterHarnessConfig (no provider/client)', () => {
+      const customAdapter = { chat: vi.fn(), stream: vi.fn() } as unknown as AgentAdapter;
+      const config: AdapterHarnessConfig = { adapter: customAdapter };
+      const harness = createHarness(config);
+
+      expect(harness.loop).toBeDefined();
+      expect(harness.tools).toBeDefined();
+      expect(mocks.createAnthropicAdapter).not.toHaveBeenCalled();
+      expect(mocks.createOpenAIAdapter).not.toHaveBeenCalled();
+    });
+
+    it('AdapterHarnessConfig supports all optional fields', () => {
+      const customAdapter = { chat: vi.fn() } as unknown as AgentAdapter;
+      const config: AdapterHarnessConfig = {
+        adapter: customAdapter,
+        maxIterations: 10,
+        maxTotalTokens: 5000,
+        budget: 1.0,
+      };
+      const harness = createHarness(config);
+      expect(harness.loop).toBeDefined();
+      expect(harness.costs).toBeDefined();
     });
   });
 
@@ -237,6 +261,18 @@ describe('createHarness', () => {
 
     it('does not register tiktoken by default', () => {
       createHarness(baseConfig);
+      expect(mocks.registerTiktokenModels).not.toHaveBeenCalled();
+    });
+
+    it('does not call registerTiktokenModels when a custom tokenizer function is provided', () => {
+      const tokenFn = (text: string) => text.split(/\s+/).length;
+      createHarness({ ...baseConfig, tokenizer: tokenFn });
+      expect(mocks.registerTiktokenModels).not.toHaveBeenCalled();
+    });
+
+    it('does not call registerTiktokenModels when a custom tokenizer object is provided', () => {
+      const tokenizer = { encode: (text: string) => ({ length: text.length }) };
+      createHarness({ ...baseConfig, tokenizer });
       expect(mocks.registerTiktokenModels).not.toHaveBeenCalled();
     });
   });
@@ -499,7 +535,7 @@ describe('createHarness', () => {
         createHarness(badConfig);
       } catch (e) {
         expect((e as HarnessError).code).toBe('INVALID_CONFIG');
-        expect((e as HarnessError).message).toContain('adapter or client');
+        expect((e as HarnessError).message).toContain('adapter');
       }
     });
 

@@ -47,7 +47,8 @@ export function createRelay(config: {
         try {
           const parsed = JSON.parse(entry.content) as VersionedRelayState;
           const version = parsed._version ?? 0;
-          const { _version: _, ...state } = parsed;
+          const { _version: _v, ...state } = parsed;
+          void _v;
           lastKnownVersion = version;
           return { id: entry.id, state: state as RelayState, version };
         } catch {
@@ -69,7 +70,8 @@ export function createRelay(config: {
         try {
           const parsed = JSON.parse(entry.content) as VersionedRelayState;
           const version = parsed._version ?? 0;
-          const { _version: _, ...state } = parsed;
+          const { _version: _v, ...state } = parsed;
+          void _v;
           currentId = entry.id;
           lastKnownVersion = version;
           return { id: entry.id, state: state as RelayState, version };

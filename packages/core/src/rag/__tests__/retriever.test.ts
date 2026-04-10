@@ -1,0 +1,424 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { createInMemoryRetriever } from '../retriever.js';
+import type { DocumentChunk, EmbeddingModel } from '../types.js';
+
+// ---------------------------------------------------------------------------
+// Mock embedding model
+// ---------------------------------------------------------------------------
+
+function createMockEmbeddingModel(dimensions = 4): EmbeddingModel & { embed: ReturnType<typeof vi.fn> } {
+  const embedFn = vi.fn(async (texts: readonly string[]): Promise<readonly (readonly number[])[]> => {
+    return texts.map((text) => {
+      const vec = new Array<number>(dimensions).fill(0);
+      for (let i = 0; i < text.length; i++) {
+        vec[i % dimensions] += text.charCodeAt(i);
+      }
+      const mag = Math.sqrt(vec.reduce((s, v) => s + v * v, 0));
+      return mag === 0 ? vec : vec.map((v) => v / mag);
+    });
+  });
+
+  return {
+    dimensions,
+    embed: embedFn,
+  };
+}
+
+function chunk(id: string, content: string, embedding?: readonly number[], index = 0): DocumentChunk {
+  return { id, documentId: 'd1', content, index, embedding };
+}
+
+// ===========================================================================
+// createInMemoryRetriever
+// ===========================================================================
+
+describe('createInMemoryRetriever', () => {
+  let embedding: ReturnType<typeof createMockEmbeddingModel>;
+
+  beforeEach(() => {
+    embedding = createMockEmbeddingModel(4);
+  });
+
+  // ---- index() ----
+
+  describe('index()', () => {
+    it('adds chunks to the internal store', async () => {
+      const retriever = createInMemoryRetriever({ embedding });
+      const chunks = [
+        chunk('c1', 'cat', [1, 0, 0, 0]),
+        chunk('c2', 'dog', [0, 1, 0, 0]),
+      ];
+
+      await retriever.index(chunks);
+      const results = await retriever.retrieve('cat', { limit: 10 });
+
+      expect(results.length).toBeGreaterThan(0);
+    });
+
+    it('supports incremental indexing (multiple index calls)', async () => {
+      const retriever = createInMemoryRetriever({ embedding });
+
+      await retriever.index([chunk('c1', 'first', [1, 0, 0, 0])]);
+      await retriever.index([chunk('c2', 'second', [0, 1, 0, 0])]);
+
+      const results = await retriever.retrieve('test', { limit: 10 });
+      const ids = results.map((r) => r.chunk.id);
+
+      expect(ids).toContain('c1');
+      expect(ids).toContain('c2');
+    });
+
+    it('handles empty chunk array', async () => {
+      const retriever = createInMemoryRetriever({ embedding });
+      await retriever.index([]);
+
+      const results = await retriever.retrieve('test');
+      expect(results).toEqual([]);
+    });
+  });
+
+  // ---- retrieve() ----
+
+  describe('retrieve()', () => {
+    it('returns ranked results by cosine similarity', async () => {
+      const retriever = createInMemoryRetriever({ embedding });
+
+      // The query "cat" will produce some embedding vector via the mock
+      // Chunks with embeddings closer to that vector score higher
+      await retriever.index([
+        chunk('c1', 'low', [0, 0, 0, 1], 0),
+        chunk('c2', 'high', [1, 0, 0, 0], 1),
+        chunk('c3', 'mid', [0.5, 0, 0, 0.5], 2),
+      ]);
+
+      const results = await retriever.retrieve('anything', { limit: 10 });
+
+      // Results must be sorted descending by score
+      for (let i = 1; i < results.length; i++) {
+        expect(results[i - 1].score).toBeGreaterThanOrEqual(results[i].score);
+      }
+    });
+
+    it('returns empty array when no chunks are indexed', async () => {
+      const retriever = createInMemoryRetriever({ embedding });
+      const results = await retriever.retrieve('query');
+
+      expect(results).toEqual([]);
+    });
+
+    it('each result has chunk and score properties', async () => {
+      const retriever = createInMemoryRetriever({ embedding });
+      await retriever.index([chunk('c1', 'hello', [1, 0, 0, 0])]);
+
+      const results = await retriever.retrieve('hello', { limit: 1 });
+
+      expect(results[0]).toHaveProperty('chunk');
+      expect(results[0]).toHaveProperty('score');
+      expect(typeof results[0].score).toBe('number');
+    });
+  });
+
+  // ---- Zero-magnitude embeddings ----
+
+  describe('zero-magnitude embeddings', () => {
+    it('assigns score 0 to chunks with zero-magnitude embedding', async () => {
+      const retriever = createInMemoryRetriever({ embedding });
+
+      await retriever.index([
+        chunk('c_zero', 'zero vec', [0, 0, 0, 0]),
+        chunk('c_normal', 'normal', [1, 0, 0, 0]),
+      ]);
+
+      const results = await retriever.retrieve('test', { limit: 10 });
+      const zeroResult = results.find((r) => r.chunk.id === 'c_zero');
+
+      if (zeroResult) {
+        expect(zeroResult.score).toBe(0);
+      }
+    });
+
+    it('handles zero-magnitude query embedding gracefully', async () => {
+      // Override embedding to return zero vector for query
+      const zeroEmbed = createMockEmbeddingModel(4);
+      zeroEmbed.embed.mockImplementation(async (texts: readonly string[]) => {
+        return texts.map(() => [0, 0, 0, 0]);
+      });
+
+      const retriever = createInMemoryRetriever({ embedding: zeroEmbed });
+      await retriever.index([chunk('c1', 'test', [1, 0, 0, 0])]);
+
+      const results = await retriever.retrieve('zero query', { limit: 10 });
+
+      // All scores should be 0 since the query embedding has zero magnitude
+      for (const r of results) {
+        expect(r.score).toBe(0);
+      }
+    });
+
+    it('skips chunks without any embedding', async () => {
+      const retriever = createInMemoryRetriever({ embedding });
+
+      await retriever.index([
+        chunk('c1', 'has embed', [1, 0, 0, 0]),
+        chunk('c_none', 'no embed', undefined),
+      ]);
+
+      const results = await retriever.retrieve('test', { limit: 10 });
+      const ids = results.map((r) => r.chunk.id);
+
+      expect(ids).not.toContain('c_none');
+    });
+
+    it('skips chunks with empty embedding array', async () => {
+      const retriever = createInMemoryRetriever({ embedding });
+
+      await retriever.index([
+        chunk('c1', 'has embed', [1, 0, 0, 0]),
+        { id: 'c_empty', documentId: 'd1', content: 'empty embed', index: 1, embedding: [] },
+      ]);
+
+      const results = await retriever.retrieve('test', { limit: 10 });
+      const ids = results.map((r) => r.chunk.id);
+
+      expect(ids).not.toContain('c_empty');
+    });
+  });
+
+  // ---- minScore filtering ----
+
+  describe('minScore filtering', () => {
+    it('excludes results below minScore threshold', async () => {
+      const retriever = createInMemoryRetriever({ embedding });
+
+      await retriever.index([
+        chunk('c1', 'a', [1, 0, 0, 0]),
+        chunk('c2', 'b', [0, 1, 0, 0]),
+      ]);
+
+      const results = await retriever.retrieve('test', { minScore: 0.99 });
+
+      for (const r of results) {
+        expect(r.score).toBeGreaterThanOrEqual(0.99);
+      }
+    });
+
+    it('defaults minScore to 0 (includes all scored results)', async () => {
+      const retriever = createInMemoryRetriever({ embedding });
+
+      await retriever.index([
+        chunk('c1', 'a', [1, 0, 0, 0]),
+        chunk('c2', 'b', [0, 1, 0, 0]),
+        chunk('c3', 'c', [0, 0, 1, 0]),
+      ]);
+
+      // Default minScore = 0 should include all
+      const results = await retriever.retrieve('test', { limit: 10 });
+      expect(results.length).toBe(3);
+    });
+  });
+
+  // ---- limit parameter ----
+
+  describe('limit parameter', () => {
+    it('limits the number of returned results', async () => {
+      const retriever = createInMemoryRetriever({ embedding });
+
+      await retriever.index([
+        chunk('c1', 'a', [1, 0, 0, 0], 0),
+        chunk('c2', 'b', [0, 1, 0, 0], 1),
+        chunk('c3', 'c', [0, 0, 1, 0], 2),
+      ]);
+
+      const results = await retriever.retrieve('test', { limit: 1 });
+      expect(results).toHaveLength(1);
+    });
+
+    it('defaults limit to 5', async () => {
+      const retriever = createInMemoryRetriever({ embedding });
+
+      const chunks: DocumentChunk[] = [];
+      for (let i = 0; i < 10; i++) {
+        const vec = [0, 0, 0, 0];
+        vec[i % 4] = 1;
+        chunks.push(chunk(`c${i}`, `text${i}`, vec, i));
+      }
+
+      await retriever.index(chunks);
+      const results = await retriever.retrieve('query');
+
+      expect(results).toHaveLength(5);
+    });
+
+    it('returns all results when limit exceeds available chunks', async () => {
+      const retriever = createInMemoryRetriever({ embedding });
+
+      await retriever.index([
+        chunk('c1', 'a', [1, 0, 0, 0]),
+        chunk('c2', 'b', [0, 1, 0, 0]),
+      ]);
+
+      const results = await retriever.retrieve('test', { limit: 100 });
+      expect(results).toHaveLength(2);
+    });
+  });
+
+  // ---- Query embedding cache ----
+
+  describe('query embedding cache', () => {
+    it('caches query embeddings (same query does not re-embed)', async () => {
+      const retriever = createInMemoryRetriever({ embedding });
+
+      await retriever.index([chunk('c1', 'test', [1, 0, 0, 0])]);
+
+      // First query: embeds
+      await retriever.retrieve('cached query');
+      const callsAfterFirst = embedding.embed.mock.calls.length;
+
+      // Second identical query: should use cache
+      await retriever.retrieve('cached query');
+      const callsAfterSecond = embedding.embed.mock.calls.length;
+
+      expect(callsAfterSecond).toBe(callsAfterFirst);
+    });
+
+    it('different queries each call embed', async () => {
+      const retriever = createInMemoryRetriever({ embedding });
+
+      await retriever.index([chunk('c1', 'test', [1, 0, 0, 0])]);
+
+      await retriever.retrieve('query one');
+      const callsAfterFirst = embedding.embed.mock.calls.length;
+
+      await retriever.retrieve('query two');
+      const callsAfterSecond = embedding.embed.mock.calls.length;
+
+      expect(callsAfterSecond).toBe(callsAfterFirst + 1);
+    });
+
+    it('cached query produces same results as uncached', async () => {
+      const retriever = createInMemoryRetriever({ embedding });
+
+      await retriever.index([
+        chunk('c1', 'hello', [1, 0, 0, 0]),
+        chunk('c2', 'world', [0, 1, 0, 0]),
+      ]);
+
+      const results1 = await retriever.retrieve('test query', { limit: 10 });
+      const results2 = await retriever.retrieve('test query', { limit: 10 });
+
+      expect(results1.length).toBe(results2.length);
+      for (let i = 0; i < results1.length; i++) {
+        expect(results1[i].chunk.id).toBe(results2[i].chunk.id);
+        expect(results1[i].score).toBeCloseTo(results2[i].score, 10);
+      }
+    });
+
+    it('evicts oldest cache entries when queryCacheSize exceeded', async () => {
+      const retriever = createInMemoryRetriever({ embedding, queryCacheSize: 2 });
+
+      await retriever.index([chunk('c1', 'test', [1, 0, 0, 0])]);
+
+      // Fill cache with 2 entries
+      await retriever.retrieve('query_a');
+      await retriever.retrieve('query_b');
+      const callsBefore = embedding.embed.mock.calls.length;
+
+      // Add a 3rd query, evicting query_a
+      await retriever.retrieve('query_c');
+
+      // query_b should still be cached
+      await retriever.retrieve('query_b');
+      const callsAfterB = embedding.embed.mock.calls.length;
+      // Only query_c embed call should have happened since callsBefore
+      expect(callsAfterB).toBe(callsBefore + 1);
+
+      // query_a was evicted, should re-embed
+      await retriever.retrieve('query_a');
+      const callsAfterA = embedding.embed.mock.calls.length;
+      expect(callsAfterA).toBe(callsAfterB + 1);
+    });
+
+    it('LRU touch: accessing cached query moves it to end (prevents eviction)', async () => {
+      const retriever = createInMemoryRetriever({ embedding, queryCacheSize: 2 });
+
+      await retriever.index([chunk('c1', 'test', [1, 0, 0, 0])]);
+
+      // Fill cache: query_a, query_b
+      await retriever.retrieve('query_a');
+      await retriever.retrieve('query_b');
+
+      // Touch query_a (moves it to end, query_b is now oldest)
+      await retriever.retrieve('query_a');
+
+      // Add query_c -> evicts query_b (oldest)
+      await retriever.retrieve('query_c');
+      const callsNow = embedding.embed.mock.calls.length;
+
+      // query_a should still be cached
+      await retriever.retrieve('query_a');
+      expect(embedding.embed.mock.calls.length).toBe(callsNow);
+
+      // query_b was evicted, should re-embed
+      await retriever.retrieve('query_b');
+      expect(embedding.embed.mock.calls.length).toBe(callsNow + 1);
+    });
+
+    it('defaults queryCacheSize to 64', async () => {
+      // We just verify it works with many queries without error
+      const retriever = createInMemoryRetriever({ embedding });
+      await retriever.index([chunk('c1', 'test', [1, 0, 0, 0])]);
+
+      for (let i = 0; i < 70; i++) {
+        await retriever.retrieve(`query_${i}`);
+      }
+
+      // Query 0 should have been evicted (cache max 64)
+      const callsBefore = embedding.embed.mock.calls.length;
+      await retriever.retrieve('query_0');
+      expect(embedding.embed.mock.calls.length).toBe(callsBefore + 1);
+
+      // Query 69 should still be cached (recent)
+      await retriever.retrieve('query_69');
+      expect(embedding.embed.mock.calls.length).toBe(callsBefore + 1);
+    });
+  });
+
+  // ---- Edge cases ----
+
+  describe('edge cases', () => {
+    it('handles mismatched embedding dimensions (returns score 0)', async () => {
+      const retriever = createInMemoryRetriever({ embedding });
+
+      // 2-dim embedding but mock produces 4-dim queries
+      await retriever.index([chunk('c1', 'mismatch', [1, 0])]);
+
+      const results = await retriever.retrieve('test', { limit: 10 });
+      const result = results.find((r) => r.chunk.id === 'c1');
+      if (result) {
+        expect(result.score).toBe(0);
+      }
+    });
+
+    it('returns a frozen retriever object', () => {
+      const retriever = createInMemoryRetriever({ embedding });
+      expect(Object.isFrozen(retriever)).toBe(true);
+    });
+
+    it('scores are between -1 and 1 for normalized vectors', async () => {
+      const retriever = createInMemoryRetriever({ embedding });
+
+      await retriever.index([
+        chunk('c1', 'a', [1, 0, 0, 0]),
+        chunk('c2', 'b', [0, 1, 0, 0]),
+        chunk('c3', 'c', [-1, 0, 0, 0]),
+      ]);
+
+      const results = await retriever.retrieve('test', { limit: 10 });
+
+      for (const r of results) {
+        expect(r.score).toBeGreaterThanOrEqual(-1.0001);
+        expect(r.score).toBeLessThanOrEqual(1.0001);
+      }
+    });
+  });
+});

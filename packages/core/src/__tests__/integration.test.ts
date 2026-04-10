@@ -7,7 +7,7 @@ import { describe, it, expect } from 'vitest';
 
 // Core
 import { AgentLoop } from '../core/index.js';
-import type { AgentAdapter, AgentEvent, ChatParams, ChatResponse, Message } from '../core/index.js';
+import type { AgentAdapter, AgentEvent, ChatResponse, Message } from '../core/index.js';
 
 // Tools
 import { defineTool, createRegistry, toolSuccess } from '../tools/index.js';
@@ -35,7 +35,7 @@ describe('Integration: all modules compose', () => {
   function createMockAdapter(responses: ChatResponse[]): AgentAdapter {
     let callIndex = 0;
     return {
-      async chat(_params: ChatParams): Promise<ChatResponse> {
+      async chat(): Promise<ChatResponse> {
         const response = responses[callIndex];
         if (!response) {
           throw new Error(`Mock adapter: no response for call index ${callIndex}`);
@@ -193,7 +193,7 @@ describe('Integration: all modules compose', () => {
         ],
         buildRetryPrompt: (content, failures) =>
           `Rewrite without: ${failures.map((f) => f.reason).join(', ')}. Original: ${content}`,
-        regenerate: async (_prompt) => {
+        regenerate: async () => {
           regenerateCount++;
           // First retry still fails, second succeeds
           if (regenerateCount === 1) {

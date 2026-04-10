@@ -7,6 +7,9 @@
 import type { Guardrail, GuardrailContext, GuardrailEvent, PipelineResult } from './types.js';
 import { HarnessError } from '../core/errors.js';
 
+/** Unique symbol used as a brand key for pipeline internal data. */
+const PIPELINE_BRAND = Symbol('GuardrailPipeline');
+
 /** Branded pipeline type to prevent direct construction. */
 export interface GuardrailPipeline {
   readonly _brand: unique symbol;
@@ -18,20 +21,25 @@ interface PipelineEntry {
   timeoutMs?: number;
 }
 
-interface PipelineInternal extends GuardrailPipeline {
+interface PipelineInternalData {
   input: PipelineEntry[];
   output: PipelineEntry[];
   failClosed: boolean;
-  onEvent?: (event: GuardrailEvent) => void;
+  onEvent: ((event: GuardrailEvent) => void) | undefined;
 }
 
-const pipelineInstances = new WeakSet<object>();
+/** A branded pipeline object that carries internal data via a symbol key. */
+interface BrandedPipeline {
+  [PIPELINE_BRAND]: PipelineInternalData;
+}
 
-function getInternal(pipeline: GuardrailPipeline): PipelineInternal {
-  if (!pipelineInstances.has(pipeline as unknown as object)) {
+function getInternal(pipeline: GuardrailPipeline): PipelineInternalData {
+  const branded = pipeline as unknown as Partial<BrandedPipeline>;
+  const data = branded[PIPELINE_BRAND];
+  if (!data) {
     throw new HarnessError('Invalid GuardrailPipeline instance', 'INVALID_PIPELINE', 'Use createPipeline() to create pipelines');
   }
-  return pipeline as unknown as PipelineInternal;
+  return data;
 }
 
 /**
@@ -51,18 +59,18 @@ export function createPipeline(config: {
   failClosed?: boolean;
   onEvent?: (event: GuardrailEvent) => void;
 }): GuardrailPipeline {
-  const internal = {
+  const internalData: PipelineInternalData = {
     input: config.input ?? [],
     output: config.output ?? [],
     failClosed: config.failClosed ?? true,
     onEvent: config.onEvent,
   };
-  pipelineInstances.add(internal);
-  return internal as unknown as GuardrailPipeline;
+  const branded: BrandedPipeline = { [PIPELINE_BRAND]: internalData };
+  return branded as unknown as GuardrailPipeline;
 }
 
 async function runGuardrails(
-  pipeline: PipelineInternal,
+  pipeline: PipelineInternalData,
   guards: PipelineEntry[],
   direction: 'input' | 'output',
   ctx: GuardrailContext,

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { withSelfHealing } from '../self-healing.js';
 import type { Guardrail } from '../types.js';
 
@@ -523,7 +523,6 @@ describe('withSelfHealing', () => {
         return { action: 'block', reason: 'second fail' };
       };
 
-      let callCount = 0;
       const realSetTimeout = globalThis.setTimeout;
       const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation((fn, ms, ...args) => {
         return realSetTimeout(fn as () => void, 0, ...args);

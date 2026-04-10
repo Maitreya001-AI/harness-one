@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { spawnSubAgent } from '../spawn.js';
-import type { AgentAdapter, ChatResponse, Message, ToolCallRequest, ToolSchema } from '../../core/types.js';
+import type { AgentAdapter, ChatResponse, ToolCallRequest } from '../../core/types.js';
 
 const USAGE = { inputTokens: 10, outputTokens: 5 };
 

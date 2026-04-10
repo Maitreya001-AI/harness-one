@@ -140,6 +140,63 @@ describe('createAnthropicAdapter', () => {
       });
     });
 
+    it('maps all JsonSchema fields to Anthropic input_schema without double assertions', async () => {
+      mock.mocks.create.mockResolvedValue({
+        content: [{ type: 'text', text: 'OK' }],
+        usage: { input_tokens: 10, output_tokens: 3 },
+      });
+
+      const adapter = createAnthropicAdapter({ client: mock.client });
+      await adapter.chat({
+        messages: [{ role: 'user', content: 'Hi' }],
+        tools: [{
+          name: 'advanced_tool',
+          description: 'A tool with many schema fields',
+          parameters: {
+            type: 'object',
+            properties: {
+              name: { type: 'string', minLength: 1, maxLength: 100, pattern: '^[a-z]+$' },
+              count: { type: 'integer', minimum: 0, maximum: 10 },
+              tags: { type: 'array', items: { type: 'string' } },
+            },
+            required: ['name'],
+            additionalProperties: false,
+            description: 'The input schema',
+          },
+        }],
+      });
+
+      const calledTools = mock.mocks.create.mock.calls[0][0].tools;
+      const schema = calledTools[0].input_schema;
+      expect(schema.type).toBe('object');
+      expect(schema.properties).toBeDefined();
+      expect(schema.required).toEqual(['name']);
+      expect(schema.additionalProperties).toBe(false);
+      expect(schema.description).toBe('The input schema');
+    });
+
+    it('omits undefined JsonSchema fields from Anthropic input_schema', async () => {
+      mock.mocks.create.mockResolvedValue({
+        content: [{ type: 'text', text: 'OK' }],
+        usage: { input_tokens: 10, output_tokens: 3 },
+      });
+
+      const adapter = createAnthropicAdapter({ client: mock.client });
+      await adapter.chat({
+        messages: [{ role: 'user', content: 'Hi' }],
+        tools: [{
+          name: 'simple_tool',
+          description: 'Minimal schema',
+          parameters: { type: 'object' },
+        }],
+      });
+
+      const calledTools = mock.mocks.create.mock.calls[0][0].tools;
+      const schema = calledTools[0].input_schema;
+      // Only 'type' should be present; no extra undefined keys
+      expect(Object.keys(schema)).toEqual(['type']);
+    });
+
     it('uses default model claude-sonnet-4-20250514', async () => {
       mock.mocks.create.mockResolvedValue({
         content: [{ type: 'text', text: 'OK' }],

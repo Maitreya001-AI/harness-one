@@ -183,15 +183,29 @@ export function createRegistry(config?: {
                   true,
                 ),
               );
-            });
+            }, { once: true });
           }),
         ]);
         return result;
       } finally {
         clearTimeout(timer);
+        // Abort the controller to fire and clean up any pending listeners,
+        // preventing listener accumulation on the abort signal.
+        ac.abort();
       }
     }
-    return tool.execute(params);
+    // Wrap non-timeout execution in try-catch to prevent rate limiter budget leak.
+    // If tool.execute() throws (instead of returning a ToolResult error),
+    // the pre-claimed turnCalls/sessionCalls counters would never be decremented.
+    try {
+      return await tool.execute(params);
+    } catch (err) {
+      return toolError(
+        err instanceof Error ? err.message : String(err),
+        'internal',
+        'Tool execution failed unexpectedly',
+      );
+    }
   }
 
   function handler(): (call: ToolCallRequest) => Promise<unknown> {

@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { defineTool } from '../define-tool.js';
 import { toolSuccess, toolError } from '../types.js';
-import type { ToolResult } from '../types.js';
 
 describe('toolSuccess', () => {
   it('returns a success result', () => {

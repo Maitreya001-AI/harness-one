@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { createFallbackAdapter } from '../fallback-adapter.js';
 import { HarnessError } from '../errors.js';
 import type { AgentAdapter, ChatParams, ChatResponse, StreamChunk } from '../types.js';
@@ -77,10 +77,8 @@ describe('createFallbackAdapter', () => {
     });
 
     it('defaults maxFailures to 3', async () => {
-      let failCount = 0;
       const primary: AgentAdapter = {
         async chat() {
-          failCount++;
           throw new Error('fail');
         },
       };
@@ -184,7 +182,7 @@ describe('createFallbackAdapter', () => {
       const gen = adapter.stream!(PARAMS);
       await expect(gen.next()).rejects.toThrow(HarnessError);
       await expect(
-        (async () => { for await (const _ of adapter.stream!(PARAMS)) {} })()
+        (async () => { for await (const chunk of adapter.stream!(PARAMS)) { void chunk; } })()
       ).rejects.toThrow('Current adapter does not support streaming');
     });
   });
@@ -274,7 +272,7 @@ describe('createFallbackAdapter', () => {
 
       const adapter = createFallbackAdapter({ adapters: [solo], maxFailures: 1 });
       await expect(
-        (async () => { for await (const _ of adapter.stream!(PARAMS)) {} })()
+        (async () => { for await (const chunk of adapter.stream!(PARAMS)) { void chunk; } })()
       ).rejects.toThrow('solo stream fail');
       expect(callOrder).toEqual(['solo-stream']);
     });

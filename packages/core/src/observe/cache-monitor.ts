@@ -66,7 +66,7 @@ export function createCacheMonitor(config?: CacheMonitorConfig): CacheMonitor {
 
     getMetrics(): CacheMetrics {
       // Recompute from raw data to avoid float drift from running subtraction
-      let recomputedCalls = rawPoints.length;
+      const recomputedCalls = rawPoints.length;
       let recomputedHitRateSum = 0;
       let recomputedCacheRead = 0;
       let recomputedCacheWrite = 0;

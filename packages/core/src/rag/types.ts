@@ -27,6 +27,8 @@ export interface DocumentChunk {
 export interface RetrievalResult {
   readonly chunk: DocumentChunk;
   readonly score: number;
+  /** Estimated token count for this result's content. Populated by the pipeline using content.length / 4 heuristic. */
+  readonly tokens?: number;
 }
 
 /** Interface for loading documents from various sources. */

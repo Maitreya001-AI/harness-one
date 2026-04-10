@@ -4,7 +4,7 @@ import { HarnessError } from '../../core/errors.js';
 import { createAgentPool } from '../agent-pool.js';
 import type { PoolConfig } from '../types.js';
 
-const mockFactory = (_role?: string) =>
+const mockFactory = () =>
   new AgentLoop({
     adapter: {
       async chat() {
@@ -109,7 +109,7 @@ describe('AgentPool', () => {
     const a1 = pool.acquire();
     expect(pool.stats).toMatchObject({ idle: 0, active: 1, total: 1, created: 1 });
 
-    const a2 = pool.acquire();
+    pool.acquire();
     expect(pool.stats).toMatchObject({ idle: 0, active: 2, total: 2, created: 2 });
 
     pool.release(a1);
