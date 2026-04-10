@@ -125,8 +125,8 @@ export interface AgentPool {
   release(agent: PooledAgent): void;
   /** Resize the pool (trim idle or pre-warm). */
   resize(target: number): void;
-  /** Wait for all active agents to be released, then dispose. */
-  drain(): Promise<void>;
+  /** Wait for all active agents to be released, then dispose. Timeout in ms (default 30000). */
+  drain(timeoutMs?: number): Promise<void>;
   /** Current pool statistics. */
   readonly stats: PoolStats;
   /** Dispose all agents and clear timers. */

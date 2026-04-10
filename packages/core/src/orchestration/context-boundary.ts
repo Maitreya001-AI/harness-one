@@ -75,17 +75,19 @@ export function createContextBoundary(
     return isAllowed(key, policy.allowWrite, policy.denyWrite);
   }
 
-  function createScopedContext(agentId: string, policy: BoundaryPolicy): SharedContext {
+  function createScopedContext(agentId: string): SharedContext {
     return {
       get(key: string): unknown {
-        if (!canRead(policy, key)) {
+        const policy = policyMap.get(agentId);
+        if (policy && !canRead(policy, key)) {
           recordViolation({ type: 'read_denied', agentId, key, timestamp: Date.now() });
           return undefined;
         }
         return context.get(key);
       },
       set(key: string, value: unknown): void {
-        if (!canWrite(policy, key)) {
+        const policy = policyMap.get(agentId);
+        if (policy && !canWrite(policy, key)) {
           recordViolation({ type: 'write_denied', agentId, key, timestamp: Date.now() });
           throw new HarnessError(
             `Agent "${agentId}" denied write access to key "${key}"`,
@@ -96,6 +98,8 @@ export function createContextBoundary(
         context.set(key, value);
       },
       entries(): ReadonlyMap<string, unknown> {
+        const policy = policyMap.get(agentId);
+        if (!policy) return context.entries();
         const filtered = new Map<string, unknown>();
         for (const [k, v] of context.entries()) {
           if (canRead(policy, k)) {
@@ -109,12 +113,9 @@ export function createContextBoundary(
 
   const bounded: BoundedContext = {
     forAgent(agentId: string): SharedContext {
-      const policy = policyMap.get(agentId);
-      if (!policy) return context;
-
       let cached = viewCache.get(agentId);
       if (!cached) {
-        cached = createScopedContext(agentId, policy);
+        cached = createScopedContext(agentId);
         viewCache.set(agentId, cached);
       }
       return cached;
@@ -125,7 +126,7 @@ export function createContextBoundary(
       for (const p of newPolicies) {
         policyMap.set(p.agent, p);
       }
-      viewCache.clear();
+      // Don't clear viewCache — views now look up policy dynamically
     },
 
     getPolicies(agentId: string): BoundaryPolicy | undefined {

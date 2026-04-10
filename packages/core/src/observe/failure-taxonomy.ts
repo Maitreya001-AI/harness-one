@@ -160,7 +160,7 @@ export function createFailureTaxonomy(config?: FailureTaxonomyConfig): FailureTa
         const detection = detector.detect(trace);
         if (detection && detection.confidence >= minConfidence) {
           results.push({
-            mode: mode as FailureClassification['mode'],
+            mode,
             confidence: detection.confidence,
             evidence: detection.evidence,
             traceId: trace.id,

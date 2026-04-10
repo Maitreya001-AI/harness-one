@@ -141,6 +141,58 @@ describe('AgentPool', () => {
     expect(pool.stats.idle).toBe(2);
   });
 
+  it('drain() resolves after timeout even with unreleased agents', async () => {
+    pool = makePool({ max: 5 });
+    pool.acquire(); // never released
+    await pool.drain(200); // should resolve in ~200ms, not hang
+    expect(pool.stats.total).toBe(0); // all disposed
+  });
+
+  it('two independent pools have isolated ID counters', () => {
+    const pool1 = makePool({ max: 5 });
+    const pool2 = makePool({ max: 5 });
+    const a1 = pool1.acquire();
+    const a2 = pool2.acquire();
+    // Both should start from 1 (isolated counters)
+    expect(a1.id).toBe(a2.id);
+    pool1.dispose();
+    pool2.dispose();
+    pool = makePool(); // keep afterEach happy
+  });
+
+  it('expired agents are recycled on release when maxAge is set', () => {
+    vi.useFakeTimers();
+    try {
+      pool = makePool({ max: 5, maxAge: 100 });
+      const agent = pool.acquire();
+      vi.advanceTimersByTime(150);
+      pool.release(agent);
+      expect(pool.stats.idle).toBe(0); // disposed, not returned to idle
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('acquire() skips expired idle agents', () => {
+    vi.useFakeTimers();
+    try {
+      pool = makePool({ max: 5, maxAge: 100 });
+      const agent = pool.acquire();
+      pool.release(agent); // returns to idle
+      vi.advanceTimersByTime(150); // now expired
+      const agent2 = pool.acquire(); // should skip expired, create new
+      expect(agent2.id).not.toBe(agent.id);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('PooledAgent is frozen', () => {
+    pool = makePool();
+    const agent = pool.acquire();
+    expect(Object.isFrozen(agent)).toBe(true);
+  });
+
   it('timer leak prevention: after dispose, no pending timers', () => {
     vi.useFakeTimers();
     try {

@@ -112,17 +112,16 @@ describe('createContextBoundary', () => {
     expect(boundary.getViolations()).toHaveLength(1000);
   });
 
-  it('setPolicies() invalidates cached views', () => {
+  it('setPolicies() updates behavior of existing views', () => {
     boundary = createContextBoundary(context, [
       { agent: 'worker', allowRead: ['shared.'] },
     ]);
-    const view1 = boundary.forAgent('worker');
-    expect(view1.get('config.secret')).toBeUndefined();
+    const view = boundary.forAgent('worker');
+    expect(view.get('config.secret')).toBeUndefined();
 
     boundary.setPolicies([{ agent: 'worker' }]);
-    const view2 = boundary.forAgent('worker');
-    expect(view2.get('config.secret')).toBe('top-secret');
-    expect(view2).not.toBe(view1);
+    // Same view now reflects new policy dynamically
+    expect(view.get('config.secret')).toBe('top-secret');
   });
 
   it('getPolicies() returns correct policy', () => {
@@ -131,5 +130,25 @@ describe('createContextBoundary', () => {
 
     expect(boundary.getPolicies('worker')).toEqual(policy);
     expect(boundary.getPolicies('unknown')).toBeUndefined();
+  });
+
+  it('forAgent returns scoped view even for unknown agents (never raw context)', () => {
+    boundary = createContextBoundary(context);
+    const view = boundary.forAgent('unknown');
+    expect(view).not.toBe(context); // must NOT be same reference
+    // Should still allow read/write (no policy = full access)
+    context.set('key', 'value');
+    expect(view.get('key')).toBe('value');
+    view.set('another', 42);
+    expect(context.get('another')).toBe(42);
+  });
+
+  it('policy updates affect previously-acquired scoped views', () => {
+    boundary = createContextBoundary(context);
+    const view = boundary.forAgent('agent-1');
+    expect(view.get('config.secret')).toBe('top-secret'); // allowed (no policy)
+
+    boundary.setPolicies([{ agent: 'agent-1', denyRead: ['config.'] }]);
+    expect(view.get('config.secret')).toBeUndefined(); // NOW denied
   });
 });

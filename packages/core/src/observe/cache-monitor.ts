@@ -30,28 +30,13 @@ export function createCacheMonitor(config?: CacheMonitorConfig): CacheMonitor {
   const cacheReadPrice = config?.pricing?.cacheReadPer1kTokens ?? 0;
   const inputPrice = config?.pricing?.inputPer1kTokens ?? 0;
 
-  // Running aggregates
-  let totalCalls = 0;
-  let hitRateSum = 0;
-  let totalCacheRead = 0;
-  let totalCacheWrite = 0;
-
-  // Raw data points for time-series
+  // Raw data points for time-series and aggregate recomputation
   let rawPoints: RawDataPoint[] = [];
 
   function evictIfNeeded(): void {
     if (rawPoints.length <= maxRawPoints) return;
-
-    // Remove oldest points beyond limit, correcting aggregates
     const excess = rawPoints.length - maxRawPoints;
-    const evicted = rawPoints.splice(0, excess);
-
-    for (const point of evicted) {
-      hitRateSum -= point.hitRate;
-      totalCacheRead -= point.cacheReadTokens;
-      totalCacheWrite -= point.cacheWriteTokens;
-      totalCalls--;
-    }
+    rawPoints.splice(0, excess);
   }
 
   return {
@@ -69,11 +54,6 @@ export function createCacheMonitor(config?: CacheMonitorConfig): CacheMonitor {
         hitRate = 0;
       }
 
-      totalCalls++;
-      hitRateSum += hitRate;
-      totalCacheRead += cacheRead;
-      totalCacheWrite += cacheWrite;
-
       rawPoints.push({
         timestamp: Date.now(),
         hitRate,
@@ -85,15 +65,27 @@ export function createCacheMonitor(config?: CacheMonitorConfig): CacheMonitor {
     },
 
     getMetrics(): CacheMetrics {
-      const avgHitRate = totalCalls > 0 ? hitRateSum / totalCalls : 0;
+      // Recompute from raw data to avoid float drift from running subtraction
+      let recomputedCalls = rawPoints.length;
+      let recomputedHitRateSum = 0;
+      let recomputedCacheRead = 0;
+      let recomputedCacheWrite = 0;
+
+      for (const point of rawPoints) {
+        recomputedHitRateSum += point.hitRate;
+        recomputedCacheRead += point.cacheReadTokens;
+        recomputedCacheWrite += point.cacheWriteTokens;
+      }
+
+      const avgHitRate = recomputedCalls > 0 ? recomputedHitRateSum / recomputedCalls : 0;
       const estimatedSavings =
-        totalCacheRead * (inputPrice - cacheReadPrice) / 1000;
+        recomputedCacheRead * (inputPrice - cacheReadPrice) / 1000;
 
       return {
-        totalCalls,
+        totalCalls: recomputedCalls,
         avgHitRate,
-        totalCacheReadTokens: totalCacheRead,
-        totalCacheWriteTokens: totalCacheWrite,
+        totalCacheReadTokens: recomputedCacheRead,
+        totalCacheWriteTokens: recomputedCacheWrite,
         estimatedSavings: Math.max(0, estimatedSavings),
       };
     },
@@ -134,10 +126,6 @@ export function createCacheMonitor(config?: CacheMonitorConfig): CacheMonitor {
     },
 
     reset(): void {
-      totalCalls = 0;
-      hitRateSum = 0;
-      totalCacheRead = 0;
-      totalCacheWrite = 0;
       rawPoints = [];
     },
   };

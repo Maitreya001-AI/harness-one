@@ -14,8 +14,6 @@ interface PoolEntry {
   idleTimer: ReturnType<typeof setTimeout> | null;
 }
 
-let poolAgentCounter = 0;
-
 /**
  * Create a new agent pool.
  *
@@ -32,22 +30,29 @@ export function createAgentPool(config: PoolConfig): AgentPool {
   const min = config.min ?? 0;
   const max = config.max ?? 10;
   const idleTimeout = config.idleTimeout ?? 60_000;
+  const maxAge = config.maxAge;
 
   const entries = new Map<string, PoolEntry>();
   let disposed = false;
   let warmedUp = false;
   let totalCreated = 0;
   let totalRecycled = 0;
+  let poolAgentCounter = 0;
+
+  function isExpired(entry: PoolEntry): boolean {
+    if (!maxAge) return false;
+    return Date.now() - entry.agent.createdAt >= maxAge;
+  }
 
   function createEntry(role?: string): PoolEntry {
     const loop: AgentLoop = factory(role);
     const id = `pool-agent-${++poolAgentCounter}`;
-    const agent: PooledAgent = {
+    const agent: PooledAgent = Object.freeze({
       id,
       loop,
       createdAt: Date.now(),
       ...(role !== undefined && { role }),
-    };
+    });
     totalCreated++;
     return { agent, state: 'idle', idleTimer: null };
   }
@@ -108,9 +113,14 @@ export function createAgentPool(config: PoolConfig): AgentPool {
       // Lazy warm-up on first acquire
       warmUp(role);
 
-      // Try to find an idle entry
+      // Try to find an idle entry (skip expired)
       for (const entry of entries.values()) {
         if (entry.state === 'idle') {
+          if (isExpired(entry)) {
+            disposeEntry(entry);
+            totalRecycled++;
+            continue;
+          }
           clearIdleTimer(entry);
           entry.state = 'active';
           return entry.agent;
@@ -135,6 +145,12 @@ export function createAgentPool(config: PoolConfig): AgentPool {
     release(agent: PooledAgent): void {
       const entry = entries.get(agent.id);
       if (!entry || entry.state !== 'active') return; // idempotent
+
+      if (isExpired(entry)) {
+        disposeEntry(entry);
+        totalRecycled++;
+        return;
+      }
 
       entry.state = 'idle';
       if (disposed) return;
@@ -166,9 +182,9 @@ export function createAgentPool(config: PoolConfig): AgentPool {
       }
     },
 
-    async drain(): Promise<void> {
-      // Wait for all active agents to be released
-      while (true) {
+    async drain(timeoutMs = 30_000): Promise<void> {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
         let hasActive = false;
         for (const entry of entries.values()) {
           if (entry.state === 'active') {
@@ -180,7 +196,7 @@ export function createAgentPool(config: PoolConfig): AgentPool {
         await new Promise((r) => setTimeout(r, 50));
       }
 
-      // Dispose all
+      // Force-dispose all (including any still active after timeout)
       pool.dispose();
     },
 

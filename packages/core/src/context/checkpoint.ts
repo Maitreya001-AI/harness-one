@@ -48,12 +48,6 @@ function createInMemoryStorage(): CheckpointStorage {
   };
 }
 
-let counter = 0;
-
-function generateId(): string {
-  return `cp_${Date.now()}_${++counter}`;
-}
-
 /**
  * Create a CheckpointManager instance.
  *
@@ -63,6 +57,11 @@ function generateId(): string {
 export function createCheckpointManager(
   config?: CheckpointManagerConfig,
 ): CheckpointManager {
+  let counter = 0;
+
+  function generateId(): string {
+    return `cp_${Date.now()}_${++counter}`;
+  }
   const maxCheckpoints = config?.maxCheckpoints ?? 5;
   const countTokens = config?.countTokens ?? defaultCountTokens;
   const storage = config?.storage ?? createInMemoryStorage();

@@ -90,7 +90,7 @@ export type FailureMode =
 
 /** A classified failure detected in a trace. */
 export interface FailureClassification {
-  readonly mode: FailureMode;
+  readonly mode: FailureMode | string;
   readonly confidence: number;
   readonly evidence: string;
   readonly traceId: string;

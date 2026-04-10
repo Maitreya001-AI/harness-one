@@ -108,4 +108,25 @@ describe('createHandoff', () => {
     expect(payload).toBeDefined();
     expect(Object.isFrozen(payload)).toBe(true);
   });
+
+  it('receipts are pruned when exceeding max capacity', () => {
+    for (let i = 0; i < 10_050; i++) {
+      handoff.send('agent-a', 'agent-b', { summary: `msg-${i}` });
+    }
+    // receipts should be capped at 10,000
+    const history = handoff.history('agent-a');
+    expect(history.length).toBeLessThanOrEqual(10_000);
+  });
+
+  it('inbox per agent is pruned when exceeding max capacity', () => {
+    for (let i = 0; i < 1_050; i++) {
+      handoff.send('agent-a', 'agent-b', { summary: `msg-${i}` });
+    }
+    // Drain the inbox and count
+    let count = 0;
+    while (handoff.receive('agent-b') !== undefined) {
+      count++;
+    }
+    expect(count).toBeLessThanOrEqual(1_000);
+  });
 });

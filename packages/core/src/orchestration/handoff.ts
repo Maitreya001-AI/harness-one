@@ -14,6 +14,8 @@ import type {
 import type { AgentOrchestrator } from './orchestrator.js';
 
 const HANDOFF_PREFIX = '__handoff__:';
+const MAX_RECEIPTS = 10_000;
+const MAX_INBOX_PER_AGENT = 1_000;
 
 /**
  * Create a HandoffManager that layers structured handoff semantics
@@ -66,12 +68,27 @@ export function createHandoff(orchestrator: AgentOrchestrator): HandoffManager {
 
       receipts.set(id, receipt);
 
+      // Evict oldest receipts if over capacity
+      if (receipts.size > MAX_RECEIPTS) {
+        const excess = receipts.size - MAX_RECEIPTS;
+        const iter = receipts.keys();
+        for (let i = 0; i < excess; i++) {
+          const key = iter.next().value;
+          if (key !== undefined) receipts.delete(key);
+        }
+      }
+
       let queue = inbox.get(to);
       if (!queue) {
         queue = [];
         inbox.set(to, queue);
       }
       queue.push(Object.freeze(payload));
+
+      // Evict oldest inbox entries if over capacity
+      while (queue.length > MAX_INBOX_PER_AGENT) {
+        queue.shift();
+      }
 
       return receipt;
     },
