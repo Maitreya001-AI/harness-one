@@ -7,6 +7,8 @@ export default defineConfig({
   clean: true,
   target: 'node18',
   sourcemap: true,
+  treeshake: true,
+  minify: true,
   external: [
     'harness-one',
     '@harness-one/langfuse',

@@ -5,13 +5,40 @@
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
-    "lint": "pnpm -r lint"
+    "lint": "pnpm -r lint",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "*.ts": [
+      "eslint --fix"
+    ]
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@vitest/coverage-v8": "^2.1.9",
+    "eslint": "^10.2.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.4.0",
     "tsup": "^8.0.0",
     "typescript": "^5.5.0",
+    "typescript-eslint": "^8.58.1",
     "vitest": "^2.0.0"
-  }
+  },
+  "author": "harness-one contributors",
+  "keywords": [
+    "ai",
+    "agent",
+    "harness",
+    "llm",
+    "framework",
+    "monorepo"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Maitreya001-AI/harness-one"
+  },
+  "bugs": {
+    "url": "https://github.com/Maitreya001-AI/harness-one/issues"
+  },
+  "homepage": "https://github.com/Maitreya001-AI/harness-one#readme"
 }

@@ -31,6 +31,35 @@ export function createOTelExporter(config?: OTelExporterConfig): TraceExporter {
 
   // Track created OTel spans so children can reference parents
   const spanMap = new Map<string, OTelSpan>();
+  // Track parent relationships for eviction: childId -> parentId
+  const spanParentMap = new Map<string, string>();
+
+  function evictSpans(count: number): void {
+    // Build set of span IDs that are parents of other spans
+    const parentIds = new Set<string>();
+    for (const [, parentId] of spanParentMap) {
+      if (spanMap.has(parentId)) parentIds.add(parentId);
+    }
+    // Evict non-parents (leaf spans) first
+    let evicted = 0;
+    for (const [id] of spanMap) {
+      if (evicted >= count) break;
+      if (!parentIds.has(id)) {
+        spanMap.delete(id);
+        spanParentMap.delete(id);
+        evicted++;
+      }
+    }
+    // If still need more, evict parents
+    if (evicted < count) {
+      for (const [id] of spanMap) {
+        if (evicted >= count) break;
+        spanMap.delete(id);
+        spanParentMap.delete(id);
+        evicted++;
+      }
+    }
+  }
 
   function setSpanAttributes(otelSpan: OTelSpan, attrs: Record<string, unknown>): void {
     for (const [key, value] of Object.entries(attrs)) {
@@ -64,6 +93,7 @@ export function createOTelExporter(config?: OTelExporterConfig): TraceExporter {
         // Clean up child spans for this trace
         for (const s of harnessTrace.spans) {
           spanMap.delete(s.id);
+          spanParentMap.delete(s.id);
         }
       });
     },
@@ -76,11 +106,13 @@ export function createOTelExporter(config?: OTelExporterConfig): TraceExporter {
 
       const spanCallback = (otelSpan: OTelSpan) => {
         spanMap.set(harnessSpan.id, otelSpan);
+        if (harnessSpan.parentId) {
+          spanParentMap.set(harnessSpan.id, harnessSpan.parentId);
+        }
 
         // Safety limit to prevent unbounded growth
         if (spanMap.size > 10_000) {
-          const firstKey = spanMap.keys().next().value;
-          if (firstKey !== undefined) spanMap.delete(firstKey);
+          evictSpans(1);
         }
 
         otelSpan.setAttribute('harness.span.id', harnessSpan.id);
@@ -121,6 +153,7 @@ export function createOTelExporter(config?: OTelExporterConfig): TraceExporter {
 
     async flush(): Promise<void> {
       spanMap.clear();
+      spanParentMap.clear();
     },
   };
 }

@@ -38,7 +38,7 @@ const mocks = vi.hoisted(() => {
   // Capture the onToolCall callback from AgentLoop constructor
   let capturedOnToolCall: ((call: { id: string; name: string; arguments: string }) => Promise<unknown>) | undefined;
   const mockAgentLoopRun = vi.fn(function* () {});
-  const MockAgentLoop = vi.fn().mockImplementation((config: any) => {
+  const MockAgentLoop = vi.fn().mockImplementation((config: Record<string, unknown>) => {
     capturedOnToolCall = config.onToolCall;
     return { run: mockAgentLoopRun };
   });
@@ -344,7 +344,7 @@ describe('createHarness', () => {
 
   describe('onToolCall callback', () => {
     it('delegates tool call to tools.execute with raw arguments string', async () => {
-      const harness = createHarness(baseConfig);
+      createHarness(baseConfig);
 
       // Get the captured onToolCall callback from AgentLoop constructor
       const onToolCall = mocks.getCapturedOnToolCall();
@@ -360,7 +360,7 @@ describe('createHarness', () => {
     });
 
     it('does not throw on invalid JSON arguments (tools.execute handles it)', async () => {
-      const harness = createHarness(baseConfig);
+      createHarness(baseConfig);
 
       const onToolCall = mocks.getCapturedOnToolCall();
       expect(onToolCall).toBeDefined();
@@ -455,6 +455,39 @@ describe('createHarness', () => {
       const harness = createHarness({ ...baseConfig, memoryStore: customStore });
       expect(harness.memory).toBe(customStore);
       expect(mocks.createAnthropicAdapter).toHaveBeenCalled();
+    });
+  });
+
+  describe('optional dependencies graceful degradation', () => {
+    it('creates harness without langfuse, redis, or tiktoken (optional deps)', () => {
+      // When no optional features are requested, harness should work fine
+      const harness = createHarness(baseConfig);
+      expect(harness.loop).toBeDefined();
+      expect(harness.tools).toBeDefined();
+      expect(harness.memory).toBeDefined();
+      expect(harness.costs).toBeDefined();
+      expect(harness.traces).toBeDefined();
+    });
+
+    it('uses in-memory store when redis is not configured', () => {
+      const harness = createHarness(baseConfig);
+      // memory should use in-memory store (not Redis)
+      expect(harness.memory).toBeDefined();
+      expect(mocks.createRedisStore).not.toHaveBeenCalled();
+    });
+
+    it('uses core cost tracker when langfuse is not configured', () => {
+      const harness = createHarness(baseConfig);
+      // costs should use core createCostTracker
+      expect(harness.costs).toBeDefined();
+      expect(mocks.createLangfuseCostTracker).not.toHaveBeenCalled();
+    });
+
+    it('uses console exporter when langfuse is not configured', () => {
+      const harness = createHarness(baseConfig);
+      // traces should use console exporter
+      expect(harness.traces).toBeDefined();
+      expect(mocks.createLangfuseExporter).not.toHaveBeenCalled();
     });
   });
 

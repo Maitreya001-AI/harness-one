@@ -54,8 +54,11 @@ export function createRedisStore(config: RedisStoreConfig): MemoryStore {
     if (!raw) return null;
     try {
       return JSON.parse(raw) as MemoryEntry;
-    } catch {
-      // Corrupted entry — remove from index and return null
+    } catch (err) {
+      // Corrupted entry — log warning, remove from index and return null
+      if (typeof console !== 'undefined') {
+        console.warn(`[harness-one/redis] Corrupted entry deleted: ${id}`, err);
+      }
       await client.del(entryKey(id));
       await client.srem(indexKey, id);
       return null;

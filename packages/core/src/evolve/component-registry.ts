@@ -117,9 +117,6 @@ export function createComponentRegistry(): ComponentRegistry {
   };
 }
 
-/** Supported comparison operators for retirement conditions. */
-const OPERATORS = ['>=', '<=', '==', '!=', '>', '<'] as const;
-
 /**
  * Evaluate a simple retirement condition string against a context object.
  *

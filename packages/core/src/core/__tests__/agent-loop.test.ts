@@ -124,18 +124,18 @@ describe('AgentLoop', () => {
   describe('abort via .abort() method', () => {
     it('stops when .abort() is called', async () => {
       let callCount = 0;
-      let loopRef: AgentLoop;
+      const loopRef: { current: AgentLoop | undefined } = { current: undefined };
       const adapter: AgentAdapter = {
         async chat() {
           callCount++;
-          if (callCount >= 2) loopRef.abort();
+          if (callCount >= 2) loopRef.current!.abort();
           return { message: { role: 'assistant', content: '', toolCalls: [{ id: `c${callCount}`, name: 't', arguments: '{}' }] }, usage: USAGE };
         },
       };
       const onToolCall = vi.fn().mockResolvedValue('ok');
 
-      loopRef = new AgentLoop({ adapter, onToolCall });
-      const events = await collectEvents(loopRef.run([{ role: 'user', content: 'test' }]));
+      loopRef.current = new AgentLoop({ adapter, onToolCall });
+      const events = await collectEvents(loopRef.current.run([{ role: 'user', content: 'test' }]));
 
       const done = events.find((e) => e.type === 'done') as Extract<AgentEvent, { type: 'done' }>;
       expect(done.reason).toBe('aborted');
@@ -266,7 +266,6 @@ describe('AgentLoop', () => {
       }
 
       // The generator should have yielded a done event with reason 'aborted' in finally
-      const done = events.find((e) => e.type === 'done') as Extract<AgentEvent, { type: 'done' }> | undefined;
       // If no done event was collected during iteration, the finally block should handle cleanup
       // We verify the generator is properly closed by checking it doesn't hang
       // The key assertion: after breaking, the generator should be done
@@ -1133,7 +1132,7 @@ describe('AgentLoop', () => {
   describe('Abort after tool calls', () => {
     it('stops when abort() is called during onToolCall execution', async () => {
       const toolCall: ToolCallRequest = { id: 'call_1', name: 'slow_tool', arguments: '{}' };
-      let loopRef: AgentLoop;
+      const loopRef: { current: AgentLoop | undefined } = { current: undefined };
       const adapter: AgentAdapter = {
         async chat() {
           return { message: { role: 'assistant', content: '', toolCalls: [toolCall] }, usage: USAGE };
@@ -1141,12 +1140,12 @@ describe('AgentLoop', () => {
       };
       const onToolCall = vi.fn().mockImplementation(async () => {
         // Abort during tool call execution
-        loopRef.abort();
+        loopRef.current!.abort();
         return 'result';
       });
 
-      loopRef = new AgentLoop({ adapter, onToolCall });
-      const events = await collectEvents(loopRef.run([{ role: 'user', content: 'test' }]));
+      loopRef.current = new AgentLoop({ adapter, onToolCall });
+      const events = await collectEvents(loopRef.current.run([{ role: 'user', content: 'test' }]));
 
       // Should have aborted after tool calls
       const done = events.find((e) => e.type === 'done') as Extract<AgentEvent, { type: 'done' }>;
@@ -1325,7 +1324,7 @@ describe('AgentLoop', () => {
   });
 
   describe('Error event type (comprehensive)', () => {
-    it('wraps adapter errors in HarnessError with ADAPTER_ERROR code', async () => {
+    it('wraps adapter errors in HarnessError with categorized error code', async () => {
       const originalError = new Error('Network timeout after 30s');
       const adapter: AgentAdapter = {
         async chat() {
@@ -1339,7 +1338,7 @@ describe('AgentLoop', () => {
       const errorEvent = events.find((e) => e.type === 'error') as Extract<AgentEvent, { type: 'error' }>;
       expect(errorEvent).toBeDefined();
       expect(errorEvent.error).toBeInstanceOf(HarnessError);
-      expect((errorEvent.error as HarnessError).code).toBe('ADAPTER_ERROR');
+      expect((errorEvent.error as HarnessError).code).toBe('ADAPTER_NETWORK');
       expect(errorEvent.error.message).toBe('Network timeout after 30s');
       expect((errorEvent.error as HarnessError).cause).toBe(originalError);
     });
@@ -1744,6 +1743,414 @@ describe('AgentLoop', () => {
       const resultEvent = events.find((e) => e.type === 'tool_result') as Extract<AgentEvent, { type: 'tool_result' }>;
       expect(resultEvent.result).toBe('result');
       expect(resultEvent.toolCallId).toBe('tc1');
+    });
+  });
+
+  // =====================================================================
+  // Fix 1: Conversation history auto-pruning
+  // =====================================================================
+  describe('Fix 1: Conversation auto-pruning keeps head + tail', () => {
+    it('prunes conversation to keep first message (system) and most recent N-1 messages', async () => {
+      const toolCall: ToolCallRequest = { id: 'call_1', name: 'tool', arguments: '{}' };
+      let capturedMessages: Message[] = [];
+      let callCount = 0;
+      const adapter: AgentAdapter = {
+        async chat(params) {
+          capturedMessages = [...params.messages];
+          callCount++;
+          if (callCount <= 4) {
+            return { message: { role: 'assistant', content: `response_${callCount}`, toolCalls: [toolCall] }, usage: USAGE };
+          }
+          return { message: { role: 'assistant', content: 'final' }, usage: USAGE };
+        },
+      };
+      const onToolCall = vi.fn().mockResolvedValue('ok');
+
+      // maxConversationMessages = 4, start with 1 message
+      // After each iteration: +1 assistant + 1 tool = +2 messages
+      // iteration 1: 1 -> 3 (user, assistant, tool) — under limit
+      // iteration 2: 3 -> 5 (> 4) — triggers pruning before adapter call
+      const loop = new AgentLoop({
+        adapter,
+        onToolCall,
+        maxConversationMessages: 4,
+      });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'system prompt' }]));
+
+      // Should have emitted at least one pruning warning
+      const warnings = events.filter((e) => e.type === 'warning') as Array<Extract<AgentEvent, { type: 'warning' }>>;
+      expect(warnings.length).toBeGreaterThan(0);
+      expect(warnings[0].message).toContain('pruned');
+
+      // The conversation passed to adapter should always be <= maxConversationMessages
+      // after pruning kicks in. The last adapter call should have at most 4 messages.
+      expect(capturedMessages.length).toBeLessThanOrEqual(4);
+
+      // The first message should always be the original system prompt
+      expect(capturedMessages[0].content).toBe('system prompt');
+    });
+
+    it('does not prune when conversation is at or under the limit', async () => {
+      const adapter = createMockAdapter([
+        { message: { role: 'assistant', content: 'Hello' }, usage: USAGE },
+      ]);
+
+      const loop = new AgentLoop({ adapter, maxConversationMessages: 10 });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'Hi' }]));
+
+      const warnings = events.filter((e) => e.type === 'warning');
+      expect(warnings).toHaveLength(0);
+    });
+
+    it('preserves the most recent tail messages after pruning', async () => {
+      const toolCall: ToolCallRequest = { id: 'call_1', name: 'tool', arguments: '{}' };
+      let lastCapturedMessages: Message[] = [];
+      let callCount = 0;
+      const adapter: AgentAdapter = {
+        async chat(params) {
+          lastCapturedMessages = [...params.messages];
+          callCount++;
+          if (callCount <= 3) {
+            return { message: { role: 'assistant', content: `resp_${callCount}`, toolCalls: [toolCall] }, usage: USAGE };
+          }
+          return { message: { role: 'assistant', content: 'done' }, usage: USAGE };
+        },
+      };
+      const onToolCall = vi.fn().mockResolvedValue('tool_result');
+
+      const loop = new AgentLoop({
+        adapter,
+        onToolCall,
+        maxConversationMessages: 3,
+      });
+      await collectEvents(loop.run([{ role: 'user', content: 'start' }]));
+
+      // After pruning: first message + last 2 messages
+      expect(lastCapturedMessages[0].content).toBe('start');
+      expect(lastCapturedMessages.length).toBeLessThanOrEqual(3);
+    });
+  });
+
+  // =====================================================================
+  // Fix 2: JSON.stringify safety for tool results
+  // =====================================================================
+  describe('Fix 2: JSON.stringify safety for circular references', () => {
+    it('handles circular reference in tool result without throwing', async () => {
+      const toolCall: ToolCallRequest = { id: 'call_1', name: 'tool', arguments: '{}' };
+      let callCount = 0;
+      let capturedMessages: Message[] = [];
+      const adapter: AgentAdapter = {
+        async chat(params) {
+          capturedMessages = [...params.messages];
+          callCount++;
+          if (callCount === 1) {
+            return { message: { role: 'assistant', content: '', toolCalls: [toolCall] }, usage: USAGE };
+          }
+          return { message: { role: 'assistant', content: 'handled' }, usage: USAGE };
+        },
+      };
+
+      // Create a circular reference object
+      const circular: Record<string, unknown> = { a: 1 };
+      circular.self = circular;
+
+      const onToolCall = vi.fn().mockResolvedValue(circular);
+
+      const loop = new AgentLoop({ adapter, onToolCall });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'test' }]));
+
+      // Should complete without throwing
+      const done = events.find((e) => e.type === 'done') as Extract<AgentEvent, { type: 'done' }>;
+      expect(done).toBeDefined();
+      expect(done.reason).toBe('end_turn');
+
+      // The tool result message in conversation should have the fallback content
+      const toolMsg = capturedMessages.find((m) => m.role === 'tool');
+      expect(toolMsg).toBeDefined();
+      expect(toolMsg!.content).toBe('[Object could not be serialized]');
+    });
+
+    it('still serializes normal objects via JSON.stringify', async () => {
+      const toolCall: ToolCallRequest = { id: 'call_1', name: 'tool', arguments: '{}' };
+      let callCount = 0;
+      let capturedMessages: Message[] = [];
+      const adapter: AgentAdapter = {
+        async chat(params) {
+          capturedMessages = [...params.messages];
+          callCount++;
+          if (callCount === 1) {
+            return { message: { role: 'assistant', content: '', toolCalls: [toolCall] }, usage: USAGE };
+          }
+          return { message: { role: 'assistant', content: 'done' }, usage: USAGE };
+        },
+      };
+
+      const onToolCall = vi.fn().mockResolvedValue({ key: 'value', num: 42 });
+
+      const loop = new AgentLoop({ adapter, onToolCall });
+      await collectEvents(loop.run([{ role: 'user', content: 'test' }]));
+
+      const toolMsg = capturedMessages.find((m) => m.role === 'tool');
+      expect(toolMsg).toBeDefined();
+      expect(toolMsg!.content).toBe('{"key":"value","num":42}');
+    });
+
+    it('passes string results through directly without JSON.stringify', async () => {
+      const toolCall: ToolCallRequest = { id: 'call_1', name: 'tool', arguments: '{}' };
+      let callCount = 0;
+      let capturedMessages: Message[] = [];
+      const adapter: AgentAdapter = {
+        async chat(params) {
+          capturedMessages = [...params.messages];
+          callCount++;
+          if (callCount === 1) {
+            return { message: { role: 'assistant', content: '', toolCalls: [toolCall] }, usage: USAGE };
+          }
+          return { message: { role: 'assistant', content: 'done' }, usage: USAGE };
+        },
+      };
+
+      const onToolCall = vi.fn().mockResolvedValue('string result');
+
+      const loop = new AgentLoop({ adapter, onToolCall });
+      await collectEvents(loop.run([{ role: 'user', content: 'test' }]));
+
+      const toolMsg = capturedMessages.find((m) => m.role === 'tool');
+      expect(toolMsg).toBeDefined();
+      expect(toolMsg!.content).toBe('string result');
+    });
+  });
+
+  // =====================================================================
+  // Fix 3: Adapter error categorization
+  // =====================================================================
+  describe('Fix 3: Adapter error categorization', () => {
+    it('categorizes rate limit errors as ADAPTER_RATE_LIMIT', async () => {
+      const adapter: AgentAdapter = {
+        async chat() { throw new Error('Rate limit exceeded: 429 Too Many Requests'); },
+      };
+      const loop = new AgentLoop({ adapter });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'test' }]));
+      const errorEvent = events.find((e) => e.type === 'error') as Extract<AgentEvent, { type: 'error' }>;
+      expect((errorEvent.error as HarnessError).code).toBe('ADAPTER_RATE_LIMIT');
+    });
+
+    it('categorizes "too many requests" as ADAPTER_RATE_LIMIT', async () => {
+      const adapter: AgentAdapter = {
+        async chat() { throw new Error('Too many requests, please slow down'); },
+      };
+      const loop = new AgentLoop({ adapter });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'test' }]));
+      const errorEvent = events.find((e) => e.type === 'error') as Extract<AgentEvent, { type: 'error' }>;
+      expect((errorEvent.error as HarnessError).code).toBe('ADAPTER_RATE_LIMIT');
+    });
+
+    it('categorizes auth errors as ADAPTER_AUTH', async () => {
+      const adapter: AgentAdapter = {
+        async chat() { throw new Error('401 Unauthorized: Invalid API key'); },
+      };
+      const loop = new AgentLoop({ adapter });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'test' }]));
+      const errorEvent = events.find((e) => e.type === 'error') as Extract<AgentEvent, { type: 'error' }>;
+      expect((errorEvent.error as HarnessError).code).toBe('ADAPTER_AUTH');
+    });
+
+    it('categorizes "api key" errors as ADAPTER_AUTH', async () => {
+      const adapter: AgentAdapter = {
+        async chat() { throw new Error('Invalid API key provided'); },
+      };
+      const loop = new AgentLoop({ adapter });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'test' }]));
+      const errorEvent = events.find((e) => e.type === 'error') as Extract<AgentEvent, { type: 'error' }>;
+      expect((errorEvent.error as HarnessError).code).toBe('ADAPTER_AUTH');
+    });
+
+    it('categorizes timeout errors as ADAPTER_NETWORK', async () => {
+      const adapter: AgentAdapter = {
+        async chat() { throw new Error('Request timeout after 30000ms'); },
+      };
+      const loop = new AgentLoop({ adapter });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'test' }]));
+      const errorEvent = events.find((e) => e.type === 'error') as Extract<AgentEvent, { type: 'error' }>;
+      expect((errorEvent.error as HarnessError).code).toBe('ADAPTER_NETWORK');
+    });
+
+    it('categorizes ECONNREFUSED errors as ADAPTER_NETWORK', async () => {
+      const adapter: AgentAdapter = {
+        async chat() { throw new Error('connect ECONNREFUSED 127.0.0.1:8080'); },
+      };
+      const loop = new AgentLoop({ adapter });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'test' }]));
+      const errorEvent = events.find((e) => e.type === 'error') as Extract<AgentEvent, { type: 'error' }>;
+      expect((errorEvent.error as HarnessError).code).toBe('ADAPTER_NETWORK');
+    });
+
+    it('categorizes fetch errors as ADAPTER_NETWORK', async () => {
+      const adapter: AgentAdapter = {
+        async chat() { throw new Error('fetch failed'); },
+      };
+      const loop = new AgentLoop({ adapter });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'test' }]));
+      const errorEvent = events.find((e) => e.type === 'error') as Extract<AgentEvent, { type: 'error' }>;
+      expect((errorEvent.error as HarnessError).code).toBe('ADAPTER_NETWORK');
+    });
+
+    it('categorizes parse errors as ADAPTER_PARSE', async () => {
+      const adapter: AgentAdapter = {
+        async chat() { throw new Error('Failed to parse JSON response'); },
+      };
+      const loop = new AgentLoop({ adapter });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'test' }]));
+      const errorEvent = events.find((e) => e.type === 'error') as Extract<AgentEvent, { type: 'error' }>;
+      expect((errorEvent.error as HarnessError).code).toBe('ADAPTER_PARSE');
+    });
+
+    it('categorizes malformed response errors as ADAPTER_PARSE', async () => {
+      const adapter: AgentAdapter = {
+        async chat() { throw new Error('Malformed response from API'); },
+      };
+      const loop = new AgentLoop({ adapter });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'test' }]));
+      const errorEvent = events.find((e) => e.type === 'error') as Extract<AgentEvent, { type: 'error' }>;
+      expect((errorEvent.error as HarnessError).code).toBe('ADAPTER_PARSE');
+    });
+
+    it('falls back to ADAPTER_ERROR for uncategorized errors', async () => {
+      const adapter: AgentAdapter = {
+        async chat() { throw new Error('Something completely unexpected'); },
+      };
+      const loop = new AgentLoop({ adapter });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'test' }]));
+      const errorEvent = events.find((e) => e.type === 'error') as Extract<AgentEvent, { type: 'error' }>;
+      expect((errorEvent.error as HarnessError).code).toBe('ADAPTER_ERROR');
+    });
+
+    it('falls back to ADAPTER_ERROR for non-Error throws', async () => {
+      const adapter: AgentAdapter = {
+        async chat() { throw 42; },
+      };
+      const loop = new AgentLoop({ adapter });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'test' }]));
+      const errorEvent = events.find((e) => e.type === 'error') as Extract<AgentEvent, { type: 'error' }>;
+      expect((errorEvent.error as HarnessError).code).toBe('ADAPTER_ERROR');
+    });
+
+    it('categorizes streaming adapter errors the same way', async () => {
+      const adapter: AgentAdapter = {
+        async chat() { throw new Error('Should not be called'); },
+        async *stream() {
+          throw new Error('Rate limit exceeded on stream');
+        },
+      };
+      const loop = new AgentLoop({ adapter, streaming: true });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'test' }]));
+      const errorEvent = events.find((e) => e.type === 'error') as Extract<AgentEvent, { type: 'error' }>;
+      expect((errorEvent.error as HarnessError).code).toBe('ADAPTER_RATE_LIMIT');
+    });
+  });
+
+  // =====================================================================
+  // Fix 4: Streaming partial tool call without ID warning
+  // =====================================================================
+  describe('Fix 4: Streaming partial tool call chunk without ID and no accumulated calls', () => {
+    it('yields warning when tool_call_delta has no ID and no prior accumulated calls exist', async () => {
+      const chunks: StreamChunk[] = [
+        // A tool_call_delta without an id, and no prior tool calls accumulated
+        { type: 'tool_call_delta', toolCall: { arguments: '{"orphan": true}' } },
+        { type: 'text_delta', text: 'response' },
+        { type: 'done', usage: USAGE },
+      ];
+
+      const adapter: AgentAdapter = {
+        async chat() { throw new Error('Should not be called'); },
+        async *stream() {
+          for (const chunk of chunks) yield chunk;
+        },
+      };
+
+      const loop = new AgentLoop({ adapter, streaming: true });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'test' }]));
+
+      const warnings = events.filter((e) => e.type === 'warning') as Array<Extract<AgentEvent, { type: 'warning' }>>;
+      expect(warnings.length).toBeGreaterThan(0);
+      expect(warnings[0].message).toContain('partial tool call chunk without ID');
+      expect(warnings[0].message).toContain('no accumulated calls');
+
+      // Should still complete normally
+      const done = events.find((e) => e.type === 'done') as Extract<AgentEvent, { type: 'done' }>;
+      expect(done).toBeDefined();
+      expect(done.reason).toBe('end_turn');
+    });
+
+    it('does not yield warning when tool_call_delta without ID appends to existing accumulated call', async () => {
+      const chunks: StreamChunk[] = [
+        { type: 'tool_call_delta', toolCall: { id: 'tc1', name: 'search' } },
+        // No id, but tc1 is already accumulated — should append, not warn
+        { type: 'tool_call_delta', toolCall: { arguments: '{"q":"test"}' } },
+        { type: 'done', usage: USAGE },
+      ];
+      let callCount = 0;
+      const adapter: AgentAdapter = {
+        async chat() { throw new Error('Should not be called'); },
+        async *stream() {
+          callCount++;
+          if (callCount === 1) {
+            for (const chunk of chunks) yield chunk;
+          } else {
+            yield { type: 'text_delta' as const, text: 'done' };
+            yield { type: 'done' as const, usage: USAGE };
+          }
+        },
+      };
+      const onToolCall = vi.fn().mockResolvedValue('ok');
+
+      const loop = new AgentLoop({ adapter, onToolCall, streaming: true });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'test' }]));
+
+      // No warning should be emitted since there IS an accumulated call
+      const warnings = events.filter((e) => e.type === 'warning');
+      expect(warnings).toHaveLength(0);
+    });
+  });
+
+  // =====================================================================
+  // Fix 5: executionStrategy vs parallel precedence (JSDoc comment)
+  // =====================================================================
+  describe('Fix 5: executionStrategy takes precedence over parallel flag', () => {
+    it('uses explicit executionStrategy even when parallel: true is also set', async () => {
+      const executionOrder: string[] = [];
+      const customStrategy: ExecutionStrategy = {
+        async execute(calls, handler) {
+          const results: ToolExecutionResult[] = [];
+          for (const call of calls) {
+            executionOrder.push(`custom:${call.name}`);
+            const result = await handler(call);
+            results.push({ toolCallId: call.id, result });
+          }
+          return results;
+        },
+      };
+
+      const toolCall1: ToolCallRequest = { id: 'tc1', name: 'tool_a', arguments: '{}' };
+      const toolCall2: ToolCallRequest = { id: 'tc2', name: 'tool_b', arguments: '{}' };
+      const adapter = createMockAdapter([
+        { message: { role: 'assistant', content: '', toolCalls: [toolCall1, toolCall2] }, usage: USAGE },
+        { message: { role: 'assistant', content: 'done' }, usage: USAGE },
+      ]);
+      const onToolCall = vi.fn().mockResolvedValue('ok');
+
+      // Both parallel: true AND executionStrategy provided
+      // executionStrategy should take precedence
+      const loop = new AgentLoop({
+        adapter,
+        onToolCall,
+        parallel: true,
+        executionStrategy: customStrategy,
+      });
+      await collectEvents(loop.run([{ role: 'user', content: 'go' }]));
+
+      // The custom strategy should have been used, not the parallel one
+      expect(executionOrder).toEqual(['custom:tool_a', 'custom:tool_b']);
     });
   });
 });

@@ -105,7 +105,7 @@ function toOpenAITool(
     function: {
       name: tool.name,
       description: tool.description,
-      parameters: tool.parameters,
+      parameters: tool.parameters as unknown as Record<string, unknown>,
     },
   };
 }
@@ -232,7 +232,10 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
       }
 
       // Only emit bare done if stream ended without a usage chunk
-      yield { type: 'done' };
+      yield {
+        type: 'done' as const,
+        usage: { inputTokens: 0, outputTokens: 0 },
+      };
     },
   };
 }

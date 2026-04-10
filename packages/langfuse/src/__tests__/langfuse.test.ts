@@ -399,6 +399,80 @@ describe('createLangfuseExporter', () => {
       expect.objectContaining({ id: 'trace-0' }),
     );
   });
+
+  it('evicts oldest traces deterministically based on access time (LRU)', async () => {
+    // Use fake timers to guarantee deterministic timestamp ordering
+    vi.useFakeTimers();
+    const exporter = createLangfuseExporter({ client: mock.client });
+
+    // Export 1000 unique traces to fill up the map
+    // Each at a different timestamp to guarantee ordering
+    for (let i = 0; i < 1000; i++) {
+      vi.setSystemTime(1000 + i);
+      await exporter.exportTrace({
+        id: `trace-${i}`,
+        name: `test-${i}`,
+        startTime: Date.now(),
+        metadata: {},
+        spans: [],
+        status: 'completed',
+      });
+    }
+
+    // Re-access trace-0 to make it "recently used" — give it the most recent timestamp
+    vi.setSystemTime(5000);
+    await exporter.exportTrace({
+      id: 'trace-0',
+      name: 'test-0-reaccessed',
+      startTime: Date.now(),
+      metadata: {},
+      spans: [],
+      status: 'completed',
+    });
+
+    // Now add 101 new traces, causing eviction of the 100 oldest
+    for (let i = 1000; i < 1101; i++) {
+      vi.setSystemTime(6000 + i);
+      await exporter.exportTrace({
+        id: `trace-${i}`,
+        name: `test-${i}`,
+        startTime: Date.now(),
+        metadata: {},
+        spans: [],
+        status: 'completed',
+      });
+    }
+
+    // trace-0 was recently accessed (timestamp 5000), so it should NOT have been evicted
+    mock.mocks.trace.mockClear();
+    await exporter.exportTrace({
+      id: 'trace-0',
+      name: 'test-0-check',
+      startTime: Date.now(),
+      metadata: {},
+      spans: [],
+      status: 'completed',
+    });
+    // trace() should NOT be called because trace-0 was not evicted (it was recent)
+    expect(mock.mocks.trace).not.toHaveBeenCalled();
+
+    // trace-1 was not re-accessed (timestamp 1001) and should have been evicted
+    mock.mocks.trace.mockClear();
+    await exporter.exportTrace({
+      id: 'trace-1',
+      name: 'test-1-check',
+      startTime: Date.now(),
+      metadata: {},
+      spans: [],
+      status: 'completed',
+    });
+    // trace() SHOULD be called because trace-1 was evicted
+    expect(mock.mocks.trace).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'trace-1' }),
+    );
+
+    vi.useRealTimers();
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createAnthropicAdapter } from '../index.js';
 import type { AnthropicAdapterConfig } from '../index.js';
-import type { Message } from 'harness-one/core';
+import type { Message, StreamChunk } from 'harness-one/core';
 
 // ---------------------------------------------------------------------------
 // Mock Anthropic client
@@ -247,6 +247,86 @@ describe('createAnthropicAdapter', () => {
       expect(result.usage.cacheWriteTokens).toBe(0);
     });
 
+    it('throws when Anthropic API returns empty content', async () => {
+      mock.mocks.create.mockResolvedValue({
+        content: [],
+        usage: { input_tokens: 10, output_tokens: 0 },
+      });
+
+      const adapter = createAnthropicAdapter({ client: mock.client });
+      await expect(
+        adapter.chat({ messages: [{ role: 'user', content: 'Hi' }] }),
+      ).rejects.toThrow('Anthropic API returned empty content');
+    });
+
+    it('throws when Anthropic API returns null content', async () => {
+      mock.mocks.create.mockResolvedValue({
+        content: null,
+        usage: { input_tokens: 10, output_tokens: 0 },
+      });
+
+      const adapter = createAnthropicAdapter({ client: mock.client });
+      await expect(
+        adapter.chat({ messages: [{ role: 'user', content: 'Hi' }] }),
+      ).rejects.toThrow('Anthropic API returned empty content');
+    });
+
+    it('throws when Anthropic API returns undefined content', async () => {
+      mock.mocks.create.mockResolvedValue({
+        content: undefined,
+        usage: { input_tokens: 10, output_tokens: 0 },
+      });
+
+      const adapter = createAnthropicAdapter({ client: mock.client });
+      await expect(
+        adapter.chat({ messages: [{ role: 'user', content: 'Hi' }] }),
+      ).rejects.toThrow('Anthropic API returned empty content');
+    });
+
+    it('extracts cache tokens safely even when cache fields are completely absent from usage', async () => {
+      // Usage object with NO cache fields at all (neither undefined nor number)
+      const usageWithoutCacheFields = Object.create(null);
+      usageWithoutCacheFields.input_tokens = 50;
+      usageWithoutCacheFields.output_tokens = 25;
+
+      mock.mocks.create.mockResolvedValue({
+        content: [{ type: 'text', text: 'OK' }],
+        usage: usageWithoutCacheFields,
+      });
+
+      const adapter = createAnthropicAdapter({ client: mock.client });
+      const result = await adapter.chat({
+        messages: [{ role: 'user', content: 'Hi' }],
+      });
+
+      // Should default to 0 without throwing
+      expect(result.usage.cacheReadTokens).toBe(0);
+      expect(result.usage.cacheWriteTokens).toBe(0);
+      expect(result.usage.inputTokens).toBe(50);
+      expect(result.usage.outputTokens).toBe(25);
+    });
+
+    it('extracts cache tokens safely when cache fields are non-number types', async () => {
+      mock.mocks.create.mockResolvedValue({
+        content: [{ type: 'text', text: 'OK' }],
+        usage: {
+          input_tokens: 10,
+          output_tokens: 5,
+          cache_read_input_tokens: 'not a number',
+          cache_creation_input_tokens: null,
+        },
+      });
+
+      const adapter = createAnthropicAdapter({ client: mock.client });
+      const result = await adapter.chat({
+        messages: [{ role: 'user', content: 'Hi' }],
+      });
+
+      // Non-number values should default to 0
+      expect(result.usage.cacheReadTokens).toBe(0);
+      expect(result.usage.cacheWriteTokens).toBe(0);
+    });
+
     it('handles assistant message with tool calls in input', async () => {
       mock.mocks.create.mockResolvedValue({
         content: [{ type: 'text', text: 'Done' }],
@@ -362,7 +442,7 @@ describe('createAnthropicAdapter', () => {
       }
 
       // Should have exactly one done event (from finalMessage), not two
-      const doneChunks = chunks.filter((c: any) => c.type === 'done');
+      const doneChunks = chunks.filter((c: unknown) => (c as StreamChunk).type === 'done');
       expect(doneChunks).toHaveLength(1);
     });
 
@@ -385,10 +465,10 @@ describe('createAnthropicAdapter', () => {
         chunks.push(chunk);
       }
 
-      const textChunks = chunks.filter((c: any) => c.type === 'text_delta');
+      const textChunks = chunks.filter((c: unknown) => (c as StreamChunk).type === 'text_delta');
       expect(textChunks).toHaveLength(2);
-      expect((textChunks[0] as any).text).toBe('Hello');
-      expect((textChunks[1] as any).text).toBe(' World');
+      expect((textChunks[0] as StreamChunk).text).toBe('Hello');
+      expect((textChunks[1] as StreamChunk).text).toBe(' World');
     });
 
     it('yields tool_call_delta chunks for tool_use streaming', async () => {
@@ -410,12 +490,12 @@ describe('createAnthropicAdapter', () => {
         chunks.push(chunk);
       }
 
-      const toolChunks = chunks.filter((c: any) => c.type === 'tool_call_delta');
+      const toolChunks = chunks.filter((c: unknown) => (c as StreamChunk).type === 'tool_call_delta');
       expect(toolChunks).toHaveLength(2);
-      expect((toolChunks[0] as any).toolCall.id).toBe('tc-1');
-      expect((toolChunks[0] as any).toolCall.name).toBe('search');
-      expect((toolChunks[0] as any).toolCall.arguments).toBe('{"q":');
-      expect((toolChunks[1] as any).toolCall.arguments).toBe('"test"}');
+      expect((toolChunks[0] as StreamChunk).toolCall!.id).toBe('tc-1');
+      expect((toolChunks[0] as StreamChunk).toolCall!.name).toBe('search');
+      expect((toolChunks[0] as StreamChunk).toolCall!.arguments).toBe('{"q":');
+      expect((toolChunks[1] as StreamChunk).toolCall!.arguments).toBe('"test"}');
     });
 
     it('yields done chunk with usage from finalMessage', async () => {
@@ -436,12 +516,12 @@ describe('createAnthropicAdapter', () => {
         chunks.push(chunk);
       }
 
-      const doneChunk = chunks.find((c: any) => c.type === 'done') as any;
+      const doneChunk = chunks.find((c: unknown) => (c as StreamChunk).type === 'done') as StreamChunk | undefined;
       expect(doneChunk).toBeDefined();
-      expect(doneChunk.usage.inputTokens).toBe(15);
-      expect(doneChunk.usage.outputTokens).toBe(8);
-      expect(doneChunk.usage.cacheReadTokens).toBe(5);
-      expect(doneChunk.usage.cacheWriteTokens).toBe(2);
+      expect(doneChunk!.usage!.inputTokens).toBe(15);
+      expect(doneChunk!.usage!.outputTokens).toBe(8);
+      expect(doneChunk!.usage!.cacheReadTokens).toBe(5);
+      expect(doneChunk!.usage!.cacheWriteTokens).toBe(2);
     });
   });
 });

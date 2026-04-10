@@ -21,18 +21,31 @@
   },
   "dependencies": {
     "harness-one": "workspace:*",
-    "@harness-one/langfuse": "workspace:*",
-    "@harness-one/opentelemetry": "workspace:*",
-    "@harness-one/tiktoken": "workspace:*",
     "@harness-one/anthropic": "workspace:*",
     "@harness-one/openai": "workspace:*",
-    "@harness-one/ajv": "workspace:*",
-    "@harness-one/redis": "workspace:*"
+    "@harness-one/ajv": "workspace:*"
+  },
+  "optionalDependencies": {
+    "@harness-one/redis": "workspace:*",
+    "@harness-one/langfuse": "workspace:*",
+    "@harness-one/opentelemetry": "workspace:*",
+    "@harness-one/tiktoken": "workspace:*"
   },
   "devDependencies": {
     "tsup": "^8.0.0",
     "typescript": "^5.5.0",
     "vitest": "^2.0.0"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "author": "harness-one contributors",
+  "keywords": ["ai", "agent", "harness", "full", "batteries-included"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Maitreya001-AI/harness-one",
+    "directory": "packages/full"
+  },
+  "bugs": {
+    "url": "https://github.com/Maitreya001-AI/harness-one/issues"
+  },
+  "homepage": "https://github.com/Maitreya001-AI/harness-one#readme"
 }

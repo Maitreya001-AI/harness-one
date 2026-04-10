@@ -27,3 +27,9 @@ jobs:
       - run: pnpm typecheck
 
       - run: pnpm test
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Audit
+        run: pnpm audit --audit-level=high || true

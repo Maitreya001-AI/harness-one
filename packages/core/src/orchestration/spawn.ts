@@ -5,7 +5,7 @@
  */
 
 import { AgentLoop } from '../core/agent-loop.js';
-import type { Message, TokenUsage } from '../core/types.js';
+import type { Message } from '../core/types.js';
 import type { DoneReason } from '../core/events.js';
 import type { SpawnSubAgentConfig, SpawnSubAgentResult } from './types.js';
 
@@ -14,15 +14,16 @@ import type { SpawnSubAgentConfig, SpawnSubAgentResult } from './types.js';
  * accumulated conversation, token usage, and termination reason.
  */
 export async function spawnSubAgent(config: SpawnSubAgentConfig): Promise<SpawnSubAgentResult> {
-  const loop = new AgentLoop({
+  const loopConfig: Record<string, unknown> = {
     adapter: config.adapter,
     maxIterations: config.maxIterations ?? 10,
-    maxTotalTokens: config.maxTotalTokens,
-    signal: config.signal,
-    tools: config.tools ? [...config.tools] : undefined,
-    onToolCall: config.onToolCall,
-    streaming: config.streaming,
-  });
+  };
+  if (config.maxTotalTokens !== undefined) loopConfig.maxTotalTokens = config.maxTotalTokens;
+  if (config.signal !== undefined) loopConfig.signal = config.signal;
+  if (config.tools) loopConfig.tools = [...config.tools];
+  if (config.onToolCall !== undefined) loopConfig.onToolCall = config.onToolCall;
+  if (config.streaming !== undefined) loopConfig.streaming = config.streaming;
+  const loop = new AgentLoop(loopConfig as unknown as ConstructorParameters<typeof AgentLoop>[0]);
 
   const conversation: Message[] = [...config.messages];
   let doneReason: DoneReason = 'end_turn';

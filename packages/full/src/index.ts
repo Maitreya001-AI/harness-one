@@ -28,12 +28,17 @@ import { createAnthropicAdapter } from '@harness-one/anthropic';
 import type { AnthropicAdapterConfig } from '@harness-one/anthropic';
 import { createOpenAIAdapter } from '@harness-one/openai';
 import type { OpenAIAdapterConfig } from '@harness-one/openai';
-import { createLangfuseExporter, createLangfuseCostTracker } from '@harness-one/langfuse';
-import type { LangfuseExporterConfig } from '@harness-one/langfuse';
-import { createRedisStore } from '@harness-one/redis';
-import type { RedisStoreConfig } from '@harness-one/redis';
 import { createAjvValidator } from '@harness-one/ajv';
+
+// Optional integration packages — listed as optionalDependencies in package.json.
+// Static imports work in the monorepo; end-users who don't install these will
+// get a clear error when attempting to use the corresponding config options.
+import { createLangfuseExporter, createLangfuseCostTracker } from '@harness-one/langfuse';
+import { createRedisStore } from '@harness-one/redis';
 import { registerTiktokenModels } from '@harness-one/tiktoken';
+
+import type { LangfuseExporterConfig } from '@harness-one/langfuse';
+import type { RedisStoreConfig } from '@harness-one/redis';
 
 /** Shared configuration fields for all providers. */
 interface HarnessConfigBase {
@@ -182,7 +187,7 @@ export function createHarness(config: HarnessConfig): Harness {
   }
 
   // 6. Cost tracker
-  const costs = config.langfuse
+  const costs = (config.langfuse && createLangfuseCostTracker)
     ? createLangfuseCostTracker({ client: config.langfuse })
     : createCostTracker();
 

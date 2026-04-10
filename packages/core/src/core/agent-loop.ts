@@ -59,6 +59,8 @@ export class AgentLoop {
   private _iteration = 0;
   private _totalToolCalls = 0;
 
+  // If executionStrategy is explicitly provided, it takes precedence over the parallel flag.
+  // parallel: true is a shorthand that creates a default parallel strategy.
   constructor(config: AgentLoopConfig) {
     this.adapter = config.adapter;
     this.maxIterations = config.maxIterations ?? 25;
@@ -166,12 +168,17 @@ export class AgentLoop {
           return;
         }
 
-        // H4: Check conversation length and emit warning if exceeded
+        // H4: Check conversation length and prune if exceeded
         if (this.maxConversationMessages !== undefined && conversation.length > this.maxConversationMessages) {
           yield {
             type: 'warning',
-            message: `Conversation length (${conversation.length}) exceeds maxConversationMessages (${this.maxConversationMessages}). Consider summarizing or trimming.`,
+            message: `Conversation pruned from ${conversation.length} to ${this.maxConversationMessages} messages`,
           };
+          // Keep first message (system) + last (maxConversationMessages - 1) messages
+          const head = conversation.slice(0, 1);
+          const tail = conversation.slice(-(this.maxConversationMessages - 1));
+          conversation.length = 0;
+          conversation.push(...head, ...tail);
         }
 
         yield { type: 'iteration_start', iteration };
@@ -182,7 +189,7 @@ export class AgentLoop {
 
         if (this.streaming && this.adapter.stream) {
           // Streaming path: use adapter.stream()
-          const streamResult = yield* this.handleStream(conversation, iteration);
+          const streamResult = yield* this.handleStream(conversation);
           if (!streamResult) {
             // Stream error already handled via error event
             yieldedDone = true;
@@ -205,7 +212,7 @@ export class AgentLoop {
             // C5: Emit error event and break gracefully
             yield { type: 'error', error: err instanceof HarnessError ? err : new HarnessError(
               err instanceof Error ? err.message : String(err),
-              'ADAPTER_ERROR',
+              AgentLoop.categorizeAdapterError(err),
               'Check adapter configuration and API credentials',
               err instanceof Error ? err : undefined,
             ) };
@@ -266,12 +273,12 @@ export class AgentLoop {
             }
             return { error: `No onToolCall handler registered for tool "${call.name}"` };
           },
-          {
-            getToolMeta: this.isSequentialTool
-              ? (name) => ({ sequential: this.isSequentialTool!(name) })
-              : undefined,
-            signal: this.abortController.signal,
-          },
+          Object.assign(
+            { signal: this.abortController.signal },
+            this.isSequentialTool
+              ? { getToolMeta: (name: string) => ({ sequential: this.isSequentialTool!(name) }) }
+              : {},
+          ),
         );
 
         // Yield all tool_result events in original order (deterministic)
@@ -279,11 +286,18 @@ export class AgentLoop {
           yield { type: 'tool_result', toolCallId: execResult.toolCallId, result: execResult.result };
           this._totalToolCalls++;
 
+          let resultContent: string;
+          try {
+            resultContent = typeof execResult.result === 'string'
+              ? execResult.result
+              : JSON.stringify(execResult.result);
+          } catch {
+            resultContent = '[Object could not be serialized]';
+          }
+
           const toolResultMsg: Message = {
             role: 'tool',
-            content: typeof execResult.result === 'string'
-              ? execResult.result
-              : JSON.stringify(execResult.result),
+            content: resultContent,
             toolCallId: execResult.toolCallId,
           };
           conversation.push(toolResultMsg);
@@ -316,7 +330,6 @@ export class AgentLoop {
 
   private async *handleStream(
     conversation: Message[],
-    _iteration: number,
   ): AsyncGenerator<AgentEvent, { message: Message; usage: TokenUsage } | null> {
     let accumulatedText = '';
     let accumulatedBytes = 0;
@@ -371,6 +384,8 @@ export class AgentLoop {
               const last = entries[entries.length - 1];
               if (partial.name) last.name = partial.name;
               if (partial.arguments) last.arguments += partial.arguments;
+            } else {
+              yield { type: 'warning', message: 'Received partial tool call chunk without ID and no accumulated calls' };
             }
           }
         } else if (chunk.type === 'done') {
@@ -382,7 +397,7 @@ export class AgentLoop {
     } catch (err) {
       yield { type: 'error', error: err instanceof HarnessError ? err : new HarnessError(
         err instanceof Error ? err.message : String(err),
-        'ADAPTER_ERROR',
+        AgentLoop.categorizeAdapterError(err),
         'Check adapter configuration and API credentials',
         err instanceof Error ? err : undefined,
       ) };
@@ -398,6 +413,15 @@ export class AgentLoop {
     };
 
     return { message, usage };
+  }
+
+  private static categorizeAdapterError(err: unknown): string {
+    const msg = err instanceof Error ? err.message.toLowerCase() : '';
+    if (msg.includes('rate') || msg.includes('429') || msg.includes('too many')) return 'ADAPTER_RATE_LIMIT';
+    if (msg.includes('auth') || msg.includes('401') || msg.includes('api key') || msg.includes('unauthorized')) return 'ADAPTER_AUTH';
+    if (msg.includes('timeout') || msg.includes('econnrefused') || msg.includes('network') || msg.includes('fetch')) return 'ADAPTER_NETWORK';
+    if (msg.includes('parse') || msg.includes('json') || msg.includes('malformed')) return 'ADAPTER_PARSE';
+    return 'ADAPTER_ERROR';
   }
 
   private isAborted(): boolean {

@@ -38,6 +38,23 @@ export function createLangfuseExporter(config: LangfuseExporterConfig): TraceExp
   // Track Langfuse trace objects so spans can attach to the correct parent.
   const MAX_TRACE_MAP_SIZE = 1000;
   const traceMap = new Map<string, ReturnType<typeof client.trace>>();
+  const traceTimestamps = new Map<string, number>();
+
+  function touchTrace(traceId: string): void {
+    traceTimestamps.set(traceId, Date.now());
+  }
+
+  function evictOldestTraces(): void {
+    if (traceMap.size <= MAX_TRACE_MAP_SIZE) return;
+    const evictCount = Math.ceil(MAX_TRACE_MAP_SIZE * 0.1);
+    // Sort by timestamp ascending (oldest first) for deterministic LRU eviction
+    const entries = [...traceTimestamps.entries()].sort((a, b) => a[1] - b[1]);
+    for (let i = 0; i < evictCount && i < entries.length; i++) {
+      const key = entries[i][0];
+      traceMap.delete(key);
+      traceTimestamps.delete(key);
+    }
+  }
 
   return {
     name: 'langfuse',
@@ -51,14 +68,10 @@ export function createLangfuseExporter(config: LangfuseExporterConfig): TraceExp
           metadata: trace.metadata,
         });
         traceMap.set(trace.id, lfTrace);
-        if (traceMap.size > MAX_TRACE_MAP_SIZE) {
-          const evictCount = Math.ceil(MAX_TRACE_MAP_SIZE * 0.1);
-          const keys = traceMap.keys();
-          for (let i = 0; i < evictCount; i++) {
-            const key = keys.next().value;
-            if (key !== undefined) traceMap.delete(key);
-          }
-        }
+        touchTrace(trace.id);
+        evictOldestTraces();
+      } else {
+        touchTrace(trace.id);
       }
 
       lfTrace.update({
@@ -75,14 +88,10 @@ export function createLangfuseExporter(config: LangfuseExporterConfig): TraceExp
       if (!lfTrace) {
         lfTrace = client.trace({ id: span.traceId, name: 'unknown' });
         traceMap.set(span.traceId, lfTrace);
-        if (traceMap.size > MAX_TRACE_MAP_SIZE) {
-          const evictCount = Math.ceil(MAX_TRACE_MAP_SIZE * 0.1);
-          const keys = traceMap.keys();
-          for (let i = 0; i < evictCount; i++) {
-            const key = keys.next().value;
-            if (key !== undefined) traceMap.delete(key);
-          }
-        }
+        touchTrace(span.traceId);
+        evictOldestTraces();
+      } else {
+        touchTrace(span.traceId);
       }
 
       const attrs = config.sanitize ? config.sanitize(span.attributes) : span.attributes;
@@ -128,11 +137,13 @@ export function createLangfuseExporter(config: LangfuseExporterConfig): TraceExp
     async flush(): Promise<void> {
       await client.flushAsync();
       traceMap.clear();
+      traceTimestamps.clear();
     },
 
     async shutdown(): Promise<void> {
       await client.flushAsync();
       traceMap.clear();
+      traceTimestamps.clear();
     },
   };
 }
@@ -179,7 +190,7 @@ export function createLangfusePromptBackend(config: LangfusePromptBackendConfig)
   }
 
   return {
-    async fetch(id: string, _version?: string): Promise<PromptTemplate | undefined> {
+    async fetch(id: string): Promise<PromptTemplate | undefined> {
       try {
         const lfPrompt = await client.getPrompt(id);
         knownPromptNames.add(id);
@@ -209,7 +220,7 @@ export function createLangfusePromptBackend(config: LangfusePromptBackendConfig)
       return templates;
     },
 
-    async push(_template: PromptTemplate): Promise<void> {
+    async push(): Promise<void> {
       throw new HarnessError(
         'Langfuse SDK does not support pushing prompts programmatically',
         'UNSUPPORTED_OPERATION',
@@ -375,8 +386,12 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): Co
       return null;
     },
 
-    onAlert(handler: (alert: CostAlert) => void): void {
+    onAlert(handler: (alert: CostAlert) => void): () => void {
       alertHandlers.push(handler);
+      return () => {
+        const idx = alertHandlers.indexOf(handler);
+        if (idx >= 0) alertHandlers.splice(idx, 1);
+      };
     },
 
     reset(): void {

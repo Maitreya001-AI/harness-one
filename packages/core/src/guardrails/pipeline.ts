@@ -68,7 +68,7 @@ async function runGuardrails(
   ctx: GuardrailContext,
 ): Promise<PipelineResult> {
   const results: GuardrailEvent[] = [];
-  let currentCtx = { ...ctx, meta: ctx.meta ? { ...ctx.meta } : undefined };
+  let currentCtx: GuardrailContext = ctx.meta ? { ...ctx, meta: { ...ctx.meta } } : { ...ctx };
   let lastModifyVerdict: GuardrailEvent['verdict'] | undefined;
   let hasModified = false;
 
@@ -76,7 +76,9 @@ async function runGuardrails(
     const start = performance.now();
     let verdict: GuardrailEvent['verdict'];
     // Deep clone meta for each guard to prevent cross-guard mutation
-    const guardCtx = { ...currentCtx, meta: currentCtx.meta ? { ...currentCtx.meta } : undefined };
+    const guardCtx: GuardrailContext = currentCtx.meta
+      ? { ...currentCtx, meta: { ...currentCtx.meta } }
+      : { ...currentCtx };
 
     try {
       if (entry.timeoutMs !== undefined) {
@@ -133,7 +135,9 @@ async function runGuardrails(
       hasModified = true;
       lastModifyVerdict = verdict;
       if (verdict.modified !== undefined) {
-        currentCtx = { ...currentCtx, content: verdict.modified, meta: currentCtx.meta ? { ...currentCtx.meta } : undefined };
+        currentCtx = currentCtx.meta
+          ? { ...currentCtx, content: verdict.modified, meta: { ...currentCtx.meta } }
+          : { ...currentCtx, content: verdict.modified };
       }
       // Continue to next guardrail instead of short-circuiting
     }

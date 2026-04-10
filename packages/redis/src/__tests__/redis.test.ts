@@ -17,7 +17,7 @@ function createMockRedis() {
 
   return {
     get: vi.fn(async (key: string) => store.get(key) ?? null),
-    set: vi.fn(async (key: string, value: string, ..._args: unknown[]) => {
+    set: vi.fn(async (key: string, value: string) => {
       store.set(key, value);
       return 'OK';
     }),
@@ -304,12 +304,63 @@ describe('createRedisStore', () => {
 
   it('uses default prefix when none provided', async () => {
     const store = createRedisStore({ client: redis });
-    const entry = await store.write({ key: 'k', content: 'test', grade: 'useful' });
+    await store.write({ key: 'k', content: 'test', grade: 'useful' });
 
     const mockRedis = redis as unknown as { set: ReturnType<typeof vi.fn> };
     const setCall = mockRedis.set.mock.calls[0];
     // Key should start with 'harness:memory:'
     expect(setCall[0]).toMatch(/^harness:memory:/);
+  });
+
+  it('logs warning when corrupted JSON entry is encountered during read', async () => {
+    const store = createRedisStore({ client: redis, prefix: 'test' });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    // Write a valid entry, then corrupt it
+    const entry = await store.write({ key: 'k', content: 'original', grade: 'useful' });
+    const mockRedis = redis as unknown as { _store: Map<string, string> };
+    const key = `test:${entry.id}`;
+    mockRedis._store.set(key, '{corrupted json!!!');
+
+    // Reading should return null and log a warning
+    const result = await store.read(entry.id);
+    expect(result).toBeNull();
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[harness-one/redis] Corrupted entry deleted:'),
+      expect.any(SyntaxError),
+    );
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining(entry.id),
+      expect.anything(),
+    );
+
+    warnSpy.mockRestore();
+  });
+
+  it('logs warning with the correct entry ID for corrupted data', async () => {
+    const store = createRedisStore({ client: redis, prefix: 'test' });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    // Write two entries and corrupt only one
+    const entry1 = await store.write({ key: 'a', content: 'good', grade: 'useful' });
+    const entry2 = await store.write({ key: 'b', content: 'bad', grade: 'useful' });
+
+    const mockRedis = redis as unknown as { _store: Map<string, string> };
+    mockRedis._store.set(`test:${entry2.id}`, 'not valid json');
+
+    // Reading the corrupted entry logs a warning
+    await store.read(entry2.id);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0][0]).toContain(entry2.id);
+
+    // Reading the valid entry does not log
+    warnSpy.mockClear();
+    const validResult = await store.read(entry1.id);
+    expect(validResult).not.toBeNull();
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    warnSpy.mockRestore();
   });
 
   it('compact uses batched mget instead of sequential getEntry calls', async () => {

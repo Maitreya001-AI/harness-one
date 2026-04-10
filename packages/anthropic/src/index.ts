@@ -93,13 +93,16 @@ function extractSystem(messages: readonly Message[]): {
 
 /** Map Anthropic's usage response to harness-one's TokenUsage. */
 function toTokenUsage(usage: Anthropic.Usage): TokenUsage {
+  const ext = usage as unknown as Record<string, unknown>;
+  const cacheRead = typeof ext?.cache_read_input_tokens === 'number'
+    ? ext.cache_read_input_tokens : 0;
+  const cacheCreate = typeof ext?.cache_creation_input_tokens === 'number'
+    ? ext.cache_creation_input_tokens : 0;
   return {
     inputTokens: usage.input_tokens,
     outputTokens: usage.output_tokens,
-    cacheReadTokens: typeof (usage as unknown as Record<string, unknown>).cache_read_input_tokens === 'number'
-      ? (usage as unknown as Record<string, number>).cache_read_input_tokens : 0,
-    cacheWriteTokens: typeof (usage as unknown as Record<string, unknown>).cache_creation_input_tokens === 'number'
-      ? (usage as unknown as Record<string, number>).cache_creation_input_tokens : 0,
+    cacheReadTokens: cacheRead,
+    cacheWriteTokens: cacheCreate,
   };
 }
 
@@ -150,6 +153,10 @@ export function createAnthropicAdapter(config: AnthropicAdapterConfig): AgentAda
         ...(params.config?.topP !== undefined && { top_p: params.config.topP }),
         ...(params.config?.stopSequences !== undefined && { stop_sequences: params.config.stopSequences as string[] }),
       }, { signal: params.signal });
+
+      if (!response.content || response.content.length === 0) {
+        throw new Error('Anthropic API returned empty content');
+      }
 
       return {
         message: toHarnessMessage(response),

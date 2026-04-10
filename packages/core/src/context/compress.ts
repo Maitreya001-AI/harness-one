@@ -238,13 +238,13 @@ export async function compactIfNeeded(
     return [...messages];
   }
 
-  return compress(messages, {
-    strategy: options.strategy,
-    budget: options.budget,
-    preserve: options.preserve,
-    summarizer: options.summarizer,
-    windowSize: options.windowSize,
-  });
+  const compressOpts = Object.assign(
+    { strategy: options.strategy, budget: options.budget },
+    options.preserve !== undefined ? { preserve: options.preserve } : {},
+    options.summarizer !== undefined ? { summarizer: options.summarizer } : {},
+    options.windowSize !== undefined ? { windowSize: options.windowSize } : {},
+  ) as CompressOptions;
+  return compress(messages, compressOpts);
 }
 
 function createPreserveFailuresStrategy(): CompressionStrategy {

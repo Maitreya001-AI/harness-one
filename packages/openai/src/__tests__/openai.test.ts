@@ -19,7 +19,7 @@ vi.mock('openai', () => ({
 
 import { createOpenAIAdapter, providers } from '../index.js';
 import type { OpenAIAdapterConfig } from '../index.js';
-import type { Message } from 'harness-one/core';
+import type { Message, StreamChunk } from 'harness-one/core';
 import { HarnessError } from 'harness-one/core';
 
 // ---------------------------------------------------------------------------
@@ -389,12 +389,12 @@ describe('createOpenAIAdapter', () => {
         chunks.push(chunk);
       }
 
-      const textChunks = chunks.filter((c: any) => c.type === 'text_delta');
+      const textChunks = chunks.filter((c: unknown) => (c as StreamChunk).type === 'text_delta');
       expect(textChunks).toHaveLength(2);
-      expect((textChunks[0] as any).text).toBe('Hello');
-      expect((textChunks[1] as any).text).toBe(' World');
+      expect((textChunks[0] as StreamChunk).text).toBe('Hello');
+      expect((textChunks[1] as StreamChunk).text).toBe(' World');
 
-      const doneChunks = chunks.filter((c: any) => c.type === 'done');
+      const doneChunks = chunks.filter((c: unknown) => (c as StreamChunk).type === 'done');
       expect(doneChunks.length).toBeGreaterThanOrEqual(1);
     });
 
@@ -416,7 +416,7 @@ describe('createOpenAIAdapter', () => {
         chunks.push(chunk);
       }
 
-      const textChunks = chunks.filter((c: any) => c.type === 'text_delta');
+      const textChunks = chunks.filter((c: unknown) => (c as StreamChunk).type === 'text_delta');
       expect(textChunks).toHaveLength(1);
     });
 
@@ -456,12 +456,12 @@ describe('createOpenAIAdapter', () => {
         chunks.push(chunk);
       }
 
-      const toolChunks = chunks.filter((c: any) => c.type === 'tool_call_delta');
+      const toolChunks = chunks.filter((c: unknown) => (c as StreamChunk).type === 'tool_call_delta');
       expect(toolChunks).toHaveLength(2);
-      expect((toolChunks[0] as any).toolCall.id).toBe('tc-1');
-      expect((toolChunks[0] as any).toolCall.name).toBe('search');
-      expect((toolChunks[0] as any).toolCall.arguments).toBe('{"q":');
-      expect((toolChunks[1] as any).toolCall.arguments).toBe('"test"}');
+      expect((toolChunks[0] as StreamChunk).toolCall!.id).toBe('tc-1');
+      expect((toolChunks[0] as StreamChunk).toolCall!.name).toBe('search');
+      expect((toolChunks[0] as StreamChunk).toolCall!.arguments).toBe('{"q":');
+      expect((toolChunks[1] as StreamChunk).toolCall!.arguments).toBe('"test"}');
     });
 
     it('accumulates tool call id across delta chunks', async () => {
@@ -503,10 +503,10 @@ describe('createOpenAIAdapter', () => {
         chunks.push(chunk);
       }
 
-      const toolChunks = chunks.filter((c: any) => c.type === 'tool_call_delta');
+      const toolChunks = chunks.filter((c: unknown) => (c as StreamChunk).type === 'tool_call_delta');
       expect(toolChunks).toHaveLength(2);
       // Second chunk should still have the accumulated id
-      expect((toolChunks[1] as any).toolCall.id).toBe('tc-1');
+      expect((toolChunks[1] as StreamChunk).toolCall!.id).toBe('tc-1');
     });
 
     it('emits done with usage and terminates stream on usage chunk', async () => {
@@ -529,14 +529,14 @@ describe('createOpenAIAdapter', () => {
       }
 
       // The done chunk must carry usage data from the usage chunk
-      const doneChunk = chunks.find((c: any) => c.type === 'done') as any;
+      const doneChunk = chunks.find((c: unknown) => (c as StreamChunk).type === 'done') as StreamChunk | undefined;
       expect(doneChunk).toBeDefined();
-      expect(doneChunk.usage).toEqual({ inputTokens: 7, outputTokens: 3 });
+      expect(doneChunk!.usage).toEqual({ inputTokens: 7, outputTokens: 3 });
 
       // No text after the usage chunk should have been emitted
-      const textChunks = chunks.filter((c: any) => c.type === 'text_delta');
+      const textChunks = chunks.filter((c: unknown) => (c as StreamChunk).type === 'text_delta');
       expect(textChunks).toHaveLength(1);
-      expect((textChunks[0] as any).text).toBe('Hi');
+      expect((textChunks[0] as StreamChunk).text).toBe('Hi');
     });
 
     it('always emits a final done event', async () => {
@@ -556,8 +556,55 @@ describe('createOpenAIAdapter', () => {
       }
 
       // The last chunk should always be a 'done' event
-      const lastChunk = chunks[chunks.length - 1] as any;
+      const lastChunk = chunks[chunks.length - 1] as StreamChunk;
       expect(lastChunk.type).toBe('done');
+    });
+
+    it('done event always includes usage even when no usage was captured from stream', async () => {
+      const asyncIter = {
+        async *[Symbol.asyncIterator]() {
+          yield { choices: [{ delta: { content: 'Hello' } }] };
+          yield { choices: [{ delta: { content: ' World' } }] };
+          // No usage chunk at all
+        },
+      };
+      mock.mocks.create.mockResolvedValue(asyncIter);
+
+      const adapter = createOpenAIAdapter({ client: mock.client });
+      const chunks: unknown[] = [];
+      for await (const chunk of adapter.stream!({
+        messages: [{ role: 'user', content: 'Hi' }],
+      })) {
+        chunks.push(chunk);
+      }
+
+      const doneChunk = chunks.find((c: unknown) => (c as StreamChunk).type === 'done') as StreamChunk | undefined;
+      expect(doneChunk).toBeDefined();
+      // Must always have usage with zero-filled defaults
+      expect(doneChunk!.usage).toBeDefined();
+      expect(doneChunk!.usage).toEqual({ inputTokens: 0, outputTokens: 0 });
+    });
+
+    it('done event includes real usage when stream provides it', async () => {
+      const asyncIter = {
+        async *[Symbol.asyncIterator]() {
+          yield { choices: [{ delta: { content: 'Hi' } }] };
+          yield { choices: [{ delta: {} }], usage: { prompt_tokens: 15, completion_tokens: 8 } };
+        },
+      };
+      mock.mocks.create.mockResolvedValue(asyncIter);
+
+      const adapter = createOpenAIAdapter({ client: mock.client });
+      const chunks: unknown[] = [];
+      for await (const chunk of adapter.stream!({
+        messages: [{ role: 'user', content: 'Hi' }],
+      })) {
+        chunks.push(chunk);
+      }
+
+      const doneChunk = chunks.find((c: unknown) => (c as StreamChunk).type === 'done') as StreamChunk | undefined;
+      expect(doneChunk).toBeDefined();
+      expect(doneChunk!.usage).toEqual({ inputTokens: 15, outputTokens: 8 });
     });
   });
 
