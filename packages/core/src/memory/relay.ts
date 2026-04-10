@@ -14,6 +14,15 @@ export interface ContextRelay {
   load(): Promise<RelayState | null>;
   checkpoint(progress: Record<string, unknown>): Promise<void>;
   addArtifact(path: string): Promise<void>;
+  /**
+   * Save relay state with automatic retry on version conflict errors.
+   *
+   * Uses exponential backoff between retries.
+   *
+   * @param state - The relay state to save.
+   * @param options - Retry configuration. Defaults: maxRetries=3, backoffMs=100.
+   */
+  saveWithRetry(state: RelayState, options?: { maxRetries?: number; backoffMs?: number }): Promise<void>;
 }
 
 /** Relay state with optimistic concurrency version. */
@@ -23,6 +32,11 @@ interface VersionedRelayState extends RelayState {
 
 /**
  * Create a cross-context relay backed by a MemoryStore.
+ *
+ * **Single-Writer Pattern (Fix 22):** The relay is designed for single-writer
+ * scenarios. The currentId cache is invalidated on detected conflicts, but
+ * external modifications bypassing the relay may cause stale reads. For
+ * multi-writer scenarios, disable caching or use version-aware reads.
  *
  * @example
  * ```ts
@@ -34,9 +48,12 @@ interface VersionedRelayState extends RelayState {
 export function createRelay(config: {
   store: MemoryStore;
   relayKey?: string;
+  /** Fix 23: Optional callback invoked when corrupt data is detected during load. */
+  onCorruption?: (id: string, error: Error) => void;
 }): ContextRelay {
   const store = config.store;
   const relayKey = config.relayKey ?? '__relay__';
+  const onCorruption = config.onCorruption;
   let currentId: string | null = null;
   let lastKnownVersion: number = 0;
 
@@ -51,10 +68,14 @@ export function createRelay(config: {
           void _v;
           lastKnownVersion = version;
           return { id: entry.id, state: state as RelayState, version };
-        } catch {
+        } catch (err) {
           // Corrupted relay data — log warning, clear cache and treat as missing
           if (typeof console !== 'undefined') {
             console.warn(`[harness-one] Corrupted relay entry skipped: ${entry.id}`);
+          }
+          // Fix 23: Invoke onCorruption callback for visibility into data integrity issues
+          if (onCorruption) {
+            onCorruption(entry.id, err instanceof Error ? err : new Error(String(err)));
           }
           currentId = null;
           return null;
@@ -75,10 +96,14 @@ export function createRelay(config: {
           currentId = entry.id;
           lastKnownVersion = version;
           return { id: entry.id, state: state as RelayState, version };
-        } catch {
+        } catch (err) {
           // Log corruption for observability instead of silent skip
           if (typeof console !== 'undefined') {
             console.warn(`[harness-one] Corrupted relay entry skipped: ${entry.id}`);
+          }
+          // Fix 23: Invoke onCorruption callback for visibility into data integrity issues
+          if (onCorruption) {
+            onCorruption(entry.id, err instanceof Error ? err : new Error(String(err)));
           }
           continue;
         }
@@ -181,6 +206,41 @@ export function createRelay(config: {
         });
         currentId = entry.id;
       }
+    },
+
+    /**
+     * Fix 21: Save relay state with automatic retry on version conflict errors.
+     * Uses exponential backoff between retries.
+     */
+    async saveWithRetry(state, options) {
+      const maxRetries = options?.maxRetries ?? 3;
+      const backoffMs = options?.backoffMs ?? 100;
+
+      let lastError: unknown;
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+          // Re-load to get fresh version before each attempt
+          if (attempt > 0) {
+            await findRelay();
+          }
+          await this.save(state);
+          return;
+        } catch (err) {
+          lastError = err;
+          if (
+            err instanceof HarnessError &&
+            err.code === 'RELAY_CONFLICT' &&
+            attempt < maxRetries
+          ) {
+            // Exponential backoff: backoffMs * 2^attempt
+            const delay = backoffMs * Math.pow(2, attempt);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            continue;
+          }
+          throw err;
+        }
+      }
+      throw lastError;
     },
   };
 }

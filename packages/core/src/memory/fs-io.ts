@@ -17,6 +17,12 @@ export interface Index {
   keys: Record<string, string>; // key -> id
 }
 
+/** Result of a batch unlink operation. */
+export interface BatchUnlinkResult {
+  deleted: string[];
+  failed: Array<{ path: string; error: string }>;
+}
+
 /**
  * Create a file I/O helper bound to a specific directory.
  */
@@ -89,12 +95,36 @@ export function createFileIO(config: { directory: string; indexFile?: string }) 
     return results;
   }
 
-  /** Delete files in parallel batches to avoid fd exhaustion. */
-  async function batchUnlink(paths: string[], batchSize = 50): Promise<void> {
+  // BatchUnlinkResult is exported at module level
+
+  /**
+   * Delete files in parallel batches to avoid fd exhaustion.
+   *
+   * Fix 19: Returns a result object with deleted paths and any failures,
+   * instead of silently swallowing all errors. Callers can inspect failures
+   * and decide how to handle partial deletions.
+   */
+  async function batchUnlink(paths: string[], batchSize = 50): Promise<BatchUnlinkResult> {
+    const deleted: string[] = [];
+    const failed: Array<{ path: string; error: string }> = [];
     for (let i = 0; i < paths.length; i += batchSize) {
       const batch = paths.slice(i, i + batchSize);
-      await Promise.all(batch.map(p => unlink(p).catch(() => {})));
+      const results = await Promise.allSettled(batch.map(p => unlink(p)));
+      for (let j = 0; j < results.length; j++) {
+        if (results[j].status === 'fulfilled') {
+          deleted.push(batch[j]);
+        } else {
+          const err = (results[j] as PromiseRejectedResult).reason;
+          // ENOENT is expected (file already deleted) -- treat as success
+          if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+            deleted.push(batch[j]);
+          } else {
+            failed.push({ path: batch[j], error: String(err) });
+          }
+        }
+      }
     }
+    return { deleted, failed };
   }
 
   /** List all JSON entry files in the directory (excluding the index file). */

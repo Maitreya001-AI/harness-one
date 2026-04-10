@@ -158,6 +158,59 @@ describe('createContextBoundary', () => {
     expect(view.get('config.secret')).toBe('top-secret'); // allowed (no policy)
 
     boundary.setPolicies([{ agent: 'agent-1', denyRead: ['config.'] }]);
-    expect(view.get('config.secret')).toBeUndefined(); // NOW denied
+    // Fix 30: After setPolicies, cache is cleared, new view is created
+    const view2 = boundary.forAgent('agent-1');
+    expect(view2.get('config.secret')).toBeUndefined(); // NOW denied
+  });
+
+  // Fix 30: Cache invalidation on policy change
+  describe('cache invalidation on policy change (Fix 30)', () => {
+    it('setPolicies clears view cache', () => {
+      boundary = createContextBoundary(context, [
+        { agent: 'worker', allowRead: ['shared.'] },
+      ]);
+      const view1 = boundary.forAgent('worker');
+      expect(view1.get('config.secret')).toBeUndefined();
+
+      // Update policies to allow everything
+      boundary.setPolicies([{ agent: 'worker' }]);
+      const view2 = boundary.forAgent('worker');
+      // Cache should be cleared, new view should reflect new policy
+      expect(view2.get('config.secret')).toBe('top-secret');
+      // New view is different from old cached view
+      expect(view1).not.toBe(view2);
+    });
+  });
+
+  // Fix 31: Strict mode
+  describe('strict mode (Fix 31)', () => {
+    it('throws on read violation in strict mode', () => {
+      boundary = createContextBoundary(context, [
+        { agent: 'worker', allowRead: ['shared.'] },
+      ], { strictMode: true });
+      const view = boundary.forAgent('worker');
+
+      expect(() => view.get('config.secret')).toThrow(HarnessError);
+      expect(() => view.get('config.secret')).toThrow(/denied read access/);
+    });
+
+    it('allows reads in advisory mode (default)', () => {
+      boundary = createContextBoundary(context, [
+        { agent: 'worker', allowRead: ['shared.'] },
+      ]);
+      const view = boundary.forAgent('worker');
+
+      // Advisory mode returns undefined instead of throwing
+      expect(view.get('config.secret')).toBeUndefined();
+    });
+
+    it('strict mode still allows valid reads', () => {
+      boundary = createContextBoundary(context, [
+        { agent: 'worker', allowRead: ['shared.'] },
+      ], { strictMode: true });
+      const view = boundary.forAgent('worker');
+
+      expect(view.get('shared.a')).toBe(1);
+    });
   });
 });

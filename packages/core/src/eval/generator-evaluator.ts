@@ -52,6 +52,16 @@ export async function runGeneratorEvaluator(
     const generated = await generate(augmentedInput);
 
     if (generated === null || generated === undefined || generated === '') {
+      // Fix 4: When generator returns empty string, still call evaluate()
+      // to get feedback before the next retry. Only break if it's the last
+      // attempt OR evaluate returns no useful feedback.
+      if (attempt < maxRetries) {
+        const evalResult = await evaluate(input, '');
+        if (evalResult.feedback) {
+          lastFeedback = evalResult.feedback;
+          continue;
+        }
+      }
       return {
         output: '',
         attempts: attempt,

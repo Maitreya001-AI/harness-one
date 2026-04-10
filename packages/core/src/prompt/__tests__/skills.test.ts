@@ -307,6 +307,91 @@ describe('createSkillEngine', () => {
       const engine = createSkillEngine();
       expect(() => engine.registerSkill(twoStageSkill)).not.toThrow();
     });
+
+    it('throws INVALID_TRANSITION_TARGET when transition targets non-existent stage', () => {
+      const skill: SkillDefinition = {
+        id: 'bad-target',
+        name: 'Bad Target',
+        description: 'test',
+        initialStage: 'a',
+        stages: [
+          {
+            id: 'a',
+            name: 'A',
+            prompt: 'A',
+            transitions: [
+              { to: 'nonexistent', condition: { type: 'keyword', keywords: ['go'] } },
+            ],
+          },
+        ],
+      };
+      const engine = createSkillEngine();
+      expect(() => engine.registerSkill(skill)).toThrow(HarnessError);
+      try {
+        engine.registerSkill(skill);
+      } catch (e) {
+        expect((e as HarnessError).code).toBe('INVALID_TRANSITION_TARGET');
+        expect((e as HarnessError).message).toContain('nonexistent');
+      }
+    });
+
+    it('throws INVALID_TRANSITION_TARGET with helpful message showing valid stages', () => {
+      const skill: SkillDefinition = {
+        id: 'bad-target-2',
+        name: 'Bad Target 2',
+        description: 'test',
+        initialStage: 'start',
+        stages: [
+          {
+            id: 'start',
+            name: 'Start',
+            prompt: 'Start',
+            transitions: [
+              { to: 'missing', condition: { type: 'turn_count', count: 1 } },
+            ],
+          },
+          {
+            id: 'end',
+            name: 'End',
+            prompt: 'End',
+            transitions: [],
+          },
+        ],
+      };
+      const engine = createSkillEngine();
+      try {
+        engine.registerSkill(skill);
+        expect.unreachable('should have thrown');
+      } catch (e) {
+        expect((e as HarnessError).code).toBe('INVALID_TRANSITION_TARGET');
+        expect((e as HarnessError).suggestion).toContain('start');
+        expect((e as HarnessError).suggestion).toContain('end');
+      }
+    });
+
+    it('accepts skill where all transition targets are valid', () => {
+      const skill: SkillDefinition = {
+        id: 'valid-targets',
+        name: 'Valid Targets',
+        description: 'test',
+        initialStage: 'a',
+        stages: [
+          {
+            id: 'a',
+            name: 'A',
+            prompt: 'A',
+            transitions: [
+              { to: 'b', condition: { type: 'keyword', keywords: ['next'] } },
+              { to: 'c', condition: { type: 'turn_count', count: 5 } },
+            ],
+          },
+          { id: 'b', name: 'B', prompt: 'B', transitions: [{ to: 'c', condition: { type: 'manual' } }] },
+          { id: 'c', name: 'C', prompt: 'C', transitions: [] },
+        ],
+      };
+      const engine = createSkillEngine();
+      expect(() => engine.registerSkill(skill)).not.toThrow();
+    });
   });
 
   describe('edge cases', () => {

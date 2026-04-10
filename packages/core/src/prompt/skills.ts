@@ -185,6 +185,21 @@ export function createSkillEngine(): SkillEngine {
       for (const stage of skill.stages) {
         stageMap.set(stage.id, stage);
       }
+
+      // Validate all transition targets reference existing stage IDs
+      const stageIds = new Set(stageMap.keys());
+      for (const stage of skill.stages) {
+        for (const transition of stage.transitions) {
+          if (!stageIds.has(transition.to)) {
+            throw new HarnessError(
+              `Stage "${stage.id}" transition targets non-existent stage "${transition.to}"`,
+              'INVALID_TRANSITION_TARGET',
+              `Valid stages: ${[...stageIds].join(', ')}`,
+            );
+          }
+        }
+      }
+
       stageMaps.set(skill.id, stageMap);
 
       skills.set(skill.id, skill);

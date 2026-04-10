@@ -483,6 +483,198 @@ describe('createRelay', () => {
     });
   });
 
+  // Fix 21: saveWithRetry helper
+  describe('saveWithRetry', () => {
+    it('succeeds on first attempt when no conflict', async () => {
+      await relay.saveWithRetry({
+        progress: { step: 1 },
+        artifacts: [],
+        checkpoint: 'cp1',
+        timestamp: 1000,
+      });
+      const loaded = await relay.load();
+      expect(loaded).not.toBeNull();
+      expect(loaded!.progress.step).toBe(1);
+    });
+
+    it('retries on version conflict and eventually succeeds', async () => {
+      // Save initial state
+      await relay.save({
+        progress: { step: 1 },
+        artifacts: [],
+        checkpoint: 'cp1',
+        timestamp: 1000,
+      });
+
+      // Create a second relay that will cause a conflict
+      const relay2 = createRelay({ store });
+      await relay.load();
+      await relay2.load();
+
+      // relay2 bumps the version
+      await relay2.save({
+        progress: { step: 2 },
+        artifacts: [],
+        checkpoint: 'cp2',
+        timestamp: 2000,
+      });
+
+      // relay1 tries saveWithRetry — first attempt should fail (stale version),
+      // but retry should reload and succeed
+      await relay.saveWithRetry({
+        progress: { step: 3 },
+        artifacts: [],
+        checkpoint: 'cp3',
+        timestamp: 3000,
+      }, { maxRetries: 3, backoffMs: 10 });
+
+      const loaded = await relay.load();
+      expect(loaded!.progress.step).toBe(3);
+    });
+
+    it('throws after exhausting all retries', async () => {
+      await relay.save({
+        progress: { step: 1 },
+        artifacts: [],
+        checkpoint: 'cp1',
+        timestamp: 1000,
+      });
+
+      // Keep bumping the version externally so every retry fails
+      const relay2 = createRelay({ store });
+
+      // Load to cache version
+      await relay.load();
+      await relay2.load();
+
+      // Bump version 5 times — more than maxRetries
+      for (let i = 2; i <= 6; i++) {
+        await relay2.save({
+          progress: { step: i },
+          artifacts: [],
+          checkpoint: `cp${i}`,
+          timestamp: i * 1000,
+        });
+      }
+
+      // relay1 has stale version (1), but relay2 has bumped to 6
+      // saveWithRetry with maxRetries=0 should fail immediately
+      await expect(
+        relay.saveWithRetry({
+          progress: { step: 99 },
+          artifacts: [],
+          checkpoint: 'cp99',
+          timestamp: 99000,
+        }, { maxRetries: 0, backoffMs: 10 }),
+      ).rejects.toThrow(HarnessError);
+    });
+
+    it('uses default maxRetries=3 and backoffMs=100', async () => {
+      // Just verify it works with defaults (no options)
+      await relay.saveWithRetry({
+        progress: { step: 1 },
+        artifacts: [],
+        checkpoint: 'cp1',
+        timestamp: 1000,
+      });
+      const loaded = await relay.load();
+      expect(loaded!.progress.step).toBe(1);
+    });
+  });
+
+  // Fix 22: Single-writer pattern documentation
+  describe('single-writer pattern', () => {
+    it('single writer can save and load without conflicts', async () => {
+      await relay.save({
+        progress: { step: 1 },
+        artifacts: [],
+        checkpoint: 'cp1',
+        timestamp: 1000,
+      });
+      await relay.save({
+        progress: { step: 2 },
+        artifacts: [],
+        checkpoint: 'cp2',
+        timestamp: 2000,
+      });
+      const loaded = await relay.load();
+      expect(loaded!.progress.step).toBe(2);
+    });
+  });
+
+  // Fix 23: onCorruption callback
+  describe('onCorruption callback', () => {
+    it('calls onCorruption when cached relay entry has corrupted JSON', async () => {
+      const corruptions: Array<{ id: string; error: Error }> = [];
+      const relayWithCb = createRelay({
+        store,
+        onCorruption: (id, error) => corruptions.push({ id, error }),
+      });
+
+      await relayWithCb.save({
+        progress: { step: 1 },
+        artifacts: [],
+        checkpoint: 'cp1',
+        timestamp: 1000,
+      });
+
+      // Corrupt the entry
+      const entries = await store.query({});
+      const relayEntry = entries.find(e => e.key === '__relay__');
+      await store.update(relayEntry!.id, { content: '{invalid json!!!' });
+
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      await relayWithCb.load();
+      warnSpy.mockRestore();
+
+      expect(corruptions).toHaveLength(1);
+      expect(corruptions[0].id).toBe(relayEntry!.id);
+      expect(corruptions[0].error).toBeInstanceOf(Error);
+    });
+
+    it('calls onCorruption when query-path relay entry has corrupted JSON', async () => {
+      const corruptions: Array<{ id: string; error: Error }> = [];
+      const freshRelay = createRelay({
+        store,
+        relayKey: '__relay__',
+        onCorruption: (id, error) => corruptions.push({ id, error }),
+      });
+
+      // Write corrupted content
+      const entry = await store.write({
+        key: '__relay__',
+        content: 'NOT_VALID_JSON{{{',
+        grade: 'critical',
+        tags: ['__relay__'],
+      });
+
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      await freshRelay.load();
+      warnSpy.mockRestore();
+
+      expect(corruptions).toHaveLength(1);
+      expect(corruptions[0].id).toBe(entry.id);
+    });
+
+    it('does not crash when onCorruption is not provided', async () => {
+      // Default behavior (no callback) still works
+      await relay.save({
+        progress: { step: 1 },
+        artifacts: [],
+        checkpoint: 'cp1',
+        timestamp: 1000,
+      });
+      const entries = await store.query({});
+      const relayEntry = entries.find(e => e.key === '__relay__');
+      await store.update(relayEntry!.id, { content: '{bad' });
+
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const result = await relay.load();
+      warnSpy.mockRestore();
+      expect(result).toBeNull();
+    });
+  });
+
   describe('Fix 5: corrupted relay entry logging', () => {
     it('logs warning when cached relay entry has corrupted JSON', async () => {
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});

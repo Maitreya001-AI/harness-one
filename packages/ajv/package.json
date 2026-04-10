@@ -23,7 +23,13 @@
     "harness-one": "workspace:*"
   },
   "peerDependencies": {
-    "ajv": ">=8.0.0"
+    "ajv": ">=8.0.0",
+    "ajv-formats": ">=3.0.0"
+  },
+  "peerDependenciesMeta": {
+    "ajv-formats": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "ajv": "^8.0.0",

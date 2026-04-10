@@ -171,6 +171,8 @@ export interface HandoffPayload {
   readonly acceptanceCriteria?: readonly string[];
   readonly context?: Readonly<Record<string, unknown>>;
   readonly metadata?: Readonly<Record<string, unknown>>;
+  /** Fix 29: Optional priority for inbox ordering. High-priority handoffs are received first. */
+  readonly priority?: 'high' | 'normal' | 'low';
 }
 
 /** Receipt for a completed handoff send. */

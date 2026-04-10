@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createMiddlewareChain } from '../middleware.js';
 import type { MiddlewareContext } from '../middleware.js';
+import { HarnessError } from '../errors.js';
 
 describe('createMiddlewareChain', () => {
   it('executes handler directly with no middleware', async () => {
@@ -221,5 +222,134 @@ describe('createMiddlewareChain', () => {
 
     await chain.execute({ type: 'tool_call' }, async () => 'ok');
     expect(seenType).toBe('tool_call');
+  });
+
+  describe('Fix 10: Error handling in middleware chain', () => {
+    it('wraps middleware errors in HarnessError with MIDDLEWARE_ERROR code', async () => {
+      const chain = createMiddlewareChain();
+
+      chain.use(async () => {
+        throw new Error('middleware broke');
+      });
+
+      try {
+        await chain.execute({ type: 'chat' }, async () => 'ok');
+        expect.fail('Should have thrown');
+      } catch (err) {
+        expect(err).toBeInstanceOf(HarnessError);
+        expect((err as HarnessError).code).toBe('MIDDLEWARE_ERROR');
+        expect((err as HarnessError).message).toBe('middleware broke');
+        expect((err as HarnessError).cause).toBeInstanceOf(Error);
+      }
+    });
+
+    it('preserves HarnessError thrown from middleware (does not double-wrap)', async () => {
+      const chain = createMiddlewareChain();
+      const original = new HarnessError('custom error', 'CUSTOM_CODE', 'fix it');
+
+      chain.use(async () => {
+        throw original;
+      });
+
+      try {
+        await chain.execute({ type: 'chat' }, async () => 'ok');
+        expect.fail('Should have thrown');
+      } catch (err) {
+        expect(err).toBe(original);
+        expect((err as HarnessError).code).toBe('CUSTOM_CODE');
+      }
+    });
+
+    it('calls onError handler when middleware throws', async () => {
+      const errors: Error[] = [];
+      const chain = createMiddlewareChain({
+        onError: (err) => errors.push(err),
+      });
+
+      chain.use(async () => {
+        throw new Error('logged error');
+      });
+
+      await expect(
+        chain.execute({ type: 'chat' }, async () => 'ok'),
+      ).rejects.toThrow();
+
+      expect(errors).toHaveLength(1);
+      expect(errors[0].message).toBe('logged error');
+    });
+
+    it('calls onError with context when middleware throws', async () => {
+      let capturedCtx: MiddlewareContext | undefined;
+      const chain = createMiddlewareChain({
+        onError: (_err, ctx) => { capturedCtx = ctx; },
+      });
+
+      chain.use(async () => {
+        throw new Error('context error');
+      });
+
+      const ctx: MiddlewareContext = { type: 'tool_call' };
+      await expect(chain.execute(ctx, async () => 'ok')).rejects.toThrow();
+
+      expect(capturedCtx).toBe(ctx);
+    });
+
+    it('wraps non-Error throws in HarnessError', async () => {
+      const chain = createMiddlewareChain();
+
+      chain.use(async () => {
+        throw 'string error';
+      });
+
+      try {
+        await chain.execute({ type: 'chat' }, async () => 'ok');
+        expect.fail('Should have thrown');
+      } catch (err) {
+        expect(err).toBeInstanceOf(HarnessError);
+        expect((err as HarnessError).code).toBe('MIDDLEWARE_ERROR');
+        expect((err as HarnessError).message).toBe('string error');
+      }
+    });
+
+    it('still propagates handler errors through middleware without wrapping', async () => {
+      const chain = createMiddlewareChain();
+
+      chain.use(async (_ctx, next) => {
+        return next();
+      });
+
+      await expect(
+        chain.execute({ type: 'chat' }, async () => {
+          throw new Error('handler error');
+        }),
+      ).rejects.toThrow('handler error');
+    });
+
+    it('first middleware error is caught even when multiple middlewares exist', async () => {
+      const chain = createMiddlewareChain();
+
+      chain.use(async () => {
+        throw new Error('first middleware error');
+      });
+
+      chain.use(async (_ctx, next) => {
+        return next();
+      });
+
+      try {
+        await chain.execute({ type: 'chat' }, async () => 'ok');
+        expect.fail('Should have thrown');
+      } catch (err) {
+        expect(err).toBeInstanceOf(HarnessError);
+        expect((err as HarnessError).message).toBe('first middleware error');
+      }
+    });
+
+    it('backward compatible: works without onError option', async () => {
+      const chain = createMiddlewareChain();
+      const handler = vi.fn().mockResolvedValue('result');
+      const result = await chain.execute({ type: 'chat' }, handler);
+      expect(result).toBe('result');
+    });
   });
 });

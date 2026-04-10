@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createCostTracker } from '../cost-tracker.js';
+import { createCostTracker, KahanSum } from '../cost-tracker.js';
 
 describe('createCostTracker', () => {
   const pricing = [
@@ -444,6 +444,100 @@ describe('createCostTracker', () => {
 
       tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
       expect(handler).not.toHaveBeenCalled();
+    });
+  });
+
+  // Fix 4: getCostByModel uses permanent modelTotals (not affected by buffer eviction)
+  describe('getCostByModel with permanent modelTotals', () => {
+    it('getCostByModel remains consistent after buffer eviction', () => {
+      const tracker = createCostTracker({
+        pricing: [{ model: 'a', inputPer1kTokens: 1.0, outputPer1kTokens: 0 }],
+      });
+
+      // Record 10,001 entries to trigger buffer eviction (maxRecords=10,000)
+      for (let i = 0; i < 10_001; i++) {
+        tracker.recordUsage({ traceId: `t${i}`, model: 'a', inputTokens: 1, outputTokens: 0 });
+      }
+
+      // getCostByModel should reflect ALL recorded usage, not just buffer
+      const byModel = tracker.getCostByModel();
+      // Each record: 1/1000 * 1.0 = 0.001; total = 10,001 * 0.001 = 10.001
+      expect(byModel['a']).toBeCloseTo(10_001 * 0.001, 2);
+    });
+
+    it('getCostByModel tracks multiple models independently', () => {
+      const tracker = createCostTracker({
+        pricing: [
+          { model: 'a', inputPer1kTokens: 1.0, outputPer1kTokens: 0 },
+          { model: 'b', inputPer1kTokens: 2.0, outputPer1kTokens: 0 },
+        ],
+      });
+
+      tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 1000, outputTokens: 0 });
+      tracker.recordUsage({ traceId: 't2', model: 'b', inputTokens: 1000, outputTokens: 0 });
+
+      const byModel = tracker.getCostByModel();
+      expect(byModel['a']).toBeCloseTo(1.0, 4);
+      expect(byModel['b']).toBeCloseTo(2.0, 4);
+    });
+
+    it('getCostByModel is cleared on reset', () => {
+      const tracker = createCostTracker({
+        pricing: [{ model: 'a', inputPer1kTokens: 1.0, outputPer1kTokens: 0 }],
+      });
+
+      tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 1000, outputTokens: 0 });
+      tracker.reset();
+
+      const byModel = tracker.getCostByModel();
+      expect(Object.keys(byModel)).toHaveLength(0);
+    });
+  });
+
+  // Fix 5: KahanSum utility class
+  describe('KahanSum utility', () => {
+    it('accumulates values with high precision', () => {
+      const sum = new KahanSum();
+      for (let i = 0; i < 10000; i++) {
+        sum.add(0.1);
+      }
+      expect(sum.total).toBeCloseTo(1000, 5);
+    });
+
+    it('supports subtraction', () => {
+      const sum = new KahanSum();
+      sum.add(1.0);
+      sum.add(2.0);
+      sum.subtract(1.5);
+      expect(sum.total).toBeCloseTo(1.5, 10);
+    });
+
+    it('reset clears the sum', () => {
+      const sum = new KahanSum();
+      sum.add(42);
+      sum.reset();
+      expect(sum.total).toBe(0);
+    });
+  });
+
+  // Fix 6: setBudget alert timing documentation
+  describe('setBudget alert timing', () => {
+    it('alerts are not re-evaluated immediately on budget change', () => {
+      const handler = vi.fn();
+      const tracker = createCostTracker({ pricing, budget: 100.0 });
+      tracker.onAlert(handler);
+
+      // Record usage that's over a very small budget
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      expect(handler).not.toHaveBeenCalled(); // 0.003 << 100.0
+
+      // Change budget to something very small — alerts NOT fired immediately
+      tracker.setBudget(0.001);
+      expect(handler).not.toHaveBeenCalled();
+
+      // Next recordUsage triggers the alert re-evaluation
+      tracker.recordUsage({ traceId: 't2', model: 'claude-3', inputTokens: 1, outputTokens: 0 });
+      expect(handler).toHaveBeenCalled();
     });
   });
 

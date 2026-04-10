@@ -125,6 +125,49 @@ describe('createEvalRunner', () => {
     });
   });
 
+  // Fix 2: Per-scorer thresholds in checkGate
+  describe('checkGate with per-scorer thresholds', () => {
+    it('fails when a scorer average is below its threshold', () => {
+      const runner = createEvalRunner({
+        scorers: [alwaysPassScorer, alwaysFailScorer],
+        overallPassRate: 0.0, // Low overall so it would pass otherwise
+        scorerThresholds: { 'always-fail': 0.5 },
+      });
+      const gate = runner.checkGate({
+        totalCases: 10,
+        passedCases: 10,
+        failedCases: 0,
+        passRate: 1.0,
+        averageScores: { 'always-pass': 1.0, 'always-fail': 0.2 },
+        results: [],
+        duration: 100,
+        timestamp: Date.now(),
+      });
+      expect(gate.passed).toBe(false);
+      expect(gate.reason).toContain('always-fail');
+      expect(gate.reason).toContain('below threshold');
+    });
+
+    it('passes when all scorer averages meet thresholds', () => {
+      const runner = createEvalRunner({
+        scorers: [alwaysPassScorer],
+        overallPassRate: 0.5,
+        scorerThresholds: { 'always-pass': 0.8 },
+      });
+      const gate = runner.checkGate({
+        totalCases: 10,
+        passedCases: 8,
+        failedCases: 2,
+        passRate: 0.8,
+        averageScores: { 'always-pass': 0.95 },
+        results: [],
+        duration: 100,
+        timestamp: Date.now(),
+      });
+      expect(gate.passed).toBe(true);
+    });
+  });
+
   // H2: EvalRunner only supports sequential execution
   describe('concurrency', () => {
     it('runs cases concurrently when concurrency is set', async () => {
@@ -181,8 +224,9 @@ describe('createEvalRunner', () => {
     });
   });
 
-  describe('edge cases', () => {
-    it('handles scorer that throws an error gracefully', async () => {
+  // Fix 1: Scorer error handling
+  describe('scorer error handling', () => {
+    it('catches individual scorer errors and assigns score 0', async () => {
       const throwingScorer: Scorer = {
         name: 'throwing',
         description: 'Always throws',
@@ -190,12 +234,76 @@ describe('createEvalRunner', () => {
           throw new Error('Scorer exploded');
         },
       };
-      const runner = createEvalRunner({ scorers: [throwingScorer] });
-      await expect(
-        runner.run([{ id: 'c1', input: 'hi' }], async (i) => i),
-      ).rejects.toThrow('Scorer exploded');
+      const runner = createEvalRunner({ scorers: [alwaysPassScorer, throwingScorer], passThreshold: 0.0 });
+      const report = await runner.run(
+        [{ id: 'c1', input: 'hi' }],
+        async (i) => i,
+      );
+
+      expect(report.results[0].scores['throwing']).toBe(0);
+      expect(report.results[0].details['throwing']).toContain('Scorer error');
+      expect(report.results[0].details['throwing']).toContain('Scorer exploded');
+      expect(report.results[0].scores['always-pass']).toBe(1.0);
     });
 
+    it('includes errors field in report when scorer fails', async () => {
+      const throwingScorer: Scorer = {
+        name: 'throwing',
+        description: 'Always throws',
+        async score() {
+          throw new Error('Scorer exploded');
+        },
+      };
+      const runner = createEvalRunner({ scorers: [throwingScorer], passThreshold: 0.0 });
+      const report = await runner.run(
+        [{ id: 'c1', input: 'hi' }],
+        async (i) => i,
+      ) as Record<string, unknown>;
+
+      expect(report.errors).toBeDefined();
+      expect((report.errors as Array<{ scorer: string; error: string }>).length).toBeGreaterThan(0);
+      expect((report.errors as Array<{ scorer: string; error: string }>)[0].scorer).toBe('throwing');
+    });
+
+    it('continues with other scorers when one throws', async () => {
+      const throwingScorer: Scorer = {
+        name: 'throwing',
+        description: 'Always throws',
+        async score() {
+          throw new Error('Scorer exploded');
+        },
+      };
+      const runner = createEvalRunner({
+        scorers: [alwaysPassScorer, throwingScorer, alwaysFailScorer],
+        passThreshold: 0.0,
+      });
+      const report = await runner.run(
+        [{ id: 'c1', input: 'hi' }],
+        async (i) => i,
+      );
+
+      expect(report.results[0].scores['always-pass']).toBe(1.0);
+      expect(report.results[0].scores['throwing']).toBe(0);
+      expect(report.results[0].scores['always-fail']).toBe(0.0);
+    });
+
+    it('runSingle catches scorer errors', async () => {
+      const throwingScorer: Scorer = {
+        name: 'throwing',
+        description: 'Always throws',
+        async score() {
+          throw new Error('Scorer exploded');
+        },
+      };
+      const runner = createEvalRunner({ scorers: [throwingScorer], passThreshold: 0.0 });
+      const result = await runner.runSingle({ id: 'c1', input: 'hi' }, 'output');
+
+      expect(result.scores['throwing']).toBe(0);
+      expect(result.details['throwing']).toContain('Scorer error');
+    });
+  });
+
+  describe('edge cases', () => {
     it('treats NaN score as 0 for pass/fail determination', async () => {
       const nanScorer: Scorer = {
         name: 'nan-scorer',
@@ -264,8 +372,6 @@ describe('createEvalRunner', () => {
       const report = await runner.run(cases, async (input) => `echo: ${input}`);
 
       expect(batchCalled).toBe(true);
-      // Batch scorer returns 0.9, individual returns 0.5
-      // If scoreBatch is used, all scores should be 0.9
       expect(report.results[0].scores['batch-scorer']).toBe(0.9);
       expect(report.results[1].scores['batch-scorer']).toBe(0.9);
     });
@@ -317,10 +423,6 @@ describe('createEvalRunner', () => {
       await expect(
         runner.run(cases, async (i) => i),
       ).rejects.toThrow(HarnessError);
-
-      await expect(
-        runner.run(cases, async (i) => i),
-      ).rejects.toThrow(/scoreBatch\(\) returned 0 results but expected 1/);
     });
 
     it('accepts scoreBatch that returns exactly matching count', async () => {
@@ -364,6 +466,69 @@ describe('createEvalRunner', () => {
 
       expect(report.results[0].scores['individual-scorer']).toBe(0.7);
       expect(report.results[1].scores['individual-scorer']).toBe(0.7);
+    });
+  });
+
+  // Fix 7: Scorers processed in registration order
+  describe('scorer registration order', () => {
+    it('processes scorers in registration order (Fix 7)', async () => {
+      const order: string[] = [];
+      const scorer1: Scorer = {
+        name: 'first',
+        description: 'First scorer',
+        async score() {
+          order.push('first');
+          return { score: 1.0, explanation: 'first' };
+        },
+      };
+      const scorer2: Scorer = {
+        name: 'second',
+        description: 'Second scorer',
+        async score() {
+          order.push('second');
+          return { score: 1.0, explanation: 'second' };
+        },
+      };
+      const scorer3: Scorer = {
+        name: 'third',
+        description: 'Third scorer',
+        async score() {
+          order.push('third');
+          return { score: 1.0, explanation: 'third' };
+        },
+      };
+
+      const runner = createEvalRunner({ scorers: [scorer1, scorer2, scorer3] });
+      await runner.run([{ id: 'c1', input: 'test' }], async (i) => i);
+
+      expect(order).toEqual(['first', 'second', 'third']);
+    });
+  });
+
+  // Fix 3: Batch scorer pre-check
+  describe('batch scorer pre-check (Fix 3)', () => {
+    it('fails fast when batch scorer pre-check returns wrong count', async () => {
+      const badBatchScorer: Scorer = {
+        name: 'bad-batch',
+        description: 'Returns wrong count on pre-check',
+        async score() {
+          return { score: 0.5, explanation: 'individual' };
+        },
+        async scoreBatch(cases) {
+          // Pre-check: return 2 results for 1 input
+          if (cases.length === 1) return [{ score: 0.5, explanation: 'a' }, { score: 0.5, explanation: 'b' }];
+          return cases.map(() => ({ score: 0.5, explanation: 'ok' }));
+        },
+      };
+
+      const runner = createEvalRunner({ scorers: [badBatchScorer] });
+      const cases = [
+        { id: 'c1', input: 'a' },
+        { id: 'c2', input: 'b' },
+        { id: 'c3', input: 'c' },
+      ];
+
+      await expect(runner.run(cases, async (i) => i)).rejects.toThrow(/pre-check failed/);
     });
   });
 });

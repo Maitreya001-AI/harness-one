@@ -33,6 +33,10 @@ export function createCacheMonitor(config?: CacheMonitorConfig): CacheMonitor {
   // Raw data points for time-series and aggregate recomputation
   let rawPoints: RawDataPoint[] = [];
 
+  // Fix 8: Dirty flag for cached metrics — avoids recomputation when nothing changed.
+  let dirty = true;
+  let cachedMetrics: CacheMetrics | null = null;
+
   function evictIfNeeded(): void {
     if (rawPoints.length <= maxRawPoints) return;
     const excess = rawPoints.length - maxRawPoints;
@@ -61,10 +65,18 @@ export function createCacheMonitor(config?: CacheMonitorConfig): CacheMonitor {
         cacheWriteTokens: cacheWrite,
       });
 
+      // Fix 8: Mark metrics as dirty on each record
+      dirty = true;
+
       evictIfNeeded();
     },
 
     getMetrics(): CacheMetrics {
+      // Fix 8: Return cached metrics if nothing changed since last computation
+      if (!dirty && cachedMetrics !== null) {
+        return cachedMetrics;
+      }
+
       // Recompute from raw data to avoid float drift from running subtraction
       const recomputedCalls = rawPoints.length;
       let recomputedHitRateSum = 0;
@@ -81,13 +93,16 @@ export function createCacheMonitor(config?: CacheMonitorConfig): CacheMonitor {
       const estimatedSavings =
         recomputedCacheRead * (inputPrice - cacheReadPrice) / 1000;
 
-      return {
+      cachedMetrics = {
         totalCalls: recomputedCalls,
         avgHitRate,
         totalCacheReadTokens: recomputedCacheRead,
         totalCacheWriteTokens: recomputedCacheWrite,
         estimatedSavings: Math.max(0, estimatedSavings),
       };
+      dirty = false;
+
+      return cachedMetrics;
     },
 
     getTimeSeries(bucketMs = 60_000): readonly CacheMetricsBucket[] {
@@ -127,6 +142,8 @@ export function createCacheMonitor(config?: CacheMonitorConfig): CacheMonitor {
 
     reset(): void {
       rawPoints = [];
+      dirty = true;
+      cachedMetrics = null;
     },
   };
 }

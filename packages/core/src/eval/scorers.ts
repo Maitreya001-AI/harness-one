@@ -9,6 +9,17 @@ import type { Scorer } from './types.js';
 /**
  * Create a relevance scorer that measures keyword overlap between input and output.
  *
+ * **Limitations**:
+ * - This scorer uses keyword-overlap only and has no semantic understanding.
+ *   Synonyms, paraphrases, and contextually relevant responses that don't share
+ *   exact keywords will score poorly.
+ * - Empty input is treated as fully relevant (score 1.0).
+ * - Stopwords are filtered out, so inputs consisting only of stopwords produce
+ *   an empty token set and score 1.0.
+ *
+ * For production use, consider an LLM-based relevance scorer that understands
+ * semantic meaning and can evaluate paraphrased or contextual relevance.
+ *
  * @example
  * ```ts
  * const scorer = createRelevanceScorer();
@@ -40,6 +51,16 @@ export function createRelevanceScorer(): Scorer {
 
 /**
  * Create a faithfulness scorer that checks if output claims are grounded in context.
+ *
+ * **Limitations**:
+ * - Uses keyword overlap, not semantic understanding. Output that paraphrases
+ *   context without using the same words will score poorly.
+ * - Empty output scores 0.0 (no claims to ground).
+ * - When no context is provided, returns 1.0 (faithfulness check is skipped),
+ *   which may mask unfaithful outputs.
+ *
+ * For production use, consider an LLM-based faithfulness scorer that can detect
+ * paraphrased claims, hallucinations, and nuanced grounding issues.
  *
  * @example
  * ```ts
@@ -76,6 +97,16 @@ export function createFaithfulnessScorer(): Scorer {
 
 /**
  * Create a length scorer that checks if output is within token bounds.
+ *
+ * **Limitations**:
+ * - Scoring is binary-like: outputs within bounds score 1.0, outputs outside
+ *   bounds score proportionally (tokens/min or max/tokens), creating a sharp
+ *   cliff rather than a gradual penalty curve.
+ * - Token counting uses simple whitespace tokenization with stopword filtering,
+ *   not a model-specific tokenizer. Actual LLM token counts may differ.
+ *
+ * For production use with precise token counting, provide a custom scorer
+ * that uses the target model's tokenizer.
  *
  * @example
  * ```ts

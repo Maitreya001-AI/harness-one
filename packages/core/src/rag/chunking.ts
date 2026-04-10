@@ -8,8 +8,32 @@ import { HarnessError } from '../core/errors.js';
 import type { ChunkingStrategy, Document, DocumentChunk } from './types.js';
 
 /**
+ * Fix 20: Find the nearest word boundary by searching backward from a position.
+ * Returns the adjusted position that does not split a word.
+ * If no whitespace is found, returns the original position.
+ */
+function findWordBoundary(text: string, position: number): number {
+  if (position >= text.length) return position;
+  // If we're already at a whitespace or the next char is whitespace, no adjustment needed
+  if (position === 0) return position;
+  // Check if we're at a word boundary already
+  if (/\s/.test(text[position]) || /\s/.test(text[position - 1])) return position;
+  // Search backward for nearest whitespace
+  for (let i = position - 1; i > 0; i--) {
+    if (/\s/.test(text[i])) {
+      return i + 1;
+    }
+  }
+  // No whitespace found, return original position to avoid empty chunks
+  return position;
+}
+
+/**
  * Create a fixed-size chunking strategy that splits documents into chunks
  * of `chunkSize` characters with optional overlap.
+ *
+ * Fix 20: When a split point falls mid-word, the boundary is adjusted backward
+ * to the nearest whitespace to avoid splitting words.
  *
  * @example
  * ```ts
@@ -60,7 +84,16 @@ export function createFixedSizeChunking(config: {
       let index = 0;
 
       for (let start = 0; start < content.length; start += step) {
-        const end = Math.min(start + chunkSize, content.length);
+        let end = Math.min(start + chunkSize, content.length);
+
+        // Fix 20: Adjust end to word boundary if mid-word
+        if (end < content.length) {
+          const adjusted = findWordBoundary(content, end);
+          if (adjusted > start) {
+            end = adjusted;
+          }
+        }
+
         chunks.push({
           id: `${document.id}_chunk_${index}`,
           documentId: document.id,
@@ -81,6 +114,9 @@ export function createFixedSizeChunking(config: {
 /**
  * Create a paragraph-based chunking strategy that splits on double newlines.
  *
+ * @param config.splitOnSingleNewline - Fix 21: When true, split on single newlines
+ *   instead of requiring double newlines. Default false for backward compatibility.
+ *
  * @example
  * ```ts
  * const chunking = createParagraphChunking({ maxChunkSize: 500 });
@@ -89,8 +125,11 @@ export function createFixedSizeChunking(config: {
  */
 export function createParagraphChunking(config?: {
   maxChunkSize?: number;
+  /** Fix 21: When true, split on single newlines instead of double newlines. Default false. */
+  splitOnSingleNewline?: boolean;
 }): ChunkingStrategy {
   const maxChunkSize = config?.maxChunkSize;
+  const splitOnSingleNewline = config?.splitOnSingleNewline ?? false;
 
   if (maxChunkSize !== undefined && maxChunkSize <= 0) {
     throw new HarnessError(
@@ -108,8 +147,9 @@ export function createParagraphChunking(config?: {
         return [];
       }
 
-      // Split on double newlines (with optional whitespace between)
-      const paragraphs = content.split(/\n\s*\n/).filter((p) => p.trim().length > 0);
+      // Fix 21: Split on single or double newlines based on config
+      const splitPattern = splitOnSingleNewline ? /\n/ : /\n\s*\n/;
+      const paragraphs = content.split(splitPattern).filter((p) => p.trim().length > 0);
 
       if (paragraphs.length === 0) {
         return [];
@@ -154,6 +194,9 @@ export function createParagraphChunking(config?: {
 /**
  * Create a sliding window chunking strategy with overlapping windows.
  *
+ * Fix 20: When a window boundary falls mid-word, it is adjusted backward
+ * to the nearest whitespace to avoid splitting words.
+ *
  * @example
  * ```ts
  * const chunking = createSlidingWindowChunking({ windowSize: 200, stepSize: 100 });
@@ -194,7 +237,16 @@ export function createSlidingWindowChunking(config: {
       let index = 0;
 
       for (let start = 0; start < content.length; start += stepSize) {
-        const end = Math.min(start + windowSize, content.length);
+        let end = Math.min(start + windowSize, content.length);
+
+        // Fix 20: Adjust end to word boundary if mid-word
+        if (end < content.length) {
+          const adjusted = findWordBoundary(content, end);
+          if (adjusted > start) {
+            end = adjusted;
+          }
+        }
+
         chunks.push({
           id: `${document.id}_chunk_${index}`,
           documentId: document.id,

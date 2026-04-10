@@ -33,31 +33,24 @@ export function createOTelExporter(config?: OTelExporterConfig): TraceExporter {
   const spanMap = new Map<string, OTelSpan>();
   // Track parent relationships for eviction: childId -> parentId
   const spanParentMap = new Map<string, string>();
+  // Track last access time per span for LRU eviction
+  const spanAccessTime = new Map<string, number>();
+
+  function touchSpan(spanId: string): void {
+    spanAccessTime.set(spanId, Date.now());
+  }
 
   function evictSpans(count: number): void {
-    // Build set of span IDs that are parents of other spans
-    const parentIds = new Set<string>();
-    for (const [, parentId] of spanParentMap) {
-      if (spanMap.has(parentId)) parentIds.add(parentId);
-    }
-    // Evict non-parents (leaf spans) first
+    // Sort all spans by lastAccessTime ascending (oldest first) for LRU eviction
+    const sortedEntries = [...spanAccessTime.entries()].sort((a, b) => a[1] - b[1]);
     let evicted = 0;
-    for (const [id] of spanMap) {
+    for (const [id] of sortedEntries) {
       if (evicted >= count) break;
-      if (!parentIds.has(id)) {
-        spanMap.delete(id);
-        spanParentMap.delete(id);
-        evicted++;
-      }
-    }
-    // If still need more, evict parents
-    if (evicted < count) {
-      for (const [id] of spanMap) {
-        if (evicted >= count) break;
-        spanMap.delete(id);
-        spanParentMap.delete(id);
-        evicted++;
-      }
+      if (!spanMap.has(id)) continue;
+      spanMap.delete(id);
+      spanParentMap.delete(id);
+      spanAccessTime.delete(id);
+      evicted++;
     }
   }
 
@@ -65,6 +58,11 @@ export function createOTelExporter(config?: OTelExporterConfig): TraceExporter {
     for (const [key, value] of Object.entries(attrs)) {
       if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
         otelSpan.setAttribute(key, value);
+      } else if (value !== undefined && value !== null) {
+        // Log a debug-level warning for dropped non-primitive attributes
+        if (typeof console !== 'undefined') {
+          console.debug(`Dropping non-primitive attribute '${key}' of type '${typeof value}'`);
+        }
       }
     }
   }
@@ -94,20 +92,38 @@ export function createOTelExporter(config?: OTelExporterConfig): TraceExporter {
         for (const s of harnessTrace.spans) {
           spanMap.delete(s.id);
           spanParentMap.delete(s.id);
+          spanAccessTime.delete(s.id);
         }
       });
     },
 
     async exportSpan(harnessSpan: Span): Promise<void> {
       const parentOTelSpan = harnessSpan.parentId ? spanMap.get(harnessSpan.parentId) : undefined;
+
+      // If parentId was specified but the parent span has been evicted, log a warning
+      // and create the span as a root span (no parent context).
+      if (harnessSpan.parentId && !parentOTelSpan) {
+        if (typeof console !== 'undefined') {
+          console.warn(
+            `[harness-one/opentelemetry] Parent span '${harnessSpan.parentId}' not found (evicted or never exported). ` +
+            `Creating span '${harnessSpan.id}' as a root span.`,
+          );
+        }
+      }
+
       const parentContext = parentOTelSpan
         ? otelTrace.setSpan(otelContext.active(), parentOTelSpan)
         : undefined;
 
       const spanCallback = (otelSpan: OTelSpan) => {
         spanMap.set(harnessSpan.id, otelSpan);
+        touchSpan(harnessSpan.id);
         if (harnessSpan.parentId) {
           spanParentMap.set(harnessSpan.id, harnessSpan.parentId);
+          // Touch the parent span to mark it as recently accessed
+          if (spanAccessTime.has(harnessSpan.parentId)) {
+            touchSpan(harnessSpan.parentId);
+          }
         }
 
         // Safety limit to prevent unbounded growth
@@ -154,6 +170,7 @@ export function createOTelExporter(config?: OTelExporterConfig): TraceExporter {
     async flush(): Promise<void> {
       spanMap.clear();
       spanParentMap.clear();
+      spanAccessTime.clear();
     },
   };
 }

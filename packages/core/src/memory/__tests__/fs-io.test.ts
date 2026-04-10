@@ -184,7 +184,7 @@ describe('createFileIO', () => {
   });
 
   describe('batchUnlink', () => {
-    it('deletes multiple files in batches', async () => {
+    it('deletes multiple files in batches and returns result', async () => {
       const io = createFileIO({ directory: dir });
       const paths: string[] = [];
       for (let i = 0; i < 3; i++) {
@@ -199,15 +199,37 @@ describe('createFileIO', () => {
         await io.writeEntry(entry);
         paths.push(io.entryPath(`del-${i}`));
       }
-      await io.batchUnlink(paths);
+      const result = await io.batchUnlink(paths);
       for (const path of paths) {
         expect(existsSync(path)).toBe(false);
       }
+      // Fix 19: Verify result structure
+      expect(result.deleted).toHaveLength(3);
+      expect(result.failed).toHaveLength(0);
     });
 
-    it('ignores missing files (no throw)', async () => {
+    it('treats missing files (ENOENT) as successful deletion', async () => {
       const io = createFileIO({ directory: dir });
-      await expect(io.batchUnlink(['/tmp/nonexistent-file.json'])).resolves.toBeUndefined();
+      const result = await io.batchUnlink([join(dir, 'nonexistent-file.json')]);
+      // ENOENT counts as deleted (file doesn't exist = mission accomplished)
+      expect(result.deleted).toHaveLength(1);
+      expect(result.failed).toHaveLength(0);
+    });
+
+    it('returns structured result with deleted and failed arrays', async () => {
+      const io = createFileIO({ directory: dir });
+      const entry: MemoryEntry = {
+        id: 'test-del',
+        key: 'k1',
+        content: 'test',
+        grade: 'useful',
+        createdAt: 1000,
+        updatedAt: 1000,
+      };
+      await io.writeEntry(entry);
+      const result = await io.batchUnlink([io.entryPath('test-del')]);
+      expect(result.deleted).toContain(io.entryPath('test-del'));
+      expect(result.failed).toHaveLength(0);
     });
   });
 

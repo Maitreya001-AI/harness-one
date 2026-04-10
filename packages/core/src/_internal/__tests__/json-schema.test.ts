@@ -394,6 +394,61 @@ describe('validateJsonSchema', () => {
     });
   });
 
+  // ─── Fix 9: ReDoS Protection ──────────────────────────────
+
+  describe('Fix 9: ReDoS protection', () => {
+    it('rejects malformed regex patterns gracefully instead of throwing', () => {
+      const schema = { type: 'string', pattern: '(unclosed' };
+      const result = validateJsonSchema(schema, 'test');
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].message).toContain('invalid regular expression');
+    });
+
+    it('rejects patterns exceeding max length', () => {
+      const longPattern = 'a'.repeat(1001);
+      const schema = { type: 'string', pattern: longPattern };
+      const result = validateJsonSchema(schema, 'test');
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].message).toContain('exceeds maximum length');
+    });
+
+    it('rejects alternation overlap patterns like (a|a)*', () => {
+      const schema = { type: 'string', pattern: '(a|a)*' };
+      const result = validateJsonSchema(schema, 'aaa');
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].message).toContain('ReDoS');
+    });
+
+    it('rejects nested quantifier patterns like (a+)+', () => {
+      const schema = { type: 'string', pattern: '(a+)+' };
+      const result = validateJsonSchema(schema, 'aaa');
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].message).toContain('ReDoS');
+    });
+
+    it('rejects patterns with quantified groups containing quantifiers like (a*)*', () => {
+      const schema = { type: 'string', pattern: '(a*)*' };
+      const result = validateJsonSchema(schema, 'aaa');
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].message).toContain('ReDoS');
+    });
+
+    it('accepts safe patterns normally', () => {
+      const schema = { type: 'string', pattern: '^[a-z]+$' };
+      const result = validateJsonSchema(schema, 'hello');
+      expect(result.valid).toBe(true);
+    });
+
+    it('handles pattern with exactly 1000 chars (boundary)', () => {
+      const pattern = '^' + 'a'.repeat(998) + '$';
+      const schema = { type: 'string', pattern };
+      // Should not reject for length (exactly 1000 is allowed)
+      const result = validateJsonSchema(schema, 'test');
+      // Pattern won't match, but it shouldn't be rejected for length
+      expect(result.errors.every(e => !e.message.includes('exceeds maximum length'))).toBe(true);
+    });
+  });
+
   // ─── Edge cases ───────────────────────────────────────────
 
   describe('edge cases', () => {

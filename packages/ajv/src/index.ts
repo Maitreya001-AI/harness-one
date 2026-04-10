@@ -4,6 +4,11 @@
  * Replaces the built-in lightweight validator with full JSON Schema support
  * including $ref, oneOf, anyOf, formats, and custom keywords.
  *
+ * **Note on ajv-formats:** Format validation (email, uri, date-time, etc.)
+ * requires the optional `ajv-formats` package (>= 3.0.0). When not installed,
+ * format keywords are silently ignored. Install it as a peer/optional dependency
+ * to enable format validation.
+ *
  * @module
  */
 
@@ -44,6 +49,24 @@ function formatSuggestion(err: {
 }
 
 /**
+ * Cached result of the lazy ajv-formats ESM dynamic import.
+ * null means the import was attempted and ajv-formats was not found.
+ */
+let formatsLoader: Promise<((ajv: InstanceType<typeof Ajv>) => void) | null> | undefined;
+
+function loadFormats(): Promise<((ajv: InstanceType<typeof Ajv>) => void) | null> {
+  if (!formatsLoader) {
+    formatsLoader = import('ajv-formats')
+      .then((mod) => {
+        const addFormats = typeof mod === 'function' ? mod : (mod.default ?? mod);
+        return typeof addFormats === 'function' ? addFormats : null;
+      })
+      .catch(() => null); // ajv-formats not installed — format validation will be skipped
+  }
+  return formatsLoader;
+}
+
+/**
  * Create a SchemaValidator backed by Ajv, supporting full JSON Schema draft-07+.
  *
  * This replaces the built-in lightweight validator when you need:
@@ -51,6 +74,11 @@ function formatSuggestion(err: {
  * - oneOf / anyOf / allOf combinators
  * - String formats (email, uri, date-time, etc.) when ajv-formats is installed
  * - Custom keywords and vocabularies
+ *
+ * Format loading is lazy: on the first call to `validate()`, the validator
+ * will attempt to dynamically import `ajv-formats` (ESM `import()`) and cache
+ * the result for all subsequent validations. This keeps the factory function
+ * synchronous while avoiding `require()`.
  */
 export function createAjvValidator(options?: AjvValidatorOptions): SchemaValidator {
   const ajv = new Ajv({
@@ -58,20 +86,13 @@ export function createAjvValidator(options?: AjvValidatorOptions): SchemaValidat
     strict: false,
   });
 
-  // Conditionally add format validators if ajv-formats is available
+  // Eagerly kick off the async import when formats are enabled, but don't block
   if (options?.formats !== false) {
-    try {
-      // Dynamic import to avoid hard dependency on ajv-formats
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const addFormats = require('ajv-formats');
-      if (typeof addFormats === 'function') {
+    loadFormats().then((addFormats) => {
+      if (addFormats) {
         addFormats(ajv);
-      } else if (typeof addFormats.default === 'function') {
-        addFormats.default(ajv);
       }
-    } catch {
-      // ajv-formats not installed — format validation will be skipped
-    }
+    });
   }
 
   return {

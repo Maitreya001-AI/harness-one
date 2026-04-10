@@ -47,6 +47,9 @@ export function analyzeCacheStability(
     firstDivergenceIndex = minLen;
   }
 
+  // Compute content overlap ratio regardless of position
+  const contentOverlapRatio = computeContentOverlapRatio(v1, v2);
+
   // If completely equal
   if (firstDivergenceIndex === -1) {
     const totalTokens = countTokens(m, [...v1]);
@@ -54,6 +57,7 @@ export function analyzeCacheStability(
       prefixMatchRatio: 1,
       firstDivergenceIndex: -1,
       stablePrefixTokens: totalTokens,
+      contentOverlapRatio,
       recommendations: [],
     };
   }
@@ -86,8 +90,46 @@ export function analyzeCacheStability(
     prefixMatchRatio,
     firstDivergenceIndex,
     stablePrefixTokens,
+    contentOverlapRatio,
     recommendations,
   };
+}
+
+/**
+ * Compute the ratio of content shared between two message arrays regardless of position.
+ * Uses a multiset approach: each unique message key is counted in both arrays,
+ * and the overlap is the sum of min(countA, countB) / max(totalA, totalB).
+ */
+function computeContentOverlapRatio(
+  v1: readonly Message[],
+  v2: readonly Message[],
+): number {
+  const total = Math.max(v1.length, v2.length);
+  if (total === 0) return 1;
+
+  function messageKey(m: Message): string {
+    return `${m.role}::${m.content}::${m.name ?? ''}`;
+  }
+
+  const counts1 = new Map<string, number>();
+  for (const m of v1) {
+    const k = messageKey(m);
+    counts1.set(k, (counts1.get(k) ?? 0) + 1);
+  }
+
+  const counts2 = new Map<string, number>();
+  for (const m of v2) {
+    const k = messageKey(m);
+    counts2.set(k, (counts2.get(k) ?? 0) + 1);
+  }
+
+  let overlap = 0;
+  for (const [k, c1] of counts1) {
+    const c2 = counts2.get(k) ?? 0;
+    overlap += Math.min(c1, c2);
+  }
+
+  return overlap / total;
 }
 
 function messagesEqual(a: Message, b: Message): boolean {

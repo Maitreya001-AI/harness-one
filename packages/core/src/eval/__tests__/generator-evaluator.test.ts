@@ -218,7 +218,24 @@ describe('runGeneratorEvaluator', () => {
       expect(result.passed).toBe(false);
     });
 
-    it('does not call evaluate when generator returns empty output', async () => {
+    it('calls evaluate for feedback when generator returns empty and retries remain (Fix 4)', async () => {
+      let evaluateCalled = false;
+      const result = await runGeneratorEvaluator(
+        {
+          generate: async () => '',
+          evaluate: async () => {
+            evaluateCalled = true;
+            return { pass: false, feedback: 'Try a different approach' };
+          },
+          maxRetries: 3,
+        },
+        'input',
+      );
+      expect(evaluateCalled).toBe(true);
+      expect(result.passed).toBe(false);
+    });
+
+    it('does not call evaluate when generator returns empty on last attempt', async () => {
       let evaluateCalled = false;
       const result = await runGeneratorEvaluator(
         {
@@ -227,6 +244,7 @@ describe('runGeneratorEvaluator', () => {
             evaluateCalled = true;
             return { pass: true, feedback: '' };
           },
+          maxRetries: 1,
         },
         'input',
       );

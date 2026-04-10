@@ -22,6 +22,10 @@ export interface AuthContext {
  * All arrays and the metadata object are shallow-frozen to prevent
  * accidental mutation.
  *
+ * **Note (Fix 15):** `Object.freeze()` is shallow. Nested objects within
+ * metadata can still be mutated. For deep immutability, deep-clone before
+ * passing or use a deep-freeze utility.
+ *
  * @example
  * ```ts
  * const ctx = createAuthContext({

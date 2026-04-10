@@ -846,3 +846,75 @@ describe('createFirstAvailableStrategy', () => {
     expect(await orch.delegate({ description: 'task2' })).toBe('a2');
   });
 });
+
+// Fix 23: Delegation cycle detection
+describe('delegation cycle detection (Fix 23)', () => {
+  it('detects delegation cycle via metadata', async () => {
+    let callCount = 0;
+    const strategy: DelegationStrategy = {
+      select: () => {
+        callCount++;
+        // First call: delegate to a2
+        // Second call: delegate back to a1 (cycle!)
+        return callCount === 1 ? 'a2' : 'a1';
+      },
+    };
+    const orch = createOrchestrator({ strategy });
+    orch.register('a1', 'Worker1');
+    orch.register('a2', 'Worker2');
+
+    // First delegation: a1 delegates to a2 (no cycle)
+    const result = await orch.delegate({ description: 'task', metadata: { delegatedFrom: 'a1' } });
+    expect(result).toBe('a2');
+
+    // Second delegation: a2 tries to delegate back to a1 (cycle!)
+    await expect(
+      orch.delegate({ description: 'task', metadata: { delegatedFrom: 'a2' } }),
+    ).rejects.toThrow(HarnessError);
+  });
+
+  it('allows non-cyclic delegation chains', async () => {
+    let callCount = 0;
+    const strategy: DelegationStrategy = {
+      select: () => {
+        callCount++;
+        return callCount === 1 ? 'a2' : 'a3';
+      },
+    };
+    const orch = createOrchestrator({ strategy });
+    orch.register('a1', 'Worker1');
+    orch.register('a2', 'Worker2');
+    orch.register('a3', 'Worker3');
+
+    // a1 -> a2 (no cycle)
+    await orch.delegate({ description: 'task', metadata: { delegatedFrom: 'a1' } });
+    // a2 -> a3 (no cycle)
+    const result = await orch.delegate({ description: 'task', metadata: { delegatedFrom: 'a2' } });
+    expect(result).toBe('a3');
+  });
+});
+
+// Fix 34: Wrap onHandlerError
+describe('onHandlerError wrapping (Fix 34)', () => {
+  it('does not block other handlers when onHandlerError throws', () => {
+    const events: OrchestratorEvent[] = [];
+    const orch = createOrchestrator({
+      onHandlerError: () => {
+        throw new Error('Error handler itself throws');
+      },
+    });
+
+    // First handler throws
+    orch.onEvent(() => {
+      throw new Error('Handler error');
+    });
+
+    // Second handler should still execute
+    orch.onEvent((e) => events.push(e));
+
+    orch.register('a1', 'Worker');
+
+    // Second handler should have received the event despite first handler and error handler throwing
+    expect(events.length).toBeGreaterThan(0);
+  });
+});

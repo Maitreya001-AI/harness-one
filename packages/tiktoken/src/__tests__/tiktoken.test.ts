@@ -16,14 +16,22 @@ vi.mock('harness-one/context', () => ({
   registerTokenizer: mockRegisterTokenizer,
 }));
 
-import { createTiktokenTokenizer, registerTiktokenModels, isSupportedTiktokenModel } from '../index.js';
+// We need to reset the module-level cache between tests
+// Import dynamically to allow cache clearing
+let createTiktokenTokenizer: typeof import('../index.js').createTiktokenTokenizer;
+let registerTiktokenModels: typeof import('../index.js').registerTiktokenModels;
+
+beforeEach(async () => {
+  vi.clearAllMocks();
+  mockEncode.mockReturnValue(new Uint32Array([1, 2, 3, 4, 5]));
+  // Re-import to reset module-level cache
+  vi.resetModules();
+  const mod = await import('../index.js');
+  createTiktokenTokenizer = mod.createTiktokenTokenizer;
+  registerTiktokenModels = mod.registerTiktokenModels;
+});
 
 describe('createTiktokenTokenizer', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockEncode.mockReturnValue(new Uint32Array([1, 2, 3, 4, 5]));
-  });
-
   it('creates a tokenizer for a given model', () => {
     const tokenizer = createTiktokenTokenizer('gpt-4');
 
@@ -56,51 +64,63 @@ describe('createTiktokenTokenizer', () => {
     expect(result.length).toBe(0);
   });
 
-  it('throws a clear error for unsupported model names before calling tiktoken', () => {
+  it('throws a clear error when encoding_for_model fails (unsupported model)', () => {
+    mockEncodingForModel.mockImplementationOnce(() => {
+      throw new Error('Unknown model: totally-fake-model');
+    });
     expect(() => createTiktokenTokenizer('totally-fake-model')).toThrow(
-      'Unsupported tiktoken model: "totally-fake-model"'
+      'Unsupported or failed tiktoken model: "totally-fake-model"'
     );
-    // encoding_for_model should NOT have been called because validation rejects early
-    expect(mockEncodingForModel).not.toHaveBeenCalled();
   });
 
-  it('includes the model name in the error message for unsupported models', () => {
-    expect(() => createTiktokenTokenizer('claude-3-opus')).toThrow('claude-3-opus');
-    expect(mockEncodingForModel).not.toHaveBeenCalled();
-  });
-
-  it('lists supported models in the error message', () => {
+  it('includes the model name and original error in the error message', () => {
+    mockEncodingForModel.mockImplementationOnce(() => {
+      throw new Error('no model found');
+    });
     try {
-      createTiktokenTokenizer('invalid-model');
+      createTiktokenTokenizer('claude-3-opus');
     } catch (err) {
-      expect((err as Error).message).toContain('gpt-4');
-      expect((err as Error).message).toContain('gpt-4o');
-      expect((err as Error).message).toContain('gpt-3.5-turbo');
+      expect((err as Error).message).toContain('claude-3-opus');
+      expect((err as Error).message).toContain('no model found');
     }
   });
-});
 
-describe('isSupportedTiktokenModel', () => {
-  it('returns true for known models', () => {
-    expect(isSupportedTiktokenModel('gpt-4')).toBe(true);
-    expect(isSupportedTiktokenModel('gpt-4o')).toBe(true);
-    expect(isSupportedTiktokenModel('gpt-4o-mini')).toBe(true);
-    expect(isSupportedTiktokenModel('gpt-3.5-turbo')).toBe(true);
-    expect(isSupportedTiktokenModel('text-davinci-003')).toBe(true);
+  it('delegates model validation to tiktoken instead of using a hardcoded list', () => {
+    // Any model that tiktoken accepts should work without a hardcoded allowlist
+    createTiktokenTokenizer('gpt-4');
+    expect(mockEncodingForModel).toHaveBeenCalledWith('gpt-4');
+    // No hardcoded list check -- just passes through to encoding_for_model
   });
 
-  it('returns false for unknown models', () => {
-    expect(isSupportedTiktokenModel('claude-3-opus')).toBe(false);
-    expect(isSupportedTiktokenModel('fake-model')).toBe(false);
-    expect(isSupportedTiktokenModel('')).toBe(false);
+  it('caches encoders per model to avoid expensive re-creation', () => {
+    const tokenizer1 = createTiktokenTokenizer('gpt-4');
+    const tokenizer2 = createTiktokenTokenizer('gpt-4');
+
+    // encoding_for_model should only be called once for the same model
+    expect(mockEncodingForModel).toHaveBeenCalledTimes(1);
+    // Both calls should return the same tokenizer instance
+    expect(tokenizer1).toBe(tokenizer2);
+  });
+
+  it('creates separate encoders for different models', () => {
+    createTiktokenTokenizer('gpt-4');
+    createTiktokenTokenizer('gpt-4o');
+
+    expect(mockEncodingForModel).toHaveBeenCalledTimes(2);
+    expect(mockEncodingForModel).toHaveBeenCalledWith('gpt-4');
+    expect(mockEncodingForModel).toHaveBeenCalledWith('gpt-4o');
+  });
+
+  it('registers tokenizer only once per model when cached', () => {
+    createTiktokenTokenizer('gpt-4');
+    createTiktokenTokenizer('gpt-4');
+
+    // registerTokenizer should only be called once for the same model
+    expect(mockRegisterTokenizer).toHaveBeenCalledTimes(1);
   });
 });
 
 describe('registerTiktokenModels', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
   it('registers default models when no argument provided', () => {
     registerTiktokenModels();
 

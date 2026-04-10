@@ -33,6 +33,33 @@ export interface LoggerConfig {
 const LOG_LEVEL_VALUES: Record<LogLevel, number> = { debug: 0, info: 1, warn: 2, error: 3 };
 
 /**
+ * Custom JSON replacer that handles Error objects, Date objects, and
+ * circular references for safe serialization of meta objects.
+ *
+ * - Error objects are serialized as `{ name, message, stack }`.
+ * - Date objects are serialized as ISO 8601 strings.
+ * - Circular references are replaced with the string `"[Circular]"`.
+ */
+export function createSafeReplacer(): (key: string, value: unknown) => unknown {
+  const seen = new WeakSet<object>();
+  return (_key: string, value: unknown): unknown => {
+    if (value instanceof Error) {
+      return { name: value.name, message: value.message, stack: value.stack };
+    }
+    if (value instanceof Date) {
+      return value.toISOString();
+    }
+    if (typeof value === 'object' && value !== null) {
+      if (seen.has(value)) {
+        return '[Circular]';
+      }
+      seen.add(value);
+    }
+    return value;
+  };
+}
+
+/**
  * Creates a structured logger.
  *
  * @example
@@ -56,12 +83,16 @@ export function createLogger(config?: LoggerConfig): Logger {
     function log(level: LogLevel, message: string, meta?: Record<string, unknown>): void {
       if (!shouldLog(level)) return;
       const merged = { ...baseMeta, ...meta };
-      const timestamp = new Date().toISOString();
+      // Fix 10: Store as epoch millis, format only at output time
+      const epochMs = Date.now();
+      // Fix 9: Use safe replacer for Error, Date, and circular reference handling
+      const replacer = createSafeReplacer();
+      const timestamp = new Date(epochMs).toISOString();
       if (json) {
-        output(JSON.stringify({ level, message, timestamp, ...merged }));
+        output(JSON.stringify({ level, message, timestamp, ...merged }, replacer));
       } else {
         const metaKeys = Object.keys(merged);
-        const suffix = metaKeys.length > 0 ? ' ' + JSON.stringify(merged) : '';
+        const suffix = metaKeys.length > 0 ? ' ' + JSON.stringify(merged, replacer) : '';
         output(`[${timestamp}] ${level.toUpperCase()} ${message}${suffix}`);
       }
     }

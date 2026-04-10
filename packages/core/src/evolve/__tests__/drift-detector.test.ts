@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createDriftDetector } from '../drift-detector.js';
+import { HarnessError } from '../../core/errors.js';
 
 describe('createDriftDetector', () => {
   describe('check', () => {
@@ -56,10 +57,15 @@ describe('createDriftDetector', () => {
       expect(bDev?.severity).toBe('high');
     });
 
-    it('returns no drift for unknown component', () => {
+    // Fix 8: Throws when no baseline set
+    it('throws NO_BASELINE error for unknown component', () => {
       const detector = createDriftDetector();
-      const report = detector.check('unknown', { a: 1 });
-      expect(report.driftDetected).toBe(false);
+      expect(() => detector.check('unknown', { a: 1 })).toThrow(HarnessError);
+      try {
+        detector.check('unknown', { a: 1 });
+      } catch (e) {
+        expect((e as HarnessError).code).toBe('NO_BASELINE');
+      }
     });
 
     it('handles deep object comparison', () => {
@@ -215,11 +221,30 @@ describe('createDriftDetector', () => {
       expect(report.driftDetected).toBe(false);
     });
 
-    it('classifies zero baseline with non-zero actual as high', () => {
+    // Fix 9: Zero baseline uses absolute thresholds
+    it('classifies zero baseline with small non-zero actual as low (Fix 9)', () => {
       const detector = createDriftDetector();
       detector.setBaseline('comp-1', { value: 0 });
 
-      const report = detector.check('comp-1', { value: 1 });
+      const report = detector.check('comp-1', { value: 0.5 });
+      expect(report.driftDetected).toBe(true);
+      expect(report.deviations[0].severity).toBe('low');
+    });
+
+    it('classifies zero baseline with medium non-zero actual as medium (Fix 9)', () => {
+      const detector = createDriftDetector();
+      detector.setBaseline('comp-1', { value: 0 });
+
+      const report = detector.check('comp-1', { value: 5 });
+      expect(report.driftDetected).toBe(true);
+      expect(report.deviations[0].severity).toBe('medium');
+    });
+
+    it('classifies zero baseline with large non-zero actual as high (Fix 9)', () => {
+      const detector = createDriftDetector();
+      detector.setBaseline('comp-1', { value: 0 });
+
+      const report = detector.check('comp-1', { value: 100 });
       expect(report.driftDetected).toBe(true);
       expect(report.deviations[0].severity).toBe('high');
     });
@@ -348,7 +373,7 @@ describe('createDriftDetector', () => {
       expect(report2.deviations[0].severity).toBe('high');
     });
 
-    it('zero baseline handling', () => {
+    it('zero baseline handling (Fix 9: absolute thresholds)', () => {
       const detector = createDriftDetector();
       detector.setBaseline('comp-1', { value: 0 });
 
@@ -356,10 +381,10 @@ describe('createDriftDetector', () => {
       const sameReport = detector.check('comp-1', { value: 0 });
       expect(sameReport.driftDetected).toBe(false);
 
-      // When baseline is 0 and actual is non-zero, should be 'high'
+      // Fix 9: When baseline is 0 and actual is 5 (1 <= 5 < 10), should be 'medium'
       const diffReport = detector.check('comp-1', { value: 5 });
       expect(diffReport.driftDetected).toBe(true);
-      expect(diffReport.deviations[0].severity).toBe('high');
+      expect(diffReport.deviations[0].severity).toBe('medium');
     });
 
     it('string value change detection', () => {
@@ -395,6 +420,26 @@ describe('createDriftDetector', () => {
       expect(enabledDev!.actual).toBe(false);
       // Same type (boolean) but different value should be 'medium'
       expect(enabledDev!.severity).toBe('medium');
+    });
+  });
+
+  // Fix 8: hasBaseline method
+  describe('hasBaseline (Fix 8)', () => {
+    it('returns false when no baseline is set', () => {
+      const detector = createDriftDetector();
+      expect(detector.hasBaseline('comp-1')).toBe(false);
+    });
+
+    it('returns true after setBaseline', () => {
+      const detector = createDriftDetector();
+      detector.setBaseline('comp-1', { value: 100 });
+      expect(detector.hasBaseline('comp-1')).toBe(true);
+    });
+
+    it('returns false for different component id', () => {
+      const detector = createDriftDetector();
+      detector.setBaseline('comp-1', { value: 100 });
+      expect(detector.hasBaseline('comp-2')).toBe(false);
     });
   });
 });

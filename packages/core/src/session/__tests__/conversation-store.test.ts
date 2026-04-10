@@ -137,6 +137,22 @@ describe('createInMemoryConversationStore', () => {
     });
   });
 
+  // Fix 14: Document multi-process safety — verify single-process append works correctly
+  describe('single-process append safety', () => {
+    it('sequential appends do not lose messages', async () => {
+      const store = createInMemoryConversationStore();
+      await store.append('s1', { role: 'user', content: 'msg1' });
+      await store.append('s1', { role: 'assistant', content: 'msg2' });
+      await store.append('s1', { role: 'user', content: 'msg3' });
+
+      const loaded = await store.load('s1');
+      expect(loaded).toHaveLength(3);
+      expect(loaded[0].content).toBe('msg1');
+      expect(loaded[1].content).toBe('msg2');
+      expect(loaded[2].content).toBe('msg3');
+    });
+  });
+
   describe('isolation between sessions', () => {
     it('sessions do not interfere with each other', async () => {
       const store = createInMemoryConversationStore();

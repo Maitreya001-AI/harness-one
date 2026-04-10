@@ -269,6 +269,39 @@ describe('createPromptRegistry', () => {
     });
   });
 
+  describe('overwrite behavior (force option)', () => {
+    it('logs a warning when overwriting without force option', () => {
+      const reg = createPromptRegistry();
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      reg.register({ id: 'a', version: '1.0', content: 'Original', variables: [] });
+      reg.register({ id: 'a', version: '1.0', content: 'Overwritten', variables: [] });
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy.mock.calls[0][0]).toContain('Overwriting template');
+      expect(warnSpy.mock.calls[0][0]).toContain('a@1.0');
+      // Overwrite still happens
+      expect(reg.get('a', '1.0')!.content).toBe('Overwritten');
+      warnSpy.mockRestore();
+    });
+
+    it('does not log a warning when overwriting with force=true', () => {
+      const reg = createPromptRegistry();
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      reg.register({ id: 'a', version: '1.0', content: 'Original', variables: [] });
+      reg.register({ id: 'a', version: '1.0', content: 'Overwritten', variables: [] }, { force: true });
+      expect(warnSpy).not.toHaveBeenCalled();
+      expect(reg.get('a', '1.0')!.content).toBe('Overwritten');
+      warnSpy.mockRestore();
+    });
+
+    it('does not log a warning for first registration', () => {
+      const reg = createPromptRegistry();
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      reg.register({ id: 'a', version: '1.0', content: 'First', variables: [] });
+      expect(warnSpy).not.toHaveBeenCalled();
+      warnSpy.mockRestore();
+    });
+  });
+
   describe('semantic version comparison', () => {
     it('treats "1.10" as newer than "1.2" (not lexicographic)', () => {
       const reg = createPromptRegistry();
@@ -635,9 +668,58 @@ describe('createAsyncPromptRegistry', () => {
       const backend = makeBackend({ fetch: fetchFn });
       const reg = createAsyncPromptRegistry(backend);
 
-      await reg.prefetch([]);
+      const result = await reg.prefetch([]);
 
       expect(fetchFn).not.toHaveBeenCalled();
+      expect(result.succeeded).toEqual([]);
+      expect(result.failed).toEqual([]);
+    });
+
+    it('returns succeeded and failed IDs with partial failure handling', async () => {
+      const fetchFn = vi.fn().mockImplementation(async (id: string) => {
+        if (id === 'a') return templateA;
+        if (id === 'bad') throw new Error('Network error');
+        return undefined;
+      });
+      const backend = makeBackend({ fetch: fetchFn });
+      const reg = createAsyncPromptRegistry(backend);
+
+      const result = await reg.prefetch(['a', 'bad']);
+
+      expect(result.succeeded).toContain('a');
+      expect(result.failed).toContain('bad');
+      // 'a' was fetched successfully
+      expect(reg.has('a')).toBe(true);
+    });
+
+    it('does not reject when one prefetch fails (uses allSettled)', async () => {
+      const fetchFn = vi.fn().mockImplementation(async (id: string) => {
+        if (id === 'ok') return templateA;
+        throw new Error('Backend down');
+      });
+      const backend = makeBackend({ fetch: fetchFn });
+      const reg = createAsyncPromptRegistry(backend);
+
+      // Should NOT throw even though 'fail1' and 'fail2' fail
+      const result = await reg.prefetch(['ok', 'fail1', 'fail2']);
+
+      expect(result.succeeded).toEqual(['ok']);
+      expect(result.failed).toEqual(['fail1', 'fail2']);
+    });
+
+    it('returns all succeeded when no failures', async () => {
+      const fetchFn = vi.fn().mockImplementation(async (id: string) => {
+        if (id === 'a') return templateA;
+        if (id === 'b') return templateB;
+        return undefined;
+      });
+      const backend = makeBackend({ fetch: fetchFn });
+      const reg = createAsyncPromptRegistry(backend);
+
+      const result = await reg.prefetch(['a', 'b']);
+
+      expect(result.succeeded).toEqual(['a', 'b']);
+      expect(result.failed).toEqual([]);
     });
   });
 });

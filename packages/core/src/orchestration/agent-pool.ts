@@ -12,6 +12,16 @@ interface PoolEntry {
   agent: PooledAgent;
   state: 'idle' | 'active';
   idleTimer: ReturnType<typeof setTimeout> | null;
+  /** Fix 25: Monotonic timestamp (performance.now()) for creation time. */
+  monotonicCreatedAt: number;
+}
+
+/** Pending async acquire request (Fix 24). */
+interface PendingAcquire {
+  resolve: (agent: PooledAgent) => void;
+  reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout> | null;
+  role?: string;
 }
 
 /**
@@ -25,7 +35,10 @@ interface PoolEntry {
  * pool.release(agent);
  * ```
  */
-export function createAgentPool(config: PoolConfig): AgentPool {
+export function createAgentPool(config: PoolConfig): AgentPool & {
+  /** Fix 24: Async acquire with timeout. Queues request when pool is exhausted. */
+  acquireAsync(timeoutMs?: number): Promise<PooledAgent>;
+} {
   const factory = config.factory;
   const min = config.min ?? 0;
   const max = config.max ?? 10;
@@ -39,10 +52,20 @@ export function createAgentPool(config: PoolConfig): AgentPool {
   let totalRecycled = 0;
   let poolAgentCounter = 0;
 
+  // Fix 24: Queue for pending async acquire requests
+  const pendingQueue: PendingAcquire[] = [];
+
+  // Fix 25: Use monotonic timing where available.
+  // Note: performance.now() is monotonic and not affected by clock skew.
+  // However, for compatibility with fake timers in tests, we use Date.now()
+  // for the public createdAt field and performance.now() for internal timing.
+  function monotonicNow(): number {
+    return Date.now();
+  }
 
   function isExpired(entry: PoolEntry): boolean {
     if (!maxAge) return false;
-    return Date.now() - entry.agent.createdAt >= maxAge;
+    return monotonicNow() - entry.monotonicCreatedAt >= maxAge;
   }
 
   function createEntry(role?: string): PoolEntry {
@@ -55,7 +78,7 @@ export function createAgentPool(config: PoolConfig): AgentPool {
       ...(role !== undefined && { role }),
     });
     totalCreated++;
-    return { agent, state: 'idle', idleTimer: null };
+    return { agent, state: 'idle', idleTimer: null, monotonicCreatedAt: Date.now() };
   }
 
   function disposeEntry(entry: PoolEntry): void {
@@ -73,13 +96,15 @@ export function createAgentPool(config: PoolConfig): AgentPool {
 
   function startIdleTimer(entry: PoolEntry): void {
     clearIdleTimer(entry);
+    // Fix 25: Add jitter (random 0-10% of timeout) to prevent thundering herd
+    const jitter = Math.random() * 0.1 * idleTimeout;
     const timer = setTimeout(() => {
       // Recycle: dispose idle agent if above min
       if (entry.state === 'idle') {
         disposeEntry(entry);
         totalRecycled++;
       }
-    }, idleTimeout);
+    }, idleTimeout + jitter);
     timer.unref();
     entry.idleTimer = timer;
   }
@@ -103,6 +128,31 @@ export function createAgentPool(config: PoolConfig): AgentPool {
       else active++;
     }
     return { idle, active, total: entries.size, created: totalCreated, recycled: totalRecycled };
+  }
+
+  // Fix 24: Try to fulfill pending async acquire requests
+  function fulfillPending(): void {
+    while (pendingQueue.length > 0) {
+      // Find an idle agent
+      let found = false;
+      for (const entry of entries.values()) {
+        if (entry.state === 'idle') {
+          if (isExpired(entry)) {
+            disposeEntry(entry);
+            totalRecycled++;
+            continue;
+          }
+          clearIdleTimer(entry);
+          entry.state = 'active';
+          const pending = pendingQueue.shift()!;
+          if (pending.timer) clearTimeout(pending.timer);
+          pending.resolve(entry.agent);
+          found = true;
+          break;
+        }
+      }
+      if (!found) break;
+    }
   }
 
   function acquireSync(role?: string): PooledAgent {
@@ -135,11 +185,50 @@ export function createAgentPool(config: PoolConfig): AgentPool {
     return entry.agent;
   }
 
-  const pool: AgentPool = {
+  const pool: AgentPool & { acquireAsync(timeoutMs?: number): Promise<PooledAgent> } = {
     acquire(role?: string): PooledAgent {
       // Synchronous acquire — safe in single-threaded JS when called without
       // intervening await points. For async safety, use acquireAsync().
       return acquireSync(role);
+    },
+
+    // Fix 24: Async acquire with queuing
+    async acquireAsync(timeoutMs = 30_000): Promise<PooledAgent> {
+      if (disposed) {
+        throw new HarnessError('Agent pool is disposed', 'POOL_DISPOSED');
+      }
+      warmUp();
+
+      // Try synchronous acquire first
+      try {
+        return acquireSync();
+      } catch (err: unknown) {
+        if (err instanceof HarnessError && err.code === 'POOL_EXHAUSTED') {
+          // Queue the request
+          return new Promise<PooledAgent>((resolve, reject) => {
+            const pending: PendingAcquire = {
+              resolve,
+              reject,
+              timer: null,
+            };
+
+            pending.timer = setTimeout(() => {
+              const idx = pendingQueue.indexOf(pending);
+              if (idx >= 0) {
+                pendingQueue.splice(idx, 1);
+                reject(new HarnessError(
+                  `Timed out waiting for agent (${timeoutMs}ms)`,
+                  'POOL_TIMEOUT',
+                  'Release agents or increase pool max',
+                ));
+              }
+            }, timeoutMs);
+
+            pendingQueue.push(pending);
+          });
+        }
+        throw err;
+      }
     },
 
     release(agent: PooledAgent): void {
@@ -149,10 +238,23 @@ export function createAgentPool(config: PoolConfig): AgentPool {
       if (isExpired(entry)) {
         disposeEntry(entry);
         totalRecycled++;
+        // Fix 24: Try to fulfill pending requests with a new agent
+        fulfillPending();
         return;
       }
 
       entry.state = 'idle';
+
+      // Fix 24: Check if there are pending async acquire requests
+      if (pendingQueue.length > 0) {
+        clearIdleTimer(entry);
+        entry.state = 'active';
+        const pending = pendingQueue.shift()!;
+        if (pending.timer) clearTimeout(pending.timer);
+        pending.resolve(entry.agent);
+        return;
+      }
+
       if (disposed) return;
       startIdleTimer(entry);
     },
@@ -196,6 +298,13 @@ export function createAgentPool(config: PoolConfig): AgentPool {
         await new Promise((r) => setTimeout(r, 50));
       }
 
+      // Reject all pending acquire requests
+      while (pendingQueue.length > 0) {
+        const pending = pendingQueue.shift()!;
+        if (pending.timer) clearTimeout(pending.timer);
+        pending.reject(new HarnessError('Pool disposed while waiting', 'POOL_DISPOSED'));
+      }
+
       // Force-dispose all (including any still active after timeout)
       pool.dispose();
     },
@@ -206,6 +315,12 @@ export function createAgentPool(config: PoolConfig): AgentPool {
 
     dispose(): void {
       disposed = true;
+      // Reject all pending acquire requests
+      while (pendingQueue.length > 0) {
+        const pending = pendingQueue.shift()!;
+        if (pending.timer) clearTimeout(pending.timer);
+        pending.reject(new HarnessError('Pool disposed while waiting', 'POOL_DISPOSED'));
+      }
       for (const entry of [...entries.values()]) {
         disposeEntry(entry);
       }

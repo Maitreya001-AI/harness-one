@@ -23,8 +23,14 @@ export interface TraceManager {
   endTrace(traceId: string, status?: 'completed' | 'error'): void;
   /** Get a trace by ID. */
   getTrace(traceId: string): Trace | undefined;
-  /** Get spans that are still running (not yet ended). Useful for leak detection. */
-  getActiveSpans(): Array<{ id: string; traceId: string; name: string; startTime: number }>;
+  /**
+   * Get spans that are still running (not yet ended). Useful for leak detection.
+   *
+   * @param olderThanMs - When provided, only return spans that have been running
+   *   for longer than this duration (in milliseconds), comparing startTime to
+   *   Date.now(). This helps detect leaked/stale spans.
+   */
+  getActiveSpans(olderThanMs?: number): Array<{ id: string; traceId: string; name: string; startTime: number }>;
   /** Flush all exporters. */
   flush(): Promise<void>;
   /** Dispose: flush all exporters, shut them down, and clear internal state. */
@@ -78,36 +84,72 @@ export function createTraceManager(config?: {
   const spans = new Map<string, MutableSpan>();
   const traceOrder: string[] = []; // For LRU eviction
   let nextId = 1;
+  let isEvicting = false; // Re-entrance guard for eviction (Fix 3)
 
   function genId(): string {
     return `id-${nextId++}-${Date.now().toString(36)}`;
   }
 
-  function evictIfNeeded(): void {
-    // First, evict ended traces that are no longer in traceOrder.
-    // These have already been exported and are safe to remove.
-    if (traces.size > maxTraces) {
-      for (const [id, trace] of traces) {
-        if (traces.size <= maxTraces) break;
-        if (trace.status !== 'running') {
+  /**
+   * Finalize any still-running spans for a trace before eviction.
+   * Ends each running span with 'error' status and an eviction attribute.
+   * Returns the list of evicted span IDs.
+   */
+  function finalizeSpansForEviction(trace: MutableTrace): string[] {
+    const evictedSpanIds: string[] = [];
+    for (const spanId of trace.spanIds) {
+      const span = spans.get(spanId);
+      if (span && span.status === 'running') {
+        span.endTime = Date.now();
+        span.status = 'error';
+        span.attributes['eviction.reason'] = 'trace_evicted';
+        evictedSpanIds.push(spanId);
+      }
+    }
+    return evictedSpanIds;
+  }
+
+  function evictIfNeeded(): string[] {
+    // Re-entrance guard: prevent recursive eviction calls (Fix 3)
+    if (isEvicting) return [];
+    isEvicting = true;
+
+    const allEvictedSpanIds: string[] = [];
+
+    try {
+      // First, evict ended traces that are no longer in traceOrder.
+      // These have already been exported and are safe to remove.
+      if (traces.size > maxTraces) {
+        for (const [id, trace] of traces) {
+          if (traces.size <= maxTraces) break;
+          if (trace.status !== 'running') {
+            // Finalize any still-running spans before removal (Fix 1)
+            allEvictedSpanIds.push(...finalizeSpansForEviction(trace));
+            for (const spanId of trace.spanIds) {
+              spans.delete(spanId);
+            }
+            traces.delete(id);
+          }
+        }
+      }
+      // Then, evict oldest running traces from the LRU order if still over capacity.
+      while (traces.size > maxTraces && traceOrder.length > 0) {
+        const oldestId = traceOrder.shift()!;
+        const trace = traces.get(oldestId);
+        if (trace) {
+          // Finalize any still-running spans before removal (Fix 1)
+          allEvictedSpanIds.push(...finalizeSpansForEviction(trace));
           for (const spanId of trace.spanIds) {
             spans.delete(spanId);
           }
-          traces.delete(id);
+          traces.delete(oldestId);
         }
       }
+    } finally {
+      isEvicting = false;
     }
-    // Then, evict oldest running traces from the LRU order if still over capacity.
-    while (traces.size > maxTraces && traceOrder.length > 0) {
-      const oldestId = traceOrder.shift()!;
-      const trace = traces.get(oldestId);
-      if (trace) {
-        for (const spanId of trace.spanIds) {
-          spans.delete(spanId);
-        }
-        traces.delete(oldestId);
-      }
-    }
+
+    return allEvictedSpanIds;
   }
 
   function toReadonlyTrace(mt: MutableTrace): Trace {
@@ -267,10 +309,16 @@ export function createTraceManager(config?: {
       return toReadonlyTrace(trace);
     },
 
-    getActiveSpans(): Array<{ id: string; traceId: string; name: string; startTime: number }> {
+    getActiveSpans(olderThanMs?: number): Array<{ id: string; traceId: string; name: string; startTime: number }> {
       const active: Array<{ id: string; traceId: string; name: string; startTime: number }> = [];
+      const now = Date.now();
       for (const span of spans.values()) {
         if (span.status === 'running') {
+          // Fix 2: When olderThanMs is provided, only include spans running
+          // longer than the specified duration (stale span detection).
+          if (olderThanMs !== undefined && (now - span.startTime) < olderThanMs) {
+            continue;
+          }
           active.push({ id: span.id, traceId: span.traceId, name: span.name, startTime: span.startTime });
         }
       }

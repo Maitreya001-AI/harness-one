@@ -81,6 +81,41 @@ describe('createCacheMonitor', () => {
     expect(Number.isFinite(metrics.avgHitRate)).toBe(true);
   });
 
+  // Fix 8: Cached getMetrics with dirty flag
+  it('getMetrics returns cached result when no new records', () => {
+    const monitor = createCacheMonitor();
+    monitor.record(makeUsage());
+
+    // First call computes metrics
+    const metrics1 = monitor.getMetrics();
+    // Second call without new records should return same result (cached)
+    const metrics2 = monitor.getMetrics();
+    expect(metrics1).toEqual(metrics2);
+  });
+
+  it('getMetrics recomputes after new record', () => {
+    const monitor = createCacheMonitor();
+    monitor.record(makeUsage({ inputTokens: 1000, cacheReadTokens: 500 }));
+    const metrics1 = monitor.getMetrics();
+    expect(metrics1.totalCalls).toBe(1);
+
+    monitor.record(makeUsage({ inputTokens: 1000, cacheReadTokens: 800 }));
+    const metrics2 = monitor.getMetrics();
+    expect(metrics2.totalCalls).toBe(2);
+    expect(metrics2.avgHitRate).not.toBe(metrics1.avgHitRate);
+  });
+
+  it('getMetrics cache is invalidated on reset', () => {
+    const monitor = createCacheMonitor();
+    monitor.record(makeUsage());
+    const metrics1 = monitor.getMetrics();
+    expect(metrics1.totalCalls).toBe(1);
+
+    monitor.reset();
+    const metrics2 = monitor.getMetrics();
+    expect(metrics2.totalCalls).toBe(0);
+  });
+
   it('evicts old data points beyond limit', () => {
     const monitor = createCacheMonitor({ maxBuckets: 2 });
     // maxBuckets * 10 = 20, so record 25 to trigger eviction

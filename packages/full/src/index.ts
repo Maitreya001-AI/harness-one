@@ -61,6 +61,15 @@ interface HarnessConfigBase {
   /**
    * Tokenizer configuration.
    *
+   * When set to `'tiktoken'`, the global tiktoken model registry is loaded
+   * via `registerTiktokenModels()`, which registers BPE encoders for common
+   * models (gpt-4, gpt-4o, gpt-4o-mini, gpt-3.5-turbo) into harness-one's
+   * global tokenizer registry. This is the only value that triggers automatic
+   * registration.
+   *
+   * Custom tokenizer objects or functions are stored but must be manually
+   * integrated with the AgentLoop. They do not mutate global state.
+   *
    * - `'tiktoken'` — registers tiktoken models globally (legacy behaviour).
    * - A function `(text: string) => number` — used as a custom token-counting
    *   function, avoiding global side-effects entirely.
@@ -232,7 +241,7 @@ export function createHarness(config: HarnessConfig): Harness {
   // consumers via `harness.tokenizer` without any global side-effects.
 
   // 6. Cost tracker
-  const costs = (config.langfuse && createLangfuseCostTracker)
+  const costs = config.langfuse
     ? createLangfuseCostTracker({ client: config.langfuse })
     : createCostTracker();
 

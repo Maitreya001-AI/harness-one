@@ -72,6 +72,21 @@ describe('createAuthContext', () => {
   });
 });
 
+// Fix 15: Document shallow freeze — verify the behavior described in JSDoc
+describe('shallow freeze behavior', () => {
+  it('top-level metadata is frozen', () => {
+    const ctx = createAuthContext({ userId: 'u-1', metadata: { nested: { deep: true } } });
+    expect(Object.isFrozen(ctx.metadata)).toBe(true);
+  });
+
+  it('nested objects within metadata can still be mutated (shallow freeze limitation)', () => {
+    const nested = { deep: true };
+    const ctx = createAuthContext({ userId: 'u-1', metadata: { nested } });
+    // Shallow freeze means nested object is NOT frozen
+    expect(Object.isFrozen(ctx.metadata!.nested)).toBe(false);
+  });
+});
+
 describe('hasRole', () => {
   it('returns true when the role exists', () => {
     const ctx = createAuthContext({ userId: 'u-1', roles: ['admin', 'editor'] });

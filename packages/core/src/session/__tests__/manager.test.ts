@@ -171,6 +171,47 @@ describe('createSessionManager', () => {
       expect(sm.list()).toHaveLength(2);
       sm.dispose();
     });
+
+    // Fix 11: LRU eviction emits distinct 'evicted' event
+    it('emits evicted event with lru_capacity reason before destroyed', () => {
+      const events: SessionEvent[] = [];
+      const sm = createSessionManager({ maxSessions: 2, gcIntervalMs: 0 });
+      sm.onEvent(e => events.push(e));
+      const s1 = sm.create();
+      sm.create();
+      sm.create(); // Should evict s1 via LRU
+
+      // Look for evicted event
+      const evictedEvents = events.filter(e => e.type === 'evicted');
+      expect(evictedEvents).toHaveLength(1);
+      expect(evictedEvents[0].sessionId).toBe(s1.id);
+      expect(evictedEvents[0].reason).toBe('lru_capacity');
+
+      // evicted should come before destroyed for the same session
+      const eventTypes = events
+        .filter(e => e.sessionId === s1.id)
+        .map(e => e.type);
+      const evictedIdx = eventTypes.indexOf('evicted');
+      const destroyedIdx = eventTypes.indexOf('destroyed');
+      expect(evictedIdx).toBeLessThan(destroyedIdx);
+      sm.dispose();
+    });
+
+    it('natural expiry via gc does NOT emit evicted event', () => {
+      const events: SessionEvent[] = [];
+      const sm = createSessionManager({ ttlMs: 1, gcIntervalMs: 0 });
+      sm.create();
+      vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 100);
+      sm.onEvent(e => events.push(e));
+      sm.gc();
+
+      const evictedEvents = events.filter(e => e.type === 'evicted');
+      expect(evictedEvents).toHaveLength(0);
+      // But destroyed should be emitted
+      const destroyedEvents = events.filter(e => e.type === 'destroyed');
+      expect(destroyedEvents).toHaveLength(1);
+      sm.dispose();
+    });
   });
 
   describe('TTL expiration', () => {
@@ -424,6 +465,32 @@ describe('createSessionManager', () => {
     });
   });
 
+  // Fix 12: Lazy expiry behavior verification
+  describe('lazy expiry', () => {
+    it('expired sessions remain in memory until accessed, listed, or gc runs', () => {
+      const sm = createSessionManager({ ttlMs: 1, gcIntervalMs: 0 });
+      const session = sm.create();
+      vi.spyOn(Date, 'now').mockReturnValue(session.createdAt + 100);
+
+      // The session is expired by TTL but still in memory (not yet cleaned up)
+      // Only when we access/get/list/gc does the status change
+      // get() marks it expired
+      const got = sm.get(session.id);
+      expect(got!.status).toBe('expired');
+
+      // But it's still in the list until gc runs
+      expect(sm.list()).toHaveLength(1);
+      expect(sm.list()[0].status).toBe('expired');
+
+      // gc removes it
+      const removed = sm.gc();
+      expect(removed).toBe(1);
+      expect(sm.list()).toHaveLength(0);
+      sm.dispose();
+    });
+  });
+
+  // Fix 13: GC timer unref behavior
   describe('C11: GC timer lifecycle', () => {
     it('dispose clears the GC interval timer', () => {
       const sm = createSessionManager({ gcIntervalMs: 100 });

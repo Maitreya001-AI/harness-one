@@ -512,6 +512,26 @@ describe('createLangfusePromptBackend', () => {
     expect(result).toBeUndefined();
   });
 
+  it('throws when Langfuse prompt is not a string type', async () => {
+    // Langfuse returns a non-string prompt (e.g., a structured/chat prompt object)
+    mock.mocks.getPrompt.mockResolvedValue({
+      prompt: { messages: [{ role: 'system', content: 'You are helpful' }] },
+      version: 1,
+    });
+
+    const backend = createLangfusePromptBackend({ client: mock.client });
+    // The non-string prompt should cause fetch to return undefined
+    // because the error is caught by the outer try/catch
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = await backend.fetch('chat-prompt');
+    expect(result).toBeUndefined();
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to fetch prompt'),
+      expect.stringContaining('not a string type'),
+    );
+    warnSpy.mockRestore();
+  });
+
   it('deduplicates variables', async () => {
     mock.mocks.getPrompt.mockResolvedValue({
       prompt: '{{name}} said hello to {{name}}',
@@ -557,7 +577,7 @@ describe('createLangfusePromptBackend', () => {
     expect(result).toEqual([]);
   });
 
-  it('push throws UNSUPPORTED_OPERATION error', async () => {
+  it('push throws UNSUPPORTED_OPERATION error (read-only adapter)', async () => {
     const backend = createLangfusePromptBackend({ client: mock.client });
     await expect(
       backend.push!({
@@ -567,6 +587,13 @@ describe('createLangfusePromptBackend', () => {
         variables: [],
       }),
     ).rejects.toThrow('Langfuse SDK does not support pushing prompts programmatically');
+
+    // Verify the error includes a hint about using the Langfuse dashboard
+    try {
+      await backend.push!({ id: 'x', version: '1', content: 'x', variables: [] });
+    } catch (err) {
+      expect((err as Error).message).toContain('does not support pushing');
+    }
   });
 });
 
@@ -620,6 +647,23 @@ describe('createLangfuseCostTracker', () => {
         usage: { input: 500, output: 200 },
       }),
     );
+  });
+
+  it('calls flushAsync after recording usage to persist generation', () => {
+    const tracker = createLangfuseCostTracker({ client: mock.client });
+    tracker.setPricing([
+      { model: 'gpt-4', inputPer1kTokens: 0.03, outputPer1kTokens: 0.06 },
+    ]);
+
+    tracker.recordUsage({
+      traceId: 't1',
+      model: 'gpt-4',
+      inputTokens: 500,
+      outputTokens: 200,
+    });
+
+    // flushAsync should be called after each recordUsage to persist the generation
+    expect(mock.mocks.flushAsync).toHaveBeenCalled();
   });
 
   it('tracks cost by model', () => {

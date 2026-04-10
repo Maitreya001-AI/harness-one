@@ -16,35 +16,10 @@ export interface Tokenizer {
 }
 
 /**
- * Known tiktoken-supported model names.
- * Used to validate model strings before casting to TiktokenModel,
- * providing clear error messages at the harness boundary.
+ * Module-level encoder cache. Avoids expensive encoder creation on every call.
+ * Maps model name -> cached Tokenizer instance.
  */
-const KNOWN_TIKTOKEN_MODELS = new Set<string>([
-  'gpt-4',
-  'gpt-4-0314',
-  'gpt-4-0613',
-  'gpt-4-32k',
-  'gpt-4-32k-0314',
-  'gpt-4-32k-0613',
-  'gpt-4o',
-  'gpt-4o-mini',
-  'gpt-3.5-turbo',
-  'gpt-3.5-turbo-0301',
-  'gpt-3.5-turbo-0613',
-  'gpt-3.5-turbo-16k',
-  'gpt-3.5-turbo-16k-0613',
-  'text-davinci-003',
-  'text-davinci-002',
-  'text-embedding-ada-002',
-]);
-
-/**
- * Check whether a model name is a known tiktoken-supported model.
- */
-export function isSupportedTiktokenModel(model: string): model is TiktokenModel {
-  return KNOWN_TIKTOKEN_MODELS.has(model);
-}
+const encoderCache = new Map<string, Tokenizer>();
 
 /** Default models to register when no model list is provided. */
 const DEFAULT_MODELS: string[] = [
@@ -73,23 +48,30 @@ export function registerTiktokenModels(models?: string[]): void {
  * Create a Tokenizer using tiktoken for a specific model and register it
  * with harness-one's tokenizer registry.
  *
+ * Instead of validating against a hardcoded model list, this function
+ * delegates to tiktoken's own `encoding_for_model()` and catches any
+ * errors for unsupported models. This automatically supports new models
+ * as tiktoken updates its registry.
+ *
+ * Encoders are cached per model to avoid expensive recreation on every call.
+ *
  * @param model - The model name (e.g., 'gpt-4', 'gpt-4o').
  * @returns The created Tokenizer instance.
  */
 export function createTiktokenTokenizer(model: string): Tokenizer {
-  if (!isSupportedTiktokenModel(model)) {
-    throw new Error(
-      `Unsupported tiktoken model: "${model}". ` +
-      `Supported models include: ${[...KNOWN_TIKTOKEN_MODELS].join(', ')}.`
-    );
+  // Check encoder cache first
+  const cached = encoderCache.get(model);
+  if (cached) {
+    return cached;
   }
 
   let encoder;
   try {
-    encoder = encoding_for_model(model);
+    encoder = encoding_for_model(model as TiktokenModel);
   } catch (err) {
     throw new Error(
-      `Failed to create tiktoken encoder for model "${model}". ` +
+      `Unsupported or failed tiktoken model: "${model}". ` +
+      `Ensure the model name is valid for tiktoken. ` +
       `Original error: ${err instanceof Error ? err.message : String(err)}`
     );
   }
@@ -100,6 +82,9 @@ export function createTiktokenTokenizer(model: string): Tokenizer {
       return { length: tokens.length };
     },
   };
+
+  // Cache the encoder for subsequent calls
+  encoderCache.set(model, tokenizer);
 
   registerTokenizer(model, tokenizer);
   return tokenizer;

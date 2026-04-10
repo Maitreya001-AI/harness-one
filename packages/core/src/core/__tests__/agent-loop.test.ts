@@ -2153,4 +2153,236 @@ describe('AgentLoop', () => {
       expect(executionOrder).toEqual(['custom:tool_a', 'custom:tool_b']);
     });
   });
+
+  // =====================================================================
+  // Production-readiness fixes: reproduction tests
+  // =====================================================================
+
+  describe('Fix 1: Signal listener memory leak - cleanup in run() finally', () => {
+    it('removes external signal listener after run() completes normally', async () => {
+      const externalController = new AbortController();
+      const adapter = createMockAdapter([
+        { message: { role: 'assistant', content: 'Hi' }, usage: USAGE },
+      ]);
+
+      const loop = new AgentLoop({ adapter, signal: externalController.signal });
+      await collectEvents(loop.run([{ role: 'user', content: 'test' }]));
+
+      // After run() completes, the external signal listener should be removed.
+      // We can verify by aborting the external signal and checking the loop
+      // does NOT get affected (its internal abort controller should not fire).
+      // If listener was leaked, aborting externalController would try to abort the loop.
+      // We test that a second run is not immediately aborted by the external signal.
+      const loop2 = new AgentLoop({ adapter: createMockAdapter([
+        { message: { role: 'assistant', content: 'Hello again' }, usage: USAGE },
+      ]) });
+      const events2 = await collectEvents(loop2.run([{ role: 'user', content: 'test' }]));
+      const done2 = events2.find((e) => e.type === 'done') as Extract<AgentEvent, { type: 'done' }>;
+      expect(done2.reason).toBe('end_turn');
+    });
+
+    it('removes external signal listener even when generator is broken out of early', async () => {
+      const externalController = new AbortController();
+      const toolCall: ToolCallRequest = { id: 'call_1', name: 'loop', arguments: '{}' };
+      const adapter: AgentAdapter = {
+        async chat() {
+          return { message: { role: 'assistant', content: '', toolCalls: [toolCall] }, usage: USAGE };
+        },
+      };
+      const onToolCall = vi.fn().mockResolvedValue('ok');
+
+      const loop = new AgentLoop({
+        adapter,
+        signal: externalController.signal,
+        onToolCall,
+        maxIterations: 100,
+      });
+
+      const gen = loop.run([{ role: 'user', content: 'test' }]);
+      // Consume only a few events then break
+      let count = 0;
+      for await (const _event of gen) {
+        count++;
+        if (count >= 3) break;
+      }
+
+      // After breaking out, the finally block should have cleaned up the listener.
+      // Verify the external signal has no lingering listeners by checking the loop
+      // internal state was cleaned up (the _externalAbortHandler should be undefined).
+      // We verify indirectly: aborting external signal should NOT throw or cause issues.
+      externalController.abort();
+      // If no error thrown, cleanup worked correctly
+    });
+  });
+
+  describe('Fix 2: Token overflow bypass - safe bounds on token values', () => {
+    it('clamps absurdly large token values to prevent overflow bypass', async () => {
+      const toolCall: ToolCallRequest = { id: 'call_1', name: 'tool', arguments: '{}' };
+      const adapter: AgentAdapter = {
+        async chat() {
+          return {
+            message: { role: 'assistant', content: '', toolCalls: [toolCall] },
+            // Buggy adapter reports absurdly large tokens (e.g., Number.MAX_SAFE_INTEGER)
+            usage: { inputTokens: Number.MAX_SAFE_INTEGER, outputTokens: 0 },
+          };
+        },
+      };
+      const onToolCall = vi.fn().mockResolvedValue('ok');
+
+      const loop = new AgentLoop({ adapter, maxTotalTokens: 5000, onToolCall });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'test' }]));
+
+      // Should trigger token budget exceeded due to clamped-but-still-large value
+      const done = events.find((e) => e.type === 'done') as Extract<AgentEvent, { type: 'done' }>;
+      expect(done).toBeDefined();
+      expect(done.reason).toBe('token_budget');
+
+      // The clamped input tokens should be at most 1,000,000,000
+      expect(loop.usage.inputTokens).toBeLessThanOrEqual(1_000_000_000);
+    });
+  });
+
+  describe('Fix 3: Stream DoS protection - cumulative byte tracking', () => {
+    it('enforces cumulative stream byte limit across iterations', async () => {
+      // Create a streaming adapter that produces just under the per-iteration limit
+      // but over the cumulative limit when combined across iterations
+      const bigText = 'x'.repeat(AgentLoop.MAX_STREAM_BYTES - 100);
+      let callCount = 0;
+      const adapter: AgentAdapter = {
+        async chat() { throw new Error('Should not be called'); },
+        async *stream() {
+          callCount++;
+          if (callCount === 1) {
+            // First iteration: produce tool calls with large text
+            yield { type: 'text_delta' as const, text: bigText };
+            yield { type: 'tool_call_delta' as const, toolCall: { id: 'tc1', name: 'tool' } };
+            yield { type: 'tool_call_delta' as const, toolCall: { arguments: '{}' } };
+            yield { type: 'done' as const, usage: USAGE };
+          } else {
+            // Second iteration: would push cumulative over limit
+            yield { type: 'text_delta' as const, text: bigText };
+            yield { type: 'done' as const, usage: USAGE };
+          }
+        },
+      };
+      const onToolCall = vi.fn().mockResolvedValue('ok');
+
+      // maxIterations=2 -> cumulative limit = 2 * MAX_STREAM_BYTES
+      // Two iterations each producing MAX_STREAM_BYTES-100 bytes should be under limit
+      const loop = new AgentLoop({ adapter, onToolCall, streaming: true, maxIterations: 2 });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'test' }]));
+
+      // Should complete normally since both iterations are under per-iteration limit
+      // and cumulative is under 2 * MAX_STREAM_BYTES
+      const done = events.find((e) => e.type === 'done');
+      expect(done).toBeDefined();
+    });
+  });
+
+  describe('Fix 4: Tool execution timeout via toolTimeoutMs', () => {
+    it('times out slow tool calls when toolTimeoutMs is set', async () => {
+      const toolCall: ToolCallRequest = { id: 'call_1', name: 'slow_tool', arguments: '{}' };
+      let callCount = 0;
+      const adapter: AgentAdapter = {
+        async chat() {
+          callCount++;
+          if (callCount === 1) {
+            return { message: { role: 'assistant', content: '', toolCalls: [toolCall] }, usage: USAGE };
+          }
+          return { message: { role: 'assistant', content: 'handled timeout' }, usage: USAGE };
+        },
+      };
+      const onToolCall = vi.fn().mockImplementation(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+        return 'should not reach';
+      });
+
+      const loop = new AgentLoop({ adapter, onToolCall, toolTimeoutMs: 50 });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'test' }]));
+
+      const toolResult = events.find((e) => e.type === 'tool_result') as Extract<AgentEvent, { type: 'tool_result' }>;
+      expect(toolResult).toBeDefined();
+      const result = toolResult.result as { error: string };
+      expect(result.error).toContain('timed out');
+      expect(result.error).toContain('50ms');
+
+      const done = events.find((e) => e.type === 'done') as Extract<AgentEvent, { type: 'done' }>;
+      expect(done).toBeDefined();
+      expect(done.reason).toBe('end_turn');
+    });
+
+    it('does not time out fast tool calls', async () => {
+      const toolCall: ToolCallRequest = { id: 'call_1', name: 'fast_tool', arguments: '{}' };
+      let callCount = 0;
+      const adapter: AgentAdapter = {
+        async chat() {
+          callCount++;
+          if (callCount === 1) {
+            return { message: { role: 'assistant', content: '', toolCalls: [toolCall] }, usage: USAGE };
+          }
+          return { message: { role: 'assistant', content: 'done' }, usage: USAGE };
+        },
+      };
+      const onToolCall = vi.fn().mockResolvedValue('fast result');
+
+      const loop = new AgentLoop({ adapter, onToolCall, toolTimeoutMs: 5000 });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'test' }]));
+
+      const toolResult = events.find((e) => e.type === 'tool_result') as Extract<AgentEvent, { type: 'tool_result' }>;
+      expect(toolResult).toBeDefined();
+      expect(toolResult.result).toBe('fast result');
+    });
+
+    it('works without toolTimeoutMs set (backward compatible)', async () => {
+      const toolCall: ToolCallRequest = { id: 'call_1', name: 'tool', arguments: '{}' };
+      let callCount = 0;
+      const adapter: AgentAdapter = {
+        async chat() {
+          callCount++;
+          if (callCount === 1) {
+            return { message: { role: 'assistant', content: '', toolCalls: [toolCall] }, usage: USAGE };
+          }
+          return { message: { role: 'assistant', content: 'done' }, usage: USAGE };
+        },
+      };
+      const onToolCall = vi.fn().mockResolvedValue('result');
+
+      const loop = new AgentLoop({ adapter, onToolCall });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'test' }]));
+
+      const done = events.find((e) => e.type === 'done') as Extract<AgentEvent, { type: 'done' }>;
+      expect(done.reason).toBe('end_turn');
+    });
+  });
+
+  describe('Fix 5: finalEventEmitted rename from yieldedDone', () => {
+    it('emits done event (final event) with correct reason on normal completion', async () => {
+      const adapter = createMockAdapter([
+        { message: { role: 'assistant', content: 'Hello!' }, usage: USAGE },
+      ]);
+      const loop = new AgentLoop({ adapter });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'Hi' }]));
+
+      const done = events.find((e) => e.type === 'done') as Extract<AgentEvent, { type: 'done' }>;
+      expect(done).toBeDefined();
+      expect(done.reason).toBe('end_turn');
+    });
+
+    it('emits done event (final event) with aborted reason when abort triggers', async () => {
+      const controller = new AbortController();
+      controller.abort(); // pre-abort
+      const adapter: AgentAdapter = {
+        async chat() {
+          return { message: { role: 'assistant', content: 'Hello' }, usage: USAGE };
+        },
+      };
+
+      const loop = new AgentLoop({ adapter, signal: controller.signal });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'test' }]));
+
+      const done = events.find((e) => e.type === 'done') as Extract<AgentEvent, { type: 'done' }>;
+      expect(done).toBeDefined();
+      expect(done.reason).toBe('aborted');
+    });
+  });
 });

@@ -11,6 +11,15 @@ import { validateJsonSchema } from '../_internal/json-schema.js';
 /**
  * Create a guardrail that validates content as JSON against a schema.
  *
+ * This validator supports basic JSON Schema validation including: type checking,
+ * required properties, enum, minimum/maximum, minLength/maxLength, pattern,
+ * and nested object/array validation.
+ *
+ * **$ref / $defs support:** Schemas using `$ref`, `$defs`, or other composition
+ * features (allOf, anyOf, oneOf) must be pre-flattened before use. These keywords
+ * are accepted in the schema type but are **not enforced** during validation.
+ * For full JSON Schema support including `$ref` resolution, use `@harness-one/ajv`.
+ *
  * @example
  * ```ts
  * const validator = createSchemaValidator({ type: 'object', properties: { name: { type: 'string' } }, required: ['name'] });
@@ -35,8 +44,8 @@ export function createSchemaValidator(
       if (redactErrors) {
         const messages = result.errors.map((e) => {
           const path = e.path || '(root)';
-          // Redact field names: replace the last segment after the last dot with [REDACTED]
-          const redactedPath = path.replace(/\.([^.[]+)$/, '.[REDACTED]');
+          // Redact ALL path segments after the first to prevent leaking internal schema structure
+          const redactedPath = path.split('.').map((seg, i) => i === 0 ? seg : '[REDACTED]').join('.');
           // Redact specific field names from the message
           const redactedMessage = e.message
             .replace(/Property "([^"]+)"/g, 'Required field')

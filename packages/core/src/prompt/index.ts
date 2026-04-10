@@ -18,7 +18,7 @@ export type { PromptBuilder } from './builder.js';
 export { createPromptBuilder } from './builder.js';
 
 // Registry
-export type { PromptRegistry, AsyncPromptRegistry } from './registry.js';
+export type { PromptRegistry, AsyncPromptRegistry, RegisterOptions } from './registry.js';
 export { createPromptRegistry, createAsyncPromptRegistry } from './registry.js';
 
 // Skills

@@ -49,6 +49,8 @@ export function createPromptBuilder(config?: {
   // Avoids recomputing sorted layers and token counts when nothing changed.
   let dirty = true;
   let cachedResult: AssembledPrompt | undefined;
+  // Cached stable prefix hash — invalidated when dirty
+  let cachedPrefixHash: string | undefined;
 
   function estimateTokens(text: string): number {
     return estimateTokensInternal(model, text);
@@ -78,17 +80,20 @@ export function createPromptBuilder(config?: {
     addLayer(layer: PromptLayer): void {
       layers.set(layer.name, Object.freeze({ ...layer }));
       dirty = true;
+      cachedPrefixHash = undefined;
     },
 
     removeLayer(name: string): void {
       layers.delete(name);
       dirty = true;
+      cachedPrefixHash = undefined;
     },
 
     setVariable(key: string, value: string): void {
       if (variables.get(key) !== value) {
         variables.set(key, value);
         dirty = true;
+        cachedPrefixHash = undefined;
       }
     },
 
@@ -172,12 +177,16 @@ export function createPromptBuilder(config?: {
     },
 
     getStablePrefixHash(): string {
+      if (cachedPrefixHash !== undefined && !dirty) {
+        return cachedPrefixHash;
+      }
       const sorted = getSortedLayers();
       const cacheableContent = sorted
         .filter(l => l.cacheable)
         .map(l => l.content)
         .join(separator);
-      return hashString(cacheableContent);
+      cachedPrefixHash = hashString(cacheableContent);
+      return cachedPrefixHash;
     },
   };
 }

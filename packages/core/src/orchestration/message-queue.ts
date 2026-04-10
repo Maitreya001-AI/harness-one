@@ -1,12 +1,21 @@
 /**
  * Message queue management for agent orchestration.
  *
- * Provides per-agent bounded message queues with drop-oldest overflow policy,
- * backpressure signaling via callbacks and events.
+ * Provides per-agent bounded message queues with configurable overflow policy:
+ * - Default (backpressure=false): drop-oldest overflow policy with backpressure
+ *   signaling via callbacks and events.
+ * - Backpressure mode (backpressure=true): reject the send with 'QUEUE_FULL'
+ *   error, letting the sender decide whether to retry or buffer.
+ *
+ * Message ordering is FIFO per sender-receiver pair within a single process.
+ * No ordering guarantees across processes or network boundaries. For total
+ * ordering in distributed systems, use Lamport clocks or a centralized
+ * message broker. (Fix 27)
  *
  * @module
  */
 
+import { HarnessError } from '../core/errors.js';
 import type { AgentMessage } from './types.js';
 
 /** Callback for when messages are dropped due to queue overflow. */
@@ -24,24 +33,36 @@ export interface MessageQueueConfig {
   readonly maxQueueSize?: number;
   readonly onWarning?: QueueWarningHandler;
   readonly onEvent?: QueueEventEmitter;
+  /**
+   * Fix 26: When true, reject sends with 'QUEUE_FULL' error instead of
+   * dropping oldest messages. The sender can then decide to retry or buffer.
+   * Default: false (backward compatible drop-oldest behavior).
+   */
+  readonly backpressure?: boolean;
 }
 
 /**
  * Per-agent message queue manager.
  *
- * Handles bounded queue enforcement with drop-oldest overflow policy:
- * when a queue is full, the oldest message is removed to make room for the new one.
+ * Handles bounded queue enforcement with configurable overflow policy.
+ *
+ * **Ordering guarantees** (Fix 27): Message ordering is FIFO per sender-receiver
+ * pair within a single process. No ordering guarantees across processes or
+ * network boundaries. For total ordering in distributed systems, use Lamport
+ * clocks or a centralized message broker.
  */
 export class MessageQueue {
   private readonly queues = new Map<string, AgentMessage[]>();
   private readonly maxQueueSize: number;
   private readonly onWarning: QueueWarningHandler | undefined;
   private readonly onEvent: QueueEventEmitter | undefined;
+  private readonly backpressure: boolean;
 
   constructor(config?: MessageQueueConfig) {
     this.maxQueueSize = config?.maxQueueSize ?? 1000;
     this.onWarning = config?.onWarning;
     this.onEvent = config?.onEvent;
+    this.backpressure = config?.backpressure ?? false;
   }
 
   /** Create a queue for an agent. */
@@ -62,8 +83,11 @@ export class MessageQueue {
   /**
    * Push a message to an agent's queue. Returns true if accepted.
    *
-   * When the queue is at capacity, the oldest message is dropped to make room,
-   * and a warning/event is emitted for backpressure signaling.
+   * When the queue is at capacity:
+   * - **backpressure=false** (default): The oldest message is dropped to make room,
+   *   and a warning/event is emitted for backpressure signaling.
+   * - **backpressure=true** (Fix 26): Throws HarnessError with code 'QUEUE_FULL'
+   *   instead of dropping. The sender can then decide to retry or buffer.
    *
    * Thread-safety note: The check-then-modify pattern below (read queue.length,
    * then shift + push) is safe because JavaScript is single-threaded and this
@@ -78,6 +102,15 @@ export class MessageQueue {
     if (!queue) return false;
 
     if (queue.length >= this.maxQueueSize) {
+      // Fix 26: Backpressure mode rejects instead of dropping
+      if (this.backpressure) {
+        throw new HarnessError(
+          `Queue full for agent "${agentId}" (maxQueueSize: ${this.maxQueueSize})`,
+          'QUEUE_FULL',
+          'Wait for messages to be consumed or increase maxQueueSize',
+        );
+      }
+
       // Drop oldest to make room (drop-oldest overflow policy)
       const droppedCount = 1;
       queue.shift();
@@ -102,6 +135,9 @@ export class MessageQueue {
 
   /**
    * Get messages for an agent, with optional filtering.
+   *
+   * Messages are returned in FIFO order (oldest first). Filtering by type
+   * or timestamp preserves this ordering.
    */
   getMessages(agentId: string, options?: { type?: AgentMessage['type']; since?: number }): AgentMessage[] {
     const queue = this.queues.get(agentId);

@@ -9,6 +9,12 @@ import type { Guardrail, GuardrailContext } from './types.js';
 /**
  * Run content through guardrails with automatic retry and regeneration.
  *
+ * **Early break behavior:** Self-healing breaks on the first guardrail failure
+ * in each attempt and does not run remaining guardrails. This is intentional for
+ * efficiency -- the retry prompt addresses the first failure, and subsequent
+ * guardrails are re-evaluated on the next attempt. Users should be aware that
+ * only the first failing guardrail's reason is passed to `buildRetryPrompt`.
+ *
  * @example
  * ```ts
  * const result = await withSelfHealing({
@@ -87,6 +93,9 @@ export async function withSelfHealing(
       }
     }
 
+    // Track retry prompt tokens in the budget before attempting regeneration
+    const retryPromptTokens = estimateTokens ? estimateTokens(retryPrompt) : 0;
+
     try {
       content = await Promise.race([
         config.regenerate(retryPrompt),
@@ -101,6 +110,10 @@ export async function withSelfHealing(
       // Don't swallow regenerate() errors — include them in failure context
       const _errorMessage = err instanceof Error ? err.message : String(err);
       void _errorMessage; // preserved for debugging/logging
+      // Count the retry prompt tokens even on failure so the budget is accurate
+      if (estimateTokens && totalTokens !== undefined) {
+        totalTokens += retryPromptTokens;
+      }
       return {
         content,
         attempts: attempt,

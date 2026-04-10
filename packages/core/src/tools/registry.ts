@@ -94,25 +94,30 @@ export function createRegistry(config?: {
   }
 
   async function execute(call: ToolCallRequest): Promise<ToolResult> {
-    // Rate limiting
-    if (turnCalls >= maxPerTurn) {
+    // Atomic rate limiting: increment FIRST, then check limits.
+    // This prevents TOCTOU races where concurrent calls both pass the check
+    // before either increments.
+    turnCalls++;
+    sessionCalls++;
+
+    if (turnCalls > maxPerTurn) {
+      turnCalls--;
+      sessionCalls--;
       return toolError(
         `Exceeded max calls per turn (${maxPerTurn})`,
         'validation',
         'Wait for the next turn or reduce tool calls',
       );
     }
-    if (sessionCalls >= maxPerSession) {
+    if (sessionCalls > maxPerSession) {
+      turnCalls--;
+      sessionCalls--;
       return toolError(
         `Exceeded max calls per session (${maxPerSession})`,
         'validation',
         'Start a new session or reduce tool calls',
       );
     }
-
-    // Reserve slot immediately to prevent TOCTOU races on concurrent execute() calls.
-    turnCalls++;
-    sessionCalls++;
 
     // Lookup
     const tool = tools.get(call.name);
@@ -166,31 +171,34 @@ export function createRegistry(config?: {
       );
     }
 
-    // Execute with optional timeout
+    // Execute with optional timeout using a simple timer promise pattern
+    // that avoids listener leaks by not attaching abort signal listeners.
     if (timeoutMs !== undefined) {
       const ac = new AbortController();
-      const timer = setTimeout(() => ac.abort(), timeoutMs);
+      let timer: ReturnType<typeof setTimeout> | undefined;
       try {
+        const timeoutPromise = new Promise<ToolResult>((resolve) => {
+          timer = setTimeout(() => {
+            ac.abort();
+            resolve(
+              toolError(
+                `Tool "${call.name}" timed out after ${timeoutMs}ms`,
+                'timeout',
+                'Consider increasing the timeout or optimizing the tool',
+                true,
+              ),
+            );
+          }, timeoutMs);
+        });
+
         const result = await Promise.race([
           tool.execute(params, ac.signal),
-          new Promise<ToolResult>((resolve) => {
-            ac.signal.addEventListener('abort', () => {
-              resolve(
-                toolError(
-                  `Tool "${call.name}" timed out after ${timeoutMs}ms`,
-                  'timeout',
-                  'Consider increasing the timeout or optimizing the tool',
-                  true,
-                ),
-              );
-            }, { once: true });
-          }),
+          timeoutPromise,
         ]);
         return result;
       } finally {
-        clearTimeout(timer);
-        // Abort the controller to fire and clean up any pending listeners,
-        // preventing listener accumulation on the abort signal.
+        if (timer !== undefined) clearTimeout(timer);
+        // Abort the controller to cancel any in-flight tool work
         ac.abort();
       }
     }

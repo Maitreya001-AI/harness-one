@@ -27,6 +27,8 @@ export interface TokenBudget {
   readonly responseReserve: number;
   remaining(segmentName: string): number;
   allocate(segmentName: string, tokens: number): void;
+  /** Try to allocate tokens; returns true if successful, false if it would overflow. Does not throw. */
+  tryAllocate(segmentName: string, tokens: number): boolean;
   reset(segmentName: string): void;
   needsTrimming(): boolean;
   trimOrder(): Array<{ segment: string; trimBy: number; priority: number }>;
@@ -80,6 +82,8 @@ export interface CacheStabilityReport {
   readonly prefixMatchRatio: number;
   readonly firstDivergenceIndex: number;
   readonly stablePrefixTokens: number;
+  /** Ratio of content shared between two arrays regardless of position (0-1). */
+  readonly contentOverlapRatio: number;
   readonly recommendations: string[];
 }
 

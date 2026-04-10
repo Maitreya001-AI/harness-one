@@ -1,6 +1,13 @@
 /**
  * Advisory access control boundary on SharedContext.
  *
+ * Supports two modes:
+ * - **Advisory mode** (default, strictMode=false): Read violations return undefined,
+ *   write violations throw HarnessError. Violations are recorded but reads are silent.
+ * - **Strict mode** (strictMode=true, Fix 31): Both read and write violations throw
+ *   HarnessError. Use strict mode when you want hard enforcement rather than advisory
+ *   access control.
+ *
  * @module
  */
 
@@ -13,6 +20,15 @@ import type {
 } from './types.js';
 
 const MAX_VIOLATIONS = 1000;
+
+/** Configuration for context boundary behavior. */
+export interface ContextBoundaryConfig {
+  /**
+   * Fix 31: When true, read violations throw errors instead of returning undefined.
+   * Default: false (advisory mode).
+   */
+  readonly strictMode?: boolean;
+}
 
 /**
  * Create a BoundedContext that enforces advisory access control
@@ -29,10 +45,12 @@ const MAX_VIOLATIONS = 1000;
 export function createContextBoundary(
   context: SharedContext,
   policies?: readonly BoundaryPolicy[],
+  boundaryConfig?: ContextBoundaryConfig,
 ): BoundedContext {
   let policyMap = new Map<string, BoundaryPolicy>();
   const violations: BoundaryViolation[] = [];
   const viewCache = new Map<string, SharedContext>();
+  const strictMode = boundaryConfig?.strictMode ?? false;
 
   if (policies) {
     for (const p of policies) {
@@ -81,6 +99,14 @@ export function createContextBoundary(
         const policy = policyMap.get(agentId);
         if (policy && !canRead(policy, key)) {
           recordViolation({ type: 'read_denied', agentId, key, timestamp: Date.now() });
+          // Fix 31: In strict mode, throw instead of returning undefined
+          if (strictMode) {
+            throw new HarnessError(
+              `Agent "${agentId}" denied read access to key "${key}"`,
+              'BOUNDARY_READ_DENIED',
+              'Check the BoundaryPolicy for this agent',
+            );
+          }
           return undefined;
         }
         return context.get(key);
@@ -126,7 +152,8 @@ export function createContextBoundary(
       for (const p of newPolicies) {
         policyMap.set(p.agent, p);
       }
-      // Don't clear viewCache — views now look up policy dynamically
+      // Fix 30: Clear view cache on policy change to ensure agents see updated policies
+      viewCache.clear();
     },
 
     getPolicies(agentId: string): BoundaryPolicy | undefined {

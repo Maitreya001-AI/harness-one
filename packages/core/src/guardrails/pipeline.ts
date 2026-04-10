@@ -45,6 +45,19 @@ function getInternal(pipeline: GuardrailPipeline): PipelineInternalData {
 /**
  * Create a guardrail pipeline.
  *
+ * **Fail-closed vs fail-open behavior:**
+ * - When `failClosed` is `true` (default) and a guardrail throws an exception,
+ *   the content is **BLOCKED** (safe default). This is the recommended setting
+ *   for production environments where safety is paramount.
+ * - When `failClosed` is `false` and a guardrail throws an exception, the
+ *   exception is caught, an event is emitted, and the content is **ALLOWED**
+ *   (fail-open). Use this only when availability is more important than safety.
+ *
+ * **Default timeout:**
+ * If a guard entry does not specify `timeoutMs`, the pipeline applies `defaultTimeoutMs`
+ * (default: 5000ms). This prevents synchronous or hanging guards from blocking the event
+ * loop indefinitely. Set `defaultTimeoutMs` to `0` to disable the default timeout.
+ *
  * @example
  * ```ts
  * const pipeline = createPipeline({
@@ -58,10 +71,25 @@ export function createPipeline(config: {
   output?: Array<{ name: string; guard: Guardrail; timeoutMs?: number }>;
   failClosed?: boolean;
   onEvent?: (event: GuardrailEvent) => void;
+  /** Default timeout (ms) for guards that don't specify their own timeoutMs. Default: 5000. Set to 0 to disable. */
+  defaultTimeoutMs?: number;
 }): GuardrailPipeline {
+  const defaultTimeoutMs = config.defaultTimeoutMs ?? 5000;
+
+  // Apply default timeout to guards that don't specify their own
+  const applyDefaults = (entries: PipelineEntry[]): PipelineEntry[] =>
+    entries.map((entry) => {
+      const resolved = entry.timeoutMs ?? (defaultTimeoutMs > 0 ? defaultTimeoutMs : undefined);
+      const result: PipelineEntry = { name: entry.name, guard: entry.guard };
+      if (resolved !== undefined) {
+        result.timeoutMs = resolved;
+      }
+      return result;
+    });
+
   const internalData: PipelineInternalData = {
-    input: config.input ?? [],
-    output: config.output ?? [],
+    input: applyDefaults(config.input ?? []),
+    output: applyDefaults(config.output ?? []),
     failClosed: config.failClosed ?? true,
     onEvent: config.onEvent,
   };

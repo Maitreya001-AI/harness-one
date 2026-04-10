@@ -25,6 +25,17 @@ export interface CompressOptions {
   readonly windowSize?: number;
 }
 
+/** Result of a compress operation with explicit success/failure signaling. */
+export interface CompressResult {
+  readonly messages: Message[];
+  /** Whether compression succeeded in fitting within the budget. */
+  readonly compressed: boolean;
+  /** Total token count of the original messages. */
+  readonly originalTokens: number;
+  /** Total token count of the returned messages. */
+  readonly finalTokens: number;
+}
+
 /**
  * Compress messages to fit within a token budget.
  *
@@ -39,7 +50,9 @@ export interface CompressOptions {
 export async function compress(
   messages: readonly Message[],
   options: CompressOptions,
-): Promise<Message[]> {
+): Promise<CompressResult> {
+  const originalTokens = messages.reduce((sum, m) => sum + msgTokens(m), 0);
+
   const strategy =
     typeof options.strategy === 'string'
       ? getBuiltinStrategy(options.strategy, options)
@@ -48,7 +61,16 @@ export async function compress(
   const result = await strategy.compress(messages, options.budget, {
     ...(options.preserve !== undefined && { preserve: options.preserve }),
   });
-  return [...result];
+  const resultMessages = [...result];
+  const finalTokens = resultMessages.reduce((sum, m) => sum + msgTokens(m), 0);
+  const compressed = finalTokens <= options.budget;
+
+  return {
+    messages: resultMessages,
+    compressed,
+    originalTokens,
+    finalTokens,
+  };
 }
 
 function getBuiltinStrategy(
@@ -244,7 +266,8 @@ export async function compactIfNeeded(
     options.summarizer !== undefined ? { summarizer: options.summarizer } : {},
     options.windowSize !== undefined ? { windowSize: options.windowSize } : {},
   ) as CompressOptions;
-  return compress(messages, compressOpts);
+  const result = await compress(messages, compressOpts);
+  return result.messages;
 }
 
 function createPreserveFailuresStrategy(): CompressionStrategy {

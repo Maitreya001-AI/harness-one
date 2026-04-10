@@ -61,18 +61,27 @@ export function validateJsonSchema(
   return { valid: errors.length === 0, errors };
 }
 
+/** Maximum allowed regex pattern length to prevent DoS. */
+const MAX_PATTERN_LENGTH = 1000;
+
 /**
  * Reject regex patterns that risk catastrophic backtracking (ReDoS).
- * Catches: nested quantifiers like (a+)+, alternation quantifiers like (a|a)*,
- * and deeply nested groups with quantifiers.
+ * Catches: nested quantifiers like (a+)+, alternation overlaps like (a|a)*,
+ * deeply nested groups with quantifiers, and overly long patterns.
  */
 function isSafePattern(pattern: string): boolean {
+  // Length limit as a simple safety measure
+  if (pattern.length > MAX_PATTERN_LENGTH) return false;
   // Nested quantifiers: (...)+ (...)* etc.
   if (/([+*]|\{\d+,?\d*\})\)([+*]|\{\d+,?\d*\})/.test(pattern)) return false;
   // Alternation with quantifier on group: (a|b)+ where alternatives overlap
   if (/\([^)]*\|[^)]*\)[+*]/.test(pattern)) return false;
+  // Alternation overlap patterns like (a|a)* — same char on both sides
+  if (/\((\w)\|\1\)[+*]/.test(pattern)) return false;
   // Deeply nested groups (3+ levels) with quantifiers
   if (/\([^)]*\([^)]*\([^)]*\)/.test(pattern)) return false;
+  // Quantified groups containing quantified elements: (a+)+ or (a*)*
+  if (/\([^)]*[+*][^)]*\)[+*]/.test(pattern)) return false;
   return true;
 }
 
@@ -104,14 +113,18 @@ function validate(
   // String constraints
   if (typeof data === 'string') {
     if (schema.pattern !== undefined) {
-      if (schema.pattern.length > 1000) {
-        errors.push({ path, message: 'Pattern rejected: exceeds maximum length (1000)' });
+      if (schema.pattern.length > MAX_PATTERN_LENGTH) {
+        errors.push({ path, message: `Pattern rejected: exceeds maximum length (${MAX_PATTERN_LENGTH})` });
       } else if (!isSafePattern(schema.pattern)) {
         errors.push({ path, message: 'Pattern rejected: potential ReDoS' });
       } else {
-        const re = new RegExp(schema.pattern);
-        if (!re.test(data)) {
-          errors.push({ path, message: `String does not match pattern "${schema.pattern}"` });
+        try {
+          const re = new RegExp(schema.pattern);
+          if (!re.test(data)) {
+            errors.push({ path, message: `String does not match pattern "${schema.pattern}"` });
+          }
+        } catch {
+          errors.push({ path, message: `Pattern rejected: invalid regular expression "${schema.pattern}"` });
         }
       }
     }

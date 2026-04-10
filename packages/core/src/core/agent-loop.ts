@@ -83,6 +83,13 @@ export interface AgentLoopConfig {
    * requiring manual instrumentation.
    */
   readonly traceManager?: AgentLoopTraceManager;
+  /**
+   * Optional timeout in milliseconds for individual tool executions.
+   *
+   * When set, any tool call that does not resolve within this duration
+   * is aborted with a timeout error and the result is fed back to the LLM.
+   */
+  readonly toolTimeoutMs?: number;
 }
 
 /**
@@ -108,6 +115,7 @@ export class AgentLoop {
   private readonly executionStrategy: ExecutionStrategy;
   private readonly isSequentialTool?: ((name: string) => boolean) | undefined;
   private readonly traceManager?: AgentLoopTraceManager | undefined;
+  private readonly toolTimeoutMs?: number | undefined;
 
   private abortController: AbortController;
   private _externalAbortHandler: (() => void) | undefined;
@@ -132,6 +140,7 @@ export class AgentLoop {
     this.streaming = config.streaming ?? false;
     this.isSequentialTool = config.isSequentialTool;
     this.traceManager = config.traceManager;
+    this.toolTimeoutMs = config.toolTimeoutMs;
 
     if (config.executionStrategy) {
       this.executionStrategy = config.executionStrategy;
@@ -143,18 +152,8 @@ export class AgentLoop {
       this.executionStrategy = createSequentialStrategy();
     }
 
-    // H3: Create internal AbortController; link to external signal if provided
+    // H3: Create internal AbortController (external signal linking deferred to run())
     this.abortController = new AbortController();
-    if (this.externalSignal) {
-      if (this.externalSignal.aborted) {
-        this.abortController.abort();
-      } else {
-        this._externalAbortHandler = () => {
-          this.abortController.abort();
-        };
-        this.externalSignal.addEventListener('abort', this._externalAbortHandler, { once: true });
-      }
-    }
   }
 
   /** Get cumulative token usage across all iterations. */
@@ -210,12 +209,28 @@ export class AgentLoop {
     const conversation = [...messages];
     this._status = 'running';
     let iteration = 0;
-    let yieldedDone = false;
+    let finalEventEmitted = false;
+
+    // Attach external signal listener at run() start (not constructor) so it
+    // is always cleaned up in the finally block, even if dispose() is never called.
+    if (this.externalSignal) {
+      if (this.externalSignal.aborted) {
+        this.abortController.abort();
+      } else {
+        this._externalAbortHandler = () => {
+          this.abortController.abort();
+        };
+        this.externalSignal.addEventListener('abort', this._externalAbortHandler, { once: true });
+      }
+    }
 
     // Auto-tracing: create a trace for this run when a traceManager is wired.
     const tm = this.traceManager;
     const traceId = tm ? tm.startTrace('agent-loop-run', { messageCount: messages.length }) : undefined;
     let iterationSpanId: string | undefined;
+    // Cumulative stream byte counter across all iterations for DoS protection
+    let cumulativeStreamBytes = 0;
+    const maxCumulativeStreamBytes = this.maxIterations * AgentLoop.MAX_STREAM_BYTES;
 
     try {
       while (true) {
@@ -223,7 +238,7 @@ export class AgentLoop {
         if (this.isAborted()) {
           if (iterationSpanId && tm) { tm.endSpan(iterationSpanId, 'error'); iterationSpanId = undefined; }
           yield { type: 'error', error: new AbortedError() };
-          yieldedDone = true;
+          finalEventEmitted = true;
           yield this.doneEvent('aborted');
           return;
         }
@@ -235,7 +250,7 @@ export class AgentLoop {
           if (iterationSpanId && tm) { tm.endSpan(iterationSpanId, 'error'); iterationSpanId = undefined; }
           const err = new MaxIterationsError(this.maxIterations);
           yield { type: 'error', error: err };
-          yieldedDone = true;
+          finalEventEmitted = true;
           yield this.doneEvent('max_iterations');
           return;
         }
@@ -246,7 +261,7 @@ export class AgentLoop {
           if (iterationSpanId && tm) { tm.endSpan(iterationSpanId, 'error'); iterationSpanId = undefined; }
           const err = new TokenBudgetExceededError(totalTokens, this.maxTotalTokens);
           yield { type: 'error', error: err };
-          yieldedDone = true;
+          finalEventEmitted = true;
           yield this.doneEvent('token_budget');
           return;
         }
@@ -280,11 +295,14 @@ export class AgentLoop {
 
         if (this.streaming && this.adapter.stream) {
           // Streaming path: use adapter.stream()
-          const streamResult = yield* this.handleStream(conversation);
+          const streamResult = yield* this.handleStream(conversation, cumulativeStreamBytes, maxCumulativeStreamBytes);
+          if (streamResult) {
+            cumulativeStreamBytes += streamResult.bytesRead;
+          }
           if (!streamResult) {
             // Stream error already handled via error event
             if (iterationSpanId && tm) { tm.endSpan(iterationSpanId, 'error'); iterationSpanId = undefined; }
-            yieldedDone = true;
+            finalEventEmitted = true;
             yield this.doneEvent('error');
             return;
           }
@@ -309,7 +327,7 @@ export class AgentLoop {
               'Check adapter configuration and API credentials',
               err instanceof Error ? err : undefined,
             ) };
-            yieldedDone = true;
+            finalEventEmitted = true;
             yield this.doneEvent('error');
             return;
           }
@@ -327,14 +345,16 @@ export class AgentLoop {
         if (this.isAborted()) {
           if (iterationSpanId && tm) { tm.endSpan(iterationSpanId, 'error'); iterationSpanId = undefined; }
           yield { type: 'error', error: new AbortedError() };
-          yieldedDone = true;
+          finalEventEmitted = true;
           yield this.doneEvent('aborted');
           return;
         }
 
-        // Accumulate usage (clamp to non-negative to prevent underflow bypass)
-        this.cumulativeUsage.inputTokens += Math.max(0, responseUsage.inputTokens);
-        this.cumulativeUsage.outputTokens += Math.max(0, responseUsage.outputTokens);
+        // Accumulate usage (clamp to safe bounds to prevent underflow bypass or overflow from buggy adapters)
+        const safeInput = Math.min(Math.max(0, responseUsage.inputTokens), 1_000_000_000);
+        const safeOutput = Math.min(Math.max(0, responseUsage.outputTokens), 1_000_000_000);
+        this.cumulativeUsage.inputTokens += safeInput;
+        this.cumulativeUsage.outputTokens += safeOutput;
 
         // H2: Check token budget immediately after accumulating tokens
         const postCallTokens = this.cumulativeUsage.inputTokens + this.cumulativeUsage.outputTokens;
@@ -344,7 +364,7 @@ export class AgentLoop {
           if (iterationSpanId && tm) { tm.endSpan(iterationSpanId, 'error'); iterationSpanId = undefined; }
           const err = new TokenBudgetExceededError(postCallTokens, this.maxTotalTokens);
           yield { type: 'error', error: err };
-          yieldedDone = true;
+          finalEventEmitted = true;
           yield this.doneEvent('token_budget');
           return;
         }
@@ -355,7 +375,7 @@ export class AgentLoop {
         if (!toolCalls || toolCalls.length === 0) {
           yield { type: 'message', message: assistantMsg, usage: responseUsage };
           if (iterationSpanId && tm) { tm.endSpan(iterationSpanId); iterationSpanId = undefined; }
-          yieldedDone = true;
+          finalEventEmitted = true;
           yield this.doneEvent('end_turn');
           return;
         }
@@ -377,9 +397,31 @@ export class AgentLoop {
               ? tm.startSpan(traceId, `tool:${call.name}`, iterationSpanId)
               : undefined;
             try {
-              const result = this.onToolCall
-                ? await this.onToolCall(call)
-                : { error: `No onToolCall handler registered for tool "${call.name}"` };
+              const toolPromise = this.onToolCall
+                ? this.onToolCall(call)
+                : Promise.resolve({ error: `No onToolCall handler registered for tool "${call.name}"` });
+
+              let result: unknown;
+              if (this.toolTimeoutMs !== undefined) {
+                // Race tool execution against a timeout
+                const timeoutMs = this.toolTimeoutMs;
+                result = await Promise.race([
+                  toolPromise,
+                  new Promise<{ error: string }>((resolve) => {
+                    const timer = setTimeout(
+                      () => resolve({ error: `Tool "${call.name}" timed out after ${timeoutMs}ms` }),
+                      timeoutMs,
+                    );
+                    // Ensure timer doesn't keep the process alive
+                    if (typeof timer === 'object' && 'unref' in timer) {
+                      (timer as NodeJS.Timeout).unref();
+                    }
+                  }),
+                ]);
+              } else {
+                result = await toolPromise;
+              }
+
               if (toolSpanId && tm) { tm.endSpan(toolSpanId); }
               return result;
             } catch (toolErr) {
@@ -421,21 +463,27 @@ export class AgentLoop {
         if (this.isAborted()) {
           if (iterationSpanId && tm) { tm.endSpan(iterationSpanId, 'error'); iterationSpanId = undefined; }
           yield { type: 'error', error: new AbortedError() };
-          yieldedDone = true;
+          finalEventEmitted = true;
           yield this.doneEvent('aborted');
           return;
         }
       }
     } finally {
+      // Clean up external signal listener to prevent memory leaks even if
+      // dispose() is never called. This is the primary cleanup path.
+      if (this._externalAbortHandler && this.externalSignal) {
+        this.externalSignal.removeEventListener('abort', this._externalAbortHandler);
+        this._externalAbortHandler = undefined;
+      }
       // End any open iteration span
       if (iterationSpanId && tm) {
         try { tm.endSpan(iterationSpanId, 'error'); } catch { /* span may already be ended */ }
       }
       // End the trace
       if (traceId && tm) {
-        try { tm.endTrace(traceId, yieldedDone ? 'completed' : 'error'); } catch { /* trace may already be ended */ }
+        try { tm.endTrace(traceId, finalEventEmitted ? 'completed' : 'error'); } catch { /* trace may already be ended */ }
       }
-      if (!yieldedDone) {
+      if (!finalEventEmitted) {
         // Generator was closed externally via .return() or .throw()
         // Mark as aborted for cleanup
         this.abortController.abort();
@@ -449,11 +497,15 @@ export class AgentLoop {
    * Returns the accumulated message and usage, or null on error.
    */
   /** Maximum accumulated stream content size (10 MB) to prevent memory exhaustion. */
-  private static readonly MAX_STREAM_BYTES = 10 * 1024 * 1024;
+  static readonly MAX_STREAM_BYTES = 10 * 1024 * 1024;
+  /** Maximum size per tool-call argument (5 MB) to prevent oversized payloads. */
+  private static readonly MAX_TOOL_ARG_BYTES = 5 * 1024 * 1024;
 
   private async *handleStream(
     conversation: Message[],
-  ): AsyncGenerator<AgentEvent, { message: Message; usage: TokenUsage } | null> {
+    cumulativeStreamBytes: number,
+    maxCumulativeStreamBytes: number,
+  ): AsyncGenerator<AgentEvent, { message: Message; usage: TokenUsage; bytesRead: number } | null> {
     let accumulatedText = '';
     let accumulatedBytes = 0;
     const accumulatedToolCalls: Map<string, { id: string; name: string; arguments: string }> = new Map();
@@ -473,6 +525,11 @@ export class AgentLoop {
             yield { type: 'error', error: new Error(`Stream exceeded maximum size (${AgentLoop.MAX_STREAM_BYTES} bytes)`) };
             return null;
           }
+          // Cumulative cross-iteration check
+          if (cumulativeStreamBytes + accumulatedBytes > maxCumulativeStreamBytes) {
+            yield { type: 'error', error: new Error('Cumulative stream size exceeded maximum across all iterations') };
+            return null;
+          }
           accumulatedText += chunk.text;
           yield { type: 'text_delta', text: chunk.text };
         } else if (chunk.type === 'tool_call_delta' && chunk.toolCall) {
@@ -486,6 +543,11 @@ export class AgentLoop {
               yield { type: 'error', error: new Error(`Stream exceeded maximum size (${AgentLoop.MAX_STREAM_BYTES} bytes)`) };
               return null;
             }
+            // Cumulative cross-iteration check
+            if (cumulativeStreamBytes + accumulatedBytes > maxCumulativeStreamBytes) {
+              yield { type: 'error', error: new Error('Cumulative stream size exceeded maximum across all iterations') };
+              return null;
+            }
           }
 
           if (partial.id) {
@@ -493,6 +555,11 @@ export class AgentLoop {
             if (existing) {
               if (partial.name) existing.name = partial.name;
               if (partial.arguments) existing.arguments += partial.arguments;
+              // Per-tool-call argument size limit
+              if (existing.arguments.length > AgentLoop.MAX_TOOL_ARG_BYTES) {
+                yield { type: 'error', error: new Error(`Tool call "${existing.name}" arguments exceeded maximum size (${AgentLoop.MAX_TOOL_ARG_BYTES} bytes)`) };
+                return null;
+              }
             } else {
               accumulatedToolCalls.set(partial.id, {
                 id: partial.id,
@@ -507,6 +574,11 @@ export class AgentLoop {
               const last = entries[entries.length - 1];
               if (partial.name) last.name = partial.name;
               if (partial.arguments) last.arguments += partial.arguments;
+              // Per-tool-call argument size limit
+              if (last.arguments.length > AgentLoop.MAX_TOOL_ARG_BYTES) {
+                yield { type: 'error', error: new Error(`Tool call "${last.name}" arguments exceeded maximum size (${AgentLoop.MAX_TOOL_ARG_BYTES} bytes)`) };
+                return null;
+              }
             } else {
               yield { type: 'warning', message: 'Received partial tool call chunk without ID and no accumulated calls' };
             }
@@ -535,7 +607,7 @@ export class AgentLoop {
       ...(toolCalls.length > 0 ? { toolCalls } : {}),
     };
 
-    return { message, usage };
+    return { message, usage, bytesRead: accumulatedBytes };
   }
 
   private static categorizeAdapterError(err: unknown): string {

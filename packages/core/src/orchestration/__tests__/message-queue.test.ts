@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { MessageQueue } from '../message-queue.js';
+import { HarnessError } from '../../core/errors.js';
 import type { AgentMessage } from '../types.js';
 
 function makeMessage(overrides: Partial<AgentMessage> = {}): AgentMessage {
@@ -202,6 +203,52 @@ describe('MessageQueue', () => {
       expect(mq.getMessages('a1')).toHaveLength(1000);
       // Oldest (msg-0) should be dropped, newest (msg-1000) should exist
       expect(mq.getMessages('a1')[999].content).toBe('msg-1000');
+    });
+  });
+
+  // Fix 26: Backpressure option
+  describe('backpressure option (Fix 26)', () => {
+    it('throws QUEUE_FULL when backpressure is enabled and queue is full', () => {
+      const mq = new MessageQueue({ maxQueueSize: 2, backpressure: true });
+      mq.createQueue('a1');
+      mq.push('a1', makeMessage({ content: 'first' }));
+      mq.push('a1', makeMessage({ content: 'second' }));
+
+      expect(() => mq.push('a1', makeMessage({ content: 'third' }))).toThrow(HarnessError);
+      try {
+        mq.push('a1', makeMessage({ content: 'third' }));
+      } catch (e) {
+        expect((e as HarnessError).code).toBe('QUEUE_FULL');
+      }
+
+      // Queue should still have original 2 messages
+      expect(mq.getMessages('a1')).toHaveLength(2);
+      expect(mq.getMessages('a1')[0].content).toBe('first');
+    });
+
+    it('uses drop-oldest by default (backpressure=false)', () => {
+      const mq = new MessageQueue({ maxQueueSize: 2 });
+      mq.createQueue('a1');
+      mq.push('a1', makeMessage({ content: 'first' }));
+      mq.push('a1', makeMessage({ content: 'second' }));
+      mq.push('a1', makeMessage({ content: 'third' })); // drops first
+
+      expect(mq.getMessages('a1')).toHaveLength(2);
+      expect(mq.getMessages('a1')[0].content).toBe('second');
+    });
+
+    it('backpressure mode does not call onWarning (rejection is the signal)', () => {
+      const warnings: unknown[] = [];
+      const mq = new MessageQueue({
+        maxQueueSize: 1,
+        backpressure: true,
+        onWarning: (w) => warnings.push(w),
+      });
+      mq.createQueue('a1');
+      mq.push('a1', makeMessage({ content: 'first' }));
+
+      expect(() => mq.push('a1', makeMessage({ content: 'second' }))).toThrow();
+      expect(warnings).toHaveLength(0);
     });
   });
 });

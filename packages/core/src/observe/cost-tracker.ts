@@ -40,6 +40,41 @@ export interface CostTracker {
 }
 
 /**
+ * Standalone Kahan summation utility class for accurate floating-point accumulation.
+ *
+ * Uses Kahan compensated summation to minimize floating-point drift when
+ * accumulating many small values. Supports both addition and subtraction.
+ */
+export class KahanSum {
+  private _total = 0;
+  private _compensation = 0;
+
+  /** Add a value to the running sum. */
+  add(x: number): void {
+    const y = x - this._compensation;
+    const t = this._total + y;
+    this._compensation = (t - this._total) - y;
+    this._total = t;
+  }
+
+  /** Subtract a value from the running sum. */
+  subtract(x: number): void {
+    this.add(-x);
+  }
+
+  /** Get the current accumulated total. */
+  get total(): number {
+    return this._total;
+  }
+
+  /** Reset the sum to zero. */
+  reset(): void {
+    this._total = 0;
+    this._compensation = 0;
+  }
+}
+
+/**
  * Create a new CostTracker instance.
  *
  * @example
@@ -64,11 +99,14 @@ export function createCostTracker(config?: {
   const warningThreshold = config?.alertThresholds?.warning ?? 0.8;
   const criticalThreshold = config?.alertThresholds?.critical ?? 0.95;
   const maxRecords = 10_000;
-  let runningTotal = 0;
 
-  // Kahan summation compensation term to prevent floating-point drift
-  // without periodic O(N) recalibration.
-  let kahanCompensation = 0;
+  // Fix 5: Use KahanSum utility for running total
+  const runningSum = new KahanSum();
+
+  // Fix 4: Track cumulative per-model costs separately from the buffer.
+  // modelTotals accumulates costs permanently (not affected by buffer eviction),
+  // ensuring getCostByModel() stays consistent with getTotalCost().
+  const modelTotals = new Map<string, KahanSum>();
 
   if (config?.pricing) {
     for (const p of config.pricing) {
@@ -101,7 +139,7 @@ export function createCostTracker(config?: {
   // Issue 1: Standalone functions using closure references instead of `this`
   function checkBudgetFn(): CostAlert | null {
     if (budget === undefined || budget <= 0) return null;
-    const currentCost = runningTotal;
+    const currentCost = runningSum.total;
     const percentUsed = currentCost / budget;
 
     if (percentUsed >= criticalThreshold) {
@@ -127,7 +165,7 @@ export function createCostTracker(config?: {
 
   function getAlertMessageFn(): string | null {
     if (budget === undefined) return null;
-    const currentCost = runningTotal;
+    const currentCost = runningSum.total;
     const percentUsed = currentCost / budget;
 
     if (percentUsed >= criticalThreshold) {
@@ -155,19 +193,20 @@ export function createCostTracker(config?: {
       };
       records.push(record);
 
-      // Kahan summation: add with compensation to prevent floating-point drift
-      const y = estimatedCost - kahanCompensation;
-      const t = runningTotal + y;
-      kahanCompensation = (t - runningTotal) - y;
-      runningTotal = t;
+      // Fix 5: Use KahanSum for running total
+      runningSum.add(estimatedCost);
+
+      // Fix 4: Accumulate per-model cost permanently
+      let modelSum = modelTotals.get(usage.model);
+      if (!modelSum) {
+        modelSum = new KahanSum();
+        modelTotals.set(usage.model, modelSum);
+      }
+      modelSum.add(estimatedCost);
 
       if (records.length > maxRecords) {
         const evicted = records.shift()!;
-        // Kahan subtraction
-        const ys = -evicted.estimatedCost - kahanCompensation;
-        const ts = runningTotal + ys;
-        kahanCompensation = (ts - runningTotal) - ys;
-        runningTotal = ts;
+        runningSum.subtract(evicted.estimatedCost);
       }
 
       // Check budget alerts after recording
@@ -182,18 +221,15 @@ export function createCostTracker(config?: {
     },
 
     getTotalCost(): number {
-      return runningTotal;
+      return runningSum.total;
     },
 
-    // Issue 3: Note — getCostByModel() and getCostByTrace() only reflect records
-    // currently in the buffer (up to maxRecords). After eviction, they will not
-    // include costs from evicted records. Use getTotalCost() for the cumulative
-    // total which includes residual cost from evicted records. Use reset() to
-    // zero everything and bring all totals back into agreement.
+    // Fix 4: getCostByModel() returns from permanent modelTotals accumulator,
+    // consistent with getTotalCost() even after buffer eviction.
     getCostByModel(): Record<string, number> {
       const result: Record<string, number> = {};
-      for (const r of records) {
-        result[r.model] = (result[r.model] ?? 0) + r.estimatedCost;
+      for (const [model, sum] of modelTotals) {
+        result[model] = sum.total;
       }
       return result;
     },
@@ -204,6 +240,13 @@ export function createCostTracker(config?: {
         .reduce((sum, r) => sum + r.estimatedCost, 0);
     },
 
+    /**
+     * Set the budget limit for cost alerting.
+     *
+     * Alerts are only re-evaluated on the next recordUsage() call, not
+     * immediately on budget change. If the current cost already exceeds
+     * the new budget, the alert will fire on the next recordUsage().
+     */
     setBudget(newBudget: number): void {
       budget = newBudget;
     },
@@ -220,8 +263,8 @@ export function createCostTracker(config?: {
 
     reset(): void {
       records.length = 0;
-      runningTotal = 0;
-      kahanCompensation = 0;
+      runningSum.reset();
+      modelTotals.clear();
     },
 
     getAlertMessage: getAlertMessageFn,

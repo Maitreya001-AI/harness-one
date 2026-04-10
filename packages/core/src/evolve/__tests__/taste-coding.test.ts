@@ -283,6 +283,39 @@ describe('createTasteCodingRegistry', () => {
     });
   });
 
+  // Fix 12: Regex safety
+  describe('regex safety (Fix 12)', () => {
+    it('rejects patterns exceeding max length', () => {
+      const registry = createTasteCodingRegistry();
+      const longPattern = 'a'.repeat(501);
+      expect(() => registry.addRule(makeRule({
+        id: 'long-pattern',
+        pattern: longPattern,
+        enforcement: 'lint',
+      }))).toThrow(HarnessError);
+
+      try {
+        registry.addRule(makeRule({
+          id: 'long-pattern',
+          pattern: longPattern,
+          enforcement: 'lint',
+        }));
+      } catch (e) {
+        expect((e as HarnessError).code).toBe('INVALID_PATTERN');
+      }
+    });
+
+    it('accepts patterns at max length', () => {
+      const registry = createTasteCodingRegistry();
+      const maxPattern = 'a'.repeat(500);
+      expect(() => registry.addRule(makeRule({
+        id: 'max-pattern',
+        pattern: maxPattern,
+        enforcement: 'lint',
+      }))).not.toThrow();
+    });
+  });
+
   describe('edge cases', () => {
     it('checkCompliance with compliant code — empty violations', () => {
       const registry = createTasteCodingRegistry();

@@ -343,6 +343,137 @@ describe('createPIIDetector', () => {
     });
   });
 
+  // ---- Fix 5: Email regex rejects consecutive dots ----
+
+  describe('Fix 5: improved email regex', () => {
+    it('rejects email with consecutive dots in local part', () => {
+      const { guard } = createPIIDetector({
+        detect: { email: true, phone: false, ssn: false, creditCard: false },
+      });
+      const result = guard({ content: 'Email: user..name@example.com' });
+      expect(result.action).toBe('allow');
+    });
+
+    it('rejects email with consecutive dots in domain', () => {
+      const { guard } = createPIIDetector({
+        detect: { email: true, phone: false, ssn: false, creditCard: false },
+      });
+      const result = guard({ content: 'Email: user@example..com' });
+      expect(result.action).toBe('allow');
+    });
+
+    it('still detects valid email addresses', () => {
+      const { guard } = createPIIDetector({
+        detect: { email: true, phone: false, ssn: false, creditCard: false },
+      });
+      expect(guard({ content: 'Contact user@example.com' }).action).toBe('block');
+      expect(guard({ content: 'Contact first.last@example.com' }).action).toBe('block');
+    });
+
+    it('detects valid email within string even if preceded by a dot', () => {
+      const { guard } = createPIIDetector({
+        detect: { email: true, phone: false, ssn: false, creditCard: false },
+      });
+      // .user@example.com - the regex will match "user@example.com" (valid part)
+      // since the regex requires first char to be alphanumeric
+      const result = guard({ content: 'Email: .user@example.com' });
+      expect(result.action).toBe('block');
+    });
+
+    it('rejects single-char email local part that ends with a dot', () => {
+      const { guard } = createPIIDetector({
+        detect: { email: true, phone: false, ssn: false, creditCard: false },
+      });
+      // ".@example.com" - no alphanumeric local part
+      const result = guard({ content: 'Email: .@example.com' });
+      expect(result.action).toBe('allow');
+    });
+  });
+
+  // ---- Fix 6: Phone regex requires separators ----
+
+  describe('Fix 6: phone regex with required separators', () => {
+    it('blocks phone with dash separators', () => {
+      const { guard } = createPIIDetector({
+        detect: { email: false, phone: true, ssn: false, creditCard: false },
+      });
+      expect(guard({ content: 'Call 555-123-4567' }).action).toBe('block');
+    });
+
+    it('blocks phone with dot separators', () => {
+      const { guard } = createPIIDetector({
+        detect: { email: false, phone: true, ssn: false, creditCard: false },
+      });
+      expect(guard({ content: 'Call 555.123.4567' }).action).toBe('block');
+    });
+
+    it('blocks phone with space separators', () => {
+      const { guard } = createPIIDetector({
+        detect: { email: false, phone: true, ssn: false, creditCard: false },
+      });
+      expect(guard({ content: 'Call 555 123 4567' }).action).toBe('block');
+    });
+
+    it('does not match bare 10-digit numbers without separators', () => {
+      const { guard } = createPIIDetector({
+        detect: { email: false, phone: true, ssn: false, creditCard: false },
+      });
+      // 5551234567 is just a bare number - no separators = no match
+      expect(guard({ content: 'Number: 5551234567' }).action).toBe('allow');
+    });
+
+    it('blocks parenthesized area code with separator', () => {
+      const { guard } = createPIIDetector({
+        detect: { email: false, phone: true, ssn: false, creditCard: false },
+      });
+      expect(guard({ content: 'Call (555) 123-4567' }).action).toBe('block');
+    });
+  });
+
+  // ---- Fix 7: API key context validation ----
+
+  describe('Fix 7: API key context prefix', () => {
+    it('detects API key after equals sign', () => {
+      const { guard } = createPIIDetector({
+        detect: { email: false, phone: false, ssn: false, creditCard: false, apiKey: true },
+      });
+      const result = guard({ content: 'API_KEY=sk-abcDefGhiJklmnOpQrsTuv' });
+      expect(result.action).toBe('block');
+    });
+
+    it('detects API key after colon', () => {
+      const { guard } = createPIIDetector({
+        detect: { email: false, phone: false, ssn: false, creditCard: false, apiKey: true },
+      });
+      const result = guard({ content: 'api_key: sk-abcDefGhiJklmnOpQrsTuv' });
+      expect(result.action).toBe('block');
+    });
+
+    it('detects API key after double quote', () => {
+      const { guard } = createPIIDetector({
+        detect: { email: false, phone: false, ssn: false, creditCard: false, apiKey: true },
+      });
+      const result = guard({ content: '"sk-abcDefGhiJklmnOpQrsTuv"' });
+      expect(result.action).toBe('block');
+    });
+
+    it('detects API key preceded by whitespace', () => {
+      const { guard } = createPIIDetector({
+        detect: { email: false, phone: false, ssn: false, creditCard: false, apiKey: true },
+      });
+      const result = guard({ content: 'Key: sk-abcDefGhiJklmnOpQrsTuv' });
+      expect(result.action).toBe('block');
+    });
+
+    it('detects API key at start of string', () => {
+      const { guard } = createPIIDetector({
+        detect: { email: false, phone: false, ssn: false, creditCard: false, apiKey: true },
+      });
+      const result = guard({ content: 'sk-abcDefGhiJklmnOpQrsTuv' });
+      expect(result.action).toBe('block');
+    });
+  });
+
   describe('selective detection', () => {
     it('can disable specific detectors', () => {
       const { guard } = createPIIDetector({

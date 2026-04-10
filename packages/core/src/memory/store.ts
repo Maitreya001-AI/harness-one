@@ -48,6 +48,13 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
     return `mem_${Date.now()}_${++idCounter}_${Math.random().toString(36).slice(2, 8)}`;
   }
 
+  /**
+   * Compute cosine similarity between two vectors.
+   *
+   * Expects embeddings to be provided as-is. The function computes raw cosine
+   * similarity. For optimal results, embeddings should be L2-normalized before
+   * storage, in which case cosine similarity reduces to a dot product.
+   */
   function cosineSimilarity(a: readonly number[], b: readonly number[]): number {
     if (a.length !== b.length || a.length === 0) return 0;
     let dot = 0, normA = 0, normB = 0;
@@ -74,9 +81,25 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
         ...(input.tags !== undefined && { tags: input.tags }),
       };
       entries.set(entry.id, entry);
+      // Fix 16: Grade-aware eviction. When maxEntries is exceeded, evict the
+      // lowest-grade entry first (ephemeral before useful before critical).
+      // Within the same grade, evict the oldest (FIFO by insertion order).
       if (maxEntries !== undefined && entries.size > maxEntries) {
-        const firstKey = entries.keys().next().value;
-        if (firstKey !== undefined) entries.delete(firstKey);
+        const gradeOrder: Record<string, number> = { ephemeral: 0, useful: 1, critical: 2 };
+        let victim: { id: string; grade: string; insertIdx: number } | null = null;
+        let idx = 0;
+        for (const [id, e] of entries) {
+          const gradeVal = gradeOrder[e.grade] ?? 1;
+          if (
+            victim === null ||
+            gradeVal < (gradeOrder[victim.grade] ?? 1) ||
+            (gradeVal === (gradeOrder[victim.grade] ?? 1) && idx < victim.insertIdx)
+          ) {
+            victim = { id, grade: e.grade, insertIdx: idx };
+          }
+          idx++;
+        }
+        if (victim !== null) entries.delete(victim.id);
       }
       return entry;
     },

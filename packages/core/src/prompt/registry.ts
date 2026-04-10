@@ -23,10 +23,16 @@ function compareSemver(a: string, b: string): number {
   return 0;
 }
 
+/** Options for template registration. */
+export interface RegisterOptions {
+  /** If true, silently overwrite an existing version. Default: false (logs a warning). */
+  readonly force?: boolean;
+}
+
 /** Registry for storing and resolving versioned prompt templates. */
 export interface PromptRegistry {
   /** Register a prompt template (immutable after registration). */
-  register(template: PromptTemplate): void;
+  register(template: PromptTemplate, options?: RegisterOptions): void;
   /** Get a template by ID and optional version. */
   get(id: string, version?: string): PromptTemplate | undefined;
   /** Resolve a template's variables and return the final string. */
@@ -67,13 +73,21 @@ export function createPromptRegistry(): PromptRegistry {
   }
 
   return {
-    register(template: PromptTemplate): void {
+    register(template: PromptTemplate, options?: RegisterOptions): void {
       const frozen = Object.freeze({ ...template });
       let versions = store.get(template.id);
       if (!versions) {
         versions = new Map();
         store.set(template.id, versions);
       }
+
+      if (versions.has(template.version) && !(options?.force)) {
+         
+        console.warn(
+          `[harness-one] Overwriting template "${template.id}@${template.version}". Pass { force: true } to suppress this warning.`,
+        );
+      }
+
       versions.set(template.version, frozen);
 
       const existing = latestVersions.get(template.id);
@@ -194,8 +208,8 @@ export interface AsyncPromptRegistry {
   list(): Promise<PromptTemplate[]>;
   /** Check if a template ID exists in local cache only. */
   has(id: string): boolean;
-  /** Pre-fetch templates from the backend into local cache. */
-  prefetch(ids: string[]): Promise<void>;
+  /** Pre-fetch templates from the backend into local cache. Returns which IDs succeeded/failed. */
+  prefetch(ids: string[]): Promise<{ succeeded: string[]; failed: string[] }>;
 }
 
 /**
@@ -272,8 +286,8 @@ export function createAsyncPromptRegistry(backend: PromptBackend): AsyncPromptRe
       return localRegistry.has(id);
     },
 
-    async prefetch(ids: string[]): Promise<void> {
-      await Promise.all(
+    async prefetch(ids: string[]): Promise<{ succeeded: string[]; failed: string[] }> {
+      const results = await Promise.allSettled(
         ids.map(async (id) => {
           if (!localRegistry.has(id)) {
             const remote = await backend.fetch(id);
@@ -281,8 +295,20 @@ export function createAsyncPromptRegistry(backend: PromptBackend): AsyncPromptRe
               localRegistry.register(remote);
             }
           }
+          return id;
         }),
       );
+
+      const succeeded: string[] = [];
+      const failed: string[] = [];
+      for (let i = 0; i < results.length; i++) {
+        if (results[i].status === 'fulfilled') {
+          succeeded.push(ids[i]);
+        } else {
+          failed.push(ids[i]);
+        }
+      }
+      return { succeeded, failed };
     },
   };
 }

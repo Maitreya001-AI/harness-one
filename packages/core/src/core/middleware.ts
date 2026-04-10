@@ -7,6 +7,8 @@
  * @module
  */
 
+import { HarnessError } from './errors.js';
+
 /** Context passed through the middleware chain. */
 export type MiddlewareContext<TExtra extends Record<string, unknown> = Record<string, unknown>> = {
   type: 'chat' | 'tool_call' | 'tool_result';
@@ -39,8 +41,12 @@ export interface MiddlewareChain<TExtra extends Record<string, unknown> = Record
  * const result = await chain.execute({ type: 'chat' }, () => adapter.chat(params));
  * ```
  */
-export function createMiddlewareChain<TExtra extends Record<string, unknown> = Record<string, unknown>>(): MiddlewareChain<TExtra> {
+export function createMiddlewareChain<TExtra extends Record<string, unknown> = Record<string, unknown>>(options?: {
+  /** Optional error handler called when a middleware throws. */
+  onError?: (error: Error, ctx: MiddlewareContext<TExtra>) => void;
+}): MiddlewareChain<TExtra> {
   const middlewares: MiddlewareFn<TExtra>[] = [];
+  const onError = options?.onError;
 
   return {
     use(fn: MiddlewareFn<TExtra>): void {
@@ -52,7 +58,23 @@ export function createMiddlewareChain<TExtra extends Record<string, unknown> = R
       const next = async (): Promise<unknown> => {
         if (index < middlewares.length) {
           const mw = middlewares[index++];
-          return mw(ctx, next);
+          try {
+            return await mw(ctx, next);
+          } catch (err) {
+            const error = err instanceof Error ? err : new Error(String(err));
+            if (onError) {
+              onError(error, ctx);
+            }
+            if (err instanceof HarnessError) {
+              throw err;
+            }
+            throw new HarnessError(
+              error.message,
+              'MIDDLEWARE_ERROR',
+              'Check the middleware implementation',
+              error,
+            );
+          }
         }
         return handler();
       };

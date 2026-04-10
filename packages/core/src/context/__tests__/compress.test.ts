@@ -21,14 +21,15 @@ describe('compress', () => {
     it('keeps last messages fitting within token budget', async () => {
       // Each msg is ~6-7 tokens. Budget of 20 tokens should fit ~3 messages.
       const result = await compress(messages, { strategy: 'truncate', budget: 20 });
-      expect(result.length).toBeGreaterThanOrEqual(2);
-      expect(result.length).toBeLessThan(6);
-      expect(result[result.length - 1].content).toBe('Response 3');
+      expect(result.messages.length).toBeGreaterThanOrEqual(2);
+      expect(result.messages.length).toBeLessThan(6);
+      expect(result.messages[result.messages.length - 1].content).toBe('Response 3');
     });
 
     it('returns all when budget exceeds total tokens', async () => {
       const result = await compress(messages, { strategy: 'truncate', budget: 500 });
-      expect(result).toHaveLength(6);
+      expect(result.messages).toHaveLength(6);
+      expect(result.compressed).toBe(true);
     });
 
     it('preserves specified messages', async () => {
@@ -37,7 +38,7 @@ describe('compress', () => {
         budget: 13,
         preserve: (m) => m.content === 'First',
       });
-      expect(result.some((m) => m.content === 'First')).toBe(true);
+      expect(result.messages.some((m) => m.content === 'First')).toBe(true);
     });
   });
 
@@ -49,9 +50,9 @@ describe('compress', () => {
         budget: 500,
         windowSize: 2,
       });
-      expect(result).toHaveLength(2);
-      expect(result[0].content).toBe('Third');
-      expect(result[1].content).toBe('Response 3');
+      expect(result.messages).toHaveLength(2);
+      expect(result.messages[0].content).toBe('Third');
+      expect(result.messages[1].content).toBe('Response 3');
     });
 
     it('preserves messages while applying window', async () => {
@@ -61,8 +62,8 @@ describe('compress', () => {
         windowSize: 2,
         preserve: (m) => m.content === 'First',
       });
-      expect(result.some((m) => m.content === 'First')).toBe(true);
-      expect(result.length).toBe(3);
+      expect(result.messages.some((m) => m.content === 'First')).toBe(true);
+      expect(result.messages.length).toBe(3);
     });
   });
 
@@ -75,11 +76,11 @@ describe('compress', () => {
         summarizer: async (msgs) => `Summarized ${msgs.length} messages`,
       });
 
-      expect(result[0].content).toContain('Summary');
+      expect(result.messages[0].content).toContain('Summary');
       // Summary should cover some messages
-      expect(result[0].content).toMatch(/Summarized \d+ messages/);
+      expect(result.messages[0].content).toMatch(/Summarized \d+ messages/);
       // Should have summary + kept messages
-      expect(result.length).toBeGreaterThanOrEqual(2);
+      expect(result.messages.length).toBeGreaterThanOrEqual(2);
     });
 
     it('throws without summarizer callback', async () => {
@@ -94,7 +95,7 @@ describe('compress', () => {
         budget: 500,
         summarizer: async () => 'summary',
       });
-      expect(result).toHaveLength(6);
+      expect(result.messages).toHaveLength(6);
     });
   });
 
@@ -113,8 +114,8 @@ describe('compress', () => {
         budget: 15,
       });
 
-      expect(result.some((m) => m.content === 'Error trace')).toBe(true);
-      expect(result.length).toBeLessThan(msgsWithFailure.length);
+      expect(result.messages.some((m) => m.content === 'Error trace')).toBe(true);
+      expect(result.messages.length).toBeLessThan(msgsWithFailure.length);
     });
 
     it('preserves order', async () => {
@@ -130,7 +131,7 @@ describe('compress', () => {
         budget: 500,
       });
       // Failure always kept, plus non-failures that fit
-      const contents = result.map((m) => m.content);
+      const contents = result.messages.map((m) => m.content);
       for (let i = 0; i < contents.length - 1; i++) {
         const origIdxA = msgsWithFailure.findIndex((m) => m.content === contents[i]);
         const origIdxB = msgsWithFailure.findIndex((m) => m.content === contents[i + 1]);
@@ -163,9 +164,9 @@ describe('compress', () => {
       });
 
       // The system prompt should be preserved (moved to front)
-      expect(result.some((m) => m.content === 'System prompt')).toBe(true);
+      expect(result.messages.some((m) => m.content === 'System prompt')).toBe(true);
       // There should be a summary message
-      expect(result.some((m) => m.content.includes('Summary'))).toBe(true);
+      expect(result.messages.some((m) => m.content.includes('Summary'))).toBe(true);
       // The system prompt should NOT have been summarized
       expect(summarizedMsgs.some((m) => m.content === 'System prompt')).toBe(false);
     });
@@ -183,7 +184,7 @@ describe('compress', () => {
         summarizer: async () => 'summary',
       });
 
-      expect(result).toHaveLength(2);
+      expect(result.messages).toHaveLength(2);
     });
   });
 
@@ -214,7 +215,8 @@ describe('compress', () => {
       // 'A' and 'B' don't fit, but preserve returns true for both,
       // so they go to toKeep.unshift(), NOT toSummarize.
       // toSummarize is empty => returns [...messages]
-      expect(result).toHaveLength(3);
+      // Note: compressed=false because all original messages are returned and exceed budget
+      expect(result.messages).toHaveLength(3);
       // Summarizer should NOT have been called since toSummarize is empty
       expect(summarizerFn).not.toHaveBeenCalled();
     });
@@ -231,8 +233,8 @@ describe('compress', () => {
         },
         budget: 1,
       });
-      expect(result).toHaveLength(1);
-      expect(result[0].content).toBe('Response 3');
+      expect(result.messages).toHaveLength(1);
+      expect(result.messages[0].content).toBe('Response 3');
     });
   });
 
@@ -241,6 +243,45 @@ describe('compress', () => {
       await expect(
         compress(messages, { strategy: 'nonexistent', budget: 5 }),
       ).rejects.toThrow('Unknown compression strategy');
+    });
+  });
+
+  describe('CompressResult: compression failure signaling', () => {
+    it('returns compressed=true and finalTokens when compression fits within budget', async () => {
+      const result = await compress(messages, { strategy: 'truncate', budget: 500 });
+      expect(result.compressed).toBe(true);
+      expect(result.originalTokens).toBeGreaterThan(0);
+      expect(result.finalTokens).toBeLessThanOrEqual(500);
+      expect(result.messages).toHaveLength(6);
+    });
+
+    it('returns compressed=false when strategy output still exceeds budget', async () => {
+      // Use a tiny budget with preserve-failures where failure messages exceed budget
+      const bigFailure: Message[] = [
+        msg('assistant', 'A'.repeat(400), { isFailureTrace: true }),
+        msg('user', 'Short'),
+      ];
+      const result = await compress(bigFailure, {
+        strategy: 'preserve-failures',
+        budget: 5, // way too small for the failure trace
+      });
+      expect(result.compressed).toBe(false);
+      expect(result.finalTokens).toBeGreaterThan(5);
+    });
+
+    it('returns compressed=true when strategy output fits within budget', async () => {
+      const result = await compress(messages, { strategy: 'truncate', budget: 500 });
+      expect(result.compressed).toBe(true);
+      expect(result.finalTokens).toBeLessThanOrEqual(500);
+    });
+
+    it('originalTokens reflects the input messages token count', async () => {
+      const result = await compress(messages, { strategy: 'truncate', budget: 500 });
+      const expectedTokens = messages.reduce(
+        (sum, m) => sum + estimateTokens('default', m.content),
+        0,
+      );
+      expect(result.originalTokens).toBe(expectedTokens);
     });
   });
 
@@ -261,9 +302,9 @@ describe('compress', () => {
     it('truncate strategy respects token budget, not message count', async () => {
       const budget = 100; // tokens, not messages
       const result = await compress(longMessages, { strategy: 'truncate', budget });
-      const resultTokens = totalTokens(result);
+      const resultTokens = totalTokens(result.messages);
       // With a 100-token budget, we should NOT get all 5 messages
-      expect(result.length).toBeLessThan(longMessages.length);
+      expect(result.messages.length).toBeLessThan(longMessages.length);
       expect(resultTokens).toBeLessThanOrEqual(budget);
     });
 
@@ -274,7 +315,7 @@ describe('compress', () => {
         budget,
         windowSize: 10, // large window, but token budget should limit
       });
-      const resultTokens = totalTokens(result);
+      const resultTokens = totalTokens(result.messages);
       expect(resultTokens).toBeLessThanOrEqual(budget);
     });
 
@@ -291,7 +332,7 @@ describe('compress', () => {
       });
       // Should have summarized some messages because total tokens > budget
       expect(summarizedMsgs.length).toBeGreaterThan(0);
-      expect(result[0].content).toContain('Summary');
+      expect(result.messages[0].content).toContain('Summary');
     });
 
     it('preserve-failures strategy respects token budget', async () => {
@@ -308,11 +349,11 @@ describe('compress', () => {
         budget,
       });
       // Failure trace must always be preserved
-      expect(result.some((m) => m.content === 'Fail trace')).toBe(true);
+      expect(result.messages.some((m) => m.content === 'Fail trace')).toBe(true);
       // Non-failure messages should be limited by token budget
-      const nonFailures = result.filter((m) => !m.meta?.isFailureTrace);
+      const nonFailures = result.messages.filter((m) => !m.meta?.isFailureTrace);
       const nonFailureTokens = totalTokens(nonFailures);
-      const failureTokens = totalTokens(result.filter((m) => m.meta?.isFailureTrace));
+      const failureTokens = totalTokens(result.messages.filter((m) => m.meta?.isFailureTrace));
       expect(nonFailureTokens + failureTokens).toBeLessThanOrEqual(budget + failureTokens);
     });
   });
@@ -357,13 +398,13 @@ describe('compress', () => {
 
       // All messages should be kept since budget is large
       return result.then((r) => {
-        expect(r).toHaveLength(5);
+        expect(r.messages).toHaveLength(5);
         // Order should be preserved
-        expect(r[0].content).toBe('Hello');
-        expect(r[1].content).toBe('Fail');
-        expect(r[2].content).toBe('Hello');
-        expect(r[3].content).toBe('Response');
-        expect(r[4].content).toBe('Latest');
+        expect(r.messages[0].content).toBe('Hello');
+        expect(r.messages[1].content).toBe('Fail');
+        expect(r.messages[2].content).toBe('Hello');
+        expect(r.messages[3].content).toBe('Response');
+        expect(r.messages[4].content).toBe('Latest');
       });
     });
   });
@@ -391,9 +432,9 @@ describe('compress', () => {
         windowSize: 2,
       }).then((result) => {
         // Should keep last 2 non-preserved messages
-        expect(result).toHaveLength(2);
-        expect(result[0].content).toBe('Third');
-        expect(result[1].content).toBe('Response 3');
+        expect(result.messages).toHaveLength(2);
+        expect(result.messages[0].content).toBe('Third');
+        expect(result.messages[1].content).toBe('Response 3');
       });
     });
 
@@ -414,8 +455,8 @@ describe('compress', () => {
         preserve: (m) => m.content === 'First',
       }).then((result) => {
         // Should have the preserved message + 1 windowed message
-        expect(result.some((m) => m.content === 'First')).toBe(true);
-        expect(result.some((m) => m.content === 'Response 2')).toBe(true);
+        expect(result.messages.some((m) => m.content === 'First')).toBe(true);
+        expect(result.messages.some((m) => m.content === 'Response 2')).toBe(true);
       });
     });
 
@@ -433,11 +474,11 @@ describe('compress', () => {
         strategy: 'preserve-failures',
         budget: 500,
       }).then((result) => {
-        expect(result).toHaveLength(4);
-        expect(result[0].content).toBe('A');
-        expect(result[1].content).toBe('Fail');
-        expect(result[2].content).toBe('B');
-        expect(result[3].content).toBe('C');
+        expect(result.messages).toHaveLength(4);
+        expect(result.messages[0].content).toBe('A');
+        expect(result.messages[1].content).toBe('Fail');
+        expect(result.messages[2].content).toBe('B');
+        expect(result.messages[3].content).toBe('C');
       });
     });
   });

@@ -27,15 +27,19 @@ interface CustomPIIPattern {
 }
 
 // Built-in PII patterns
-const EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
-const PHONE_RE = /(?:\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})/;
+// Email: reject consecutive dots in local part and domain.
+// Uses a base regex for structure, with a post-match validation to reject '..' sequences.
+const EMAIL_RE = /[a-zA-Z0-9](?:[a-zA-Z0-9._%+-]*[a-zA-Z0-9])?@[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?\.[a-zA-Z]{2,}/;
+// Phone: require at least one separator (-, ., or space) between groups to reduce false positives
+const PHONE_RE = /\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}/;
 // SSN: dashed (123-45-6789), no-dashes (123456789), space-separated (123 45 6789)
 const SSN_RE = /\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b/;
 const CREDIT_CARD_RE = /\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b/;
 // IPv4 with proper 0-255 range validation per octet
 const IPV4_RE = /\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b/;
 // API keys: OpenAI sk-*, AWS AKIA*, GitHub ghp_/gho_/github_pat_, Stripe sk_live_/sk_test_, Google AIza
-const API_KEY_RE = /\b(sk-[a-zA-Z0-9]{20,}|AKIA[A-Z0-9]{16}|ghp_[a-zA-Z0-9]{36,}|gho_[a-zA-Z0-9]{36,}|github_pat_[a-zA-Z0-9_]{22,}|sk_live_[a-zA-Z0-9]{24,}|sk_test_[a-zA-Z0-9]{24,}|AIza[a-zA-Z0-9_-]{35})\b/;
+// Requires key-like context: preceded by =, :, ", or whitespace/start-of-string to reduce false positives from discussion text
+const API_KEY_RE = /(?:^|[=:"'\s])(sk-[a-zA-Z0-9]{20,}|AKIA[A-Z0-9]{16}|ghp_[a-zA-Z0-9]{36,}|gho_[a-zA-Z0-9]{36,}|github_pat_[a-zA-Z0-9_]{22,}|sk_live_[a-zA-Z0-9]{24,}|sk_test_[a-zA-Z0-9]{24,}|AIza[a-zA-Z0-9_-]{35})\b/;
 const PEM_PRIVATE_KEY_RE = /-----BEGIN (?:RSA |EC )?PRIVATE KEY-----/;
 
 /**
@@ -85,7 +89,12 @@ export function createPIIDetector(config?: {
   const detectors: Array<{ name: string; pattern: RegExp; validate?: (match: string) => boolean }> = [];
 
   if (detect.email !== false) {
-    detectors.push({ name: 'email', pattern: EMAIL_RE });
+    detectors.push({
+      name: 'email',
+      pattern: EMAIL_RE,
+      // Reject emails with consecutive dots in local part or domain
+      validate: (match: string) => !match.includes('..'),
+    });
   }
   if (detect.phone !== false) {
     detectors.push({ name: 'phone', pattern: PHONE_RE });

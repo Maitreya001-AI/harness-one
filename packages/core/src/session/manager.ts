@@ -44,6 +44,12 @@ export interface SessionManager {
  * prevent memory leaks. Failing to call `dispose()` will leak the GC interval
  * timer and all session data.
  *
+ * **Lazy Expiry (Fix 12):** Sessions expire lazily -- they are only removed
+ * when accessed, listed, or when gc() runs. In long-running services, expired
+ * sessions remain in memory until one of these operations triggers cleanup.
+ * For aggressive cleanup, ensure gc is enabled (gcIntervalMs config). The
+ * default gcIntervalMs is 60000 (60 seconds).
+ *
  * @example
  * ```ts
  * const sm = createSessionManager({ maxSessions: 10, ttlMs: 60000 });
@@ -83,8 +89,8 @@ export function createSessionManager(config?: {
     return `sess-${nextId++}-${Date.now().toString(36)}`;
   }
 
-  function emit(type: SessionEvent['type'], sessionId: string): void {
-    const event: SessionEvent = { type, sessionId, timestamp: Date.now() };
+  function emit(type: SessionEvent['type'], sessionId: string, reason?: string): void {
+    const event: SessionEvent = { type, sessionId, timestamp: Date.now(), ...(reason !== undefined && { reason }) };
     if (emitting) {
       pendingEvents.push(event);
       return;
@@ -121,6 +127,8 @@ export function createSessionManager(config?: {
       accessOrder.delete(oldestId);
       const session = sessions.get(oldestId);
       if (session) {
+        // Fix 11: Emit distinct 'evicted' event before destroying via LRU
+        emit('evicted', oldestId, 'lru_capacity');
         sessions.delete(oldestId);
         emit('destroyed', oldestId);
       }
@@ -142,7 +150,9 @@ export function createSessionManager(config?: {
     ? setInterval(() => { manager.gc(); }, gcIntervalMs)
     : null;
 
-  // Prevent timer from keeping the process alive
+  // Fix 13: The GC timer is unref'd so it will not prevent process exit.
+  // If your application needs session persistence across restarts, use an
+  // external store (e.g., Redis, database).
   if (gcTimer && typeof gcTimer === 'object' && 'unref' in gcTimer) {
     gcTimer.unref();
   }

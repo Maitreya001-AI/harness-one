@@ -379,6 +379,50 @@ describe('createComponentRegistry', () => {
     });
   });
 
+  // Fix 10: Deep freeze returns
+  describe('deep freeze returns (Fix 10)', () => {
+    it('get() returns a frozen copy', () => {
+      const registry = createComponentRegistry();
+      registry.register(makeMeta({ id: 'frozen-test' }));
+      const meta = registry.get('frozen-test');
+      expect(meta).toBeDefined();
+      expect(Object.isFrozen(meta)).toBe(true);
+    });
+
+    it('get() returns a copy (mutation does not affect registry)', () => {
+      const registry = createComponentRegistry();
+      registry.register(makeMeta({ id: 'copy-test', tags: ['original'] }));
+      const meta1 = registry.get('copy-test');
+      const meta2 = registry.get('copy-test');
+      // Should be equal but not the same reference
+      expect(meta1).toEqual(meta2);
+    });
+  });
+
+  // Fix 11: Tokenized condition parsing
+  describe('tokenized condition parsing (Fix 11)', () => {
+    it('rejects conditions with operators embedded in values', () => {
+      const registry = createComponentRegistry();
+      registry.register(makeMeta({
+        id: 'embedded-op',
+        retirementCondition: 'name>=5 extra',
+      }));
+      // 4 tokens, not valid 3-token format
+      const result = registry.validate('embedded-op', { 'name>=5': 999, extra: 1 });
+      expect(result.valid).toBe(true); // Cannot parse, so condition not met
+    });
+
+    it('correctly parses 3-token condition with spaces', () => {
+      const registry = createComponentRegistry();
+      registry.register(makeMeta({
+        id: 'spaced',
+        retirementCondition: 'count > 10',
+      }));
+      expect(registry.validate('spaced', { count: 11 }).valid).toBe(false);
+      expect(registry.validate('spaced', { count: 10 }).valid).toBe(true);
+    });
+  });
+
   describe('list without filter returns all', () => {
     it('returns all components when no filter is provided', () => {
       const registry = createComponentRegistry();

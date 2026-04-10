@@ -12,6 +12,12 @@ import type { SpawnSubAgentConfig, SpawnSubAgentResult } from './types.js';
 /**
  * Spawn a child {@link AgentLoop}, run it to completion, and return the
  * accumulated conversation, token usage, and termination reason.
+ *
+ * **Streaming limitation** (Fix 32): Child agent streaming output is consumed
+ * internally by the sub-agent loop. To receive real-time updates from child
+ * agents, use the event callback mechanism via `onEvent` instead of direct
+ * stream passthrough. The stream events are processed sequentially and results
+ * are only available after the sub-agent loop completes.
  */
 export async function spawnSubAgent(config: SpawnSubAgentConfig): Promise<SpawnSubAgentResult> {
   const loopConfig: Record<string, unknown> = {

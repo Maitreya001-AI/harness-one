@@ -9,6 +9,11 @@ import type { Guardrail, GuardrailContext } from './types.js';
 /**
  * Create a rate limiter guardrail with sliding window and LRU key eviction.
  *
+ * @warning This rate limiter is in-memory and operates per-process. In multi-instance
+ * or distributed deployments, use a shared backend (e.g., Redis) via `@harness-one/redis`.
+ * Each process maintains its own independent rate limit state, so a user could exceed
+ * the intended limit by distributing requests across multiple instances.
+ *
  * @example
  * ```ts
  * const limiter = createRateLimiter({ max: 10, windowMs: 60_000 });
@@ -19,7 +24,19 @@ export function createRateLimiter(config: {
   windowMs: number;
   keyFn?: (ctx: GuardrailContext) => string;
   maxKeys?: number;
+  /**
+   * Reserved for future use. When true, the rate limiter will use a shared backend
+   * for distributed rate limiting. Currently not implemented — setting this to true
+   * will throw an error. Use `@harness-one/redis` for distributed rate limiting.
+   */
+  distributed?: boolean;
 }): { name: string; guard: Guardrail } {
+  if (config.distributed) {
+    throw new Error(
+      'Distributed rate limiting is not yet implemented in the built-in rate limiter. ' +
+      'Use @harness-one/redis for distributed rate limiting.',
+    );
+  }
   const maxKeys = config.maxKeys ?? 10_000;
   const buckets = new Map<string, number[]>();
   // Map-based LRU: delete + re-set moves key to end (O(1)); keys().next() = oldest (O(1))

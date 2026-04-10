@@ -26,6 +26,9 @@ export interface EvalRunner {
 export function createEvalRunner(config: EvalConfig): EvalRunner {
   const { scorers, passThreshold = 0.7, overallPassRate = 0.8, concurrency = 1 } = config;
 
+  // Fix 2: Extract per-scorer thresholds from gate config
+  const scorerThresholds = config.scorerThresholds;
+
   if (scorers.length === 0) {
     throw new HarnessError(
       'At least one scorer is required',
@@ -39,10 +42,17 @@ export function createEvalRunner(config: EvalConfig): EvalRunner {
     const scores: Record<string, number> = {};
     const details: Record<string, string> = {};
 
+    // Fix 1: Wrap each scorer in try-catch
     for (const scorer of scorers) {
-      const result = await scorer.score(evalCase.input, output, evalCase.context);
-      scores[scorer.name] = result.score;
-      details[scorer.name] = result.explanation;
+      try {
+        const result = await scorer.score(evalCase.input, output, evalCase.context);
+        scores[scorer.name] = result.score;
+        details[scorer.name] = result.explanation;
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        scores[scorer.name] = 0;
+        details[scorer.name] = `Scorer error: ${message}`;
+      }
     }
 
     const passed = Object.values(scores).every((s) => s >= passThreshold);
@@ -105,55 +115,94 @@ export function createEvalRunner(config: EvalConfig): EvalRunner {
       }
 
       // Step 2: Score results, using scoreBatch when available
+      // Fix 1: Track scorer errors across the batch
+      const scorerErrors: Array<{ scorer: string; error: string }> = [];
       const results: EvalResult[] = [];
       const casesWithOutputs = cases.map((c, i) => ({ evalCase: c, output: outputs[i] }));
 
-      // Check which scorers support batch scoring
-      const batchScorers = scorers.filter(s => s.scoreBatch);
-      const individualScorers = scorers.filter(s => !s.scoreBatch);
-
-      // Pre-compute batch scores for scorers that support it
+      // Fix 7: Process scorers in registration order
+      // Instead of splitting batch/individual, process all in registration order
+      // Pre-compute batch results for scorers that support it
       const batchResults = new Map<string, Array<{ score: number; explanation: string }>>();
-      for (const scorer of batchScorers) {
-        const batchInput = casesWithOutputs.map(({ evalCase, output }) => ({
-          input: evalCase.input,
-          output,
-          ...(evalCase.context !== undefined && { context: evalCase.context }),
-        }));
-        const batchScoreResults = await scorer.scoreBatch!(batchInput);
-        batchResults.set(scorer.name, batchScoreResults);
-      }
 
-      // Validate batch results before indexing
+      // Fix 3: Batch scorer mismatch pre-check
+      const batchScorers = scorers.filter(s => s.scoreBatch);
       for (const scorer of batchScorers) {
-        const batchResult = batchResults.get(scorer.name);
-        if (!batchResult || batchResult.length !== cases.length) {
-          throw new HarnessError(
-            `Scorer "${scorer.name}" scoreBatch() returned ${batchResult?.length ?? 0} results but expected ${cases.length}`,
-            'SCORER_MISMATCH',
-            'Ensure scoreBatch() returns exactly one result per case',
-          );
+        try {
+          // Pre-check: run on a single-item slice to verify correct result count
+          if (casesWithOutputs.length > 0) {
+            const probeInput = [{
+              input: casesWithOutputs[0].evalCase.input,
+              output: casesWithOutputs[0].output,
+              ...(casesWithOutputs[0].evalCase.context !== undefined && { context: casesWithOutputs[0].evalCase.context }),
+            }];
+            const probeResult = await scorer.scoreBatch!(probeInput);
+            if (probeResult.length !== 1) {
+              throw new HarnessError(
+                `Scorer "${scorer.name}" scoreBatch() pre-check failed: returned ${probeResult.length} results for 1 input`,
+                'SCORER_MISMATCH',
+                'Ensure scoreBatch() returns exactly one result per case',
+              );
+            }
+          }
+
+          const batchInput = casesWithOutputs.map(({ evalCase, output }) => ({
+            input: evalCase.input,
+            output,
+            ...(evalCase.context !== undefined && { context: evalCase.context }),
+          }));
+          const batchScoreResults = await scorer.scoreBatch!(batchInput);
+
+          // Validate batch results
+          if (batchScoreResults.length !== cases.length) {
+            throw new HarnessError(
+              `Scorer "${scorer.name}" scoreBatch() returned ${batchScoreResults.length} results but expected ${cases.length}`,
+              'SCORER_MISMATCH',
+              'Ensure scoreBatch() returns exactly one result per case',
+            );
+          }
+          batchResults.set(scorer.name, batchScoreResults);
+        } catch (err: unknown) {
+          // Fix 1: Catch batch scorer errors
+          if (err instanceof HarnessError && err.code === 'SCORER_MISMATCH') {
+            throw err; // Re-throw mismatch errors
+          }
+          const message = err instanceof Error ? err.message : String(err);
+          scorerErrors.push({ scorer: scorer.name, error: message });
+          // Fill with zero scores
+          batchResults.set(scorer.name, cases.map(() => ({
+            score: 0,
+            explanation: `Scorer error: ${message}`,
+          })));
         }
       }
 
-      // Build results per case
+      // Build results per case — Fix 7: process in registration order
       for (let i = 0; i < cases.length; i++) {
         const caseStart = Date.now();
         const scores: Record<string, number> = {};
         const details: Record<string, string> = {};
 
-        // Individual scorers
-        for (const scorer of individualScorers) {
-          const result = await scorer.score(cases[i].input, outputs[i], cases[i].context);
-          scores[scorer.name] = result.score;
-          details[scorer.name] = result.explanation;
-        }
-
-        // Batch scorers (use pre-computed results)
-        for (const scorer of batchScorers) {
-          const batchResult = batchResults.get(scorer.name)!;
-          scores[scorer.name] = batchResult[i].score;
-          details[scorer.name] = batchResult[i].explanation;
+        // Process all scorers in registration order
+        for (const scorer of scorers) {
+          if (scorer.scoreBatch && batchResults.has(scorer.name)) {
+            // Use pre-computed batch results
+            const batchResult = batchResults.get(scorer.name)!;
+            scores[scorer.name] = batchResult[i].score;
+            details[scorer.name] = batchResult[i].explanation;
+          } else {
+            // Individual scorer — Fix 1: wrap in try-catch
+            try {
+              const result = await scorer.score(cases[i].input, outputs[i], cases[i].context);
+              scores[scorer.name] = result.score;
+              details[scorer.name] = result.explanation;
+            } catch (err: unknown) {
+              const message = err instanceof Error ? err.message : String(err);
+              scores[scorer.name] = 0;
+              details[scorer.name] = `Scorer error: ${message}`;
+              scorerErrors.push({ scorer: scorer.name, error: message });
+            }
+          }
         }
 
         const passed = Object.values(scores).every((s) => s >= passThreshold);
@@ -183,19 +232,37 @@ export function createEvalRunner(config: EvalConfig): EvalRunner {
         results,
         duration: Date.now() - start,
         timestamp: Date.now(),
+        // Fix 1: Include errors field summarizing scorer failures
+        ...(scorerErrors.length > 0 && { errors: scorerErrors }),
       };
     },
 
     runSingle,
 
+    // Fix 2: Enhanced checkGate with per-scorer thresholds
     checkGate(report) {
-      if (report.passRate >= overallPassRate) {
-        return { passed: true, reason: `Pass rate ${(report.passRate * 100).toFixed(1)}% meets threshold ${(overallPassRate * 100).toFixed(1)}%` };
+      // Check overall pass rate
+      if (report.passRate < overallPassRate) {
+        return {
+          passed: false,
+          reason: `Pass rate ${(report.passRate * 100).toFixed(1)}% below threshold ${(overallPassRate * 100).toFixed(1)}%`,
+        };
       }
-      return {
-        passed: false,
-        reason: `Pass rate ${(report.passRate * 100).toFixed(1)}% below threshold ${(overallPassRate * 100).toFixed(1)}%`,
-      };
+
+      // Fix 2: Check per-scorer thresholds
+      if (scorerThresholds) {
+        for (const [scorerName, threshold] of Object.entries(scorerThresholds)) {
+          const avgScore = report.averageScores[scorerName];
+          if (avgScore !== undefined && avgScore < threshold) {
+            return {
+              passed: false,
+              reason: `Scorer "${scorerName}" average ${avgScore.toFixed(3)} below threshold ${threshold}`,
+            };
+          }
+        }
+      }
+
+      return { passed: true, reason: `Pass rate ${(report.passRate * 100).toFixed(1)}% meets threshold ${(overallPassRate * 100).toFixed(1)}%` };
     },
   };
 }

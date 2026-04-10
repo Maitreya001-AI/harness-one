@@ -452,13 +452,13 @@ describe('createInMemoryStore', () => {
   });
 
   describe('maxEntries option', () => {
-    it('evicts oldest entry when maxEntries is exceeded', async () => {
+    it('evicts lowest-grade entry when maxEntries is exceeded (grade-aware)', async () => {
       const bounded = createInMemoryStore({ maxEntries: 2 });
       const first = await bounded.write({ key: 'k1', content: 'first', grade: 'useful' });
       await bounded.write({ key: 'k2', content: 'second', grade: 'useful' });
       await bounded.write({ key: 'k3', content: 'third', grade: 'useful' });
 
-      // first entry should have been evicted
+      // first entry should have been evicted (same grade, FIFO)
       expect(await bounded.read(first.id)).toBeNull();
       expect(await bounded.count()).toBe(2);
     });
@@ -491,16 +491,53 @@ describe('createInMemoryStore', () => {
       expect(await single.read(last.id)).not.toBeNull();
     });
 
-    it('evicts entries in FIFO order (oldest first)', async () => {
+    // Fix 16: Grade-aware eviction
+    it('evicts ephemeral before useful when maxEntries exceeded', async () => {
+      const bounded = createInMemoryStore({ maxEntries: 2 });
+      const ephemeral = await bounded.write({ key: 'k1', content: 'temp', grade: 'ephemeral' });
+      const useful = await bounded.write({ key: 'k2', content: 'keep', grade: 'useful' });
+      const newEntry = await bounded.write({ key: 'k3', content: 'new', grade: 'useful' });
+
+      // ephemeral should be evicted first (lower grade)
+      expect(await bounded.read(ephemeral.id)).toBeNull();
+      expect(await bounded.read(useful.id)).not.toBeNull();
+      expect(await bounded.read(newEntry.id)).not.toBeNull();
+    });
+
+    it('evicts useful before critical when maxEntries exceeded', async () => {
+      const bounded = createInMemoryStore({ maxEntries: 2 });
+      const useful = await bounded.write({ key: 'k1', content: 'useful', grade: 'useful' });
+      const critical = await bounded.write({ key: 'k2', content: 'critical', grade: 'critical' });
+      const newEntry = await bounded.write({ key: 'k3', content: 'new', grade: 'useful' });
+
+      // useful should be evicted (lower grade than critical)
+      expect(await bounded.read(useful.id)).toBeNull();
+      expect(await bounded.read(critical.id)).not.toBeNull();
+      expect(await bounded.read(newEntry.id)).not.toBeNull();
+    });
+
+    it('evicts oldest of same grade (FIFO within grade)', async () => {
       const bounded = createInMemoryStore({ maxEntries: 2 });
       const e1 = await bounded.write({ key: 'k1', content: 'first', grade: 'useful' });
       const e2 = await bounded.write({ key: 'k2', content: 'second', grade: 'useful' });
       const e3 = await bounded.write({ key: 'k3', content: 'third', grade: 'useful' });
 
-      // e1 evicted, e2 and e3 remain
+      // e1 evicted (oldest of same grade), e2 and e3 remain
       expect(await bounded.read(e1.id)).toBeNull();
       expect(await bounded.read(e2.id)).not.toBeNull();
       expect(await bounded.read(e3.id)).not.toBeNull();
+    });
+
+    it('critical entries survive eviction when lower-grade entries exist', async () => {
+      const bounded = createInMemoryStore({ maxEntries: 2 });
+      const critical = await bounded.write({ key: 'k1', content: 'critical', grade: 'critical' });
+      const ephemeral = await bounded.write({ key: 'k2', content: 'temp', grade: 'ephemeral' });
+      const newCritical = await bounded.write({ key: 'k3', content: 'new critical', grade: 'critical' });
+
+      // ephemeral should be evicted, both critical entries survive
+      expect(await bounded.read(ephemeral.id)).toBeNull();
+      expect(await bounded.read(critical.id)).not.toBeNull();
+      expect(await bounded.read(newCritical.id)).not.toBeNull();
     });
   });
 

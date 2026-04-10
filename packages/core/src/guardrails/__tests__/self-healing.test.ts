@@ -589,6 +589,68 @@ describe('withSelfHealing', () => {
     });
   });
 
+  describe('Fix 11: token budget tracking on regeneration failure', () => {
+    it('counts retry prompt tokens in totalTokens even when regenerate() throws', async () => {
+      const guard: Guardrail = () => ({ action: 'block', reason: 'bad' });
+      const regenerate = vi.fn().mockRejectedValue(new Error('LLM API down'));
+      const estimateTokens = (text: string) => text.length;
+
+      const realSetTimeout = globalThis.setTimeout;
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation((fn, ms, ...args) => {
+        return realSetTimeout(fn as () => void, 0, ...args);
+      });
+
+      const result = await withSelfHealing(
+        {
+          maxRetries: 3,
+          guardrails: [{ name: 'g1', guard }],
+          buildRetryPrompt: () => 'fix this please',
+          regenerate,
+          estimateTokens,
+          maxTotalTokens: 10000,
+        },
+        'bad content',
+      );
+
+      setTimeoutSpy.mockRestore();
+
+      expect(result.passed).toBe(false);
+      expect(result.totalTokens).toBeDefined();
+      // totalTokens should include: initial content tokens + retry prompt tokens
+      // initial: 'bad content'.length = 11
+      // retry prompt: 'fix this please'.length = 15
+      // Total: 11 + 15 = 26
+      expect(result.totalTokens).toBe('bad content'.length + 'fix this please'.length);
+    });
+
+    it('counts retry prompt tokens on timeout failure', async () => {
+      const guard: Guardrail = () => ({ action: 'block', reason: 'bad' });
+      const regenerate = vi.fn().mockImplementation(
+        () => new Promise(() => {}), // never resolves
+      );
+      const estimateTokens = (text: string) => text.length;
+
+      const result = await withSelfHealing(
+        {
+          maxRetries: 2,
+          guardrails: [{ name: 'g1', guard }],
+          buildRetryPrompt: () => 'retry prompt',
+          regenerate,
+          estimateTokens,
+          maxTotalTokens: 10000,
+          regenerateTimeoutMs: 50,
+        },
+        'initial',
+      );
+
+      expect(result.passed).toBe(false);
+      expect(result.totalTokens).toBeDefined();
+      // initial: 'initial'.length = 7
+      // retry prompt: 'retry prompt'.length = 12
+      expect(result.totalTokens).toBe('initial'.length + 'retry prompt'.length);
+    });
+  });
+
   describe('Fix 6: regenerate error not swallowed', () => {
     it('returns failure when regenerate throws with error info preserved', async () => {
       const guard: Guardrail = () => ({ action: 'block', reason: 'bad' });

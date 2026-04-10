@@ -505,6 +505,54 @@ describe('createRAGPipeline', () => {
     expect(Object.isFrozen(pipeline)).toBe(true);
   });
 
+  // ---- Fix 22: Embedding health check ----
+
+  describe('embedding health check (Fix 22)', () => {
+    it('validates embedding function when validateEmbedding is true', async () => {
+      const pipeline = createRAGPipeline({
+        embedding,
+        retriever: createInMemoryRetriever({ embedding }),
+        validateEmbedding: true,
+      });
+
+      const count = await pipeline.ingestDocuments([
+        { id: 'd1', content: 'Hello world' },
+      ]);
+      expect(count).toBe(1);
+    });
+
+    it('throws when embedding model returns invalid results with validation enabled', async () => {
+      const brokenEmbedding: EmbeddingModel = {
+        dimensions: 4,
+        async embed() {
+          return []; // Returns nothing
+        },
+      };
+
+      const pipeline = createRAGPipeline({
+        embedding: brokenEmbedding,
+        retriever: createInMemoryRetriever({ embedding }),
+        validateEmbedding: true,
+      });
+
+      await expect(pipeline.ingestDocuments([
+        { id: 'd1', content: 'Hello' },
+      ])).rejects.toThrow(/Embedding validation failed/);
+    });
+
+    it('skips validation when validateEmbedding is false (default)', async () => {
+      const pipeline = createRAGPipeline({
+        embedding,
+        retriever: createInMemoryRetriever({ embedding }),
+      });
+
+      const count = await pipeline.ingestDocuments([
+        { id: 'd1', content: 'Hello' },
+      ]);
+      expect(count).toBe(1);
+    });
+  });
+
   // ---- getChunks returns a copy ----
 
   it('getChunks returns a copy (not internal reference)', async () => {

@@ -24,10 +24,15 @@ describe('createContentFilter', () => {
       expect(guard({ content: 'this contains badword' }).action).toBe('block');
     });
 
-    it('blocks on partial match within a word', () => {
+    it('does NOT block on partial match within a word (word-boundary matching)', () => {
       const { guard } = createContentFilter({ blocked: ['bad'] });
-      // "bad" appears within "badge"
-      expect(guard({ content: 'My badge is here' }).action).toBe('block');
+      // "bad" appears within "badge" but should not match due to word-boundary
+      expect(guard({ content: 'My badge is here' }).action).toBe('allow');
+    });
+
+    it('blocks when blocked keyword appears as a standalone word', () => {
+      const { guard } = createContentFilter({ blocked: ['bad'] });
+      expect(guard({ content: 'This is bad content' }).action).toBe('block');
     });
 
     it('blocks on the first matching keyword', () => {
@@ -178,9 +183,9 @@ describe('createContentFilter', () => {
     });
 
     it('handles content with special regex characters in keywords', () => {
-      // Keywords are matched with .includes(), not regex
+      // Keywords with regex-special characters are safely escaped for word-boundary matching
       const { guard } = createContentFilter({ blocked: ['$money'] });
-      expect(guard({ content: 'I have $money' }).action).toBe('block');
+      expect(guard({ content: 'I have $money today' }).action).toBe('block');
     });
 
     it('handles very long content efficiently', () => {
@@ -193,6 +198,58 @@ describe('createContentFilter', () => {
 
       expect(result.action).toBe('block');
       expect(elapsed).toBeLessThan(1000);
+    });
+  });
+
+  // ---- Word boundary matching (Fix 3) ----
+
+  describe('word boundary matching', () => {
+    it('does not false-positive: "contest" does not match keyword "test"', () => {
+      const { guard } = createContentFilter({ blocked: ['test'] });
+      expect(guard({ content: 'This is a contest entry' }).action).toBe('allow');
+    });
+
+    it('does not false-positive: "assassin" does not match keyword "ass"', () => {
+      const { guard } = createContentFilter({ blocked: ['ass'] });
+      expect(guard({ content: 'The assassin was caught' }).action).toBe('allow');
+    });
+
+    it('blocks exact word match: "test" matches standalone "test"', () => {
+      const { guard } = createContentFilter({ blocked: ['test'] });
+      expect(guard({ content: 'This is a test for you' }).action).toBe('block');
+    });
+
+    it('blocks word at start of string', () => {
+      const { guard } = createContentFilter({ blocked: ['bad'] });
+      expect(guard({ content: 'bad things happen' }).action).toBe('block');
+    });
+
+    it('blocks word at end of string', () => {
+      const { guard } = createContentFilter({ blocked: ['bad'] });
+      expect(guard({ content: 'something bad' }).action).toBe('block');
+    });
+
+    it('blocks word surrounded by punctuation', () => {
+      const { guard } = createContentFilter({ blocked: ['bad'] });
+      expect(guard({ content: 'is it (bad) or good?' }).action).toBe('block');
+    });
+  });
+
+  // ---- NFKC normalization (Fix 4) ----
+
+  describe('NFKC normalization', () => {
+    it('catches fullwidth characters used to bypass filtering', () => {
+      const { guard } = createContentFilter({ blocked: ['forbidden'] });
+      // Fullwidth 'f' (U+FF46) + 'o' (U+FF4F) + 'r' (U+FF52) + 'b' (U+FF42) + ...
+      const fullwidthForbidden = '\uFF46\uFF4F\uFF52\uFF42\uFF49\uFF44\uFF44\uFF45\uFF4E';
+      expect(guard({ content: `This is ${fullwidthForbidden} content` }).action).toBe('block');
+    });
+
+    it('normalizes both keywords and content consistently', () => {
+      const { guard } = createContentFilter({ blocked: ['cafe'] });
+      // "cafe" with combining acute (caf + e + combining acute) -> NFKC -> caf\u00E9
+      // The keyword "cafe" is also NFKC-normalized, so this tests consistent normalization
+      expect(guard({ content: 'Visit the cafe today' }).action).toBe('block');
     });
   });
 

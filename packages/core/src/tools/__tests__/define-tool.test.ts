@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { defineTool } from '../define-tool.js';
 import { toolSuccess, toolError } from '../types.js';
+import { HarnessError } from '../../core/errors.js';
 
 describe('toolSuccess', () => {
   it('returns a success result', () => {
@@ -168,6 +169,89 @@ describe('defineTool', () => {
     });
 
     expect(tool.responseFormat).toBeUndefined();
+  });
+
+  describe('Fix 8: Schema validation at definition time', () => {
+    it('throws INVALID_TOOL_SCHEMA for an unsupported type', () => {
+      expect(() => defineTool({
+        name: 'bad',
+        description: 'Bad tool',
+        parameters: { type: 'invalid_type' as 'object' },
+        execute: async () => toolSuccess(null),
+      })).toThrow(HarnessError);
+
+      try {
+        defineTool({
+          name: 'bad',
+          description: 'Bad tool',
+          parameters: { type: 'invalid_type' as 'object' },
+          execute: async () => toolSuccess(null),
+        });
+      } catch (err) {
+        expect((err as HarnessError).code).toBe('INVALID_TOOL_SCHEMA');
+      }
+    });
+
+    it('throws INVALID_TOOL_SCHEMA when properties is not an object', () => {
+      expect(() => defineTool({
+        name: 'bad',
+        description: 'Bad tool',
+        parameters: { type: 'object', properties: 'not an object' as unknown as Record<string, never> },
+        execute: async () => toolSuccess(null),
+      })).toThrow(HarnessError);
+    });
+
+    it('throws INVALID_TOOL_SCHEMA when required is not an array', () => {
+      expect(() => defineTool({
+        name: 'bad',
+        description: 'Bad tool',
+        parameters: { type: 'object', required: 'not array' as unknown as string[] },
+        execute: async () => toolSuccess(null),
+      })).toThrow(HarnessError);
+    });
+
+    it('validates nested property schemas recursively', () => {
+      expect(() => defineTool({
+        name: 'bad',
+        description: 'Bad tool',
+        parameters: {
+          type: 'object',
+          properties: {
+            nested: { type: 'invalid_nested' as 'string' },
+          },
+        },
+        execute: async () => toolSuccess(null),
+      })).toThrow(HarnessError);
+    });
+
+    it('validates items schema for array type', () => {
+      expect(() => defineTool({
+        name: 'bad',
+        description: 'Bad tool',
+        parameters: {
+          type: 'array',
+          items: { type: 'not_a_type' as 'string' },
+        },
+        execute: async () => toolSuccess(null),
+      })).toThrow(HarnessError);
+    });
+
+    it('accepts valid schemas without throwing', () => {
+      expect(() => defineTool({
+        name: 'good',
+        description: 'Good tool',
+        parameters: {
+          type: 'object',
+          properties: {
+            name: { type: 'string' },
+            age: { type: 'integer' },
+            tags: { type: 'array', items: { type: 'string' } },
+          },
+          required: ['name'],
+        },
+        execute: async () => toolSuccess(null),
+      })).not.toThrow();
+    });
   });
 
   describe('edge cases', () => {

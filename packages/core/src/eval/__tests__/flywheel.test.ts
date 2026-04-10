@@ -157,4 +157,87 @@ describe('extractNewCases', () => {
     expect(newCases).toHaveLength(1);
     expect(newCases[0].input).toBe('case-abc');
   });
+
+  // Fix 5: Circuit breaker tests
+  describe('circuit breaker (Fix 5)', () => {
+    it('tracks sourceId in generated case metadata', () => {
+      const originalCases: EvalCase[] = [
+        { id: 'case-1', input: 'What is AI?' },
+      ];
+      const report = makeReport([
+        { caseId: 'case-1', scores: { relevance: 0.1 } },
+      ]);
+
+      const newCases = extractNewCases(report, { scoreThreshold: 0.5 }, originalCases);
+      expect(newCases).toHaveLength(1);
+      expect(newCases[0].metadata!.sourceId).toBe('case-1');
+      expect(newCases[0].metadata!.generationDepth).toBe(1);
+    });
+
+    it('limits generation depth to maxGenerationDepth', () => {
+      const originalCases: EvalCase[] = [
+        {
+          id: 'deep-case',
+          input: 'Already deep',
+          metadata: { sourceId: 'root', generationDepth: 3 },
+        },
+      ];
+      const report = makeReport([
+        { caseId: 'deep-case', scores: { relevance: 0.1 } },
+      ]);
+
+      const newCases = extractNewCases(report, { scoreThreshold: 0.5, maxGenerationDepth: 3 }, originalCases);
+      expect(newCases).toHaveLength(0); // At max depth, should not generate
+    });
+
+    it('allows generation when below maxGenerationDepth', () => {
+      const originalCases: EvalCase[] = [
+        {
+          id: 'shallow-case',
+          input: 'Not deep yet',
+          metadata: { sourceId: 'root', generationDepth: 1 },
+        },
+      ];
+      const report = makeReport([
+        { caseId: 'shallow-case', scores: { relevance: 0.1 } },
+      ]);
+
+      const newCases = extractNewCases(report, { scoreThreshold: 0.5, maxGenerationDepth: 3 }, originalCases);
+      expect(newCases).toHaveLength(1);
+      expect(newCases[0].metadata!.generationDepth).toBe(2);
+    });
+
+    it('deduplicates by content hash', () => {
+      const originalCases: EvalCase[] = [
+        { id: 'case-1', input: 'Same question' },
+        { id: 'case-2', input: 'Same question' },
+      ];
+      const report = makeReport([
+        { caseId: 'case-1', scores: { relevance: 0.1 } },
+        { caseId: 'case-2', scores: { relevance: 0.2 } },
+      ]);
+
+      const newCases = extractNewCases(report, { scoreThreshold: 0.5 }, originalCases);
+      // Should deduplicate since both have the same input
+      expect(newCases).toHaveLength(1);
+    });
+
+    it('defaults maxGenerationDepth to 3', () => {
+      const originalCases: EvalCase[] = [
+        {
+          id: 'depth-2',
+          input: 'Depth 2 case',
+          metadata: { sourceId: 'root', generationDepth: 2 },
+        },
+      ];
+      const report = makeReport([
+        { caseId: 'depth-2', scores: { relevance: 0.1 } },
+      ]);
+
+      // Default maxGenerationDepth=3, case is at depth 2, so one more generation is allowed
+      const newCases = extractNewCases(report, { scoreThreshold: 0.5 }, originalCases);
+      expect(newCases).toHaveLength(1);
+      expect(newCases[0].metadata!.generationDepth).toBe(3);
+    });
+  });
 });

@@ -173,7 +173,10 @@ export function createLangfusePromptBackend(config: LangfusePromptBackendConfig)
     name: string,
     lfPrompt: { prompt: unknown; version: number },
   ): PromptTemplate {
-    const content = String(lfPrompt.prompt);
+    if (typeof lfPrompt.prompt !== 'string') {
+      throw new Error(`Langfuse prompt "${name}" is not a string type`);
+    }
+    const content = lfPrompt.prompt;
     const variableMatches = content.match(/\{\{(\w+)\}\}/g) ?? [];
     const variables = [...new Set(variableMatches.map((m) => m.replace(/\{\{|\}\}/g, '')))];
 
@@ -220,6 +223,10 @@ export function createLangfusePromptBackend(config: LangfusePromptBackendConfig)
       return templates;
     },
 
+    /**
+     * @throws Always throws - Langfuse prompt management is read-only via this
+     * adapter. Use the Langfuse dashboard to manage prompts.
+     */
     async push(): Promise<void> {
       throw new HarnessError(
         'Langfuse SDK does not support pushing prompts programmatically',
@@ -326,6 +333,11 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): Co
           cacheReadTokens: usage.cacheReadTokens,
           cacheWriteTokens: usage.cacheWriteTokens,
         },
+      });
+
+      // Flush to ensure the generation record is persisted to Langfuse
+      client.flushAsync().catch(() => {
+        // Best-effort flush — do not fail the recordUsage call
       });
 
       if (budget !== undefined) {

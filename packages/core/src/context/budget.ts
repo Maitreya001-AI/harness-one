@@ -25,6 +25,14 @@ import { HarnessError } from '../core/errors.js';
  * ```
  */
 export function createBudget(config: BudgetConfig): TokenBudget {
+  if (config.totalTokens <= 0) {
+    throw new HarnessError(
+      `totalTokens must be positive, got ${config.totalTokens}`,
+      'INVALID_BUDGET',
+      'Provide a totalTokens value greater than 0',
+    );
+  }
+
   const responseReserve = config.responseReserve ?? 0;
 
   const segmentState = new Map<
@@ -33,6 +41,13 @@ export function createBudget(config: BudgetConfig): TokenBudget {
   >();
 
   for (const seg of config.segments) {
+    if (seg.maxTokens <= 0) {
+      throw new HarnessError(
+        `Segment "${seg.name}" maxTokens must be positive, got ${seg.maxTokens}`,
+        'INVALID_BUDGET',
+        'Provide a maxTokens value greater than 0 for each segment',
+      );
+    }
     segmentState.set(seg.name, {
       maxTokens: seg.maxTokens,
       used: 0,
@@ -73,6 +88,15 @@ export function createBudget(config: BudgetConfig): TokenBudget {
         );
       }
       seg.used += tokens;
+    },
+
+    tryAllocate(segmentName: string, tokens: number): boolean {
+      const seg = getSegment(segmentName);
+      if (seg.used + tokens > seg.maxTokens) {
+        return false;
+      }
+      seg.used += tokens;
+      return true;
     },
 
     reset(segmentName: string): void {

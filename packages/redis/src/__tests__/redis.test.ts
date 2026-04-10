@@ -194,6 +194,32 @@ describe('createRedisStore', () => {
     expect(results[0].content).toBe('tagged');
   });
 
+  it('queries with multiple tags using AND semantics (every tag must match)', async () => {
+    const store = createRedisStore({ client: redis, prefix: 'test' });
+
+    await store.write({ key: 'a', content: 'both-tags', grade: 'useful', tags: ['urgent', 'critical'] });
+    await store.write({ key: 'b', content: 'only-urgent', grade: 'useful', tags: ['urgent'] });
+    await store.write({ key: 'c', content: 'only-critical', grade: 'useful', tags: ['critical'] });
+    await store.write({ key: 'd', content: 'no-tags', grade: 'useful' });
+
+    // Filtering with ['urgent', 'critical'] should return only entries with BOTH tags
+    const results = await store.query({ tags: ['urgent', 'critical'] });
+    expect(results).toHaveLength(1);
+    expect(results[0].content).toBe('both-tags');
+  });
+
+  it('ignores non-string search values in query filter', async () => {
+    const store = createRedisStore({ client: redis, prefix: 'test' });
+
+    await store.write({ key: 'a', content: 'Hello world', grade: 'useful' });
+    await store.write({ key: 'b', content: 'Goodbye world', grade: 'useful' });
+
+    // Passing a non-string search value should not crash -- it is silently ignored
+    const results = await store.query({ search: 123 as unknown as string });
+    // All entries should be returned since the non-string search is ignored
+    expect(results).toHaveLength(2);
+  });
+
   it('writes with TTL when defaultTTL is set', async () => {
     const store = createRedisStore({ client: redis, prefix: 'test', defaultTTL: 3600 });
 

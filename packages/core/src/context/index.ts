@@ -25,7 +25,7 @@ export { packContext } from './pack.js';
 
 // Compress
 export { compress, compactIfNeeded } from './compress.js';
-export type { CompressOptions, CompactOptions } from './compress.js';
+export type { CompressOptions, CompactOptions, CompressResult } from './compress.js';
 
 // Cache stability
 export { analyzeCacheStability } from './cache-stability.js';

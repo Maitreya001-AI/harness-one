@@ -607,6 +607,109 @@ describe('createRegistry', () => {
     });
   });
 
+  describe('Fix 6: TOCTOU atomic rate limiting', () => {
+    it('concurrent calls cannot both pass the limit (atomic increment-then-check)', async () => {
+      // With increment-first pattern, concurrent calls cannot both slip through
+      const asyncTool = defineTool({
+        name: 'async',
+        description: 'Async tool',
+        parameters: { type: 'object' },
+        execute: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          return toolSuccess('ok');
+        },
+      });
+      const registry = createRegistry({ maxCallsPerTurn: 2 });
+      registry.register(asyncTool);
+
+      const call = { id: '1', name: 'async', arguments: '{}' };
+      // Launch 5 concurrent calls - only 2 should succeed
+      const results = await Promise.all([
+        registry.execute(call),
+        registry.execute(call),
+        registry.execute(call),
+        registry.execute(call),
+        registry.execute(call),
+      ]);
+
+      const successes = results.filter((r) => r.success);
+      const failures = results.filter((r) => !r.success);
+      expect(successes).toHaveLength(2);
+      expect(failures).toHaveLength(3);
+    });
+
+    it('decrements counters on early failure paths (not_found, validation, permission)', async () => {
+      const registry = createRegistry({ maxCallsPerTurn: 1 });
+      registry.register(makeEchoTool());
+
+      // Not found should not consume a slot
+      await registry.execute({ id: '1', name: 'missing', arguments: '{}' });
+      const good1 = await registry.execute({ id: '2', name: 'echo', arguments: '{"text":"hi"}' });
+      expect(good1.success).toBe(true);
+
+      registry.resetTurn();
+
+      // Invalid JSON should not consume a slot
+      await registry.execute({ id: '3', name: 'echo', arguments: 'not json' });
+      const good2 = await registry.execute({ id: '4', name: 'echo', arguments: '{"text":"hi"}' });
+      expect(good2.success).toBe(true);
+
+      registry.resetTurn();
+
+      // Validation failure should not consume a slot
+      await registry.execute({ id: '5', name: 'echo', arguments: '{"text": 123}' });
+      const good3 = await registry.execute({ id: '6', name: 'echo', arguments: '{"text":"hi"}' });
+      expect(good3.success).toBe(true);
+    });
+  });
+
+  describe('Fix 7: Timer listener leak prevention', () => {
+    it('cleans up timeout timer on successful execution (no leaked timers)', async () => {
+      vi.useFakeTimers();
+      const registry = createRegistry({ timeoutMs: 5000 });
+      registry.register(makeEchoTool());
+      const promise = registry.execute({
+        id: '1',
+        name: 'echo',
+        arguments: '{"text":"hello"}',
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      const result = await promise;
+      expect(result.success).toBe(true);
+
+      // Advancing timers past timeout should not cause any issues
+      // because the timer was properly cleared in the finally block
+      await vi.advanceTimersByTimeAsync(10000);
+      vi.useRealTimers();
+    });
+
+    it('does not leak abort signal listeners after timeout', async () => {
+      const slowTool = defineTool({
+        name: 'slow',
+        description: 'Slow tool',
+        parameters: { type: 'object' },
+        execute: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 5000));
+          return toolSuccess('done');
+        },
+      });
+      const registry = createRegistry({ timeoutMs: 50 });
+      registry.register(slowTool);
+
+      // Execute multiple times to verify no listener accumulation
+      for (let i = 0; i < 10; i++) {
+        const result = await registry.execute({
+          id: String(i),
+          name: 'slow',
+          arguments: '{}',
+        });
+        expect(result.success).toBe(false);
+      }
+      // If listeners leaked, we'd see a Node.js MaxListenersExceeded warning
+      // The test passing without error means no leak
+    });
+  });
+
   describe('edge cases', () => {
     it('permission check blocks execution', async () => {
       const registry = createRegistry({

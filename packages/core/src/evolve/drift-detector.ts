@@ -4,6 +4,7 @@
  * @module
  */
 
+import { HarnessError } from '../core/errors.js';
 import type { DriftReport, DriftDeviation } from './types.js';
 
 /** Interface for detecting drift from baselines. */
@@ -11,6 +12,8 @@ export interface DriftDetector {
   setBaseline(componentId: string, baseline: Record<string, unknown>): void;
   check(componentId: string, current: Record<string, unknown>): DriftReport;
   checkAll(currentValues: Record<string, Record<string, unknown>>): DriftReport[];
+  /** Fix 8: Check if a baseline exists for a given metric/component. */
+  hasBaseline(componentId: string): boolean;
 }
 
 /** Configuration for the drift detector. */
@@ -37,7 +40,14 @@ export function createDriftDetector(config?: DriftDetectorConfig): DriftDetector
   function classifyWithThresholds(expected: unknown, actual: unknown): 'low' | 'medium' | 'high' {
     if (expected === undefined || actual === undefined) return 'high';
     if (typeof expected === 'number' && typeof actual === 'number') {
-      if (expected === 0) return actual === 0 ? 'low' : 'high';
+      // Fix 9: Zero-baseline severity — use absolute difference thresholds
+      if (expected === 0) {
+        if (actual === 0) return 'low';
+        const abs = Math.abs(actual);
+        if (abs < 1) return 'low';
+        if (abs < 10) return 'medium';
+        return 'high';
+      }
       const ratio = Math.abs(actual - expected) / Math.abs(expected);
       if (ratio > mediumThreshold) return 'high';
       if (ratio > lowThreshold) return 'medium';
@@ -52,17 +62,20 @@ export function createDriftDetector(config?: DriftDetectorConfig): DriftDetector
       baselines.set(componentId, { ...baseline });
     },
 
+    // Fix 8: hasBaseline method
+    hasBaseline(componentId) {
+      return baselines.has(componentId);
+    },
+
     check(componentId, current) {
       const baseline = baselines.get(componentId);
+      // Fix 8: Throw if no baseline set
       if (!baseline) {
-        return {
-          componentId,
-          driftDetected: false,
-          baseline: {},
-          current,
-          deviations: [],
-          timestamp: Date.now(),
-        };
+        throw new HarnessError(
+          `No baseline set for component "${componentId}"`,
+          'NO_BASELINE',
+          'Call setBaseline() before check()',
+        );
       }
 
       const deviations: DriftDeviation[] = [];

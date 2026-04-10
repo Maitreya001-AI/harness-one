@@ -232,6 +232,57 @@ describe('createPromptBuilder', () => {
     });
   });
 
+  describe('getStablePrefixHash caching', () => {
+    it('returns cached hash on repeated calls without changes', () => {
+      const builder = createPromptBuilder();
+      builder.addLayer({ name: 'sys', content: 'Stable content', priority: 0, cacheable: true });
+      const hash1 = builder.getStablePrefixHash();
+      const hash2 = builder.getStablePrefixHash();
+      expect(hash1).toBe(hash2);
+    });
+
+    it('invalidates cached hash when addLayer is called', () => {
+      const builder = createPromptBuilder();
+      builder.addLayer({ name: 'sys', content: 'Original', priority: 0, cacheable: true });
+      const hash1 = builder.getStablePrefixHash();
+      builder.addLayer({ name: 'extra', content: 'New cacheable', priority: 1, cacheable: true });
+      const hash2 = builder.getStablePrefixHash();
+      expect(hash1).not.toBe(hash2);
+    });
+
+    it('invalidates cached hash when removeLayer is called', () => {
+      const builder = createPromptBuilder();
+      builder.addLayer({ name: 'sys', content: 'Stable', priority: 0, cacheable: true });
+      builder.addLayer({ name: 'extra', content: 'Extra', priority: 1, cacheable: true });
+      const hash1 = builder.getStablePrefixHash();
+      builder.removeLayer('extra');
+      const hash2 = builder.getStablePrefixHash();
+      expect(hash1).not.toBe(hash2);
+    });
+
+    it('invalidates cached hash when setVariable is called', () => {
+      const builder = createPromptBuilder();
+      builder.addLayer({ name: 'sys', content: 'Hello {{name}}', priority: 0, cacheable: true });
+      const hash1 = builder.getStablePrefixHash();
+      builder.setVariable('name', 'Alice');
+      // Hash is invalidated but should still be the same value since it hashes raw content
+      const hash2 = builder.getStablePrefixHash();
+      expect(hash1).toBe(hash2); // raw content hasn't changed
+    });
+
+    it('does not recompute hash when no changes occurred (caching works)', () => {
+      const builder = createPromptBuilder();
+      builder.addLayer({ name: 'sys', content: 'Stable', priority: 0, cacheable: true });
+      // First call computes
+      builder.getStablePrefixHash();
+      // Call build to clear dirty flag
+      builder.build();
+      // Second call should use cache (hash unchanged)
+      const hash = builder.getStablePrefixHash();
+      expect(hash).toMatch(/^[0-9a-f]{16}$/);
+    });
+  });
+
   describe('edge cases', () => {
     it('cache hash stability: changing variable value does not change hash', () => {
       const builder = createPromptBuilder();

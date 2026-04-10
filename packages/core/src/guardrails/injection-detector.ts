@@ -9,8 +9,9 @@ import type { Guardrail, GuardrailContext } from './types.js';
 // Zero-width characters to strip before matching
 const ZERO_WIDTH_RE = /[\u200B\u200C\u200D\uFEFF\u00AD\u2060\u180E]/g;
 
-// Cyrillic-to-Latin and Greek-to-Latin homoglyph map for common confusables
+// Cyrillic-to-Latin, Greek-to-Latin, IPA, and mathematical homoglyph map for common confusables
 const HOMOGLYPH_MAP: Record<string, string> = {
+  // Cyrillic homoglyphs
   '\u0430': 'a', // Cyrillic а → Latin a
   '\u0435': 'e', // Cyrillic е → Latin e
   '\u043E': 'o', // Cyrillic о → Latin o
@@ -19,6 +20,8 @@ const HOMOGLYPH_MAP: Record<string, string> = {
   '\u0443': 'y', // Cyrillic у → Latin y
   '\u0445': 'x', // Cyrillic х → Latin x
   '\u0456': 'i', // Cyrillic і → Latin i
+  '\u0501': 'd', // Cyrillic ԁ → Latin d
+  // Greek homoglyphs
   '\u03BF': 'o', // Greek ο (omicron) → Latin o
   '\u03B1': 'a', // Greek α (alpha) → Latin a
   '\u03B5': 'e', // Greek ε (epsilon) → Latin e
@@ -27,6 +30,21 @@ const HOMOGLYPH_MAP: Record<string, string> = {
   '\u03C4': 't', // Greek τ (tau) → Latin t
   '\u03B7': 'n', // Greek η (eta) → Latin n
   '\u03B9': 'i', // Greek ι (iota) → Latin i
+  // IPA extensions
+  '\u0251': 'a', // ɑ (Latin alpha) → Latin a
+  '\u0261': 'g', // ɡ (script g) → Latin g
+  '\u026A': 'i', // ɪ (small capital I) → Latin i
+  '\u0274': 'n', // ɴ (small capital N) → Latin n
+  '\u025B': 'e', // ɛ (open e) → Latin e
+  '\u027E': 'r', // ɾ (fish-hook r) → Latin r
+  '\u028C': 'v', // ʌ (turned v) → Latin v
+  '\u1E77': 'u', // ṷ (u with circumflex below) → Latin u
+  // Mathematical/Roman numeral confusables
+  '\u217E': 'd', // ⅾ (small roman numeral five hundred) → Latin d
+  '\u217C': 'l', // ⅼ (small roman numeral fifty) → Latin l
+  '\u2170': 'i', // ⅰ (small roman numeral one) → Latin i
+  '\u2174': 'v', // ⅴ (small roman numeral five) → Latin v
+  '\u2179': 'x', // ⅹ (small roman numeral ten) → Latin x
 };
 
 // Markdown formatting characters to strip
@@ -95,20 +113,29 @@ export function createInjectionDetector(config?: {
       break;
   }
 
+  /** Maximum input length for regex pattern checking (ReDoS protection). */
+  const MAX_PATTERN_INPUT_LENGTH = 100_000;
+
   const guard: Guardrail = (ctx: GuardrailContext) => {
     // Normalize: strip zero-width characters
     let normalized = ctx.content.replace(ZERO_WIDTH_RE, '');
     // Normalize Unicode (NFKC collapses many confusables)
     normalized = normalized.normalize('NFKC');
     // Apply Cyrillic-to-Latin and Greek-to-Latin homoglyph mapping
-    normalized = normalized.replace(/[\u0430\u0435\u043E\u0441\u0440\u0443\u0445\u0456\u03BF\u03B1\u03B5\u03BD\u03BA\u03C4\u03B7\u03B9]/g, (ch) => HOMOGLYPH_MAP[ch] ?? ch);
+    normalized = normalized.replace(/[\u0430\u0435\u043E\u0441\u0440\u0443\u0445\u0456\u0501\u03BF\u03B1\u03B5\u03BD\u03BA\u03C4\u03B7\u03B9\u0251\u0261\u026A\u0274\u025B\u027E\u028C\u1E77\u217E\u217C\u2170\u2174\u2179]/g, (ch) => HOMOGLYPH_MAP[ch] ?? ch);
     // Normalize whitespace (newlines, tabs, multiple spaces → single space)
     normalized = normalized.replace(/\s+/g, ' ');
     // Strip markdown formatting characters
     normalized = normalized.replace(MARKDOWN_RE, '');
 
+    // Truncate for pattern checking to prevent ReDoS on very large inputs.
+    // The original content is preserved in the result; only pattern checking uses the truncated version.
+    const patternInput = normalized.length > MAX_PATTERN_INPUT_LENGTH
+      ? normalized.slice(0, MAX_PATTERN_INPUT_LENGTH)
+      : normalized;
+
     for (const pattern of patterns) {
-      if (pattern.test(normalized)) {
+      if (pattern.test(patternInput)) {
         return { action: 'block', reason: 'Potential prompt injection detected: injection pattern detected' };
       }
     }

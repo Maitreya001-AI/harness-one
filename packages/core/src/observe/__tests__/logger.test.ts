@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createLogger } from '../logger.js';
+import { createLogger, createSafeReplacer } from '../logger.js';
 
 
 describe('createLogger', () => {
@@ -206,6 +206,104 @@ describe('createLogger', () => {
       } finally {
         spy.mockRestore();
       }
+    });
+  });
+
+  // Fix 9: Error serialization via safe replacer
+  describe('error serialization', () => {
+    it('serializes Error objects in meta to name/message/stack', () => {
+      const { lines, output } = captureOutput();
+      const logger = createLogger({ json: true, output });
+      const err = new Error('test failure');
+      logger.error('something failed', { error: err });
+      const parsed = JSON.parse(lines[0]);
+      expect(parsed.error).toBeDefined();
+      expect(parsed.error.name).toBe('Error');
+      expect(parsed.error.message).toBe('test failure');
+      expect(parsed.error.stack).toBeDefined();
+    });
+
+    it('serializes Date objects in meta to ISO string', () => {
+      const { lines, output } = captureOutput();
+      const logger = createLogger({ json: true, output });
+      const date = new Date('2025-01-01T00:00:00Z');
+      logger.info('with date', { createdAt: date });
+      const parsed = JSON.parse(lines[0]);
+      expect(parsed.createdAt).toBe('2025-01-01T00:00:00.000Z');
+    });
+
+    it('handles circular references without throwing', () => {
+      const { lines, output } = captureOutput();
+      const logger = createLogger({ json: true, output });
+      const obj: Record<string, unknown> = { a: 1 };
+      obj.self = obj; // circular
+      logger.info('circular', { data: obj });
+      const parsed = JSON.parse(lines[0]);
+      expect(parsed.data.a).toBe(1);
+      expect(parsed.data.self).toBe('[Circular]');
+    });
+
+    it('handles circular references in text format', () => {
+      const { lines, output } = captureOutput();
+      const logger = createLogger({ output });
+      const obj: Record<string, unknown> = { x: 1 };
+      obj.ref = obj;
+      logger.info('circular text', { data: obj });
+      expect(lines[0]).toContain('[Circular]');
+    });
+  });
+
+  // Fix 9: createSafeReplacer standalone tests
+  describe('createSafeReplacer', () => {
+    it('serializes Error to object with name/message/stack', () => {
+      const replacer = createSafeReplacer();
+      const err = new TypeError('bad input');
+      const result = replacer('err', err) as Record<string, unknown>;
+      expect(result.name).toBe('TypeError');
+      expect(result.message).toBe('bad input');
+      expect(result.stack).toBeDefined();
+    });
+
+    it('serializes Date to ISO string', () => {
+      const replacer = createSafeReplacer();
+      const date = new Date('2025-06-15T12:00:00Z');
+      expect(replacer('d', date)).toBe('2025-06-15T12:00:00.000Z');
+    });
+
+    it('detects circular references', () => {
+      const replacer = createSafeReplacer();
+      const obj = { a: 1 };
+      // First pass: obj gets registered
+      replacer('', obj);
+      // Second pass: same object is circular
+      expect(replacer('ref', obj)).toBe('[Circular]');
+    });
+
+    it('passes through primitives', () => {
+      const replacer = createSafeReplacer();
+      expect(replacer('k', 42)).toBe(42);
+      expect(replacer('k', 'hello')).toBe('hello');
+      expect(replacer('k', true)).toBe(true);
+      expect(replacer('k', null)).toBe(null);
+    });
+  });
+
+  // Fix 10: Performance - defer timestamp (Date.now() stored, formatted at output)
+  describe('deferred timestamp formatting', () => {
+    it('output still contains ISO timestamp', () => {
+      const { lines, output } = captureOutput();
+      const logger = createLogger({ output });
+      logger.info('test');
+      // The output should still contain a properly formatted ISO timestamp
+      expect(lines[0]).toMatch(/\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+    });
+
+    it('JSON output contains ISO timestamp', () => {
+      const { lines, output } = captureOutput();
+      const logger = createLogger({ json: true, output });
+      logger.info('test');
+      const parsed = JSON.parse(lines[0]);
+      expect(parsed.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     });
   });
 

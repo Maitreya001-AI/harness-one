@@ -373,6 +373,86 @@ describe('createSlidingWindowChunking', () => {
 });
 
 // ===========================================================================
+// Fix 20: Word boundary awareness
+// ===========================================================================
+
+describe('word boundary awareness (Fix 20)', () => {
+  it('fixed-size: chunk boundaries prefer word boundaries', () => {
+    const chunking = createFixedSizeChunking({ chunkSize: 8 });
+    // "hello world foo bar" - at position 8 we're in "world" at 'o'
+    // The boundary adjusts back to nearest whitespace
+    const chunks = chunking.chunk(doc('hello world foo bar'));
+
+    // Verify all chunks have content
+    expect(chunks.length).toBeGreaterThan(0);
+    for (const c of chunks) {
+      expect(c.content.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('sliding-window: adjusts window end to word boundary', () => {
+    const chunking = createSlidingWindowChunking({ windowSize: 8, stepSize: 5 });
+    const chunks = chunking.chunk(doc('hello world foo bar baz'));
+
+    expect(chunks.length).toBeGreaterThan(0);
+    for (const c of chunks) {
+      expect(c.content.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('fixed-size: preserves content when no whitespace found', () => {
+    const chunking = createFixedSizeChunking({ chunkSize: 5 });
+    // "abcdefghij" has no spaces, so word boundary adjustment falls back to original position
+    const chunks = chunking.chunk(doc('abcdefghij'));
+    expect(chunks).toHaveLength(2);
+    expect(chunks[0].content).toBe('abcde');
+    expect(chunks[1].content).toBe('fghij');
+  });
+
+  it('fixed-size: word boundary adjustment does not split words', () => {
+    // With overlap, word boundary adjustment creates better chunks
+    const chunking = createFixedSizeChunking({ chunkSize: 10, overlap: 3 });
+    const chunks = chunking.chunk(doc('the quick brown fox jumps'));
+
+    for (const c of chunks) {
+      // No chunk should end with a partial word (when mid-content)
+      expect(c.content.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+// ===========================================================================
+// Fix 21: Paragraph chunking single newline option
+// ===========================================================================
+
+describe('paragraph chunking splitOnSingleNewline (Fix 21)', () => {
+  it('splits on single newline when enabled', () => {
+    const chunking = createParagraphChunking({ splitOnSingleNewline: true });
+    const chunks = chunking.chunk(doc('Line 1\nLine 2\nLine 3'));
+
+    expect(chunks).toHaveLength(3);
+    expect(chunks[0].content).toBe('Line 1');
+    expect(chunks[1].content).toBe('Line 2');
+    expect(chunks[2].content).toBe('Line 3');
+  });
+
+  it('still requires double newlines by default', () => {
+    const chunking = createParagraphChunking();
+    const chunks = chunking.chunk(doc('Line 1\nLine 2\n\nLine 3'));
+
+    expect(chunks).toHaveLength(2);
+  });
+
+  it('defaults to false for backward compatibility', () => {
+    const chunking = createParagraphChunking({ splitOnSingleNewline: false });
+    const chunks = chunking.chunk(doc('Line 1\nLine 2'));
+
+    // Single newline should NOT split
+    expect(chunks).toHaveLength(1);
+  });
+});
+
+// ===========================================================================
 // Unicode boundary handling
 // ===========================================================================
 

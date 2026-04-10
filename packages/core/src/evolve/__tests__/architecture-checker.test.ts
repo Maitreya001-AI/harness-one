@@ -178,6 +178,83 @@ describe('noCircularDepsRule - weak module detection fix', () => {
   });
 });
 
+// Fix 13: Performance cache
+describe('architecture-checker cache (Fix 13)', () => {
+  it('returns cached result for same context', () => {
+    const checker = createArchitectureChecker();
+    let checkCount = 0;
+    checker.addRule({
+      id: 'counting-rule',
+      name: 'Counter',
+      description: 'Counts checks',
+      check: () => {
+        checkCount++;
+        return { passed: true, violations: [] };
+      },
+    });
+
+    const context = { files: ['a.ts'], imports: {} };
+    checker.check(context);
+    expect(checkCount).toBe(1);
+
+    // Same context should use cache
+    checker.check(context);
+    expect(checkCount).toBe(1);
+  });
+
+  it('invalidates cache when rules are added', () => {
+    const checker = createArchitectureChecker();
+    let checkCount = 0;
+    checker.addRule({
+      id: 'rule-1',
+      name: 'Rule 1',
+      description: 'First rule',
+      check: () => {
+        checkCount++;
+        return { passed: true, violations: [] };
+      },
+    });
+
+    const context = { files: ['a.ts'], imports: {} };
+    checker.check(context);
+    expect(checkCount).toBe(1);
+
+    // Add another rule - cache should be invalidated
+    checker.addRule({
+      id: 'rule-2',
+      name: 'Rule 2',
+      description: 'Second rule',
+      check: () => {
+        checkCount++;
+        return { passed: true, violations: [] };
+      },
+    });
+
+    checker.check(context);
+    expect(checkCount).toBe(3); // Both rules checked
+  });
+});
+
+// Fix 14: Specific suggestions
+describe('noCircularDepsRule specific suggestions (Fix 14)', () => {
+  it('includes specific modules in violation suggestion', () => {
+    const rule = noCircularDepsRule(['core', 'context']);
+    const result = rule.check({
+      files: ['src/core/types.ts', 'src/context/pack.ts'],
+      imports: {
+        'src/core/types.ts': ['src/context/pack.ts'],
+        'src/context/pack.ts': ['src/core/types.ts'],
+      },
+    });
+    expect(result.passed).toBe(false);
+    // Suggestion should mention specific modules
+    const violation = result.violations[0];
+    expect(violation.suggestion).toContain('core');
+    expect(violation.suggestion).toContain('context');
+    expect(violation.message).toContain('Circular dependency detected');
+  });
+});
+
 describe('architecture-checker edge cases', () => {
   it('path segment matching does not false-positive on substrings', () => {
     const rule = layerDependencyRule({

@@ -240,4 +240,47 @@ describe('AgentPool', () => {
       vi.useRealTimers();
     }
   });
+
+  // Fix 24: Async acquire queue
+  describe('acquireAsync (Fix 24)', () => {
+    it('acquires immediately when pool has capacity', async () => {
+      pool = makePool({ max: 5 });
+      const agent = await pool.acquireAsync();
+      expect(agent).toBeDefined();
+      expect(agent.loop).toBeDefined();
+    });
+
+    it('queues request and fulfills when agent released', async () => {
+      pool = makePool({ max: 1 });
+      const agent1 = pool.acquire();
+
+      // Start async acquire - should queue
+      const acquirePromise = pool.acquireAsync(5000);
+
+      // Release agent1 - should fulfill the pending request
+      setTimeout(() => pool.release(agent1), 50);
+
+      const agent2 = await acquirePromise;
+      expect(agent2).toBeDefined();
+    });
+
+    it('rejects with POOL_TIMEOUT when timeout expires', async () => {
+      pool = makePool({ max: 1 });
+      pool.acquire(); // exhaust pool
+
+      await expect(pool.acquireAsync(100)).rejects.toThrow(HarnessError);
+      try {
+        await pool.acquireAsync(100);
+      } catch (e) {
+        expect((e as HarnessError).code).toBe('POOL_TIMEOUT');
+      }
+    });
+
+    it('rejects with POOL_DISPOSED when pool is disposed', async () => {
+      pool = makePool();
+      pool.dispose();
+
+      await expect(pool.acquireAsync()).rejects.toThrow(HarnessError);
+    });
+  });
 });

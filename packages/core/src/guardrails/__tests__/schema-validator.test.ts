@@ -446,6 +446,83 @@ describe('createSchemaValidator', () => {
     });
   });
 
+  // ---- Fix 14: improved error redaction ----
+
+  describe('Fix 14: redact ALL path segments after the first', () => {
+    it('redacts all segments after the first in deep paths', () => {
+      const { guard } = createSchemaValidator({
+        type: 'object',
+        properties: {
+          user: {
+            type: 'object',
+            properties: {
+              address: {
+                type: 'object',
+                properties: { city: { type: 'string' } },
+                required: ['city'],
+              },
+            },
+            required: ['address'],
+          },
+        },
+        required: ['user'],
+      });
+
+      const result = guard({
+        content: JSON.stringify({ user: { address: {} } }),
+      });
+
+      expect(result.action).toBe('block');
+      if (result.action === 'block') {
+        // All path segments after the first should be [REDACTED]
+        expect(result.reason).toContain('[REDACTED]');
+        // Should not leak internal field names like 'address' or 'city'
+        expect(result.reason).not.toContain('city');
+      }
+    });
+
+    it('preserves root-level path without redaction', () => {
+      const { guard } = createSchemaValidator({
+        type: 'object',
+        properties: { name: { type: 'string' } },
+        required: ['name'],
+      });
+
+      const result = guard({ content: '{}' });
+      expect(result.action).toBe('block');
+      if (result.action === 'block') {
+        expect(result.reason).toContain('[REDACTED]');
+      }
+    });
+
+    it('shows raw paths when redactErrors is false', () => {
+      const { guard } = createSchemaValidator(
+        {
+          type: 'object',
+          properties: {
+            user: {
+              type: 'object',
+              properties: { city: { type: 'string' } },
+              required: ['city'],
+            },
+          },
+          required: ['user'],
+        },
+        { redactErrors: false },
+      );
+
+      const result = guard({
+        content: JSON.stringify({ user: {} }),
+      });
+
+      expect(result.action).toBe('block');
+      if (result.action === 'block') {
+        expect(result.reason).toContain('city');
+        expect(result.reason).not.toContain('[REDACTED]');
+      }
+    });
+  });
+
   // ---- Name ----
 
   it('has name "schema-validator"', () => {

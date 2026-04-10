@@ -37,6 +37,9 @@ function createToolLoopDetector(): FailureDetector {
 
       if (maxRun < 3) return null;
 
+      // Empirically chosen, pending validation against production data.
+      // Calibrate using eval framework. Base confidence 0.5 with +0.1 per
+      // additional consecutive span beyond 3, capped at 0.95.
       const confidence = Math.min(0.5 + (maxRun - 3) * 0.1, 0.95);
       return {
         confidence,
@@ -56,6 +59,8 @@ function createEarlyStopDetector(): FailureDetector {
       const duration = (trace.endTime ?? trace.startTime) - trace.startTime;
       if (duration >= 5000) return null;
 
+      // Empirically chosen, pending validation against production data.
+      // Calibrate using eval framework.
       return {
         confidence: 0.6,
         evidence: `Trace completed with ${trace.spans.length} span(s) in ${duration}ms`,
@@ -79,6 +84,9 @@ function createBudgetExceededDetector(): FailureDetector {
 
       if (!nameMatch && !attrMatch) return null;
 
+      // Empirically chosen, pending validation against production data.
+      // Calibrate using eval framework. High confidence (0.9) because both
+      // error status and budget-related naming are strong signals.
       return {
         confidence: 0.9,
         evidence: `Last span "${lastSpan.name}" has error status with budget-related indicators`,
@@ -98,6 +106,9 @@ function createTimeoutDetector(): FailureDetector {
       const lastSpan = trace.spans[trace.spans.length - 1];
       if (lastSpan.status !== 'running') return null;
 
+      // Empirically chosen, pending validation against production data.
+      // Calibrate using eval framework. Timeout detection (0.8) has moderate-high
+      // confidence since long duration + running span is a strong signal.
       return {
         confidence: 0.8,
         evidence: `Trace duration ${Math.round(duration / 1000)}s with last span still running`,
@@ -117,6 +128,9 @@ function createHallucinationDetector(): FailureDetector {
 
       if (errorToolSpans.length < 2) return null;
 
+      // Empirically chosen, pending validation against production data.
+      // Calibrate using eval framework. Base confidence 0.5 with +0.1 per
+      // error tool span, capped at 0.8.
       const confidence = Math.min(0.5 + errorToolSpans.length * 0.1, 0.8);
       return {
         confidence,

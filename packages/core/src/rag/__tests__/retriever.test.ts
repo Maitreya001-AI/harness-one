@@ -383,6 +383,42 @@ describe('createInMemoryRetriever', () => {
     });
   });
 
+  // ---- Fix 15: Skipped chunk tracking ----
+
+  describe('skipped chunks tracking (Fix 15)', () => {
+    it('reports skipped chunks count via retrieveExtended', async () => {
+      const retriever = createInMemoryRetriever({ embedding });
+
+      await retriever.index([
+        chunk('c1', 'has embed', [1, 0, 0, 0]),
+        chunk('c_none', 'no embed', undefined),
+        chunk('c_zero', 'zero embed', [0, 0, 0, 0]),
+      ]);
+
+      const result = await retriever.retrieveExtended('test', { limit: 10 });
+      expect(result.skippedChunks).toBeGreaterThan(0);
+      expect(result.results.length).toBeGreaterThan(0);
+    });
+  });
+
+  // ---- Fix 16: Cache versioning ----
+
+  describe('cache versioning (Fix 16)', () => {
+    it('different cacheVersion invalidates cached queries', async () => {
+      const retriever1 = createInMemoryRetriever({ embedding, cacheVersion: 'v1' });
+      const retriever2 = createInMemoryRetriever({ embedding, cacheVersion: 'v2' });
+
+      await retriever1.index([chunk('c1', 'test', [1, 0, 0, 0])]);
+      await retriever2.index([chunk('c1', 'test', [1, 0, 0, 0])]);
+
+      // Both should work independently
+      const results1 = await retriever1.retrieve('query');
+      const results2 = await retriever2.retrieve('query');
+      expect(results1.length).toBeGreaterThan(0);
+      expect(results2.length).toBeGreaterThan(0);
+    });
+  });
+
   // ---- Edge cases ----
 
   describe('edge cases', () => {

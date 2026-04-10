@@ -256,6 +256,26 @@ describe('createRateLimiter', () => {
     }
   });
 
+  // ---- Distributed flag (Fix 8) ----
+
+  describe('distributed flag', () => {
+    it('throws when distributed: true is set (not yet implemented)', () => {
+      expect(() =>
+        createRateLimiter({ max: 10, windowMs: 60_000, distributed: true }),
+      ).toThrow('Distributed rate limiting is not yet implemented');
+    });
+
+    it('works normally when distributed is undefined (backward compatible)', () => {
+      const { guard } = createRateLimiter({ max: 1, windowMs: 1000 });
+      expect(guard({ content: 'a' }).action).toBe('allow');
+    });
+
+    it('works normally when distributed is false', () => {
+      const { guard } = createRateLimiter({ max: 1, windowMs: 1000, distributed: false });
+      expect(guard({ content: 'a' }).action).toBe('allow');
+    });
+  });
+
   // ---- Performance ----
 
   it('handles many keys efficiently with Map-based O(1) LRU', () => {

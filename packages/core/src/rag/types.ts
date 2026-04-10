@@ -66,6 +66,11 @@ export interface RAGPipelineConfig {
   readonly maxChunks?: number;
   /** Called when the pipeline encounters a non-fatal issue (e.g., duplicate chunks, capacity exceeded). */
   readonly onWarning?: (warning: { message: string; type: 'duplicate' | 'capacity' }) => void;
+  /**
+   * When true, embed a test string during ingest() and verify the result is a valid number array.
+   * This catches misconfigured embedding models early before processing the full batch.
+   */
+  readonly validateEmbedding?: boolean;
 }
 
 /** A fully-wired RAG pipeline. */

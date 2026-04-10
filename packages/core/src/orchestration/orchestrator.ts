@@ -89,6 +89,9 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
   const eventHandlers: ((event: OrchestratorEvent) => void)[] = [];
   const contextStore = new Map<string, unknown>();
 
+  // Fix 23: Track delegation chains to detect cycles
+  const delegationChain = new Map<string, Set<string>>();
+
   function emit(event: OrchestratorEvent): void {
     // Iterate over a snapshot so that handlers can safely unsubscribe
     // (or add new handlers) during iteration without mutating the live array.
@@ -97,8 +100,13 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
       try {
         handler(event);
       } catch (err: unknown) {
+        // Fix 34: Wrap onHandlerError callback itself in try-catch
         if (config?.onHandlerError) {
-          config.onHandlerError(err, event);
+          try {
+            config.onHandlerError(err, event);
+          } catch {
+            // Swallow error from error handler to prevent blocking subsequent handlers
+          }
         } else {
           console.warn('Orchestrator event handler threw an error:', err);
         }
@@ -195,6 +203,11 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
       const existed = agents.delete(id);
       if (existed) {
         messageQueue.deleteQueue(id);
+        // Fix 23: Clean up delegation chain
+        delegationChain.delete(id);
+        for (const chain of delegationChain.values()) {
+          chain.delete(id);
+        }
       }
       return existed;
     },
@@ -268,6 +281,43 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
       const allAgents = Array.from(agents.values()).map(toReadonly);
       const selectedId = await strategy.select(allAgents, task);
       if (selectedId !== undefined) {
+        // Fix 23: Check for delegation cycles
+        // If task has metadata with delegatedFrom, check chain
+        const delegatedFrom = task.metadata?.delegatedFrom as string | undefined;
+        if (delegatedFrom && selectedId) {
+          // Check: has selectedId ever (directly or transitively) delegated
+          // to delegatedFrom? If so, delegating from delegatedFrom back to
+          // selectedId would create a cycle.
+          const visited = new Set<string>();
+          const queue = [selectedId];
+          while (queue.length > 0) {
+            const current = queue.shift()!;
+            if (visited.has(current)) continue;
+            visited.add(current);
+            // If selectedId can reach delegatedFrom, it's a cycle
+            if (current === delegatedFrom) {
+              throw new HarnessError(
+                `Delegation cycle detected: ${selectedId} is already in the delegation chain of ${delegatedFrom}`,
+                'DELEGATION_CYCLE',
+                'Avoid delegating tasks back to agents that originated the delegation',
+              );
+            }
+            // Check who 'current' has delegated to
+            const delegates = delegationChain.get(current);
+            if (delegates) {
+              for (const d of delegates) {
+                if (!visited.has(d)) queue.push(d);
+              }
+            }
+          }
+
+          // Record the delegation: delegatedFrom -> selectedId
+          if (!delegationChain.has(delegatedFrom)) {
+            delegationChain.set(delegatedFrom, new Set());
+          }
+          delegationChain.get(delegatedFrom)!.add(selectedId);
+        }
+
         emit({ type: 'task_delegated', agentId: selectedId, task });
       }
       return selectedId;
@@ -300,6 +350,7 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
       messageQueue.clear();
       eventHandlers.length = 0;
       contextStore.clear();
+      delegationChain.clear();
     },
   };
 

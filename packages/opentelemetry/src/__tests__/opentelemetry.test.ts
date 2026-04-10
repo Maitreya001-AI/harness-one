@@ -119,7 +119,8 @@ describe('createOTelExporter', () => {
     expect(mock.mocks.end).toHaveBeenCalled();
   });
 
-  it('skips non-primitive attributes', async () => {
+  it('skips non-primitive attributes and logs debug warning', async () => {
+    const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
     const exporter = createOTelExporter({ tracer: mock.tracer });
     const span: Span = {
       id: 'span-1',
@@ -138,6 +139,12 @@ describe('createOTelExporter', () => {
     const attrNames = calls.map((c: unknown[]) => c[0]);
     expect(attrNames).not.toContain('complex');
     expect(attrNames).toContain('simple');
+
+    // A debug-level warning should be logged for the dropped attribute
+    expect(debugSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Dropping non-primitive attribute 'complex' of type 'object'"),
+    );
+    debugSpy.mockRestore();
   });
 
   it('flush is a no-op', async () => {
@@ -253,7 +260,8 @@ describe('createOTelExporter', () => {
     expect(childCall.length).toBe(4);
   });
 
-  it('creates root span when parentId has no matching known span', async () => {
+  it('creates root span when parentId has no matching known span and logs warning', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const exporter = createOTelExporter({ tracer: mock.tracer });
 
     const span: Span = {
@@ -272,6 +280,15 @@ describe('createOTelExporter', () => {
     const call = mock.mocks.startActiveSpan.mock.calls[0];
     expect(call[0]).toBe('orphan-op');
     expect(call.length).toBe(2);
+
+    // A warning should be logged about the evicted/missing parent
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Parent span 'unknown-parent' not found"),
+    );
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Creating span 'span-1' as a root span"),
+    );
+    warnSpy.mockRestore();
   });
 
   describe('span eviction with parent awareness', () => {

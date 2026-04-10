@@ -30,6 +30,11 @@ export interface RedisStoreConfig {
 /**
  * Create a MemoryStore backed by Redis.
  *
+ * Requires a pre-configured ioredis client. For production use, configure
+ * the client with: `retryStrategy` for reconnection, `reconnectOnError` for
+ * transient failures, and appropriate `maxRetriesPerRequest`. Connection
+ * pooling is managed by ioredis internally.
+ *
  * Data model:
  * - Each entry: STRING key `prefix:id` -> JSON(MemoryEntry)
  * - Key index: SET `prefix:__keys__` -> { id1, id2, ... }
@@ -118,10 +123,10 @@ export function createRedisStore(config: RedisStoreConfig): MemoryStore {
 
           if (filter.grade && entry.grade !== filter.grade) continue;
           if (filter.tags && filter.tags.length > 0) {
-            if (!filter.tags.some((t) => entry.tags?.includes(t))) continue;
+            if (!filter.tags.every((t) => entry.tags?.includes(t))) continue;
           }
           if (filter.since !== undefined && entry.updatedAt < filter.since) continue;
-          if (filter.search) {
+          if (filter.search && typeof filter.search === 'string') {
             const term = filter.search.toLowerCase();
             if (!entry.content.toLowerCase().includes(term)) continue;
           }

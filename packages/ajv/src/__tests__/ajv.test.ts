@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { createAjvValidator } from '../index.js';
 import type { JsonSchema } from 'harness-one/core';
 
@@ -198,11 +198,13 @@ describe('createAjvValidator', () => {
     expect(anyOfError).toBeDefined();
   });
 
-  it('attempts to load ajv-formats when formats is not disabled', () => {
-    // This test covers the formats loading path (lines 63-75).
+  it('uses ESM dynamic import for ajv-formats when formats is not disabled', async () => {
+    // This test covers the lazy ESM import path.
+    // The validator is created synchronously, and formats are loaded lazily.
     // Even if ajv-formats is not installed, the catch block handles it gracefully.
-    // The validator should still work.
     const validator = createAjvValidator(); // formats defaults to true
+    // Allow the async import to settle
+    await new Promise((resolve) => setTimeout(resolve, 50));
     const result = validator.validate(
       { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] },
       { name: 'Alice' },
@@ -210,8 +212,10 @@ describe('createAjvValidator', () => {
     expect(result.valid).toBe(true);
   });
 
-  it('works with formats explicitly enabled', () => {
+  it('works with formats explicitly enabled', async () => {
     const validator = createAjvValidator({ formats: true });
+    // Allow the async import to settle
+    await new Promise((resolve) => setTimeout(resolve, 50));
     const result = validator.validate(
       { type: 'string' },
       'hello',
@@ -237,9 +241,11 @@ describe('createAjvValidator', () => {
     expect(result.errors.length).toBe(3);
   });
 
-  it('defaults allErrors to true when not specified', () => {
+  it('defaults allErrors to true when not specified', async () => {
     // No options at all
     const validator = createAjvValidator();
+    // Allow the async import to settle
+    await new Promise((resolve) => setTimeout(resolve, 50));
     const result = validator.validate(
       {
         type: 'object',
@@ -254,9 +260,11 @@ describe('createAjvValidator', () => {
     expect(result.errors.length).toBe(2);
   });
 
-  it('formatSuggestion handles "format" keyword with email format', () => {
+  it('formatSuggestion handles "format" keyword with email format', async () => {
     // With formats enabled and ajv-formats installed, format validation is active
     const validator = createAjvValidator({ formats: true });
+    // Allow the async import to settle so ajv-formats is loaded
+    await new Promise((resolve) => setTimeout(resolve, 50));
     const result = validator.validate(
       {
         type: 'object',
@@ -273,11 +281,21 @@ describe('createAjvValidator', () => {
     expect(formatError!.suggestion).toContain('email');
   });
 
-  it('handles ajv-formats require failure gracefully', () => {
-    // Test that when require('ajv-formats') throws, the validator still works
-    // We cannot easily mock require() in this context, but we can verify
-    // that formats: false explicitly skips the loading path
+  it('handles ajv-formats import failure gracefully', () => {
+    // Test that when formats: false is set, the import is skipped entirely.
+    // The validator should still work without any format loading.
     const validator = createAjvValidator({ formats: false });
+    const result = validator.validate({ type: 'string' }, 'hello');
+    expect(result.valid).toBe(true);
+  });
+
+  it('returns SchemaValidator synchronously (lazy format loading)', () => {
+    // The factory function itself is synchronous - it returns a SchemaValidator
+    // immediately, even though format loading happens asynchronously.
+    const validator = createAjvValidator({ formats: true });
+    expect(validator).toBeDefined();
+    expect(typeof validator.validate).toBe('function');
+    // Validate works immediately even before formats are loaded
     const result = validator.validate({ type: 'string' }, 'hello');
     expect(result.valid).toBe(true);
   });

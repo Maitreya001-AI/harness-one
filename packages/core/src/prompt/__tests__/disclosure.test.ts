@@ -181,31 +181,49 @@ describe('createDisclosureManager', () => {
       expect(content).not.toContain('Refresh');
     });
 
-    it('expand with gapped level numbers returns empty for missing levels', () => {
+    it('expand with gapped level numbers skips to next available level', () => {
       const dm = createDisclosureManager();
       // Register levels 0 and 2, skipping level 1
       dm.register('gapped', [
         { level: 0, content: 'Level zero' },
         { level: 2, content: 'Level two' },
       ]);
-      // expand from 0 tries to find level 1, which doesn't exist
-      // should return '' from the ?? '' fallback (line 92)
+      // expand from 0 should skip level 1 and jump to level 2
       const content = dm.expand('gapped');
-      expect(content).toBe('');
-      expect(dm.getCurrentLevel('gapped')).toBe(1);
+      expect(content).toBe('Level two');
+      expect(dm.getCurrentLevel('gapped')).toBe(2);
     });
 
-    it('expand with gapped levels then reaching an existing level', () => {
+    it('expand with gapped levels jumps directly to next available level', () => {
       const dm = createDisclosureManager();
       dm.register('gapped', [
         { level: 0, content: 'Level zero' },
         { level: 3, content: 'Level three' },
       ]);
-      // expand from 0 -> 1 (missing), 1 -> 2 (missing), 2 -> 3 (exists)
-      expect(dm.expand('gapped')).toBe('');
-      expect(dm.expand('gapped')).toBe('');
+      // expand from 0 should jump directly to 3 (the next available)
       expect(dm.expand('gapped')).toBe('Level three');
       expect(dm.getCurrentLevel('gapped')).toBe(3);
+    });
+
+    it('expand with multiple gaps traverses correctly', () => {
+      const dm = createDisclosureManager();
+      dm.register('multi-gap', [
+        { level: 0, content: 'Zero' },
+        { level: 5, content: 'Five' },
+        { level: 10, content: 'Ten' },
+      ]);
+      // 0 -> 5
+      expect(dm.expand('multi-gap')).toBe('Five');
+      expect(dm.getCurrentLevel('multi-gap')).toBe(5);
+      // 5 -> 10
+      expect(dm.expand('multi-gap')).toBe('Ten');
+      expect(dm.getCurrentLevel('multi-gap')).toBe(10);
+      // At max, stays at 10
+      const atMax = dm.expand('multi-gap');
+      expect(dm.getCurrentLevel('multi-gap')).toBe(10);
+      expect(atMax).toContain('Zero');
+      expect(atMax).toContain('Five');
+      expect(atMax).toContain('Ten');
     });
   });
 });

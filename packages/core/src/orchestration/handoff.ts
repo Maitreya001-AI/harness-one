@@ -18,6 +18,12 @@ const HANDOFF_PREFIX = '__handoff__:';
 const MAX_RECEIPTS = 10_000;
 const MAX_INBOX_PER_AGENT = 1_000;
 
+/** Fix 28: Configuration for handoff behavior. */
+export interface HandoffConfig {
+  /** Optional TTL for receipts in milliseconds. When set, receipts older than this are evicted. */
+  readonly receiptTtlMs?: number;
+}
+
 /**
  * Create a HandoffManager that layers structured handoff semantics
  * on top of any {@link MessageTransport}.
@@ -41,17 +47,19 @@ const MAX_INBOX_PER_AGENT = 1_000;
  * const handoff = createHandoff(transport);
  * ```
  */
-export function createHandoff(transport: MessageTransport): HandoffManager;
+export function createHandoff(transport: MessageTransport, handoffConfig?: HandoffConfig): HandoffManager;
 /**
  * @deprecated Pass a {@link MessageTransport} instead of a full AgentOrchestrator.
  *             AgentOrchestrator already satisfies MessageTransport, so no code
  *             changes are needed — this overload exists for backward compatibility.
  */
-export function createHandoff(orchestrator: AgentOrchestrator): HandoffManager;
-export function createHandoff(transport: MessageTransport): HandoffManager {
+export function createHandoff(orchestrator: AgentOrchestrator, handoffConfig?: HandoffConfig): HandoffManager;
+export function createHandoff(transport: MessageTransport, handoffConfig?: HandoffConfig): HandoffManager {
   const receipts = new Map<string, HandoffReceipt>();
   const inbox = new Map<string, HandoffPayload[]>();
   let nextId = 0;
+
+  const receiptTtlMs = handoffConfig?.receiptTtlMs;
 
   function serializePayload(payload: HandoffPayload): string {
     try {
@@ -62,6 +70,17 @@ export function createHandoff(transport: MessageTransport): HandoffManager {
         'HANDOFF_SERIALIZATION_ERROR',
         'Ensure all values in the handoff payload are JSON-serializable',
       );
+    }
+  }
+
+  // Fix 28: Evict receipts by TTL
+  function evictExpiredReceipts(): void {
+    if (!receiptTtlMs) return;
+    const now = Date.now();
+    for (const [key, receipt] of receipts) {
+      if (now - receipt.timestamp > receiptTtlMs) {
+        receipts.delete(key);
+      }
     }
   }
 
@@ -87,6 +106,9 @@ export function createHandoff(transport: MessageTransport): HandoffManager {
 
       receipts.set(id, receipt);
 
+      // Fix 28: Evict expired receipts by TTL
+      evictExpiredReceipts();
+
       // Evict oldest receipts if over capacity
       if (receipts.size > MAX_RECEIPTS) {
         const excess = receipts.size - MAX_RECEIPTS;
@@ -102,11 +124,14 @@ export function createHandoff(transport: MessageTransport): HandoffManager {
         queue = [];
         inbox.set(to, queue);
       }
-      queue.push(Object.freeze(payload));
+
+      // Fix 29: Insert by priority
+      const priorityPayload = Object.freeze(payload);
+      insertByPriority(queue, priorityPayload);
 
       // Evict oldest inbox entries if over capacity
       while (queue.length > MAX_INBOX_PER_AGENT) {
-        queue.shift();
+        queue.pop(); // Remove lowest priority (at end)
       }
 
       return receipt;
@@ -119,6 +144,9 @@ export function createHandoff(transport: MessageTransport): HandoffManager {
     },
 
     history(agentId: string): readonly HandoffReceipt[] {
+      // Fix 28: Evict expired before returning
+      evictExpiredReceipts();
+
       const result: HandoffReceipt[] = [];
       for (const receipt of receipts.values()) {
         if (receipt.from === agentId || receipt.to === agentId) {
@@ -164,4 +192,34 @@ export function createHandoff(transport: MessageTransport): HandoffManager {
   };
 
   return manager;
+}
+
+/**
+ * Fix 29: Insert a payload into a priority-sorted queue.
+ * High priority items go first, then normal, then low.
+ * Within the same priority level, items maintain FIFO order.
+ */
+function insertByPriority(queue: HandoffPayload[], payload: HandoffPayload): void {
+  const priority = (payload as unknown as { priority?: string }).priority ?? 'normal';
+  const rank = priorityRank(priority);
+
+  // Find insertion point: after all items with same or higher priority
+  let insertIdx = queue.length;
+  for (let i = 0; i < queue.length; i++) {
+    const itemPriority = (queue[i] as unknown as { priority?: string }).priority ?? 'normal';
+    if (priorityRank(itemPriority) < rank) {
+      insertIdx = i;
+      break;
+    }
+  }
+  queue.splice(insertIdx, 0, payload);
+}
+
+function priorityRank(priority: string): number {
+  switch (priority) {
+    case 'high': return 3;
+    case 'normal': return 2;
+    case 'low': return 1;
+    default: return 2;
+  }
 }

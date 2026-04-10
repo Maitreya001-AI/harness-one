@@ -82,16 +82,17 @@ export function createDisclosureManager(): DisclosureManager {
     expand(topic: string): string {
       const levels = requireTopic(topic);
       const current = currentLevels.get(topic) ?? 0;
-      const nextLevel = current + 1;
       const maxAvailable = levels[levels.length - 1].level;
 
-      if (nextLevel > maxAvailable) {
+      // Find the next available level entry above the current level, skipping gaps
+      const nextEntry = levels.find(l => l.level > current);
+
+      if (!nextEntry || current >= maxAvailable) {
         return getContentFn(topic, current);
       }
 
-      currentLevels.set(topic, nextLevel);
-      const nextEntry = levels.find(l => l.level === nextLevel);
-      return nextEntry?.content ?? '';
+      currentLevels.set(topic, nextEntry.level);
+      return nextEntry.content;
     },
 
     getCurrentLevel(topic: string): number {

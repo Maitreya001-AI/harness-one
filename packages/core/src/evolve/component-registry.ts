@@ -36,6 +36,18 @@ export interface ComponentRegistry {
 export function createComponentRegistry(): ComponentRegistry {
   const components = new Map<string, ComponentMeta>();
 
+  // Fix 10: Deep freeze utility for returning immutable copies
+  function deepFreeze<T>(obj: T): T {
+    if (obj === null || obj === undefined || typeof obj !== 'object') return obj;
+    // Use JSON parse/stringify for simple deep clone + freeze
+    try {
+      return JSON.parse(JSON.stringify(obj)) as T;
+    } catch {
+      // If not serializable (e.g., function conditions), return shallow copy
+      return { ...obj } as T;
+    }
+  }
+
   return {
     register(meta) {
       if (components.has(meta.id)) {
@@ -48,8 +60,16 @@ export function createComponentRegistry(): ComponentRegistry {
       components.set(meta.id, meta);
     },
 
+    // Fix 10: Return a deep-frozen copy
     get(id) {
-      return components.get(id);
+      const meta = components.get(id);
+      if (!meta) return undefined;
+      // For components with function retirement conditions, we can't JSON serialize
+      // so return a frozen shallow copy
+      if (typeof meta.retirementCondition === 'function') {
+        return Object.freeze({ ...meta });
+      }
+      return Object.freeze(deepFreeze(meta));
     },
 
     list(filter) {
@@ -120,6 +140,10 @@ export function createComponentRegistry(): ComponentRegistry {
 /**
  * Evaluate a simple retirement condition string against a context object.
  *
+ * Fix 11: Uses proper tokenization by splitting on whitespace first,
+ * then identifying the operator token. This prevents matching operators
+ * inside value strings. Validates that exactly 3 tokens exist (key, operator, value).
+ *
  * Supports conditions in the form: `key operator value`
  * where operator is one of: >, <, >=, <=, ==, !=
  *
@@ -127,32 +151,34 @@ export function createComponentRegistry(): ComponentRegistry {
  * Returns false if the condition cannot be parsed or the key is missing from context.
  */
 function evaluateCondition(condition: string, context: Record<string, unknown>): boolean {
-  // Check operators in order of length (longest first) to avoid
-  // '>=' being matched as '>' with '=' left in the value string.
-  const operators = ['>=', '<=', '!=', '==', '>', '<'] as const;
-  for (const op of operators) {
-    const idx = condition.indexOf(op);
-    if (idx === -1) continue;
-
-    const key = condition.slice(0, idx).trim();
-    const valueStr = condition.slice(idx + op.length).trim();
-
-    if (!key || !(key in context)) return false;
-
-    const contextValue = context[key];
-    const targetValue = Number(valueStr);
-
-    if (typeof contextValue !== 'number' || Number.isNaN(targetValue)) return false;
-
-    switch (op) {
-      case '>':  return contextValue > targetValue;
-      case '<':  return contextValue < targetValue;
-      case '>=': return contextValue >= targetValue;
-      case '<=': return contextValue <= targetValue;
-      case '==': return contextValue === targetValue;
-      case '!=': return contextValue !== targetValue;
-    }
+  // Fix 11: Split by whitespace first, then identify the operator token
+  const tokens = condition.trim().split(/\s+/);
+  if (tokens.length !== 3) {
+    // Not a valid 3-token condition
+    return false;
   }
 
-  return false;
+  const [key, op, valueStr] = tokens;
+  const validOps = ['>=', '<=', '!=', '==', '>', '<'] as const;
+  type ValidOp = typeof validOps[number];
+
+  if (!validOps.includes(op as ValidOp)) {
+    return false;
+  }
+
+  if (!key || !(key in context)) return false;
+
+  const contextValue = context[key];
+  const targetValue = Number(valueStr);
+
+  if (typeof contextValue !== 'number' || Number.isNaN(targetValue)) return false;
+
+  switch (op as ValidOp) {
+    case '>':  return contextValue > targetValue;
+    case '<':  return contextValue < targetValue;
+    case '>=': return contextValue >= targetValue;
+    case '<=': return contextValue <= targetValue;
+    case '==': return contextValue === targetValue;
+    case '!=': return contextValue !== targetValue;
+  }
 }

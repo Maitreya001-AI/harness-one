@@ -16,6 +16,10 @@ export interface ArchitectureChecker {
 /**
  * Create an architecture checker that validates rules against a codebase context.
  *
+ * Fix 13: Caches dependency graph analysis results (cycle detection) between
+ * rule checks. The cache is invalidated when rules or modules change, avoiding
+ * repeated O(V*(V+E)) DFS computations.
+ *
  * @example
  * ```ts
  * const checker = createArchitectureChecker();
@@ -25,13 +29,29 @@ export interface ArchitectureChecker {
  */
 export function createArchitectureChecker(): ArchitectureChecker {
   const rules: ArchitectureRule[] = [];
+  // Fix 13: Cache for check results, keyed by a hash of context
+  let lastContextHash = '';
+  let cachedResult: { passed: boolean; violations: RuleResult[] } | null = null;
+  let lastRuleCount = 0;
+
+  function hashContext(context: RuleContext): string {
+    return JSON.stringify({ files: context.files, imports: context.imports });
+  }
 
   return {
     addRule(rule) {
       rules.push(rule);
+      // Invalidate cache when rules change
+      cachedResult = null;
     },
 
     check(context) {
+      // Fix 13: Return cached result if context and rules haven't changed
+      const contextHash = hashContext(context);
+      if (cachedResult && contextHash === lastContextHash && rules.length === lastRuleCount) {
+        return cachedResult;
+      }
+
       const violations: RuleResult[] = [];
       let allPassed = true;
 
@@ -43,7 +63,14 @@ export function createArchitectureChecker(): ArchitectureChecker {
         }
       }
 
-      return { passed: allPassed, violations };
+      const result = { passed: allPassed, violations };
+
+      // Update cache
+      lastContextHash = contextHash;
+      lastRuleCount = rules.length;
+      cachedResult = result;
+
+      return result;
     },
 
     listRules() {
@@ -54,6 +81,9 @@ export function createArchitectureChecker(): ArchitectureChecker {
 
 /**
  * Create a rule that detects circular dependencies between modules.
+ *
+ * Fix 14: Enhanced violation suggestions include the specific modules
+ * involved in the cycle, rather than generic advice.
  *
  * @example
  * ```ts
@@ -86,15 +116,19 @@ export function noCircularDepsRule(allowedModules: string[]): ArchitectureRule {
         }
       }
 
-      // Detect cycles using DFS
+      // Detect cycles using DFS — Fix 14: track the actual cycle path
       for (const mod of allowedModules) {
         const visited = new Set<string>();
         const stack = new Set<string>();
-        if (hasCycle(mod, graph, visited, stack)) {
+        const path: string[] = [];
+        const cyclePath = findCyclePath(mod, graph, visited, stack, path);
+        if (cyclePath) {
+          // Fix 14: Specific suggestion with involved modules
+          const cycleStr = cyclePath.join(' -> ');
           violations.push({
             file: mod,
-            message: `Circular dependency detected involving module: ${mod}`,
-            suggestion: `Refactor to break the cycle in module: ${mod}`,
+            message: `Circular dependency detected: ${cycleStr}`,
+            suggestion: `Circular dependency: ${cycleStr}. Consider extracting shared interface from ${cyclePath[0]} and ${cyclePath[cyclePath.length - 2]} into a separate module.`,
           });
         }
       }
@@ -153,20 +187,31 @@ function getModule(filePath: string, modules: string[]): string | undefined {
   return modules.find((m) => segments.includes(m));
 }
 
-function hasCycle(
+/** Find a cycle path using DFS. Returns the cycle path or null. */
+function findCyclePath(
   node: string,
   graph: Map<string, Set<string>>,
   visited: Set<string>,
   stack: Set<string>,
-): boolean {
+  path: string[],
+): string[] | null {
   visited.add(node);
   stack.add(node);
+  path.push(node);
 
   for (const neighbor of graph.get(node) ?? []) {
-    if (stack.has(neighbor)) return true;
-    if (!visited.has(neighbor) && hasCycle(neighbor, graph, visited, stack)) return true;
+    if (stack.has(neighbor)) {
+      // Found a cycle — return path from neighbor back to neighbor
+      const cycleStart = path.indexOf(neighbor);
+      return [...path.slice(cycleStart), neighbor];
+    }
+    if (!visited.has(neighbor)) {
+      const result = findCyclePath(neighbor, graph, visited, stack, path);
+      if (result) return result;
+    }
   }
 
+  path.pop();
   stack.delete(node);
-  return false;
+  return null;
 }

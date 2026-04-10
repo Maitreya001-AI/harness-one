@@ -180,6 +180,63 @@ describe('createFailureTaxonomy', () => {
     });
   });
 
+  // Fix 7: Confidence calibration documentation — verify comments exist
+  // (These are JSDoc-level fixes; we verify the confidence values are still the expected heuristic values)
+  describe('confidence calibration', () => {
+    it('tool_loop confidence follows documented formula: 0.5 + (run-3)*0.1, max 0.95', () => {
+      const taxonomy = createFailureTaxonomy();
+      // 5 consecutive spans => confidence = 0.5 + (5-3)*0.1 = 0.7
+      const spans = Array.from({ length: 5 }, (_, i) =>
+        makeSpan({ id: `s${i}`, name: 'callTool' }),
+      );
+      const trace = makeTrace({ spans });
+      const results = taxonomy.classify(trace);
+      const loopResult = results.find(r => r.mode === 'tool_loop');
+      expect(loopResult!.confidence).toBeCloseTo(0.7);
+    });
+
+    it('early_stop confidence is 0.6', () => {
+      const taxonomy = createFailureTaxonomy();
+      const trace = makeTrace({
+        startTime: 0, endTime: 2000, status: 'completed',
+        spans: [makeSpan({ id: 's0' })],
+      });
+      const results = taxonomy.classify(trace);
+      expect(results.find(r => r.mode === 'early_stop')!.confidence).toBeCloseTo(0.6);
+    });
+
+    it('budget_exceeded confidence is 0.9', () => {
+      const taxonomy = createFailureTaxonomy();
+      const trace = makeTrace({
+        status: 'error',
+        spans: [makeSpan({ id: 's1', name: 'budget_check', status: 'error', attributes: { budget: true } })],
+      });
+      const results = taxonomy.classify(trace);
+      expect(results.find(r => r.mode === 'budget_exceeded')!.confidence).toBeCloseTo(0.9);
+    });
+
+    it('timeout confidence is 0.8', () => {
+      const taxonomy = createFailureTaxonomy();
+      const trace = makeTrace({
+        startTime: 0, endTime: 130_000,
+        spans: [makeSpan({ id: 's1', name: 'long', startTime: 0, endTime: undefined, status: 'running' })],
+      });
+      const results = taxonomy.classify(trace);
+      expect(results.find(r => r.mode === 'timeout')!.confidence).toBeCloseTo(0.8);
+    });
+
+    it('hallucination confidence follows formula: 0.5 + count*0.1, max 0.8', () => {
+      const taxonomy = createFailureTaxonomy();
+      const spans = Array.from({ length: 4 }, (_, i) =>
+        makeSpan({ id: `s${i}`, name: `tool_call_${i}`, status: 'error' }),
+      );
+      const trace = makeTrace({ spans });
+      const results = taxonomy.classify(trace);
+      // 4 errors => 0.5 + 4*0.1 = 0.9, capped at 0.8
+      expect(results.find(r => r.mode === 'hallucination')!.confidence).toBeCloseTo(0.8);
+    });
+  });
+
   it('returns results sorted by confidence descending', () => {
     const taxonomy = createFailureTaxonomy();
     taxonomy.registerDetector('low', {

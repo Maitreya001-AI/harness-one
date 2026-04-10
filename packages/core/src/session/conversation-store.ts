@@ -87,7 +87,16 @@ export function createInMemoryConversationStore(): ConversationStore {
       const messages = store.get(sessionId);
       return messages ? [...messages] : [];
     },
-    /** @see ConversationStore.append — safe under single-threaded Node.js; no mutex needed. */
+    /**
+     * Append a single message to a session's history.
+     *
+     * This implementation is safe for single-process access only. For
+     * distributed stores, use database-level atomic operations (e.g.,
+     * Redis RPUSH, Postgres array_append). Concurrent append from multiple
+     * processes without external coordination may lose messages.
+     *
+     * @see ConversationStore.append -- safe under single-threaded Node.js; no mutex needed.
+     */
     async append(sessionId, message) {
       const existing = store.get(sessionId) ?? [];
       const messages = [...existing, message];

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createBudget } from '../budget.js';
+import { HarnessError } from '../../core/errors.js';
 
 describe('createBudget', () => {
   const config = {
@@ -263,6 +264,114 @@ describe('createBudget', () => {
       });
       expect(() => budget.allocate('history', 200)).not.toThrow();
       expect(budget.remaining('history')).toBe(0);
+    });
+  });
+
+  describe('tryAllocate', () => {
+    it('returns true and allocates when within capacity', () => {
+      const budget = createBudget({
+        totalTokens: 1000,
+        segments: [{ name: 'history', maxTokens: 500, trimPriority: 1 }],
+      });
+      const result = budget.tryAllocate('history', 200);
+      expect(result).toBe(true);
+      expect(budget.remaining('history')).toBe(300);
+    });
+
+    it('returns false and does not allocate when over capacity', () => {
+      const budget = createBudget({
+        totalTokens: 1000,
+        segments: [{ name: 'history', maxTokens: 500, trimPriority: 1 }],
+      });
+      const result = budget.tryAllocate('history', 600);
+      expect(result).toBe(false);
+      expect(budget.remaining('history')).toBe(500); // unchanged
+    });
+
+    it('returns false on cumulative overflow without throwing', () => {
+      const budget = createBudget({
+        totalTokens: 1000,
+        segments: [{ name: 'history', maxTokens: 200, trimPriority: 1 }],
+      });
+      budget.allocate('history', 150);
+      const result = budget.tryAllocate('history', 100);
+      expect(result).toBe(false);
+      expect(budget.remaining('history')).toBe(50); // unchanged
+    });
+
+    it('throws on unknown segment (same as allocate)', () => {
+      const budget = createBudget({
+        totalTokens: 1000,
+        segments: [{ name: 'history', maxTokens: 500, trimPriority: 1 }],
+      });
+      expect(() => budget.tryAllocate('unknown', 100)).toThrow('Unknown segment');
+    });
+
+    it('returns true for exact capacity', () => {
+      const budget = createBudget({
+        totalTokens: 1000,
+        segments: [{ name: 'history', maxTokens: 200, trimPriority: 1 }],
+      });
+      const result = budget.tryAllocate('history', 200);
+      expect(result).toBe(true);
+      expect(budget.remaining('history')).toBe(0);
+    });
+  });
+
+  describe('zero budget validation', () => {
+    it('throws INVALID_BUDGET when totalTokens is 0', () => {
+      expect(() =>
+        createBudget({
+          totalTokens: 0,
+          segments: [{ name: 'a', maxTokens: 100 }],
+        }),
+      ).toThrow(HarnessError);
+      try {
+        createBudget({ totalTokens: 0, segments: [{ name: 'a', maxTokens: 100 }] });
+      } catch (e) {
+        expect((e as HarnessError).code).toBe('INVALID_BUDGET');
+      }
+    });
+
+    it('throws INVALID_BUDGET when totalTokens is negative', () => {
+      expect(() =>
+        createBudget({
+          totalTokens: -100,
+          segments: [{ name: 'a', maxTokens: 100 }],
+        }),
+      ).toThrow(HarnessError);
+    });
+
+    it('throws INVALID_BUDGET when a segment has maxTokens of 0', () => {
+      expect(() =>
+        createBudget({
+          totalTokens: 1000,
+          segments: [{ name: 'a', maxTokens: 0 }],
+        }),
+      ).toThrow(HarnessError);
+      try {
+        createBudget({ totalTokens: 1000, segments: [{ name: 'a', maxTokens: 0 }] });
+      } catch (e) {
+        expect((e as HarnessError).code).toBe('INVALID_BUDGET');
+      }
+    });
+
+    it('throws INVALID_BUDGET when a segment has negative maxTokens', () => {
+      expect(() =>
+        createBudget({
+          totalTokens: 1000,
+          segments: [{ name: 'a', maxTokens: -50 }],
+        }),
+      ).toThrow(HarnessError);
+    });
+
+    it('allows positive totalTokens and segment maxTokens', () => {
+      expect(() =>
+        createBudget({
+          totalTokens: 100,
+          segments: [{ name: 'a', maxTokens: 50 }],
+        }),
+      ).not.toThrow();
     });
   });
 

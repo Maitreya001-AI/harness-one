@@ -139,6 +139,74 @@ describe('createHandoff', () => {
     expect(count).toBeLessThanOrEqual(1_000);
   });
 
+  // Fix 28: Receipt TTL eviction
+  describe('receipt TTL eviction (Fix 28)', () => {
+    it('evicts receipts older than TTL', async () => {
+      const transport: MessageTransport = { send: vi.fn() };
+      const h = createHandoff(transport, { receiptTtlMs: 50 });
+
+      h.send('a', 'b', { summary: 'old' });
+
+      // Wait for TTL to expire
+      await new Promise(r => setTimeout(r, 60));
+
+      h.send('a', 'b', { summary: 'new' });
+      const history = h.history('a');
+      // Old receipt should be evicted
+      expect(history.length).toBe(1);
+      expect(history[0].payload.summary).toBe('new');
+    });
+
+    it('does not evict when TTL is not set', () => {
+      const transport: MessageTransport = { send: vi.fn() };
+      const h = createHandoff(transport);
+
+      h.send('a', 'b', { summary: 'msg1' });
+      h.send('a', 'b', { summary: 'msg2' });
+
+      const history = h.history('a');
+      expect(history.length).toBe(2);
+    });
+  });
+
+  // Fix 29: Priority inbox
+  describe('priority inbox (Fix 29)', () => {
+    it('high-priority handoffs are received before normal', () => {
+      const transport: MessageTransport = { send: vi.fn() };
+      const h = createHandoff(transport);
+
+      h.send('a', 'b', { summary: 'normal', priority: 'normal' });
+      h.send('a', 'b', { summary: 'high', priority: 'high' });
+      h.send('a', 'b', { summary: 'low', priority: 'low' });
+
+      expect(h.receive('b')?.summary).toBe('high');
+      expect(h.receive('b')?.summary).toBe('normal');
+      expect(h.receive('b')?.summary).toBe('low');
+    });
+
+    it('default priority is normal', () => {
+      const transport: MessageTransport = { send: vi.fn() };
+      const h = createHandoff(transport);
+
+      h.send('a', 'b', { summary: 'default' });
+      h.send('a', 'b', { summary: 'high', priority: 'high' });
+
+      expect(h.receive('b')?.summary).toBe('high');
+      expect(h.receive('b')?.summary).toBe('default');
+    });
+
+    it('FIFO within same priority level', () => {
+      const transport: MessageTransport = { send: vi.fn() };
+      const h = createHandoff(transport);
+
+      h.send('a', 'b', { summary: 'first-high', priority: 'high' });
+      h.send('a', 'b', { summary: 'second-high', priority: 'high' });
+
+      expect(h.receive('b')?.summary).toBe('first-high');
+      expect(h.receive('b')?.summary).toBe('second-high');
+    });
+  });
+
   describe('MessageTransport interface', () => {
     it('accepts a minimal MessageTransport instead of full orchestrator', () => {
       const transport: MessageTransport = {

@@ -16,6 +16,11 @@ import type { MemoryStore } from './store.js';
  *
  * Each entry is stored as `{directory}/{id}.json`. An index file maps keys to IDs.
  *
+ * @warning This implementation uses in-process mutex only. It is NOT safe for
+ * concurrent access from multiple processes. For multi-process scenarios, use a
+ * database-backed store or add distributed file locking (e.g., `proper-lockfile`,
+ * advisory locks via flock/fcntl).
+ *
  * @example
  * ```ts
  * const store = createFileSystemStore({ directory: '/tmp/memory' });
@@ -185,15 +190,33 @@ export function createFileSystemStore(config: {
         if (policy.maxAge !== undefined) {
           const survivors: MemoryEntry[] = [];
           const toDelete: string[] = [];
+          const deleteIdMap = new Map<string, string>(); // path -> entry id
           for (const entry of all) {
             if (now - entry.createdAt > policy.maxAge && weights[entry.grade] < 1.0) {
-              toDelete.push(io.entryPath(entry.id));
-              freed.push(entry.id);
+              const path = io.entryPath(entry.id);
+              toDelete.push(path);
+              deleteIdMap.set(path, entry.id);
             } else {
               survivors.push(entry);
             }
           }
-          await io.batchUnlink(toDelete);
+          // Fix 19/20: Use structured batchUnlink result
+          const result = await io.batchUnlink(toDelete);
+          // Only count successfully deleted entries
+          for (const deletedPath of result.deleted) {
+            const entryId = deleteIdMap.get(deletedPath);
+            if (entryId) freed.push(entryId);
+          }
+          // Fix 20: Keep failed entries in the survivor list so they remain in the index
+          if (result.failed.length > 0) {
+            for (const failure of result.failed) {
+              const entryId = deleteIdMap.get(failure.path);
+              if (entryId) {
+                const entry = all.find(e => e.id === entryId);
+                if (entry) survivors.push(entry);
+              }
+            }
+          }
           all = survivors;
         }
 
@@ -205,17 +228,30 @@ export function createFileSystemStore(config: {
           let current = all.length;
           const removedIds = new Set<string>();
           const toDelete: string[] = [];
+          const deleteIdMap = new Map<string, string>(); // path -> entry id
           for (const victim of sorted) {
             if (current <= policy.maxEntries) break;
             if (weights[victim.grade] < 1.0) {
-              toDelete.push(io.entryPath(victim.id));
-              freed.push(victim.id);
+              const path = io.entryPath(victim.id);
+              toDelete.push(path);
+              deleteIdMap.set(path, victim.id);
               removedIds.add(victim.id);
               current--;
             }
           }
-          await io.batchUnlink(toDelete);
-          all = all.filter((e) => !removedIds.has(e.id));
+          // Fix 19/20: Use structured batchUnlink result
+          const result = await io.batchUnlink(toDelete);
+          // Only count successfully deleted entries
+          const actuallyRemoved = new Set<string>();
+          for (const deletedPath of result.deleted) {
+            const entryId = deleteIdMap.get(deletedPath);
+            if (entryId) {
+              actuallyRemoved.add(entryId);
+              freed.push(entryId);
+            }
+          }
+          // Fix 20: Keep failed entries in the list (they were not deleted)
+          all = all.filter((e) => !actuallyRemoved.has(e.id));
         }
 
         // Rebuild index from remaining entries (no extra I/O needed)
@@ -243,8 +279,19 @@ export function createFileSystemStore(config: {
       await io.ensureDir();
       await withIndexLock(async () => {
         const all = await allEntries();
-        await io.batchUnlink(all.map(e => io.entryPath(e.id)));
-        await io.writeIndex({ keys: {} });
+        const result = await io.batchUnlink(all.map(e => io.entryPath(e.id)));
+        // If some deletions failed, keep those entries in the index
+        if (result.failed.length > 0) {
+          const failedPaths = new Set(result.failed.map(f => f.path));
+          const survivingEntries = all.filter(e => failedPaths.has(io.entryPath(e.id)));
+          const newIndex = { keys: {} as Record<string, string> };
+          for (const entry of survivingEntries) {
+            newIndex.keys[entry.key] = entry.id;
+          }
+          await io.writeIndex(newIndex);
+        } else {
+          await io.writeIndex({ keys: {} });
+        }
       });
     },
   };

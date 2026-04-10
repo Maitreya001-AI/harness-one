@@ -188,6 +188,73 @@ describe('packContext', () => {
     });
   });
 
+  describe('midBudgetExhausted signaling', () => {
+    it('returns midBudgetExhausted=false when MID has budget', () => {
+      const budget = createBudget({
+        totalTokens: 100000,
+        segments: [{ name: 'all', maxTokens: 100000 }],
+      });
+      const result = packContext({
+        head: [msg('system', 'System')],
+        mid: [msg('user', 'Hello')],
+        tail: [msg('user', 'Bye')],
+        budget,
+      });
+      expect(result.midBudgetExhausted).toBe(false);
+    });
+
+    it('returns midBudgetExhausted=true when HEAD+TAIL consume entire budget', () => {
+      const budget = createBudget({
+        totalTokens: 10,
+        segments: [{ name: 'all', maxTokens: 10 }],
+      });
+      const result = packContext({
+        head: [msg('system', 'A very long system prompt that uses many tokens')],
+        mid: [msg('user', 'Mid message')],
+        tail: [msg('user', 'A fairly long tail message as well')],
+        budget,
+      });
+      expect(result.midBudgetExhausted).toBe(true);
+      expect(result.usage.mid).toBe(0);
+    });
+
+    it('returns midBudgetExhausted=true when responseReserve exhausts mid budget', () => {
+      const budget = createBudget({
+        totalTokens: 100,
+        segments: [{ name: 'all', maxTokens: 100 }],
+        responseReserve: 95,
+      });
+      const result = packContext({
+        head: [msg('system', 'System prompt here')],
+        mid: [msg('user', 'Mid')],
+        tail: [msg('user', 'End')],
+        budget,
+      });
+      // With 95 reserve, only 5 tokens for everything. HEAD+TAIL will exceed.
+      expect(result.midBudgetExhausted).toBe(true);
+    });
+
+    it('returns midBudgetExhausted=false even when MID is truncated but has some budget', () => {
+      const budget = createBudget({
+        totalTokens: 30,
+        segments: [{ name: 'all', maxTokens: 30 }],
+      });
+      const result = packContext({
+        head: [msg('system', 'System')],
+        mid: [
+          msg('user', 'Long message one'),
+          msg('assistant', 'Long response one'),
+          msg('user', 'Short'),
+        ],
+        tail: [msg('user', 'End')],
+        budget,
+      });
+      // MID may be truncated but midBudget is not zero
+      expect(result.truncated).toBe(true);
+      expect(result.midBudgetExhausted).toBe(false);
+    });
+  });
+
   describe('H6: midBudget can be negative', () => {
     it('clamps midBudget to 0 when HEAD+TAIL exceed total budget', () => {
       // HEAD + TAIL > totalTokens

@@ -62,6 +62,8 @@ export interface EvalConfig {
   readonly overallPassRate?: number;
   /** Max number of cases to run concurrently. Defaults to 1 (sequential). */
   readonly concurrency?: number;
+  /** Optional per-scorer minimum average score thresholds for quality gate. */
+  readonly scorerThresholds?: Record<string, number>;
 }
 
 /** Configuration for a generator-evaluator loop. */

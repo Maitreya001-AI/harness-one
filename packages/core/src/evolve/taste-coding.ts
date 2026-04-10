@@ -7,6 +7,9 @@
 import { HarnessError } from '../core/errors.js';
 import type { TasteCodingRule } from './types.js';
 
+/** Maximum allowed pattern length. Patterns exceeding this are rejected. */
+const MAX_PATTERN_LENGTH = 500;
+
 /** A single compliance violation found during checkCompliance. */
 export interface TasteViolation {
   readonly ruleId: string;
@@ -67,6 +70,27 @@ export function createTasteCodingRegistry(): TasteCodingRegistry {
           'Use a unique rule ID or remove the existing rule first',
         );
       }
+
+      // Fix 12: Validate pattern length
+      if (rule.pattern.length > MAX_PATTERN_LENGTH) {
+        throw new HarnessError(
+          `Pattern too long (${rule.pattern.length} chars, max ${MAX_PATTERN_LENGTH}). Patterns should be simple word-match patterns, not complex regexes.`,
+          'INVALID_PATTERN',
+          `Reduce pattern length to ${MAX_PATTERN_LENGTH} characters or fewer`,
+        );
+      }
+
+      // Fix 12: Validate that the pattern is a valid regex when escaped
+      try {
+        new RegExp(`\\b${escapeRegExp(rule.pattern)}\\b`);
+      } catch {
+        throw new HarnessError(
+          `Invalid pattern: "${rule.pattern}". Patterns should be simple word-match patterns, not complex regexes.`,
+          'INVALID_PATTERN',
+          'Use a simple string pattern that can be safely converted to a regex',
+        );
+      }
+
       rules.set(rule.id, rule);
     },
 
@@ -113,7 +137,16 @@ export function createTasteCodingRegistry(): TasteCodingRegistry {
       const violations: TasteViolation[] = [];
       for (const rule of rules.values()) {
         if (rule.enforcement !== 'lint' && rule.enforcement !== 'ci') continue;
-        const regex = new RegExp(`\\b${escapeRegExp(rule.pattern)}\\b`);
+
+        // Fix 12: Wrap regex construction in try-catch for safety
+        let regex: RegExp;
+        try {
+          regex = new RegExp(`\\b${escapeRegExp(rule.pattern)}\\b`);
+        } catch {
+          // Skip invalid patterns gracefully
+          continue;
+        }
+
         if (regex.test(code)) {
           violations.push({
             ruleId: rule.id,

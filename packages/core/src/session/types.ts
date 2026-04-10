@@ -15,7 +15,9 @@ export interface Session {
 
 /** An event emitted during session lifecycle. */
 export interface SessionEvent {
-  readonly type: 'created' | 'accessed' | 'locked' | 'unlocked' | 'expired' | 'destroyed';
+  readonly type: 'created' | 'accessed' | 'locked' | 'unlocked' | 'expired' | 'destroyed' | 'evicted';
   readonly sessionId: string;
   readonly timestamp: number;
+  /** Present on 'evicted' events to indicate the reason for eviction. */
+  readonly reason?: string;
 }

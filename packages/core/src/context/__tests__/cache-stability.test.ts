@@ -155,6 +155,52 @@ describe('analyzeCacheStability', () => {
     });
   });
 
+  describe('contentOverlapRatio', () => {
+    it('returns 1 for identical arrays', () => {
+      const msgs = [msg('system', 'Sys'), msg('user', 'Hi')];
+      const report = analyzeCacheStability(msgs, msgs);
+      expect(report.contentOverlapRatio).toBe(1);
+    });
+
+    it('returns 1 for empty arrays', () => {
+      const report = analyzeCacheStability([], []);
+      expect(report.contentOverlapRatio).toBe(1);
+    });
+
+    it('returns 0 for completely different arrays', () => {
+      const v1 = [msg('user', 'Hello')];
+      const v2 = [msg('user', 'Goodbye')];
+      const report = analyzeCacheStability(v1, v2);
+      expect(report.contentOverlapRatio).toBe(0);
+    });
+
+    it('returns correct ratio for partial overlap', () => {
+      const v1 = [msg('system', 'Sys'), msg('user', 'Hello')];
+      const v2 = [msg('system', 'Sys'), msg('user', 'Goodbye')];
+      const report = analyzeCacheStability(v1, v2);
+      // 1 shared message out of max(2, 2) = 2 => 0.5
+      expect(report.contentOverlapRatio).toBe(0.5);
+    });
+
+    it('detects overlap regardless of position (reordered messages)', () => {
+      const v1 = [msg('user', 'A'), msg('assistant', 'B')];
+      const v2 = [msg('assistant', 'B'), msg('user', 'A')];
+      const report = analyzeCacheStability(v1, v2);
+      // Both messages are shared, just in different order
+      expect(report.contentOverlapRatio).toBe(1);
+      // But prefix match should detect divergence at index 0
+      expect(report.prefixMatchRatio).toBe(0);
+    });
+
+    it('handles different length arrays', () => {
+      const v1 = [msg('system', 'Sys'), msg('user', 'A')];
+      const v2 = [msg('system', 'Sys'), msg('user', 'A'), msg('assistant', 'B')];
+      const report = analyzeCacheStability(v1, v2);
+      // 2 shared out of max(2, 3) = 3 => 2/3
+      expect(report.contentOverlapRatio).toBeCloseTo(2 / 3, 2);
+    });
+  });
+
   describe('H4: JSON.stringify comparison for toolCalls is unstable', () => {
     it('considers messages equal when toolCalls have same fields in different order', () => {
       // JSON.stringify is not order-stable. Two objects with same fields in different

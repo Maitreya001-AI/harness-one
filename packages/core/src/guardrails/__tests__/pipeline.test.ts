@@ -432,6 +432,81 @@ describe('runToolOutput', () => {
   });
 });
 
+describe('Fix 9: default timeout for guards', () => {
+  it('applies default 5000ms timeout to guards without explicit timeoutMs', async () => {
+    const hangingGuard: Guardrail = () => new Promise(() => {}); // never resolves
+    const pipeline = createPipeline({
+      input: [{ name: 'hanger', guard: hangingGuard }],
+      // No timeoutMs on guard, default 5000ms applies
+      // Use a short defaultTimeoutMs for test speed
+      defaultTimeoutMs: 50,
+    });
+    const result = await runInput(pipeline, { content: 'hello' });
+    expect(result.passed).toBe(false);
+    if (result.verdict.action === 'block') {
+      expect(result.verdict.reason).toContain('timed out');
+    }
+  });
+
+  it('guard-level timeoutMs overrides pipeline defaultTimeoutMs', async () => {
+    const fastGuard: Guardrail = async () => {
+      await new Promise((r) => setTimeout(r, 30));
+      return { action: 'allow' };
+    };
+    const pipeline = createPipeline({
+      input: [{ name: 'fast', guard: fastGuard, timeoutMs: 5000 }],
+      defaultTimeoutMs: 10, // very short default, but guard overrides with 5000
+    });
+    const result = await runInput(pipeline, { content: 'hello' });
+    expect(result.passed).toBe(true);
+  });
+
+  it('defaultTimeoutMs: 0 disables default timeout', async () => {
+    const fastGuard: Guardrail = () => ({ action: 'allow' });
+    const pipeline = createPipeline({
+      input: [{ name: 'fast', guard: fastGuard }],
+      defaultTimeoutMs: 0,
+    });
+    const result = await runInput(pipeline, { content: 'hello' });
+    expect(result.passed).toBe(true);
+  });
+});
+
+describe('Fix 10: fail-closed/fail-open semantics', () => {
+  it('failClosed=true blocks on guardrail exception (safe default)', async () => {
+    const pipeline = createPipeline({
+      input: [{ name: 'thrower', guard: throwGuard }],
+      failClosed: true,
+      defaultTimeoutMs: 0,
+    });
+    const result = await runInput(pipeline, { content: 'hello' });
+    expect(result.passed).toBe(false);
+    expect(result.verdict.action).toBe('block');
+  });
+
+  it('failClosed=false allows on guardrail exception (fail-open)', async () => {
+    const pipeline = createPipeline({
+      input: [
+        { name: 'thrower', guard: throwGuard },
+        { name: 'allow', guard: allowGuard },
+      ],
+      failClosed: false,
+      defaultTimeoutMs: 0,
+    });
+    const result = await runInput(pipeline, { content: 'hello' });
+    expect(result.passed).toBe(true);
+  });
+
+  it('defaults to failClosed=true when not specified', async () => {
+    const pipeline = createPipeline({
+      input: [{ name: 'thrower', guard: throwGuard }],
+      defaultTimeoutMs: 0,
+    });
+    const result = await runInput(pipeline, { content: 'hello' });
+    expect(result.passed).toBe(false);
+  });
+});
+
 describe('Gap 2: permissionLevel in GuardrailContext', () => {
   it('passes permissionLevel through to guardrail functions', async () => {
     let receivedCtx: import('../types.js').GuardrailContext | undefined;
