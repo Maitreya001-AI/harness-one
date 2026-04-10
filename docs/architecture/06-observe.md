@@ -13,6 +13,8 @@ observe 模块提供两个核心能力：TraceManager 管理分布式追踪（Tr
 | `src/observe/types.ts` | 类型定义：Trace、Span、SpanEvent、TokenUsageRecord、CostAlert、TraceExporter | ~67 |
 | `src/observe/trace-manager.ts` | createTraceManager + createConsoleExporter + createNoOpExporter | ~273 |
 | `src/observe/cost-tracker.ts` | createCostTracker——成本追踪与预算告警 | ~177 |
+| `src/observe/failure-taxonomy.ts` | createFailureTaxonomy——从 Trace 分类失败模式 | ~189 |
+| `src/observe/cache-monitor.ts` | createCacheMonitor——KV-cache 命中率监控 | ~133 |
 | `src/observe/index.ts` | 公共导出桶文件 | ~20 |
 
 ## 公共 API
@@ -123,8 +125,91 @@ cost = (inputTokens/1000 * inputPrice) + (outputTokens/1000 * outputPrice)
 2. **LRU 而非 TTL**——按数量而非时间淘汰，更适合长期运行的 agent 进程
 3. **成本与追踪分离**——TraceManager 和 CostTracker 是独立的，可单独使用
 
+## Failure Taxonomy
+
+> 从 Trace 结构自动分类 Agent 失败模式。
+
+### 概述
+
+`createFailureTaxonomy()` 分析已完成的 Trace，通过一组可插拔的 FailureDetector 识别常见失败模式（如工具循环、过早停止、预算超支）。每个检测器独立评分，返回按置信度降序排列的分类结果。
+
+### 工厂函数
+
+```ts
+function createFailureTaxonomy(config?: FailureTaxonomyConfig): FailureTaxonomy
+```
+
+**配置项**：
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `detectors` | `Record<string, FailureDetector>` | — | 覆盖或扩展内置检测器 |
+| `minConfidence` | `number` | `0.5` | 低于此阈值的检测结果不报告 |
+
+### 5 个内置检测器
+
+| 模式 | 触发条件 | 基础置信度 |
+|------|---------|-----------|
+| `tool_loop` | ≥3 个连续同名 Span | 0.5 + (runLength - 3) × 0.1，上限 0.95 |
+| `early_stop` | 已完成 Trace，≤2 Span，<5s | 0.6 |
+| `budget_exceeded` | 最后一个 Span 为 error 且名称/属性含 "budget" | 0.9 |
+| `timeout` | Trace >120s，最后一个 Span 仍为 running | 0.8 |
+| `hallucination` | ≥2 个 tool 相关 Span 为 error | 0.5 + errorCount × 0.1，上限 0.8 |
+
+### API
+
+| 方法 | 说明 |
+|------|------|
+| `classify(trace)` | 分析 Trace，返回 `FailureClassification[]`（按 confidence 降序） |
+| `registerDetector(mode, detector)` | 运行时注册自定义检测器 |
+| `getStats()` | 返回各失败模式的累计计数 |
+| `reset()` | 重置累计统计 |
+
+### 扩展
+
+实现 `FailureDetector` 接口（`detect(trace): { confidence, evidence } | null`），通过 config 或 `registerDetector()` 注入。自定义检测器可覆盖同名内置检测器。
+
+## Cache Monitor
+
+> KV-cache 命中率监控与成本节约估算。
+
+### 概述
+
+`createCacheMonitor()` 追踪 LLM 调用的缓存命中率，提供运行聚合指标和时间序列分桶数据，用于评估上下文工程策略的缓存效果。
+
+### 工厂函数
+
+```ts
+function createCacheMonitor(config?: CacheMonitorConfig): CacheMonitor
+```
+
+**配置项**：
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `pricing.cacheReadPer1kTokens` | `number` | `0` | 缓存读取每千 token 价格 |
+| `pricing.inputPer1kTokens` | `number` | `0` | 常规输入每千 token 价格 |
+| `maxBuckets` | `number` | `100` | 保留的原始数据点上限为 maxBuckets × 10 |
+
+### API
+
+| 方法 | 说明 |
+|------|------|
+| `record(usage, prefixMatchRatio?)` | 记录一次 token 用量样本。可选传入 `prefixMatchRatio` 覆盖自动计算的命中率 |
+| `getMetrics()` | 返回聚合指标：totalCalls、avgHitRate、totalCacheReadTokens、totalCacheWriteTokens、estimatedSavings |
+| `getTimeSeries(bucketMs?)` | 返回按时间分桶的指标数组（默认 60s 桶） |
+| `reset()` | 清空所有记录数据 |
+
+### 实现细节
+
+- **从原始数据重算聚合** —— `getMetrics()` 每次从原始数据点重新计算，避免浮点漂移
+- **成本节约估算** —— `estimatedSavings = cacheReadTokens × (inputPrice - cacheReadPrice) / 1000`，下限为 0
+- **数据淘汰** —— 原始数据点超过 `maxBuckets × 10` 时，从最旧端淘汰
+
 ## 已知限制
 
 - TraceManager 不支持跨进程的分布式追踪关联
 - 未注册模型的成本计算为 0，不发出警告
 - getCostByModel()/getCostByTrace() 仅反映缓冲区内的记录；如需包含已淘汰记录的累计总额，使用 getTotalCost()
+- FailureTaxonomy 仅分析 Trace 结构，不检查消息内容
+- CacheMonitor 的成本节约估算依赖用户提供准确的 pricing 配置

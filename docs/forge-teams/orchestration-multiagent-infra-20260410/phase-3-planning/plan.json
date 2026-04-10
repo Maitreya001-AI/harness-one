@@ -1,0 +1,145 @@
+{
+  "plan_version": "1.0",
+  "prd_reference": "docs/forge-teams/orchestration-multiagent-infra-20260410/phase-1-requirements/prd.md",
+  "adr_reference": "docs/forge-teams/orchestration-multiagent-infra-20260410/phase-2-architecture/adr.md",
+  "generated_at": "2026-04-10",
+  "summary": {
+    "total_tasks": 9,
+    "critical_path_length": 4,
+    "max_parallelism": 6,
+    "shared_file_conflicts": 0,
+    "waves": 4,
+    "estimated_total_loc": 2020
+  },
+  "waves": [
+    {
+      "wave": 1,
+      "name": "Types + Prerequisite",
+      "tasks": ["T-01", "T-02", "T-03", "T-04"],
+      "parallelizable": true
+    },
+    {
+      "wave": 2,
+      "name": "P0 Implementations",
+      "tasks": ["T-05", "T-06", "T-07"],
+      "parallelizable": true,
+      "note": "T-08 from Wave 3 can overlap since it only depends on T-04"
+    },
+    {
+      "wave": 3,
+      "name": "P1 Implementations",
+      "tasks": ["T-08"],
+      "parallelizable_with_wave_2": true
+    },
+    {
+      "wave": 4,
+      "name": "Integration + Re-exports",
+      "tasks": ["T-09"],
+      "parallelizable": false,
+      "note": "Integration gate — modifies all index.ts files"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "T-01",
+      "title": "Add AgentLoopStatus type and status getter to AgentLoop",
+      "description": "Prerequisite. Add AgentLoopStatus type to core/types.ts. Add _status field, status getter, transitions in agent-loop.ts. Include test file.",
+      "estimated_loc": 60,
+      "dependencies": [],
+      "complexity": "S",
+      "files_owned": ["packages/core/src/core/types.ts", "packages/core/src/core/agent-loop.ts", "packages/core/src/core/__tests__/agent-loop-status.test.ts"],
+      "verification": "npx vitest run packages/core/src/core/__tests__/agent-loop-status.test.ts"
+    },
+    {
+      "id": "T-02",
+      "title": "Add Pool, Handoff, Boundary types to orchestration/types.ts",
+      "description": "Pure type additions for agent-pool, handoff, and context-boundary interfaces.",
+      "estimated_loc": 80,
+      "dependencies": [],
+      "complexity": "S",
+      "files_owned": ["packages/core/src/orchestration/types.ts"],
+      "verification": "npx tsc --noEmit"
+    },
+    {
+      "id": "T-03",
+      "title": "Add Checkpoint types to context/types.ts",
+      "description": "Pure type additions for checkpoint manager interfaces.",
+      "estimated_loc": 40,
+      "dependencies": [],
+      "complexity": "S",
+      "files_owned": ["packages/core/src/context/types.ts"],
+      "verification": "npx tsc --noEmit"
+    },
+    {
+      "id": "T-04",
+      "title": "Add FailureTaxonomy and CacheMonitor types to observe/types.ts",
+      "description": "Pure type additions for failure taxonomy and cache monitor interfaces.",
+      "estimated_loc": 60,
+      "dependencies": [],
+      "complexity": "S",
+      "files_owned": ["packages/core/src/observe/types.ts"],
+      "verification": "npx tsc --noEmit"
+    },
+    {
+      "id": "T-05",
+      "title": "Implement AgentPool + tests",
+      "description": "Create agent-pool.ts. Factory-based pool with sync acquire, lazy warm-up, idle timeout, max age rotation. TDD: tests first.",
+      "estimated_loc": 350,
+      "dependencies": ["T-01", "T-02"],
+      "complexity": "M",
+      "files_owned": ["packages/core/src/orchestration/agent-pool.ts", "packages/core/src/orchestration/__tests__/agent-pool.test.ts"],
+      "verification": "npx vitest run packages/core/src/orchestration/__tests__/agent-pool.test.ts"
+    },
+    {
+      "id": "T-06",
+      "title": "Implement Handoff Protocol + tests",
+      "description": "Create handoff.ts. Structured messaging layer on orchestrator. JSON prefix serialization. TDD: tests first.",
+      "estimated_loc": 300,
+      "dependencies": ["T-02"],
+      "complexity": "M",
+      "files_owned": ["packages/core/src/orchestration/handoff.ts", "packages/core/src/orchestration/__tests__/handoff.test.ts"],
+      "verification": "npx vitest run packages/core/src/orchestration/__tests__/handoff.test.ts"
+    },
+    {
+      "id": "T-07",
+      "title": "Implement Checkpoint Manager + tests",
+      "description": "Create checkpoint.ts. Sync in-memory storage, shallow copy, auto-prune. TDD: tests first.",
+      "estimated_loc": 280,
+      "dependencies": ["T-03"],
+      "complexity": "M",
+      "files_owned": ["packages/core/src/context/checkpoint.ts", "packages/core/src/context/__tests__/checkpoint.test.ts"],
+      "verification": "npx vitest run packages/core/src/context/__tests__/checkpoint.test.ts"
+    },
+    {
+      "id": "T-08",
+      "title": "Implement FailureTaxonomy + CacheMonitor + tests",
+      "description": "Create failure-taxonomy.ts (5 detectors on Trace objects) and cache-monitor.ts (running aggregates). TDD: tests first.",
+      "estimated_loc": 550,
+      "dependencies": ["T-04"],
+      "complexity": "L",
+      "files_owned": [
+        "packages/core/src/observe/failure-taxonomy.ts",
+        "packages/core/src/observe/__tests__/failure-taxonomy.test.ts",
+        "packages/core/src/observe/cache-monitor.ts",
+        "packages/core/src/observe/__tests__/cache-monitor.test.ts"
+      ],
+      "verification": "npx vitest run packages/core/src/observe/__tests__/failure-taxonomy.test.ts packages/core/src/observe/__tests__/cache-monitor.test.ts"
+    },
+    {
+      "id": "T-09",
+      "title": "Implement ContextBoundary + update all index.ts re-exports",
+      "description": "Create context-boundary.ts. Prefix ACL, violation tracking. Update orchestration/index.ts, context/index.ts, observe/index.ts with all new re-exports. Integration gate.",
+      "estimated_loc": 300,
+      "dependencies": ["T-05", "T-06", "T-07", "T-08"],
+      "complexity": "M",
+      "files_owned": [
+        "packages/core/src/orchestration/context-boundary.ts",
+        "packages/core/src/orchestration/__tests__/context-boundary.test.ts",
+        "packages/core/src/orchestration/index.ts",
+        "packages/core/src/context/index.ts",
+        "packages/core/src/observe/index.ts"
+      ],
+      "verification": "npx vitest run packages/core/src/orchestration/__tests__/context-boundary.test.ts && npx tsc --noEmit"
+    }
+  ]
+}
