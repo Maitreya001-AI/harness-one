@@ -122,8 +122,8 @@ interface HandoffPayload {
 ### 设计决策
 
 - **JSON 序列化前缀** —— 消息内容以 `__handoff__:` 前缀 + JSON 格式传输，便于接收方区分 handoff 消息与普通消息
-- **Receipt 容量上限** —— 最多保留 10,000 条 receipt，FIFO 淘汰
-- **Inbox 容量上限** —— 每个 Agent 的 inbox 最多 1,000 条，FIFO 淘汰
+- **Receipt 容量上限** —— 默认最多保留 10,000 条 receipt，FIFO 淘汰；可通过 `HandoffConfig.maxReceipts` 自定义
+- **Inbox 容量上限** —— 每个 Agent 的 inbox 默认最多 1,000 条，FIFO 淘汰；可通过 `HandoffConfig.maxInboxPerAgent` 自定义
 - **不可变返回值** —— receipt 和 payload 均 `Object.freeze()`
 
 ## Context Boundary
@@ -192,10 +192,13 @@ const mq = new MessageQueue({
 
 mq.createQueue('agent-a');
 const accepted = mq.push('agent-a', agentMessage); // 返回 false 时队列满（已 drop-oldest）
+const next    = mq.peek('agent-a');                // 查看队首消息但不移除
+const msg     = mq.dequeue('agent-a');             // 移除并返回队首消息
+const len     = mq.size('agent-a');                // 返回队列当前长度
 const messages = mq.getMessages('agent-a', { type: 'request' });
 ```
 
-**背压策略**：队列满时采用 drop-oldest（淘汰最旧消息），同时通过 `onWarning` 和 `onEvent` 两路回调发出信号，调用方可据此限流或告警。`push()` 的返回值 `boolean` 表示消息是否进入队列（`false` 意味着有旧消息被丢弃）。
+**背压策略**：队列满时采用 drop-oldest（淘汰最旧消息），同时通过 `onWarning` 和 `onEvent` 两路回调发出信号，调用方可据此限流或告警。`push()` 的返回值 `boolean` 表示消息是否进入队列（`false` 意味着有旧消息被丢弃）。`maxQueueSize` 必须 >= 1，否则构造时抛出错误。
 
 ## 与 Orchestrator 的组合
 

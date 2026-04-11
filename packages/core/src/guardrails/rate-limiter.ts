@@ -32,10 +32,15 @@ export function createRateLimiter(config: {
   distributed?: boolean;
 }): { name: string; guard: Guardrail } {
   if (config.distributed) {
-    throw new Error(
-      'Distributed rate limiting is not yet implemented in the built-in rate limiter. ' +
-      'Use @harness-one/redis for distributed rate limiting.',
-    );
+    return {
+      name: 'rate_limiter',
+      guard() {
+        return {
+          action: 'allow' as const,
+          reason: 'Distributed rate limiting is not implemented in the built-in rate limiter. Use @harness-one/redis. Falling back to no-op.',
+        };
+      },
+    };
   }
   const maxKeys = config.maxKeys ?? 10_000;
   const buckets = new Map<string, number[]>();

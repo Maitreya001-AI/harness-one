@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createAnthropicAdapter } from '../index.js';
 import type { AnthropicAdapterConfig } from '../index.js';
 import type { Message, StreamChunk } from 'harness-one/core';
+import { HarnessError } from 'harness-one/core';
 
 // ---------------------------------------------------------------------------
 // Mock Anthropic client
@@ -304,7 +305,7 @@ describe('createAnthropicAdapter', () => {
       expect(result.usage.cacheWriteTokens).toBe(0);
     });
 
-    it('throws when Anthropic API returns empty content', async () => {
+    it('throws HarnessError when Anthropic API returns empty content', async () => {
       mock.mocks.create.mockResolvedValue({
         content: [],
         usage: { input_tokens: 10, output_tokens: 0 },
@@ -313,10 +314,13 @@ describe('createAnthropicAdapter', () => {
       const adapter = createAnthropicAdapter({ client: mock.client });
       await expect(
         adapter.chat({ messages: [{ role: 'user', content: 'Hi' }] }),
+      ).rejects.toThrow(HarnessError);
+      await expect(
+        adapter.chat({ messages: [{ role: 'user', content: 'Hi' }] }),
       ).rejects.toThrow('Anthropic API returned empty content');
     });
 
-    it('throws when Anthropic API returns null content', async () => {
+    it('throws HarnessError when Anthropic API returns null content', async () => {
       mock.mocks.create.mockResolvedValue({
         content: null,
         usage: { input_tokens: 10, output_tokens: 0 },
@@ -325,16 +329,22 @@ describe('createAnthropicAdapter', () => {
       const adapter = createAnthropicAdapter({ client: mock.client });
       await expect(
         adapter.chat({ messages: [{ role: 'user', content: 'Hi' }] }),
+      ).rejects.toThrow(HarnessError);
+      await expect(
+        adapter.chat({ messages: [{ role: 'user', content: 'Hi' }] }),
       ).rejects.toThrow('Anthropic API returned empty content');
     });
 
-    it('throws when Anthropic API returns undefined content', async () => {
+    it('throws HarnessError when Anthropic API returns undefined content', async () => {
       mock.mocks.create.mockResolvedValue({
         content: undefined,
         usage: { input_tokens: 10, output_tokens: 0 },
       });
 
       const adapter = createAnthropicAdapter({ client: mock.client });
+      await expect(
+        adapter.chat({ messages: [{ role: 'user', content: 'Hi' }] }),
+      ).rejects.toThrow(HarnessError);
       await expect(
         adapter.chat({ messages: [{ role: 'user', content: 'Hi' }] }),
       ).rejects.toThrow('Anthropic API returned empty content');

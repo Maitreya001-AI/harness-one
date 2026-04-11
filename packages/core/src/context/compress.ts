@@ -51,6 +51,9 @@ export async function compress(
   messages: readonly Message[],
   options: CompressOptions,
 ): Promise<CompressResult> {
+  if (options.budget <= 0) {
+    throw new HarnessError('budget must be > 0', 'INVALID_CONFIG', 'Provide a positive token budget');
+  }
   const originalTokens = messages.reduce((sum, m) => sum + msgTokens(m), 0);
 
   const strategy =

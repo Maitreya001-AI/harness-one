@@ -160,6 +160,22 @@ export class AgentLoop {
     this.maxStreamBytes = config.maxStreamBytes ?? AgentLoop.MAX_STREAM_BYTES;
     this.maxToolArgBytes = config.maxToolArgBytes ?? AgentLoop.MAX_TOOL_ARG_BYTES;
 
+    if (this.maxIterations < 1) {
+      throw new HarnessError('maxIterations must be >= 1', 'INVALID_CONFIG', 'Provide a positive maxIterations value');
+    }
+    if (this.maxTotalTokens <= 0) {
+      throw new HarnessError('maxTotalTokens must be > 0', 'INVALID_CONFIG', 'Provide a positive maxTotalTokens value');
+    }
+    if (this.maxStreamBytes <= 0) {
+      throw new HarnessError('maxStreamBytes must be > 0', 'INVALID_CONFIG', 'Provide a positive maxStreamBytes value');
+    }
+    if (this.maxToolArgBytes <= 0) {
+      throw new HarnessError('maxToolArgBytes must be > 0', 'INVALID_CONFIG', 'Provide a positive maxToolArgBytes value');
+    }
+    if (this.toolTimeoutMs !== undefined && this.toolTimeoutMs <= 0) {
+      throw new HarnessError('toolTimeoutMs must be > 0', 'INVALID_CONFIG', 'Provide a positive toolTimeoutMs value');
+    }
+
     if (config.executionStrategy) {
       this.executionStrategy = config.executionStrategy;
     } else if (config.parallel) {
@@ -322,10 +338,6 @@ export class AgentLoop {
           if (streamResult) {
             cumulativeStreamBytes += streamResult.bytesRead;
           } else {
-            // Stream error already handled via error event.
-            // Reset cumulativeStreamBytes to prevent phantom accumulation from
-            // a failed/aborted stream that only partially wrote data.
-            cumulativeStreamBytes = 0;
             if (iterationSpanId && tm) { tm.endSpan(iterationSpanId, 'error'); iterationSpanId = undefined; }
             finalEventEmitted = true;
             yield this.doneEvent('error');

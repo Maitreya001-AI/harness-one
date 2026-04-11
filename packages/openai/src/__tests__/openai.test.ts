@@ -17,7 +17,7 @@ vi.mock('openai', () => ({
   default: mockOpenAIConstructor,
 }));
 
-import { createOpenAIAdapter, providers } from '../index.js';
+import { createOpenAIAdapter, providers, registerProvider } from '../index.js';
 import type { OpenAIAdapterConfig } from '../index.js';
 import type { Message, StreamChunk } from 'harness-one/core';
 import { HarnessError } from 'harness-one/core';
@@ -405,6 +405,103 @@ describe('createOpenAIAdapter', () => {
         expect.any(Object),
       );
     });
+
+    it('passes responseFormat json_object to SDK', async () => {
+      mock.mocks.create.mockResolvedValue({
+        choices: [{ message: { role: 'assistant', content: '{"answer": 42}' } }],
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+      });
+
+      const adapter = createOpenAIAdapter({ client: mock.client });
+      await adapter.chat({
+        messages: [{ role: 'user', content: 'Hi' }],
+        responseFormat: { type: 'json_object' },
+      });
+
+      expect(mock.mocks.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          response_format: { type: 'json_object' },
+        }),
+        expect.any(Object),
+      );
+    });
+
+    it('passes responseFormat json_schema to SDK', async () => {
+      mock.mocks.create.mockResolvedValue({
+        choices: [{ message: { role: 'assistant', content: '{"name":"test"}' } }],
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+      });
+
+      const adapter = createOpenAIAdapter({ client: mock.client });
+      await adapter.chat({
+        messages: [{ role: 'user', content: 'Hi' }],
+        responseFormat: {
+          type: 'json_schema',
+          schema: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] },
+          strict: true,
+        },
+      });
+
+      const calledArgs = mock.mocks.create.mock.calls[0][0];
+      expect(calledArgs.response_format).toEqual({
+        type: 'json_schema',
+        json_schema: {
+          name: 'response',
+          schema: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] },
+          strict: true,
+        },
+      });
+    });
+
+    it('passes responseFormat json_schema without strict when undefined', async () => {
+      mock.mocks.create.mockResolvedValue({
+        choices: [{ message: { role: 'assistant', content: '{"name":"test"}' } }],
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+      });
+
+      const adapter = createOpenAIAdapter({ client: mock.client });
+      await adapter.chat({
+        messages: [{ role: 'user', content: 'Hi' }],
+        responseFormat: {
+          type: 'json_schema',
+          schema: { type: 'object', properties: { name: { type: 'string' } } },
+        },
+      });
+
+      const calledArgs = mock.mocks.create.mock.calls[0][0];
+      expect(calledArgs.response_format.json_schema).not.toHaveProperty('strict');
+    });
+
+    it('does not pass response_format when responseFormat is text', async () => {
+      mock.mocks.create.mockResolvedValue({
+        choices: [{ message: { role: 'assistant', content: 'Hello' } }],
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+      });
+
+      const adapter = createOpenAIAdapter({ client: mock.client });
+      await adapter.chat({
+        messages: [{ role: 'user', content: 'Hi' }],
+        responseFormat: { type: 'text' },
+      });
+
+      const calledArgs = mock.mocks.create.mock.calls[0][0] as Record<string, unknown>;
+      expect(calledArgs).not.toHaveProperty('response_format');
+    });
+
+    it('does not pass response_format when responseFormat is not set', async () => {
+      mock.mocks.create.mockResolvedValue({
+        choices: [{ message: { role: 'assistant', content: 'Hello' } }],
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+      });
+
+      const adapter = createOpenAIAdapter({ client: mock.client });
+      await adapter.chat({
+        messages: [{ role: 'user', content: 'Hi' }],
+      });
+
+      const calledArgs = mock.mocks.create.mock.calls[0][0] as Record<string, unknown>;
+      expect(calledArgs).not.toHaveProperty('response_format');
+    });
   });
 
   describe('stream()', () => {
@@ -719,6 +816,130 @@ describe('createOpenAIAdapter', () => {
       expect(calledArgs).not.toHaveProperty('top_p');
       expect(calledArgs).not.toHaveProperty('stop');
     });
+
+    it('passes maxTokens to stream API call', async () => {
+      const asyncIter = {
+        async *[Symbol.asyncIterator]() {
+          yield { choices: [{ delta: { content: 'Hi' } }] };
+          yield { choices: [{ delta: {} }], usage: { prompt_tokens: 5, completion_tokens: 2 } };
+        },
+      };
+      mock.mocks.create.mockResolvedValue(asyncIter);
+
+      const adapter = createOpenAIAdapter({ client: mock.client });
+      for await (const _chunk of adapter.stream!({
+        messages: [{ role: 'user', content: 'Hi' }],
+        config: { maxTokens: 500 },
+      })) { /* consume */ }
+
+      expect(mock.mocks.create).toHaveBeenCalledWith(
+        expect.objectContaining({ max_tokens: 500 }),
+        expect.any(Object),
+      );
+    });
+
+    it('includes stream_options to request usage data', async () => {
+      const asyncIter = {
+        async *[Symbol.asyncIterator]() {
+          yield { choices: [{ delta: { content: 'Hi' } }] };
+          yield { choices: [{ delta: {} }], usage: { prompt_tokens: 5, completion_tokens: 2 } };
+        },
+      };
+      mock.mocks.create.mockResolvedValue(asyncIter);
+
+      const adapter = createOpenAIAdapter({ client: mock.client });
+      for await (const _chunk of adapter.stream!({
+        messages: [{ role: 'user', content: 'Hi' }],
+      })) { /* consume */ }
+
+      expect(mock.mocks.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          stream_options: { include_usage: true },
+        }),
+        expect.any(Object),
+      );
+    });
+
+    it('passes responseFormat json_object to stream API call', async () => {
+      const asyncIter = {
+        async *[Symbol.asyncIterator]() {
+          yield { choices: [{ delta: { content: '{"answer":42}' } }] };
+          yield { choices: [{ delta: {} }], usage: { prompt_tokens: 5, completion_tokens: 2 } };
+        },
+      };
+      mock.mocks.create.mockResolvedValue(asyncIter);
+
+      const adapter = createOpenAIAdapter({ client: mock.client });
+      for await (const _chunk of adapter.stream!({
+        messages: [{ role: 'user', content: 'Hi' }],
+        responseFormat: { type: 'json_object' },
+      })) { /* consume */ }
+
+      expect(mock.mocks.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          response_format: { type: 'json_object' },
+        }),
+        expect.any(Object),
+      );
+    });
+
+    it('passes responseFormat json_schema to stream API call', async () => {
+      const asyncIter = {
+        async *[Symbol.asyncIterator]() {
+          yield { choices: [{ delta: { content: '{"name":"test"}' } }] };
+          yield { choices: [{ delta: {} }], usage: { prompt_tokens: 5, completion_tokens: 2 } };
+        },
+      };
+      mock.mocks.create.mockResolvedValue(asyncIter);
+
+      const adapter = createOpenAIAdapter({ client: mock.client });
+      for await (const _chunk of adapter.stream!({
+        messages: [{ role: 'user', content: 'Hi' }],
+        responseFormat: {
+          type: 'json_schema',
+          schema: { type: 'object', properties: { name: { type: 'string' } } },
+        },
+      })) { /* consume */ }
+
+      const calledArgs = mock.mocks.create.mock.calls[0][0];
+      expect(calledArgs.response_format).toEqual({
+        type: 'json_schema',
+        json_schema: {
+          name: 'response',
+          schema: { type: 'object', properties: { name: { type: 'string' } } },
+        },
+      });
+    });
+
+    it('generates fallback tool call ID from index when id is missing', async () => {
+      const asyncIter = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            choices: [{
+              delta: {
+                tool_calls: [{
+                  index: 0,
+                  function: { name: 'search', arguments: '{}' },
+                }],
+              },
+            }],
+          };
+        },
+      };
+      mock.mocks.create.mockResolvedValue(asyncIter);
+
+      const adapter = createOpenAIAdapter({ client: mock.client });
+      const chunks: unknown[] = [];
+      for await (const chunk of adapter.stream!({
+        messages: [{ role: 'user', content: 'Hi' }],
+      })) {
+        chunks.push(chunk);
+      }
+
+      const toolChunks = chunks.filter((c: unknown) => (c as StreamChunk).type === 'tool_call_delta');
+      expect(toolChunks).toHaveLength(1);
+      expect((toolChunks[0] as StreamChunk).toolCall!.id).toBe('tool_0');
+    });
   });
 
   describe('client creation', () => {
@@ -752,6 +973,18 @@ describe('createOpenAIAdapter', () => {
       expect(providers.perplexity.baseURL).toBe('https://api.perplexity.ai');
       expect(providers.mistral.baseURL).toBe('https://api.mistral.ai/v1');
       expect(providers.ollama.baseURL).toBe('http://localhost:11434/v1');
+    });
+
+    it('registerProvider adds a new provider that is accessible via providers', () => {
+      registerProvider('custom-provider', { baseURL: 'https://custom.example.com/v1' });
+      expect(providers['custom-provider']).toEqual({ baseURL: 'https://custom.example.com/v1' });
+    });
+
+    it('registerProvider overwrites an existing provider', () => {
+      registerProvider('ollama', { baseURL: 'http://remote-host:11434/v1' });
+      expect(providers.ollama).toEqual({ baseURL: 'http://remote-host:11434/v1' });
+      // Restore for other tests
+      registerProvider('ollama', { baseURL: 'http://localhost:11434/v1' });
     });
 
     it('can be spread into adapter config', async () => {

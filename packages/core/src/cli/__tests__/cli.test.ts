@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { parseArgs, getTemplate, auditProject, ALL_MODULES } from '../index.js';
-import { scanFiles } from '../audit.js';
+import { parseArgs, getTemplate, auditProject, ALL_MODULES, MODULE_DESCRIPTIONS, FILE_NAMES, c, SUPPORTS_COLOR } from '../index.js';
+import { scanFiles, maturityLabel } from '../audit.js';
 import type { ModuleName } from '../index.js';
 import { mkdirSync, writeFileSync, rmSync, existsSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
@@ -307,5 +307,141 @@ describe('Audit logic', () => {
     expect(files.length).toBeGreaterThanOrEqual(1);
     // Should find the code.ts file
     expect(files.some(f => f.includes('code.ts'))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// maturityLabel
+// ---------------------------------------------------------------------------
+
+describe('maturityLabel', () => {
+  // Use plain identity functions to avoid ANSI codes in assertions
+  const plainColors = {
+    green: (s: string) => `[green:${s}]`,
+    yellow: (s: string) => `[yellow:${s}]`,
+    red: (s: string) => `[red:${s}]`,
+  };
+
+  it('returns "None" (red) for 0 used modules', () => {
+    expect(maturityLabel(0, plainColors)).toBe('[red:None]');
+  });
+
+  it('returns "Starter" (red) for 1 used module', () => {
+    expect(maturityLabel(1, plainColors)).toBe('[red:Starter]');
+  });
+
+  it('returns "Starter" (red) for 2 used modules', () => {
+    expect(maturityLabel(2, plainColors)).toBe('[red:Starter]');
+  });
+
+  it('returns "Basic" (yellow) for 3 used modules', () => {
+    expect(maturityLabel(3, plainColors)).toBe('[yellow:Basic]');
+  });
+
+  it('returns "Basic" (yellow) for 4 used modules', () => {
+    expect(maturityLabel(4, plainColors)).toBe('[yellow:Basic]');
+  });
+
+  it('returns "Intermediate" (yellow) for 5 used modules', () => {
+    expect(maturityLabel(5, plainColors)).toBe('[yellow:Intermediate]');
+  });
+
+  it('returns "Intermediate" (yellow) for 6 used modules', () => {
+    expect(maturityLabel(6, plainColors)).toBe('[yellow:Intermediate]');
+  });
+
+  it('returns "Advanced" (green) for 7 used modules', () => {
+    expect(maturityLabel(7, plainColors)).toBe('[green:Advanced]');
+  });
+
+  it('returns "Advanced" (green) for 8 used modules', () => {
+    expect(maturityLabel(8, plainColors)).toBe('[green:Advanced]');
+  });
+
+  it('returns "Comprehensive" (green) for 9 used modules', () => {
+    expect(maturityLabel(9, plainColors)).toBe('[green:Comprehensive]');
+  });
+
+  it('returns "Comprehensive" (green) for 10 used modules', () => {
+    expect(maturityLabel(10, plainColors)).toBe('[green:Comprehensive]');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// UI color utilities
+// ---------------------------------------------------------------------------
+
+describe('UI color utilities', () => {
+  it('c object has all expected color functions', () => {
+    expect(typeof c.bold).toBe('function');
+    expect(typeof c.green).toBe('function');
+    expect(typeof c.red).toBe('function');
+    expect(typeof c.yellow).toBe('function');
+    expect(typeof c.cyan).toBe('function');
+    expect(typeof c.dim).toBe('function');
+  });
+
+  it('color functions return strings', () => {
+    expect(typeof c.bold('test')).toBe('string');
+    expect(typeof c.green('test')).toBe('string');
+    expect(typeof c.red('test')).toBe('string');
+    expect(typeof c.yellow('test')).toBe('string');
+    expect(typeof c.cyan('test')).toBe('string');
+    expect(typeof c.dim('test')).toBe('string');
+  });
+
+  it('color functions preserve the input text (contained in output)', () => {
+    expect(c.bold('hello')).toContain('hello');
+    expect(c.green('hello')).toContain('hello');
+    expect(c.red('hello')).toContain('hello');
+    expect(c.yellow('hello')).toContain('hello');
+    expect(c.cyan('hello')).toContain('hello');
+    expect(c.dim('hello')).toContain('hello');
+  });
+
+  it('SUPPORTS_COLOR is a boolean', () => {
+    expect(typeof SUPPORTS_COLOR).toBe('boolean');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MODULE_DESCRIPTIONS and FILE_NAMES exports
+// ---------------------------------------------------------------------------
+
+describe('MODULE_DESCRIPTIONS', () => {
+  it('has a description for every module', () => {
+    for (const mod of ALL_MODULES) {
+      expect(MODULE_DESCRIPTIONS[mod]).toBeDefined();
+      expect(typeof MODULE_DESCRIPTIONS[mod]).toBe('string');
+      expect(MODULE_DESCRIPTIONS[mod].length).toBeGreaterThan(0);
+    }
+  });
+
+  it('has exactly 10 entries matching ALL_MODULES', () => {
+    expect(Object.keys(MODULE_DESCRIPTIONS)).toHaveLength(ALL_MODULES.length);
+  });
+});
+
+describe('FILE_NAMES', () => {
+  it('has a file name for every module', () => {
+    for (const mod of ALL_MODULES) {
+      expect(FILE_NAMES[mod]).toBeDefined();
+      expect(typeof FILE_NAMES[mod]).toBe('string');
+      expect(FILE_NAMES[mod]).toMatch(/\.ts$/);
+    }
+  });
+
+  it('has exactly 10 entries matching ALL_MODULES', () => {
+    expect(Object.keys(FILE_NAMES)).toHaveLength(ALL_MODULES.length);
+  });
+
+  it('core module maps to agent.ts', () => {
+    expect(FILE_NAMES['core']).toBe('agent.ts');
+  });
+
+  it('all file names are unique', () => {
+    const names = Object.values(FILE_NAMES);
+    const unique = new Set(names);
+    expect(unique.size).toBe(names.length);
   });
 });

@@ -68,6 +68,13 @@ export function createSessionManager(config?: {
   const ttlMs = config?.ttlMs ?? 5 * 60 * 1000;
   const gcIntervalMs = config?.gcIntervalMs ?? 60000;
 
+  if (maxSessions < 1) {
+    throw new HarnessError('maxSessions must be >= 1', 'INVALID_CONFIG', 'Provide a positive maxSessions value');
+  }
+  if (ttlMs <= 0) {
+    throw new HarnessError('ttlMs must be > 0', 'INVALID_CONFIG', 'Provide a positive TTL value');
+  }
+
   interface MutableSession {
     id: string;
     createdAt: number;

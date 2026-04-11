@@ -37,7 +37,7 @@ observe 模块提供两个核心能力：TraceManager 管理分布式追踪（Tr
 ```ts
 function createTraceManager(config?: {
   exporters?: TraceExporter[];
-  maxTraces?: number;  // 默认 1000，LRU 淘汰
+  maxTraces?: number;  // 默认 1000，LRU 淘汰；非正数值在构造时被拒绝
 }): TraceManager
 ```
 TraceManager 接口：`startTrace()`, `startSpan()`, `addSpanEvent()`, `setSpanAttributes()`, `endSpan()`, `endTrace()`, `getTrace()`, `getActiveSpans()`, `flush()`, `dispose()`.
@@ -58,6 +58,7 @@ function createCostTracker(config?: {
   pricing?: ModelPricing[];
   budget?: number;
   alertThresholds?: { warning: number; critical: number };  // 默认 0.8 / 0.95（Langfuse 实现中可通过 config 覆盖）
+  maxRecords?: number;  // 环形缓冲区容量上限，默认 10,000
 }): CostTracker
 ```
 CostTracker 接口：`setPricing()`, `recordUsage()`, `updateUsage()`, `getTotalCost()`, `getCostByModel()`, `getCostByTrace()`, `setBudget()`, `checkBudget()`, `onAlert()`, `getAlertMessage()`, `reset()`.
@@ -66,7 +67,7 @@ CostTracker 接口：`setPricing()`, `recordUsage()`, `updateUsage()`, `getTotal
 
 实现特点：
 - 使用独立闭包函数（checkBudgetFn、getAlertMessageFn）代替 `this` 引用，支持安全解构：`const { recordUsage, checkBudget } = createCostTracker()`
-- 内置 maxRecords=10,000 环形缓冲区，超出时自动淘汰最旧记录
+- 环形缓冲区容量由 `maxRecords` 配置（默认 10,000），超出时自动淘汰最旧记录
 - 每 1,000 条记录执行一次浮点数重校准，防止精度漂移
 - `getAlertMessage(): string | null` — 返回当前预算告警的人类可读消息，无告警时返回 null
 

@@ -15,12 +15,44 @@ function createMockRedis() {
     return sets.get(key)!;
   };
 
+  const setFn = vi.fn((key: string, value: string) => {
+    store.set(key, value);
+    return 'OK';
+  });
+  const saddFn = vi.fn((key: string, ...members: string[]) => {
+    const s = getSet(key);
+    let added = 0;
+    for (const m of members) {
+      if (!s.has(m)) { s.add(m); added++; }
+    }
+    return added;
+  });
+
+  const multi = vi.fn(() => {
+    const queue: (() => unknown)[] = [];
+    const pipeline = {
+      set: vi.fn((...args: unknown[]) => {
+        queue.push(() => setFn(...(args as [string, string])));
+        return pipeline;
+      }),
+      sadd: vi.fn((...args: unknown[]) => {
+        queue.push(() => saddFn(args[0] as string, ...(args.slice(1) as string[])));
+        return pipeline;
+      }),
+      exec: vi.fn(async () => {
+        const results: [null, unknown][] = [];
+        for (const fn of queue) {
+          results.push([null, fn()]);
+        }
+        return results;
+      }),
+    };
+    return pipeline;
+  });
+
   return {
     get: vi.fn(async (key: string) => store.get(key) ?? null),
-    set: vi.fn(async (key: string, value: string) => {
-      store.set(key, value);
-      return 'OK';
-    }),
+    set: setFn,
     del: vi.fn(async (...keys: string[]) => {
       let count = 0;
       for (const key of keys) {
@@ -29,14 +61,7 @@ function createMockRedis() {
       }
       return count;
     }),
-    sadd: vi.fn(async (key: string, ...members: string[]) => {
-      const s = getSet(key);
-      let added = 0;
-      for (const m of members) {
-        if (!s.has(m)) { s.add(m); added++; }
-      }
-      return added;
-    }),
+    sadd: saddFn,
     srem: vi.fn(async (key: string, ...members: string[]) => {
       const s = getSet(key);
       let removed = 0;
@@ -48,6 +73,7 @@ function createMockRedis() {
     smembers: vi.fn(async (key: string) => Array.from(getSet(key))),
     scard: vi.fn(async (key: string) => getSet(key).size),
     mget: vi.fn(async (...keys: string[]) => keys.map((k) => store.get(k) ?? null)),
+    multi,
     _store: store,
     _sets: sets,
   } as unknown as RedisStoreConfig['client'];
@@ -338,33 +364,29 @@ describe('createRedisStore', () => {
     expect(setCall[0]).toMatch(/^harness:memory:/);
   });
 
-  it('logs warning when corrupted JSON entry is encountered during read', async () => {
+  it('silently cleans up corrupted JSON entry during read', async () => {
     const store = createRedisStore({ client: redis, prefix: 'test' });
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     // Write a valid entry, then corrupt it
     const entry = await store.write({ key: 'k', content: 'original', grade: 'useful' });
-    const mockRedis = redis as unknown as { _store: Map<string, string> };
+    const mockRedis = redis as unknown as { _store: Map<string, string>; del: ReturnType<typeof vi.fn>; srem: ReturnType<typeof vi.fn> };
     const key = `test:${entry.id}`;
     mockRedis._store.set(key, '{corrupted json!!!');
 
-    // Reading should return null and log a warning
+    // Reading should return null without logging a warning
     const result = await store.read(entry.id);
     expect(result).toBeNull();
+    expect(warnSpy).not.toHaveBeenCalled();
 
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('[harness-one/redis] Corrupted entry deleted:'),
-      expect.any(SyntaxError),
-    );
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining(entry.id),
-      expect.anything(),
-    );
+    // The corrupted entry should be removed from the store and index
+    expect(mockRedis.del).toHaveBeenCalledWith(`test:${entry.id}`);
+    expect(mockRedis.srem).toHaveBeenCalledWith('test:__keys__', entry.id);
 
     warnSpy.mockRestore();
   });
 
-  it('logs warning with the correct entry ID for corrupted data', async () => {
+  it('cleans up only the corrupted entry, not valid ones', async () => {
     const store = createRedisStore({ client: redis, prefix: 'test' });
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
@@ -375,16 +397,15 @@ describe('createRedisStore', () => {
     const mockRedis = redis as unknown as { _store: Map<string, string> };
     mockRedis._store.set(`test:${entry2.id}`, 'not valid json');
 
-    // Reading the corrupted entry logs a warning
-    await store.read(entry2.id);
-    expect(warnSpy).toHaveBeenCalledTimes(1);
-    expect(warnSpy.mock.calls[0][0]).toContain(entry2.id);
+    // Reading the corrupted entry returns null without warning
+    const corruptResult = await store.read(entry2.id);
+    expect(corruptResult).toBeNull();
+    expect(warnSpy).not.toHaveBeenCalled();
 
-    // Reading the valid entry does not log
-    warnSpy.mockClear();
+    // Reading the valid entry still works
     const validResult = await store.read(entry1.id);
     expect(validResult).not.toBeNull();
-    expect(warnSpy).not.toHaveBeenCalled();
+    expect(validResult!.content).toBe('good');
 
     warnSpy.mockRestore();
   });
@@ -407,5 +428,76 @@ describe('createRedisStore', () => {
     expect(mockRedis.mget).toHaveBeenCalled();
     // No individual get calls should be made during compact
     expect(mockRedis.get).not.toHaveBeenCalled();
+  });
+
+  // ── sessionId filtering ────────────────────────────────────────────────
+
+  it('queries with sessionId filter returns only matching entries', async () => {
+    const store = createRedisStore({ client: redis, prefix: 'test' });
+
+    await store.write({ key: 'a', content: 'session-1 entry', grade: 'useful', metadata: { sessionId: 'sess-1' } });
+    await store.write({ key: 'b', content: 'session-2 entry', grade: 'useful', metadata: { sessionId: 'sess-2' } });
+    await store.write({ key: 'c', content: 'no-session entry', grade: 'useful' });
+
+    const results = await store.query({ sessionId: 'sess-1' });
+    expect(results).toHaveLength(1);
+    expect(results[0].content).toBe('session-1 entry');
+  });
+
+  it('queries with sessionId filter returns empty when no entries match', async () => {
+    const store = createRedisStore({ client: redis, prefix: 'test' });
+
+    await store.write({ key: 'a', content: 'entry1', grade: 'useful', metadata: { sessionId: 'sess-1' } });
+
+    const results = await store.query({ sessionId: 'nonexistent' });
+    expect(results).toHaveLength(0);
+  });
+
+  it('queries with sessionId excludes entries without metadata', async () => {
+    const store = createRedisStore({ client: redis, prefix: 'test' });
+
+    await store.write({ key: 'a', content: 'with session', grade: 'useful', metadata: { sessionId: 'sess-1' } });
+    await store.write({ key: 'b', content: 'no metadata', grade: 'useful' });
+
+    const results = await store.query({ sessionId: 'sess-1' });
+    expect(results).toHaveLength(1);
+    expect(results[0].content).toBe('with session');
+  });
+
+  // ── Atomic writes via multi/pipeline ───────────────────────────────────
+
+  it('write uses atomic multi/pipeline for set + sadd', async () => {
+    const store = createRedisStore({ client: redis, prefix: 'test' });
+    const mockRedis = redis as unknown as { multi: ReturnType<typeof vi.fn> };
+
+    // Clear any previous calls
+    mockRedis.multi.mockClear();
+
+    await store.write({ key: 'k', content: 'atomic test', grade: 'useful' });
+
+    // multi should have been called to ensure atomicity
+    expect(mockRedis.multi).toHaveBeenCalled();
+    // The pipeline should include both set and sadd
+    const pipeline = mockRedis.multi.mock.results[0].value;
+    expect(pipeline.set).toHaveBeenCalled();
+    expect(pipeline.sadd).toHaveBeenCalled();
+    expect(pipeline.exec).toHaveBeenCalled();
+  });
+
+  it('write with TTL uses atomic multi/pipeline', async () => {
+    const store = createRedisStore({ client: redis, prefix: 'test', defaultTTL: 3600 });
+    const mockRedis = redis as unknown as { multi: ReturnType<typeof vi.fn> };
+
+    mockRedis.multi.mockClear();
+
+    await store.write({ key: 'k', content: 'ttl atomic', grade: 'useful' });
+
+    expect(mockRedis.multi).toHaveBeenCalled();
+    const pipeline = mockRedis.multi.mock.results[0].value;
+    // set should have been called with EX and TTL
+    const setCall = pipeline.set.mock.calls[0];
+    expect(setCall[2]).toBe('EX');
+    expect(setCall[3]).toBe(3600);
+    expect(pipeline.exec).toHaveBeenCalled();
   });
 });

@@ -102,10 +102,8 @@ export function createPromptRegistry(): PromptRegistry {
       }
 
       if (versions.has(template.version) && !(options?.force)) {
-         
-        console.warn(
-          `[harness-one] Overwriting template "${template.id}@${template.version}". Pass { force: true } to suppress this warning.`,
-        );
+        // Overwriting existing version without force — proceed silently.
+        // Callers can detect overwrites by checking has() before register().
       }
 
       versions.set(template.version, frozen);

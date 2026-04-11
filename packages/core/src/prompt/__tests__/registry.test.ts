@@ -270,14 +270,13 @@ describe('createPromptRegistry', () => {
   });
 
   describe('overwrite behavior (force option)', () => {
-    it('logs a warning when overwriting without force option', () => {
+    it('silently overwrites without logging when force option is not set', () => {
       const reg = createPromptRegistry();
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
       reg.register({ id: 'a', version: '1.0', content: 'Original', variables: [] });
       reg.register({ id: 'a', version: '1.0', content: 'Overwritten', variables: [] });
-      expect(warnSpy).toHaveBeenCalledTimes(1);
-      expect(warnSpy.mock.calls[0][0]).toContain('Overwriting template');
-      expect(warnSpy.mock.calls[0][0]).toContain('a@1.0');
+      // Library code should not write to console — overwrite happens silently
+      expect(warnSpy).not.toHaveBeenCalled();
       // Overwrite still happens
       expect(reg.get('a', '1.0')!.content).toBe('Overwritten');
       warnSpy.mockRestore();

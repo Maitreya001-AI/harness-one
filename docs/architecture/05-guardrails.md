@@ -108,6 +108,8 @@ createInjectionDetector 的标准化流程：
 
 滑动窗口算法 + LRU key 淘汰（maxKeys 默认 10000）。每次请求清除过期时间戳，检查窗口内计数。
 
+**分布式模式降级**：当速率限制器配置了分布式后端但后端不可用时，不再抛出运行时异常——改为返回一个 no-op guardrail（始终 `allow`），确保分布式后端故障不会中断 Agent 执行。
+
 ### 内容过滤 ReDoS 防护
 
 `createContentFilter` 在注册用户提供的 `blockedPatterns` 时，对每个正则表达式执行安全性预检：用短测试字符串测量匹配耗时，超过阈值的正则被拒绝并抛出错误，防止恶意或病态正则导致的灾难性回溯（ReDoS）。

@@ -58,6 +58,10 @@ export function createTraceManager(config?: {
   const maxTraces = config?.maxTraces ?? 1000;
   const onExportError = config?.onExportError;
 
+  if (maxTraces < 1) {
+    throw new HarnessError('maxTraces must be >= 1', 'INVALID_CONFIG', 'Provide a positive maxTraces value');
+  }
+
   interface MutableSpan {
     id: string;
     traceId: string;

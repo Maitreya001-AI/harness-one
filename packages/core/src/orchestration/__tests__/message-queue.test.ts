@@ -206,6 +206,254 @@ describe('MessageQueue', () => {
     });
   });
 
+  describe('dequeue', () => {
+    it('removes and returns messages in FIFO order', () => {
+      const mq = new MessageQueue();
+      mq.createQueue('a1');
+      mq.push('a1', makeMessage({ content: 'first' }));
+      mq.push('a1', makeMessage({ content: 'second' }));
+      mq.push('a1', makeMessage({ content: 'third' }));
+
+      const dequeued = mq.dequeue('a1');
+      expect(dequeued).toHaveLength(3);
+      expect(dequeued[0].content).toBe('first');
+      expect(dequeued[1].content).toBe('second');
+      expect(dequeued[2].content).toBe('third');
+
+      // Queue should be empty after dequeue
+      expect(mq.getMessages('a1')).toHaveLength(0);
+    });
+
+    it('dequeue(agentId, limit) returns at most limit messages', () => {
+      const mq = new MessageQueue();
+      mq.createQueue('a1');
+      mq.push('a1', makeMessage({ content: 'first' }));
+      mq.push('a1', makeMessage({ content: 'second' }));
+      mq.push('a1', makeMessage({ content: 'third' }));
+
+      const dequeued = mq.dequeue('a1', 2);
+      expect(dequeued).toHaveLength(2);
+      expect(dequeued[0].content).toBe('first');
+      expect(dequeued[1].content).toBe('second');
+
+      // Remaining message should still be in queue
+      const remaining = mq.getMessages('a1');
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0].content).toBe('third');
+    });
+
+    it('dequeue() on empty queue returns empty array', () => {
+      const mq = new MessageQueue();
+      mq.createQueue('a1');
+      const dequeued = mq.dequeue('a1');
+      expect(dequeued).toEqual([]);
+    });
+
+    it('dequeue() on non-existent queue returns empty array', () => {
+      const mq = new MessageQueue();
+      const dequeued = mq.dequeue('nonexistent');
+      expect(dequeued).toEqual([]);
+    });
+
+    it('dequeue with limit larger than queue size returns all messages', () => {
+      const mq = new MessageQueue();
+      mq.createQueue('a1');
+      mq.push('a1', makeMessage({ content: 'only' }));
+
+      const dequeued = mq.dequeue('a1', 100);
+      expect(dequeued).toHaveLength(1);
+      expect(dequeued[0].content).toBe('only');
+      expect(mq.getMessages('a1')).toHaveLength(0);
+    });
+
+    it('dequeue with limit 0 returns empty array', () => {
+      const mq = new MessageQueue();
+      mq.createQueue('a1');
+      mq.push('a1', makeMessage({ content: 'msg' }));
+
+      const dequeued = mq.dequeue('a1', 0);
+      expect(dequeued).toHaveLength(0);
+      // Original message should still be in queue
+      expect(mq.getMessages('a1')).toHaveLength(1);
+    });
+
+    it('multiple dequeue calls drain the queue progressively', () => {
+      const mq = new MessageQueue();
+      mq.createQueue('a1');
+      for (let i = 0; i < 5; i++) {
+        mq.push('a1', makeMessage({ content: `msg-${i}` }));
+      }
+
+      const batch1 = mq.dequeue('a1', 2);
+      expect(batch1).toHaveLength(2);
+      expect(batch1[0].content).toBe('msg-0');
+      expect(batch1[1].content).toBe('msg-1');
+
+      const batch2 = mq.dequeue('a1', 2);
+      expect(batch2).toHaveLength(2);
+      expect(batch2[0].content).toBe('msg-2');
+      expect(batch2[1].content).toBe('msg-3');
+
+      const batch3 = mq.dequeue('a1', 2);
+      expect(batch3).toHaveLength(1);
+      expect(batch3[0].content).toBe('msg-4');
+
+      const batch4 = mq.dequeue('a1');
+      expect(batch4).toHaveLength(0);
+    });
+  });
+
+  describe('peek', () => {
+    it('returns copies without removing messages', () => {
+      const mq = new MessageQueue();
+      mq.createQueue('a1');
+      mq.push('a1', makeMessage({ content: 'first' }));
+      mq.push('a1', makeMessage({ content: 'second' }));
+
+      const peeked = mq.peek('a1');
+      expect(peeked).toHaveLength(2);
+      expect(peeked[0].content).toBe('first');
+      expect(peeked[1].content).toBe('second');
+
+      // Messages should still be in queue
+      expect(mq.getMessages('a1')).toHaveLength(2);
+
+      // Peek again returns the same results
+      const peeked2 = mq.peek('a1');
+      expect(peeked2).toHaveLength(2);
+    });
+
+    it('peek(agentId, limit) returns at most limit messages', () => {
+      const mq = new MessageQueue();
+      mq.createQueue('a1');
+      mq.push('a1', makeMessage({ content: 'first' }));
+      mq.push('a1', makeMessage({ content: 'second' }));
+      mq.push('a1', makeMessage({ content: 'third' }));
+
+      const peeked = mq.peek('a1', 2);
+      expect(peeked).toHaveLength(2);
+      expect(peeked[0].content).toBe('first');
+      expect(peeked[1].content).toBe('second');
+
+      // All messages still in queue
+      expect(mq.getMessages('a1')).toHaveLength(3);
+    });
+
+    it('peek on empty queue returns empty array', () => {
+      const mq = new MessageQueue();
+      mq.createQueue('a1');
+      expect(mq.peek('a1')).toEqual([]);
+    });
+
+    it('peek on non-existent queue returns empty array', () => {
+      const mq = new MessageQueue();
+      expect(mq.peek('nonexistent')).toEqual([]);
+    });
+
+    it('peek returns a new array (not the internal queue reference)', () => {
+      const mq = new MessageQueue();
+      mq.createQueue('a1');
+      mq.push('a1', makeMessage({ content: 'msg' }));
+
+      const peeked = mq.peek('a1');
+      // Modifying the returned array should not affect the queue
+      peeked.length = 0;
+      expect(mq.peek('a1')).toHaveLength(1);
+    });
+  });
+
+  describe('size', () => {
+    it('returns correct count', () => {
+      const mq = new MessageQueue();
+      mq.createQueue('a1');
+      expect(mq.size('a1')).toBe(0);
+
+      mq.push('a1', makeMessage({ content: 'first' }));
+      expect(mq.size('a1')).toBe(1);
+
+      mq.push('a1', makeMessage({ content: 'second' }));
+      expect(mq.size('a1')).toBe(2);
+    });
+
+    it('returns 0 for non-existent queue', () => {
+      const mq = new MessageQueue();
+      expect(mq.size('nonexistent')).toBe(0);
+    });
+
+    it('returns 0 after clearing', () => {
+      const mq = new MessageQueue();
+      mq.createQueue('a1');
+      mq.push('a1', makeMessage());
+      mq.push('a1', makeMessage());
+      mq.clear();
+      expect(mq.size('a1')).toBe(0);
+    });
+
+    it('reflects size after drop-oldest overflow', () => {
+      const mq = new MessageQueue({ maxQueueSize: 3 });
+      mq.createQueue('a1');
+      for (let i = 0; i < 10; i++) {
+        mq.push('a1', makeMessage({ content: `msg-${i}` }));
+      }
+      expect(mq.size('a1')).toBe(3);
+    });
+  });
+
+  describe('dequeue + size consistency', () => {
+    it('size decreases after dequeue', () => {
+      const mq = new MessageQueue();
+      mq.createQueue('a1');
+      mq.push('a1', makeMessage({ content: 'first' }));
+      mq.push('a1', makeMessage({ content: 'second' }));
+      mq.push('a1', makeMessage({ content: 'third' }));
+
+      expect(mq.size('a1')).toBe(3);
+
+      mq.dequeue('a1', 1);
+      expect(mq.size('a1')).toBe(2);
+
+      mq.dequeue('a1', 1);
+      expect(mq.size('a1')).toBe(1);
+
+      mq.dequeue('a1');
+      expect(mq.size('a1')).toBe(0);
+    });
+
+    it('peek does not affect size', () => {
+      const mq = new MessageQueue();
+      mq.createQueue('a1');
+      mq.push('a1', makeMessage());
+      mq.push('a1', makeMessage());
+
+      expect(mq.size('a1')).toBe(2);
+      mq.peek('a1');
+      expect(mq.size('a1')).toBe(2);
+      mq.peek('a1', 1);
+      expect(mq.size('a1')).toBe(2);
+    });
+
+    it('dequeue + push + size stays consistent', () => {
+      const mq = new MessageQueue();
+      mq.createQueue('a1');
+
+      for (let i = 0; i < 5; i++) {
+        mq.push('a1', makeMessage({ content: `msg-${i}` }));
+      }
+      expect(mq.size('a1')).toBe(5);
+
+      mq.dequeue('a1', 3);
+      expect(mq.size('a1')).toBe(2);
+
+      mq.push('a1', makeMessage({ content: 'new-1' }));
+      mq.push('a1', makeMessage({ content: 'new-2' }));
+      expect(mq.size('a1')).toBe(4);
+
+      const all = mq.dequeue('a1');
+      expect(all).toHaveLength(4);
+      expect(mq.size('a1')).toBe(0);
+    });
+  });
+
   // Fix 26: Backpressure option
   describe('backpressure option (Fix 26)', () => {
     it('throws QUEUE_FULL when backpressure is enabled and queue is full', () => {

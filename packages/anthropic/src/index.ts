@@ -17,6 +17,7 @@ import type {
   TokenUsage,
   ToolSchema,
 } from 'harness-one/core';
+import { HarnessError } from 'harness-one/core';
 
 /** Configuration for the Anthropic adapter. */
 export interface AnthropicAdapterConfig {
@@ -24,13 +25,6 @@ export interface AnthropicAdapterConfig {
   readonly client: Anthropic;
   /** Model name. Defaults to 'claude-sonnet-4-20250514'. */
   readonly model?: string;
-  /**
-   * Maximum number of retries for transient errors (429, 5xx).
-   * The Anthropic SDK handles retries at the client level.
-   * Configure via `new Anthropic({ maxRetries: N })` when creating the client.
-   * @default 2 (SDK default)
-   */
-  readonly maxRetries?: number;
 }
 
 /** Convert a harness-one Message to the Anthropic message format. */
@@ -191,7 +185,7 @@ export function createAnthropicAdapter(config: AnthropicAdapterConfig): AgentAda
       }, { signal: params.signal });
 
       if (!response.content || response.content.length === 0) {
-        throw new Error('Anthropic API returned empty content');
+        throw new HarnessError('Anthropic API returned empty content', 'PROVIDER_ERROR', 'Check if the model and API key are valid');
       }
 
       return {

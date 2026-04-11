@@ -5,6 +5,7 @@
  */
 
 import type { Guardrail, GuardrailContext } from './types.js';
+import { HarnessError } from '../core/errors.js';
 
 /**
  * Run content through guardrails with automatic retry and regeneration.
@@ -43,6 +44,9 @@ export async function withSelfHealing(
   initialContent: string,
 ): Promise<{ content: string; attempts: number; passed: boolean; totalTokens?: number }> {
   const maxRetries = config.maxRetries ?? 3;
+  if (maxRetries < 1) {
+    throw new HarnessError('maxRetries must be >= 1', 'INVALID_CONFIG', 'Provide a maxRetries value of 1 or higher');
+  }
   const regenerateTimeoutMs = config.regenerateTimeoutMs ?? 30_000;
   const estimateTokens = config.estimateTokens;
   const maxTotalTokens = config.maxTotalTokens;

@@ -15,13 +15,17 @@ import type {
 import type { AgentOrchestrator } from './orchestrator.js';
 
 const HANDOFF_PREFIX = '__handoff__:';
-const MAX_RECEIPTS = 10_000;
-const MAX_INBOX_PER_AGENT = 1_000;
+const DEFAULT_MAX_RECEIPTS = 10_000;
+const DEFAULT_MAX_INBOX_PER_AGENT = 1_000;
 
 /** Fix 28: Configuration for handoff behavior. */
 export interface HandoffConfig {
   /** Optional TTL for receipts in milliseconds. When set, receipts older than this are evicted. */
   readonly receiptTtlMs?: number;
+  /** Maximum number of receipts to retain. Default: 10000. */
+  readonly maxReceipts?: number;
+  /** Maximum inbox size per agent. Default: 1000. */
+  readonly maxInboxPerAgent?: number;
 }
 
 /**
@@ -60,6 +64,8 @@ export function createHandoff(transport: MessageTransport, handoffConfig?: Hando
   let nextId = 0;
 
   const receiptTtlMs = handoffConfig?.receiptTtlMs;
+  const maxReceipts = handoffConfig?.maxReceipts ?? DEFAULT_MAX_RECEIPTS;
+  const maxInboxPerAgent = handoffConfig?.maxInboxPerAgent ?? DEFAULT_MAX_INBOX_PER_AGENT;
 
   function serializePayload(payload: HandoffPayload): string {
     try {
@@ -86,6 +92,12 @@ export function createHandoff(transport: MessageTransport, handoffConfig?: Hando
 
   const manager: HandoffManager = {
     send(from: string, to: string, payload: HandoffPayload): HandoffReceipt {
+      if (!from || typeof from !== 'string') {
+        throw new HarnessError('from agent ID must be a non-empty string', 'INVALID_CONFIG', 'Provide a valid agent ID for the sender');
+      }
+      if (!to || typeof to !== 'string') {
+        throw new HarnessError('to agent ID must be a non-empty string', 'INVALID_CONFIG', 'Provide a valid agent ID for the receiver');
+      }
       const content = serializePayload(payload);
 
       transport.send({
@@ -110,8 +122,8 @@ export function createHandoff(transport: MessageTransport, handoffConfig?: Hando
       evictExpiredReceipts();
 
       // Evict oldest receipts if over capacity
-      if (receipts.size > MAX_RECEIPTS) {
-        const excess = receipts.size - MAX_RECEIPTS;
+      if (receipts.size > maxReceipts) {
+        const excess = receipts.size - maxReceipts;
         const iter = receipts.keys();
         for (let i = 0; i < excess; i++) {
           const key = iter.next().value;
@@ -130,7 +142,7 @@ export function createHandoff(transport: MessageTransport, handoffConfig?: Hando
       insertByPriority(queue, priorityPayload);
 
       // Evict oldest inbox entries if over capacity
-      while (queue.length > MAX_INBOX_PER_AGENT) {
+      while (queue.length > maxInboxPerAgent) {
         queue.pop(); // Remove lowest priority (at end)
       }
 
@@ -199,14 +211,18 @@ export function createHandoff(transport: MessageTransport, handoffConfig?: Hando
  * High priority items go first, then normal, then low.
  * Within the same priority level, items maintain FIFO order.
  */
+function extractPriority(payload: HandoffPayload): string {
+  return payload.priority ?? 'normal';
+}
+
 function insertByPriority(queue: HandoffPayload[], payload: HandoffPayload): void {
-  const priority = (payload as unknown as { priority?: string }).priority ?? 'normal';
+  const priority = extractPriority(payload);
   const rank = priorityRank(priority);
 
   // Find insertion point: after all items with same or higher priority
   let insertIdx = queue.length;
   for (let i = 0; i < queue.length; i++) {
-    const itemPriority = (queue[i] as unknown as { priority?: string }).priority ?? 'normal';
+    const itemPriority = extractPriority(queue[i]);
     if (priorityRank(itemPriority) < rank) {
       insertIdx = i;
       break;

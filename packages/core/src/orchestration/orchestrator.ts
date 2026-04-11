@@ -108,7 +108,8 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
             // Swallow error from error handler to prevent blocking subsequent handlers
           }
         } else {
-          console.warn('Orchestrator event handler threw an error:', err);
+          // No onHandlerError configured — silently swallow to avoid console side effects in library code.
+          // Users should provide onHandlerError in OrchestratorConfig for production monitoring.
         }
       }
     }

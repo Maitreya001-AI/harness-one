@@ -69,11 +69,6 @@ export function createRelay(config: {
           lastKnownVersion = version;
           return { id: entry.id, state: state as RelayState, version };
         } catch (err) {
-          // Corrupted relay data — log warning, clear cache and treat as missing
-          if (typeof console !== 'undefined') {
-            console.warn(`[harness-one] Corrupted relay entry skipped: ${entry.id}`);
-          }
-          // Fix 23: Invoke onCorruption callback for visibility into data integrity issues
           if (onCorruption) {
             onCorruption(entry.id, err instanceof Error ? err : new Error(String(err)));
           }
@@ -97,11 +92,6 @@ export function createRelay(config: {
           lastKnownVersion = version;
           return { id: entry.id, state: state as RelayState, version };
         } catch (err) {
-          // Log corruption for observability instead of silent skip
-          if (typeof console !== 'undefined') {
-            console.warn(`[harness-one] Corrupted relay entry skipped: ${entry.id}`);
-          }
-          // Fix 23: Invoke onCorruption callback for visibility into data integrity issues
           if (onCorruption) {
             onCorruption(entry.id, err instanceof Error ? err : new Error(String(err)));
           }

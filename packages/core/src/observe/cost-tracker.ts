@@ -98,6 +98,7 @@ export function createCostTracker(config?: {
   pricing?: ModelPricing[];
   budget?: number;
   alertThresholds?: { warning: number; critical: number };
+  maxRecords?: number;
 }): CostTracker {
   const pricing = new Map<string, ModelPricing>();
   const records: TokenUsageRecord[] = [];
@@ -105,7 +106,7 @@ export function createCostTracker(config?: {
   let budget: number | undefined = config?.budget;
   const warningThreshold = config?.alertThresholds?.warning ?? 0.8;
   const criticalThreshold = config?.alertThresholds?.critical ?? 0.95;
-  const maxRecords = 10_000;
+  const maxRecords = config?.maxRecords ?? 10_000;
 
   // Fix 5: Use KahanSum utility for running total
   const runningSum = new KahanSum();

@@ -68,9 +68,13 @@ class AgentLoop {
 
 **行为**：在循环中调用 `adapter.chat()`（或 `adapter.stream()`），如果 LLM 返回 toolCalls，则依次调用 `onToolCall` 并将结果回填，继续循环直到 LLM 不再请求工具或触发安全阀（maxIterations / maxTotalTokens / abort）。
 
+**构造时输入验证**：`AgentLoopConfig` 中所有数值参数（`maxIterations`、`maxTotalTokens`、`maxStreamBytes`、`maxToolArgBytes`、`toolTimeoutMs`）在构造时校验，非正数或非有限值会立即抛出错误，防止无效配置静默生效。
+
 **流式安全阀**：`AgentLoopConfig` 提供两个字节级限制防止超大流式响应：
 - `maxStreamBytes` — 单次流式响应的最大字节数；超限时中断流并抛出 `AbortedError`
 - `maxToolArgBytes` — 单个工具调用参数的最大字节数；超限时跳过该工具调用并返回 `toolError('validation')`
+
+流字节计数器在流错误时**不重置**——累计字节数跨失败尝试保留，防止通过重复触发短流错误绕过 `maxStreamBytes` 预算。
 
 **生命周期状态**（`status` getter）：
 - `idle` — 构造后未运行
@@ -142,7 +146,8 @@ AgentLoop 在超出 token 预算时裁剪历史对话。裁剪逻辑始终保留
 ## 扩展点
 
 - 实现 `AgentAdapter` 接口适配任意 LLM 提供商
-- 通过 `ChatParams.config` 传入 `LLMConfig`，由 adapter 转发给底层 LLM（temperature、topP、maxTokens 等）。`LLMConfig` 支持 `[key: string]: unknown` 索引签名，允许 adapter 自定义额外参数
+- 通过 `ChatParams.config` 传入 `LLMConfig`，由 adapter 转发给底层 LLM（temperature、topP、maxTokens 等）。`LLMConfig` 支持 `extra?: Readonly<Record<string, unknown>>` 字段，允许 adapter 自定义额外参数
+- 所有数值容量限制（`maxIterations`、`maxTotalTokens` 等）均可在 `AgentLoopConfig` 中配置；非正数值在构造时被拒绝
 - 通过 `onToolCall` 回调自定义工具调度逻辑
 - 通过 `signal` (AbortSignal) 实现外部取消控制
 - 通过 `executionStrategy` 传入自定义工具执行策略（如依赖感知、优先级调度）

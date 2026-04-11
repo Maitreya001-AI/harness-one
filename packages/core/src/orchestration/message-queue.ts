@@ -60,6 +60,9 @@ export class MessageQueue {
 
   constructor(config?: MessageQueueConfig) {
     this.maxQueueSize = config?.maxQueueSize ?? 1000;
+    if (this.maxQueueSize < 1) {
+      throw new HarnessError('maxQueueSize must be >= 1', 'INVALID_CONFIG', 'Provide a positive maxQueueSize value');
+    }
     this.onWarning = config?.onWarning;
     this.onEvent = config?.onEvent;
     this.backpressure = config?.backpressure ?? false;
@@ -150,6 +153,32 @@ export class MessageQueue {
       messages = messages.filter((m) => m.timestamp >= options.since!);
     }
     return messages;
+  }
+
+  /**
+   * Dequeue up to `limit` messages from an agent's queue, removing them.
+   * Returns messages in FIFO order (oldest first).
+   */
+  dequeue(agentId: string, limit?: number): AgentMessage[] {
+    const queue = this.queues.get(agentId);
+    if (!queue || queue.length === 0) return [];
+    const count = limit !== undefined ? Math.min(limit, queue.length) : queue.length;
+    return queue.splice(0, count);
+  }
+
+  /**
+   * Peek at messages without removing them. Alias for getMessages with filtering.
+   */
+  peek(agentId: string, limit?: number): AgentMessage[] {
+    const queue = this.queues.get(agentId);
+    if (!queue) return [];
+    if (limit !== undefined) return queue.slice(0, limit);
+    return [...queue];
+  }
+
+  /** Get the current size of an agent's queue. */
+  size(agentId: string): number {
+    return this.queues.get(agentId)?.length ?? 0;
   }
 
   /** Clear all queues. */

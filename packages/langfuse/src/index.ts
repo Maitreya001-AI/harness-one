@@ -23,6 +23,8 @@ export interface LangfuseExporterConfig {
   readonly client: Langfuse;
   /** Optional: sanitize span attributes before export (e.g., strip PII). */
   readonly sanitize?: (attributes: Record<string, unknown>) => Record<string, unknown>;
+  /** Maximum number of trace entries to retain in the LRU map. Defaults to 1000. */
+  readonly maxTraceMapSize?: number;
 }
 
 /**
@@ -36,7 +38,7 @@ export function createLangfuseExporter(config: LangfuseExporterConfig): TraceExp
   const { client } = config;
 
   // Track Langfuse trace objects so spans can attach to the correct parent.
-  const MAX_TRACE_MAP_SIZE = 1000;
+  const MAX_TRACE_MAP_SIZE = config.maxTraceMapSize ?? 1000;
   const traceMap = new Map<string, ReturnType<typeof client.trace>>();
   const traceTimestamps = new Map<string, number>();
 
@@ -141,8 +143,6 @@ export function createLangfuseExporter(config: LangfuseExporterConfig): TraceExp
 
     async flush(): Promise<void> {
       await client.flushAsync();
-      traceMap.clear();
-      traceTimestamps.clear();
     },
 
     async shutdown(): Promise<void> {
@@ -179,7 +179,7 @@ export function createLangfusePromptBackend(config: LangfusePromptBackendConfig)
     lfPrompt: { prompt: unknown; version: number },
   ): PromptTemplate {
     if (typeof lfPrompt.prompt !== 'string') {
-      throw new Error(`Langfuse prompt "${name}" is not a string type`);
+      throw new HarnessError(`Langfuse prompt "${name}" is not a string type`, 'PROVIDER_ERROR', 'Ensure the Langfuse prompt is configured as a text type');
     }
     const content = lfPrompt.prompt;
     const variableMatches = content.match(/\{\{(\w+)\}\}/g) ?? [];
@@ -254,6 +254,8 @@ export interface LangfuseCostTrackerConfig {
   readonly warningThreshold?: number;
   /** Critical threshold (0-1). Defaults to 0.95. */
   readonly criticalThreshold?: number;
+  /** Maximum number of usage records to retain. Defaults to 10000. */
+  readonly maxRecords?: number;
 }
 
 /**
@@ -269,7 +271,7 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): Co
   const alertHandlers: ((alert: CostAlert) => void)[] = [];
   let budget: number | undefined;
   let runningTotal = 0;
-  const maxRecords = 10_000;
+  const maxRecords = config.maxRecords ?? 10_000;
   const RECALIBRATE_INTERVAL = 1000;
   let recordsSinceRecalibrate = 0;
   const warningThreshold = config.warningThreshold ?? 0.8;

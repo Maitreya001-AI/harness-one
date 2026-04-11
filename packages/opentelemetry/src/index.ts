@@ -24,6 +24,8 @@ export interface OTelExporterConfig {
    * Defaults to 1000.
    */
   readonly maxEvictedParents?: number;
+  /** Maximum number of active spans to retain before LRU eviction. Defaults to 10000. */
+  readonly maxSpans?: number;
 }
 
 /**
@@ -165,7 +167,7 @@ export function createOTelExporter(config?: OTelExporterConfig): TraceExporter {
         }
 
         // Safety limit to prevent unbounded growth
-        if (spanMap.size > 10_000) {
+        if (spanMap.size > (config?.maxSpans ?? 10_000)) {
           evictSpans(1);
         }
 

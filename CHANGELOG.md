@@ -6,6 +6,111 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.1.1] — 2026-04-11
+
+### Fixed
+
+#### Core (`harness-one`)
+
+- **AgentLoop**: Input validation added to constructor — `maxIterations`,
+  `maxTotalTokens`, `maxStreamBytes`, `maxToolArgBytes`, and `toolTimeoutMs`
+  now reject non-positive or non-finite values at construction time.
+- **AgentLoop**: Stream byte counter no longer resets on stream error — the
+  cumulative counter is preserved across failed stream attempts, closing a DoS
+  vector where repeated short failures could reset the `maxStreamBytes` budget.
+- **Handoff**: Input validation added for `from`/`to` agent IDs; `as unknown as`
+  type casts replaced with runtime type guards.
+- **Spawn**: `as unknown as` type casts replaced with runtime type guards.
+
+#### Guardrails
+
+- **Rate limiter**: Distributed mode no longer crashes at runtime when a
+  distributed back-end is unavailable — it now degrades to a no-op guardrail
+  instead of throwing.
+- **Self-healing**: Input validation added to `maxRetries` — non-positive values
+  are rejected at construction time.
+- **Schema validator**: `compress()` budget parameter validated on call.
+
+#### Prompt
+
+- **Registry**: `console.warn` removed — duplicate registration is now silently
+  ignored instead of emitting a console warning.
+
+#### Context
+
+- **Context boundary**: `MAX_VIOLATIONS` limit is now configurable via
+  `ContextBoundaryConfig`.
+
+#### Memory
+
+- **Relay**: `console.warn` removed from corruption handler — damaged relay data
+  returns `null` silently.
+
+#### Session
+
+- **SessionManager**: Input validation added for `maxSessions` and `ttlMs` —
+  non-positive values are rejected at construction time.
+
+#### Observe
+
+- **TraceManager**: Input validation added for `maxTraces`; the limit is now
+  enforced at construction time.
+- **CostTracker**: `maxRecords` is now configurable via `CostTrackerConfig`
+  (previously hardcoded at 10,000).
+
+#### Orchestration
+
+- **MessageQueue**: `dequeue()`, `peek()`, and `size()` methods added.
+- **MessageQueue**: `maxQueueSize` validated — values less than 1 are rejected
+  at construction time.
+- **Handoff**: `MAX_RECEIPTS` and `MAX_INBOX_PER_AGENT` limits are now
+  configurable via `HandoffConfig`.
+
+#### OpenAI adapter
+
+- **`chat()` / `stream()`**: `responseFormat` passthrough added for
+  `json_object` and `json_schema` response formats.
+- **`stream()`**: `max_tokens` is now forwarded to the SDK call (was previously
+  omitted).
+- **`stream()`**: `stream_options: { include_usage: true }` added so streaming
+  responses carry token usage data.
+- **Tool call ID fallback**: Empty tool call IDs now fall back to
+  `tool_${tc.index}` instead of `''`.
+- **Provider registry**: Providers are now extensible via `registerProvider()`.
+
+#### Anthropic adapter
+
+- **Errors**: `HarnessError` is now thrown instead of generic `Error`.
+- **Config**: Unused `maxRetries` field removed from `AnthropicAdapterConfig`.
+
+#### Redis
+
+- **`query()`**: Session ID filtering is now applied server-side.
+- **Writes**: `multi()`/`exec()` used for atomic write operations.
+- **Config**: Input validation added for `client` and `TTL` parameters.
+- **Corruption handler**: `console.warn` removed — corrupted entries are
+  discarded silently.
+
+#### Langfuse
+
+- **`flush()`**: No longer clears trace maps — only `shutdown()` clears them.
+- **Trace map**: `MAX_TRACE_MAP_SIZE` is now configurable via `maxTraceMapSize`
+  in `LangfuseConfig`.
+- **CostTracker**: `maxRecords` is now configurable via `LangfuseConfig`.
+- **Errors**: `HarnessError` is now thrown instead of generic `Error`.
+
+#### AJV
+
+- **Format loader**: Retries on transient failures during async format plugin
+  loading.
+
+#### OpenTelemetry
+
+- **Span limit**: Maximum number of tracked spans is now configurable via
+  `maxSpans` in the exporter config (previously hardcoded).
+
+---
+
 ## [0.1.0] — 2026-04-10
 
 ### Fixed

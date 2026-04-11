@@ -44,6 +44,13 @@ export function createRedisStore(config: RedisStoreConfig): MemoryStore {
   const prefix = config.prefix ?? 'harness:memory';
   const defaultTTL = config.defaultTTL;
 
+  if (!client) {
+    throw new HarnessError('Redis client is required', 'INVALID_CONFIG', 'Provide a valid ioredis client instance');
+  }
+  if (defaultTTL !== undefined && defaultTTL <= 0) {
+    throw new HarnessError('defaultTTL must be > 0', 'INVALID_CONFIG', 'Provide a positive TTL value in seconds');
+  }
+
   function entryKey(id: string): string {
     return `${prefix}:${id}`;
   }
@@ -59,11 +66,8 @@ export function createRedisStore(config: RedisStoreConfig): MemoryStore {
     if (!raw) return null;
     try {
       return JSON.parse(raw) as MemoryEntry;
-    } catch (err) {
-      // Corrupted entry — log warning, remove from index and return null
-      if (typeof console !== 'undefined') {
-        console.warn(`[harness-one/redis] Corrupted entry deleted: ${id}`, err);
-      }
+    } catch {
+      // Corrupted entry — remove from index silently and return null
       await client.del(entryKey(id));
       await client.srem(indexKey, id);
       return null;
@@ -73,12 +77,14 @@ export function createRedisStore(config: RedisStoreConfig): MemoryStore {
   async function setEntry(entry: MemoryEntry): Promise<void> {
     const key = entryKey(entry.id);
     const value = JSON.stringify(entry);
+    const pipeline = client.multi();
     if (defaultTTL) {
-      await client.set(key, value, 'EX', defaultTTL);
+      pipeline.set(key, value, 'EX', defaultTTL);
     } else {
-      await client.set(key, value);
+      pipeline.set(key, value);
     }
-    await client.sadd(indexKey, entry.id);
+    pipeline.sadd(indexKey, entry.id);
+    await pipeline.exec();
   }
 
   return {
@@ -130,6 +136,7 @@ export function createRedisStore(config: RedisStoreConfig): MemoryStore {
             const term = filter.search.toLowerCase();
             if (!entry.content.toLowerCase().includes(term)) continue;
           }
+          if (filter.sessionId !== undefined && entry.metadata?.['sessionId'] !== filter.sessionId) continue;
 
           entries.push(entry);
         }

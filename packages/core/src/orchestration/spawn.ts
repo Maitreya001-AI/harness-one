@@ -5,6 +5,7 @@
  */
 
 import { AgentLoop } from '../core/agent-loop.js';
+import type { AgentLoopConfig } from '../core/agent-loop.js';
 import type { Message } from '../core/types.js';
 import type { DoneReason } from '../core/events.js';
 import type { SpawnSubAgentConfig, SpawnSubAgentResult } from './types.js';
@@ -20,16 +21,16 @@ import type { SpawnSubAgentConfig, SpawnSubAgentResult } from './types.js';
  * are only available after the sub-agent loop completes.
  */
 export async function spawnSubAgent(config: SpawnSubAgentConfig): Promise<SpawnSubAgentResult> {
-  const loopConfig: Record<string, unknown> = {
+  const loopConfig: AgentLoopConfig = {
     adapter: config.adapter,
     maxIterations: config.maxIterations ?? 10,
+    ...(config.maxTotalTokens !== undefined && { maxTotalTokens: config.maxTotalTokens }),
+    ...(config.signal !== undefined && { signal: config.signal }),
+    ...(config.tools && { tools: [...config.tools] }),
+    ...(config.onToolCall !== undefined && { onToolCall: config.onToolCall }),
+    ...(config.streaming !== undefined && { streaming: config.streaming }),
   };
-  if (config.maxTotalTokens !== undefined) loopConfig.maxTotalTokens = config.maxTotalTokens;
-  if (config.signal !== undefined) loopConfig.signal = config.signal;
-  if (config.tools) loopConfig.tools = [...config.tools];
-  if (config.onToolCall !== undefined) loopConfig.onToolCall = config.onToolCall;
-  if (config.streaming !== undefined) loopConfig.streaming = config.streaming;
-  const loop = new AgentLoop(loopConfig as unknown as ConstructorParameters<typeof AgentLoop>[0]);
+  const loop = new AgentLoop(loopConfig);
 
   const conversation: Message[] = [...config.messages];
   let doneReason: DoneReason = 'end_turn';

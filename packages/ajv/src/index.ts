@@ -61,7 +61,11 @@ function loadFormats(): Promise<((ajv: InstanceType<typeof Ajv>) => void) | null
         const addFormats = typeof mod === 'function' ? mod : (mod.default ?? mod);
         return typeof addFormats === 'function' ? addFormats : null;
       })
-      .catch(() => null); // ajv-formats not installed — format validation will be skipped
+      .catch(() => {
+        // Reset so next call retries the import (transient failures shouldn't be cached)
+        formatsLoader = undefined;
+        return null;
+      });
   }
   return formatsLoader;
 }

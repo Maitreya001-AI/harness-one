@@ -22,13 +22,7 @@ import type {
 } from 'harness-one/core';
 import { HarnessError } from 'harness-one/core';
 
-/**
- * Well-known OpenAI-compatible provider base URLs.
- *
- * Usage:
- *   createOpenAIAdapter({ ...providers.groq, apiKey: '...', model: 'llama-3.3-70b-versatile' })
- */
-export const providers = {
+const _providers: Record<string, { baseURL: string }> = {
   openrouter: { baseURL: 'https://openrouter.ai/api/v1' },
   groq: { baseURL: 'https://api.groq.com/openai/v1' },
   deepseek: { baseURL: 'https://api.deepseek.com' },
@@ -37,7 +31,20 @@ export const providers = {
   perplexity: { baseURL: 'https://api.perplexity.ai' },
   mistral: { baseURL: 'https://api.mistral.ai/v1' },
   ollama: { baseURL: 'http://localhost:11434/v1' },
-} as const;
+};
+
+/**
+ * Well-known OpenAI-compatible provider base URLs.
+ *
+ * Usage:
+ *   createOpenAIAdapter({ ...providers.groq, apiKey: '...', model: 'llama-3.3-70b-versatile' })
+ */
+export const providers: Readonly<Record<string, { baseURL: string }>> = _providers;
+
+/** Register a custom OpenAI-compatible provider or override an existing one. */
+export function registerProvider(name: string, config: { baseURL: string }): void {
+  _providers[name] = config;
+}
 
 /** Configuration for the OpenAI adapter. */
 export interface OpenAIAdapterConfig {
@@ -191,6 +198,17 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
         ...(params.config?.topP !== undefined && { top_p: params.config.topP }),
         ...(params.config?.maxTokens !== undefined && { max_tokens: params.config.maxTokens }),
         ...(params.config?.stopSequences !== undefined && { stop: params.config.stopSequences as string[] }),
+        ...(params.responseFormat?.type === 'json_object' && { response_format: { type: 'json_object' as const } }),
+        ...(params.responseFormat?.type === 'json_schema' && {
+          response_format: {
+            type: 'json_schema' as const,
+            json_schema: {
+              name: 'response',
+              schema: toOpenAIParameters(params.responseFormat.schema),
+              ...(params.responseFormat.strict !== undefined && { strict: params.responseFormat.strict }),
+            },
+          },
+        }),
       }, { signal: params.signal });
 
       const choice = response.choices[0];
@@ -211,8 +229,21 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
         ...(params.tools && { tools: params.tools.map(toOpenAITool) }),
         ...(params.config?.temperature !== undefined && { temperature: params.config.temperature }),
         ...(params.config?.topP !== undefined && { top_p: params.config.topP }),
+        ...(params.config?.maxTokens !== undefined && { max_tokens: params.config.maxTokens }),
         ...(params.config?.stopSequences !== undefined && { stop: params.config.stopSequences as string[] }),
+        ...(params.responseFormat?.type === 'json_object' && { response_format: { type: 'json_object' as const } }),
+        ...(params.responseFormat?.type === 'json_schema' && {
+          response_format: {
+            type: 'json_schema' as const,
+            json_schema: {
+              name: 'response',
+              schema: toOpenAIParameters(params.responseFormat.schema),
+              ...(params.responseFormat.strict !== undefined && { strict: params.responseFormat.strict }),
+            },
+          },
+        }),
         stream: true,
+        stream_options: { include_usage: true },
       }, { signal: params.signal });
 
       const toolCallAccum = new Map<
@@ -232,7 +263,7 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
           for (const tc of delta.tool_calls) {
             let accum = toolCallAccum.get(tc.index);
             if (!accum) {
-              accum = { id: tc.id ?? '', name: '', arguments: '' };
+              accum = { id: tc.id ?? `tool_${tc.index}`, name: '', arguments: '' };
               toolCallAccum.set(tc.index, accum);
             }
             if (tc.id) accum.id = tc.id;

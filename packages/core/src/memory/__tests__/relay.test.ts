@@ -675,8 +675,8 @@ describe('createRelay', () => {
     });
   });
 
-  describe('Fix 5: corrupted relay entry logging', () => {
-    it('logs warning when cached relay entry has corrupted JSON', async () => {
+  describe('Fix 5: corrupted relay entry handling', () => {
+    it('silently skips corrupted cached relay entry without logging', async () => {
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
       await relay.save({
@@ -693,14 +693,13 @@ describe('createRelay', () => {
 
       await relay.load();
 
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('[harness-one] Corrupted relay entry skipped:'),
-      );
+      // Library code should not write to console
+      expect(warnSpy).not.toHaveBeenCalled();
 
       warnSpy.mockRestore();
     });
 
-    it('logs warning when query-path relay entry has corrupted JSON', async () => {
+    it('silently skips corrupted query-path relay entry without logging', async () => {
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
       // Write corrupted content with relay tag so query finds it
@@ -715,9 +714,8 @@ describe('createRelay', () => {
       const freshRelay = createRelay({ store, relayKey: '__relay__' });
       await freshRelay.load();
 
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('[harness-one] Corrupted relay entry skipped:'),
-      );
+      // Library code should not write to console
+      expect(warnSpy).not.toHaveBeenCalled();
 
       warnSpy.mockRestore();
     });

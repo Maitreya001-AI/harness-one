@@ -19,7 +19,7 @@ import type {
   SharedContext,
 } from './types.js';
 
-const MAX_VIOLATIONS = 1000;
+const DEFAULT_MAX_VIOLATIONS = 1000;
 
 /** Configuration for context boundary behavior. */
 export interface ContextBoundaryConfig {
@@ -28,6 +28,8 @@ export interface ContextBoundaryConfig {
    * Default: false (advisory mode).
    */
   readonly strictMode?: boolean;
+  /** Maximum number of violations to retain. Default: 1000. */
+  readonly maxViolations?: number;
 }
 
 /**
@@ -51,6 +53,7 @@ export function createContextBoundary(
   const violations: BoundaryViolation[] = [];
   const viewCache = new Map<string, SharedContext>();
   const strictMode = boundaryConfig?.strictMode ?? false;
+  const maxViolations = boundaryConfig?.maxViolations ?? DEFAULT_MAX_VIOLATIONS;
 
   if (policies) {
     for (const p of policies) {
@@ -59,7 +62,7 @@ export function createContextBoundary(
   }
 
   function recordViolation(violation: BoundaryViolation): void {
-    if (violations.length >= MAX_VIOLATIONS) {
+    if (violations.length >= maxViolations) {
       violations.shift();
     }
     violations.push(violation);
