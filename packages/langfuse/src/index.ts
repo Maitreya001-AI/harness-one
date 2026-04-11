@@ -411,6 +411,42 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): Co
       };
     },
 
+    updateUsage(traceId: string, usage: Partial<Omit<TokenUsageRecord, 'estimatedCost' | 'timestamp' | 'traceId' | 'model'>>): TokenUsageRecord | undefined {
+      // Find the most recent record for this traceId
+      let lastIdx = -1;
+      for (let i = records.length - 1; i >= 0; i--) {
+        if (records[i].traceId === traceId) {
+          lastIdx = i;
+          break;
+        }
+      }
+      if (lastIdx === -1) return undefined;
+
+      const existing = records[lastIdx];
+      const oldCost = existing.estimatedCost;
+
+      // Merge updated token fields
+      const merged = {
+        ...existing,
+        ...(usage.inputTokens !== undefined && { inputTokens: usage.inputTokens }),
+        ...(usage.outputTokens !== undefined && { outputTokens: usage.outputTokens }),
+        ...(usage.cacheReadTokens !== undefined && { cacheReadTokens: usage.cacheReadTokens }),
+        ...(usage.cacheWriteTokens !== undefined && { cacheWriteTokens: usage.cacheWriteTokens }),
+      };
+      const newCost = computeCost(merged);
+      merged.estimatedCost = newCost;
+
+      records[lastIdx] = merged;
+      runningTotal += newCost - oldCost;
+
+      if (budget !== undefined) {
+        const alert = tracker.checkBudget();
+        if (alert) emitAlert(alert);
+      }
+
+      return merged;
+    },
+
     reset(): void {
       records.length = 0;
       runningTotal = 0;

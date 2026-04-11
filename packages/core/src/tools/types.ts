@@ -47,7 +47,7 @@ export interface ValidationError {
 /** Custom schema validator interface for injecting external validators (e.g., Ajv). */
 export interface SchemaValidator {
   /** Validate params against a JSON schema, returning validity and any errors. */
-  validate(schema: JsonSchema, params: unknown): { valid: boolean; errors: ValidationError[] };
+  validate(schema: JsonSchema, params: unknown): { valid: boolean; errors: ValidationError[] } | Promise<{ valid: boolean; errors: ValidationError[] }>;
 }
 
 /** Create a successful tool result. */

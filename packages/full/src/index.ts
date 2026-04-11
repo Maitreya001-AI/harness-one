@@ -29,6 +29,7 @@ import type { AnthropicAdapterConfig } from '@harness-one/anthropic';
 import { createOpenAIAdapter } from '@harness-one/openai';
 import type { OpenAIAdapterConfig } from '@harness-one/openai';
 import { createAjvValidator } from '@harness-one/ajv';
+import type { AjvSchemaValidator } from '@harness-one/ajv';
 
 // Optional integration packages — listed as optionalDependencies in package.json.
 // Static imports work in the monorepo; end-users who don't install these will
@@ -227,8 +228,8 @@ export function createHarness(config: HarnessConfig): Harness {
   // 3. Memory store
   const memory: MemoryStore = config.memoryStore ?? createMemory(config);
 
-  // 4. Schema validator
-  const schemaValidator: SchemaValidator = config.schemaValidator
+  // 4. Schema validator (AjvSchemaValidator is async; SchemaValidator supports both)
+  const schemaValidator: SchemaValidator | AjvSchemaValidator = config.schemaValidator
     ? config.schemaValidator
     : createAjvValidator();
 

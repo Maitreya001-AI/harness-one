@@ -35,6 +35,8 @@ export default tseslint.config(
       '@typescript-eslint/no-extraneous-class': 'off',
       // Allow non-null assertions in tests
       '@typescript-eslint/no-invalid-void-type': 'off',
+      // Disallow console in library source code (use structured logging)
+      'no-console': ['warn', { allow: ['warn', 'debug'] }],
     },
   },
   // Relax rules for test files
@@ -44,6 +46,14 @@ export default tseslint.config(
       '@typescript-eslint/no-explicit-any': 'off',
       '@typescript-eslint/explicit-function-return-type': 'off',
       '@typescript-eslint/no-non-null-assertion': 'off',
+      'no-console': 'off',
+    },
+  },
+  // Relax no-console for CLI code which intentionally uses console
+  {
+    files: ['**/cli/**/*.ts', '**/cli.ts'],
+    rules: {
+      'no-console': 'off',
     },
   },
 );

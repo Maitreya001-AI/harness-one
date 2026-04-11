@@ -145,10 +145,12 @@ export function createRegistry(config?: {
       );
     }
 
-    // Validate
-    const validation = customValidator
-      ? customValidator.validate(tool.parameters, params)
-      : validateToolCall(tool.parameters, params);
+    // Validate (await in case validator is async, e.g., AjvSchemaValidator)
+    const validation = await Promise.resolve(
+      customValidator
+        ? customValidator.validate(tool.parameters, params)
+        : validateToolCall(tool.parameters, params),
+    );
     if (!validation.valid) {
       turnCalls--;
       sessionCalls--;

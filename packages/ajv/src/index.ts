@@ -71,10 +71,8 @@ function loadFormats(): Promise<((ajv: InstanceType<typeof Ajv>) => void) | null
  * method returns a Promise so callers can await it to guarantee formats are
  * applied before validation runs (fixing the race condition).
  *
- * The SchemaValidator interface declares validate() as synchronous; this type
- * augments it with the async return type. Call sites that need the race-condition
- * fix must await the result. The cast is sound because the Promise always resolves
- * before `.valid` / `.errors` are accessed in practice.
+ * The SchemaValidator interface supports both sync and async validate().
+ * AjvSchemaValidator narrows the return to always be a Promise.
  */
 export type AjvSchemaValidator = Omit<SchemaValidator, 'validate'> & {
   validate(schema: JsonSchema, params: unknown): Promise<{ valid: boolean; errors: ValidationError[] }>;

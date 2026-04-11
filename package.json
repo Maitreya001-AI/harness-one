@@ -1,6 +1,7 @@
 {
   "name": "harness-one-monorepo",
   "private": true,
+  "type": "module",
   "scripts": {
     "build": "pnpm -r build",
     "test": "pnpm -r test",
