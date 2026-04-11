@@ -90,6 +90,20 @@ export interface AgentLoopConfig {
    * is aborted with a timeout error and the result is fed back to the LLM.
    */
   readonly toolTimeoutMs?: number;
+  /**
+   * Maximum accumulated stream content size in bytes per iteration.
+   *
+   * Defaults to 10 MB (10 * 1024 * 1024). Set a lower value to reduce
+   * memory pressure when processing large streaming responses.
+   */
+  readonly maxStreamBytes?: number;
+  /**
+   * Maximum size in bytes for a single tool-call's accumulated arguments.
+   *
+   * Defaults to 5 MB (5 * 1024 * 1024). Prevents oversized payloads from
+   * being forwarded to tool handlers.
+   */
+  readonly maxToolArgBytes?: number;
 }
 
 /**
@@ -116,6 +130,8 @@ export class AgentLoop {
   private readonly isSequentialTool?: ((name: string) => boolean) | undefined;
   private readonly traceManager?: AgentLoopTraceManager | undefined;
   private readonly toolTimeoutMs?: number | undefined;
+  private readonly maxStreamBytes: number;
+  private readonly maxToolArgBytes: number;
 
   private abortController: AbortController;
   private _externalAbortHandler: (() => void) | undefined;
@@ -141,6 +157,8 @@ export class AgentLoop {
     this.isSequentialTool = config.isSequentialTool;
     this.traceManager = config.traceManager;
     this.toolTimeoutMs = config.toolTimeoutMs;
+    this.maxStreamBytes = config.maxStreamBytes ?? AgentLoop.MAX_STREAM_BYTES;
+    this.maxToolArgBytes = config.maxToolArgBytes ?? AgentLoop.MAX_TOOL_ARG_BYTES;
 
     if (config.executionStrategy) {
       this.executionStrategy = config.executionStrategy;
@@ -230,7 +248,7 @@ export class AgentLoop {
     let iterationSpanId: string | undefined;
     // Cumulative stream byte counter across all iterations for DoS protection
     let cumulativeStreamBytes = 0;
-    const maxCumulativeStreamBytes = this.maxIterations * AgentLoop.MAX_STREAM_BYTES;
+    const maxCumulativeStreamBytes = this.maxIterations * this.maxStreamBytes;
 
     try {
       while (true) {
@@ -272,9 +290,14 @@ export class AgentLoop {
             type: 'warning',
             message: `Conversation pruned from ${conversation.length} to ${this.maxConversationMessages} messages`,
           };
-          // Keep first message (system) + last (maxConversationMessages - 1) messages
-          const head = conversation.slice(0, 1);
-          const tail = conversation.slice(-(this.maxConversationMessages - 1));
+          // Preserve all leading system messages (there may be 0 or more)
+          let systemCount = 0;
+          while (systemCount < conversation.length && conversation[systemCount].role === 'system') {
+            systemCount++;
+          }
+          const head = conversation.slice(0, Math.max(1, systemCount));
+          const tailSize = this.maxConversationMessages - head.length;
+          const tail = conversation.slice(-Math.max(1, tailSize));
           conversation.length = 0;
           conversation.push(...head, ...tail);
         }
@@ -298,9 +321,11 @@ export class AgentLoop {
           const streamResult = yield* this.handleStream(conversation, cumulativeStreamBytes, maxCumulativeStreamBytes);
           if (streamResult) {
             cumulativeStreamBytes += streamResult.bytesRead;
-          }
-          if (!streamResult) {
-            // Stream error already handled via error event
+          } else {
+            // Stream error already handled via error event.
+            // Reset cumulativeStreamBytes to prevent phantom accumulation from
+            // a failed/aborted stream that only partially wrote data.
+            cumulativeStreamBytes = 0;
             if (iterationSpanId && tm) { tm.endSpan(iterationSpanId, 'error'); iterationSpanId = undefined; }
             finalEventEmitted = true;
             yield this.doneEvent('error');
@@ -405,10 +430,10 @@ export class AgentLoop {
               if (this.toolTimeoutMs !== undefined) {
                 // Race tool execution against a timeout
                 const timeoutMs = this.toolTimeoutMs;
-                result = await Promise.race([
-                  toolPromise,
-                  new Promise<{ error: string }>((resolve) => {
-                    const timer = setTimeout(
+                let timer: ReturnType<typeof setTimeout> | undefined;
+                try {
+                  const timeoutPromise = new Promise<{ error: string }>((resolve) => {
+                    timer = setTimeout(
                       () => resolve({ error: `Tool "${call.name}" timed out after ${timeoutMs}ms` }),
                       timeoutMs,
                     );
@@ -416,8 +441,13 @@ export class AgentLoop {
                     if (typeof timer === 'object' && 'unref' in timer) {
                       (timer as NodeJS.Timeout).unref();
                     }
-                  }),
-                ]);
+                  });
+                  result = await Promise.race([toolPromise, timeoutPromise]);
+                } finally {
+                  // Always clear the timer to prevent it from running after the
+                  // tool resolves, avoiding resource waste and phantom callbacks.
+                  if (timer !== undefined) clearTimeout(timer);
+                }
               } else {
                 result = await toolPromise;
               }
@@ -521,8 +551,8 @@ export class AgentLoop {
       for await (const chunk of stream) {
         if (chunk.type === 'text_delta' && chunk.text) {
           accumulatedBytes += chunk.text.length;
-          if (accumulatedBytes > AgentLoop.MAX_STREAM_BYTES) {
-            yield { type: 'error', error: new Error(`Stream exceeded maximum size (${AgentLoop.MAX_STREAM_BYTES} bytes)`) };
+          if (accumulatedBytes > this.maxStreamBytes) {
+            yield { type: 'error', error: new Error(`Stream exceeded maximum size (${this.maxStreamBytes} bytes)`) };
             return null;
           }
           // Cumulative cross-iteration check
@@ -539,8 +569,8 @@ export class AgentLoop {
           // Accumulate tool call parts
           if (partial.arguments) {
             accumulatedBytes += partial.arguments.length;
-            if (accumulatedBytes > AgentLoop.MAX_STREAM_BYTES) {
-              yield { type: 'error', error: new Error(`Stream exceeded maximum size (${AgentLoop.MAX_STREAM_BYTES} bytes)`) };
+            if (accumulatedBytes > this.maxStreamBytes) {
+              yield { type: 'error', error: new Error(`Stream exceeded maximum size (${this.maxStreamBytes} bytes)`) };
               return null;
             }
             // Cumulative cross-iteration check
@@ -556,8 +586,8 @@ export class AgentLoop {
               if (partial.name) existing.name = partial.name;
               if (partial.arguments) existing.arguments += partial.arguments;
               // Per-tool-call argument size limit
-              if (existing.arguments.length > AgentLoop.MAX_TOOL_ARG_BYTES) {
-                yield { type: 'error', error: new Error(`Tool call "${existing.name}" arguments exceeded maximum size (${AgentLoop.MAX_TOOL_ARG_BYTES} bytes)`) };
+              if (existing.arguments.length > this.maxToolArgBytes) {
+                yield { type: 'error', error: new Error(`Tool call "${existing.name}" arguments exceeded maximum size (${this.maxToolArgBytes} bytes)`) };
                 return null;
               }
             } else {
@@ -575,8 +605,8 @@ export class AgentLoop {
               if (partial.name) last.name = partial.name;
               if (partial.arguments) last.arguments += partial.arguments;
               // Per-tool-call argument size limit
-              if (last.arguments.length > AgentLoop.MAX_TOOL_ARG_BYTES) {
-                yield { type: 'error', error: new Error(`Tool call "${last.name}" arguments exceeded maximum size (${AgentLoop.MAX_TOOL_ARG_BYTES} bytes)`) };
+              if (last.arguments.length > this.maxToolArgBytes) {
+                yield { type: 'error', error: new Error(`Tool call "${last.name}" arguments exceeded maximum size (${this.maxToolArgBytes} bytes)`) };
                 return null;
               }
             } else {

@@ -320,4 +320,144 @@ describe('createFallbackAdapter', () => {
       expect(result.message.content).toBe('a3 response');
     });
   });
+
+  // =====================================================================
+  // PR Fix 4: Race condition mutex on mutable state
+  // =====================================================================
+  describe('PR Fix 4: Race condition mutex - concurrent failure handling', () => {
+    it('pendingSwitch is cleared after a sequential switch so the next call is not blocked', async () => {
+      // Sequential: Call 1 switches from a1 to a2, Call 2 should proceed normally
+      // without being blocked by a stale pendingSwitch.
+      const primary = createFailingAdapter('primary', 'always fails');
+      const fallback = createMockAdapter('fallback', [
+        { message: { role: 'assistant', content: 'fb1' }, usage: USAGE },
+        { message: { role: 'assistant', content: 'fb2' }, usage: USAGE },
+      ]);
+
+      const adapter = createFallbackAdapter({ adapters: [primary, fallback], maxFailures: 1 });
+
+      // First sequential call: primary fails, switch to fallback, retry → "fb1"
+      const r1 = await adapter.chat(PARAMS);
+      expect(r1.message.content).toBe('fb1');
+
+      // Second sequential call: should go straight to fallback (no stale pendingSwitch)
+      const r2 = await adapter.chat(PARAMS);
+      expect(r2.message.content).toBe('fb2');
+    });
+
+    it('handles concurrent failures gracefully — both calls eventually succeed', async () => {
+      // Two concurrent calls both fail on the primary adapter.
+      // The mutex ensures only one switch occurs even if both failures
+      // arrive close together, and both retries succeed on the fallback.
+      const callLog: string[] = [];
+
+      // Use a shared promise to force both calls to fail at the same microtask boundary
+      let rejectBoth!: (err: Error) => void;
+      const failPromise = new Promise<never>((_, reject) => {
+        rejectBoth = reject;
+      });
+
+      const primary: AgentAdapter = {
+        async chat() {
+          callLog.push('primary');
+          return failPromise; // both calls share the same rejection promise
+        },
+      };
+      const fallback: AgentAdapter = {
+        async chat() {
+          callLog.push('fallback');
+          return { message: { role: 'assistant', content: 'ok' }, usage: USAGE };
+        },
+      };
+
+      const adapter = createFallbackAdapter({ adapters: [primary, fallback], maxFailures: 1 });
+
+      // Start both calls concurrently
+      const promise1 = adapter.chat(PARAMS);
+      const promise2 = adapter.chat(PARAMS);
+
+      // Both are now waiting on failPromise — reject it to unblock them simultaneously
+      rejectBoth(new Error('simultaneous failure'));
+
+      const results = await Promise.allSettled([promise1, promise2]);
+
+      // Both should have at least tried fallback
+      expect(callLog).toContain('fallback');
+
+      // Both calls should eventually succeed (via fallback)
+      const successes = results.filter((r) => r.status === 'fulfilled');
+      expect(successes.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('mutex prevents double-switch: concurrent failures only advance by one adapter', async () => {
+      // When two concurrent failures arrive at the SAME microtask boundary,
+      // the mutex should prevent currentIndex from advancing by 2.
+      // After both failures are handled, currentIndex should be 1 (not 2).
+      const callLog: string[] = [];
+
+      let rejectBoth!: (err: Error) => void;
+      const failPromise = new Promise<never>((_, reject) => {
+        rejectBoth = reject;
+      });
+
+      const a1: AgentAdapter = {
+        async chat() {
+          callLog.push('a1');
+          return failPromise;
+        },
+      };
+      const a2: AgentAdapter = {
+        async chat() {
+          callLog.push('a2');
+          return { message: { role: 'assistant', content: 'a2 ok' }, usage: USAGE };
+        },
+      };
+      const a3: AgentAdapter = {
+        async chat() {
+          callLog.push('a3');
+          return { message: { role: 'assistant', content: 'a3 ok' }, usage: USAGE };
+        },
+      };
+
+      const adapter = createFallbackAdapter({ adapters: [a1, a2, a3], maxFailures: 1 });
+
+      const promise1 = adapter.chat(PARAMS);
+      const promise2 = adapter.chat(PARAMS);
+
+      // Both calls are waiting on the same failPromise rejection
+      rejectBoth(new Error('concurrent fail'));
+
+      const results = await Promise.allSettled([promise1, promise2]);
+
+      // a2 should have been used for retries
+      expect(callLog).toContain('a2');
+
+      // With proper mutex, a3 should NOT be called because both concurrent
+      // failures should map to a single switch to a2 (index 1), not a double
+      // switch to a3 (index 2).
+      expect(callLog).not.toContain('a3');
+
+      const successes = results.filter((r) => r.status === 'fulfilled');
+      expect(successes.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('pendingSwitch resets to null after switch completes', async () => {
+      // After a switch, subsequent calls should work normally
+      const primary = createFailingAdapter('primary', 'always fails');
+      const fallback = createMockAdapter('fallback', [
+        { message: { role: 'assistant', content: 'fb1' }, usage: USAGE },
+        { message: { role: 'assistant', content: 'fb2' }, usage: USAGE },
+      ]);
+
+      const adapter = createFallbackAdapter({ adapters: [primary, fallback], maxFailures: 1 });
+
+      // First call: switches to fallback
+      const r1 = await adapter.chat(PARAMS);
+      expect(r1.message.content).toBe('fb1');
+
+      // Second call: should still work (pendingSwitch must have been cleared)
+      const r2 = await adapter.chat(PARAMS);
+      expect(r2.message.content).toBe('fb2');
+    });
+  });
 });

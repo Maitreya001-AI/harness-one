@@ -36,16 +36,42 @@ export function createFallbackAdapter(config: FallbackAdapterConfig): AgentAdapt
   const maxFailures = config.maxFailures ?? 3;
   let currentIndex = 0;
   let failureCount = 0;
+  // Mutex for adapter switch: concurrent failures wait for any in-progress
+  // switch to complete before proceeding, preventing race conditions where
+  // two concurrent calls both increment failureCount and both trigger a switch.
+  let pendingSwitch: Promise<void> | null = null;
 
   function getAdapter(): AgentAdapter {
     return adapters[currentIndex];
   }
 
-  function handleFailure(): void {
+  async function handleFailure(): Promise<void> {
+    // If a switch is already in progress, wait for it to complete and return.
+    // The in-progress switch will have already reset failureCount, so we
+    // avoid double-switching.
+    if (pendingSwitch) {
+      await pendingSwitch;
+      return;
+    }
     failureCount++;
     if (failureCount >= maxFailures && currentIndex < adapters.length - 1) {
-      currentIndex++;
+      // Use a deferred-resolve pattern:
+      // 1. Set pendingSwitch BEFORE mutations so concurrent callers see it.
+      // 2. Perform synchronous state mutations.
+      // 3. Resolve the promise (so waiters can proceed).
+      // 4. Yield once via `await`, giving concurrent callers a chance to run.
+      // 5. Set pendingSwitch = null AFTER the await, so it's null for the
+      //    next sequential caller but non-null while concurrent callers check.
+      let resolvePending!: () => void;
+      const switchPromise = new Promise<void>((resolve) => {
+        resolvePending = resolve;
+      });
+      pendingSwitch = switchPromise;
+      currentIndex = (currentIndex + 1) % adapters.length;
       failureCount = 0;
+      resolvePending();
+      await switchPromise;
+      pendingSwitch = null;
     }
   }
 
@@ -61,7 +87,7 @@ export function createFallbackAdapter(config: FallbackAdapterConfig): AgentAdapt
         handleSuccess();
         return result;
       } catch (err) {
-        handleFailure();
+        await handleFailure();
         const switched = currentIndex !== adapterBefore;
         if (switched) {
           // We switched to a new adapter — retry with it
@@ -90,7 +116,7 @@ export function createFallbackAdapter(config: FallbackAdapterConfig): AgentAdapt
         yield* adapter.stream(params);
         handleSuccess();
       } catch (err) {
-        handleFailure();
+        await handleFailure();
         const switched = currentIndex !== adapterBefore;
         if (switched) {
           // Switched to new adapter — retry with it
