@@ -17,6 +17,13 @@ export interface OTelExporterConfig {
   readonly tracer?: Tracer;
   /** Service name for the tracer (used when tracer is not provided). */
   readonly serviceName?: string;
+  /**
+   * Maximum number of evicted parent span contexts to retain for child linking.
+   * When a parent span is evicted from the LRU cache but a child arrives later,
+   * this fallback map provides the minimal context needed to link them correctly.
+   * Defaults to 1000.
+   */
+  readonly maxEvictedParents?: number;
 }
 
 /**
@@ -28,6 +35,7 @@ export interface OTelExporterConfig {
 export function createOTelExporter(config?: OTelExporterConfig): TraceExporter {
   const serviceName = config?.serviceName ?? 'harness-one';
   const tracer = config?.tracer ?? otelTrace.getTracer(serviceName);
+  const maxEvictedParents = config?.maxEvictedParents ?? 1000;
 
   // Track created OTel spans so children can reference parents
   const spanMap = new Map<string, OTelSpan>();
@@ -35,6 +43,11 @@ export function createOTelExporter(config?: OTelExporterConfig): TraceExporter {
   const spanParentMap = new Map<string, string>();
   // Track last access time per span for LRU eviction
   const spanAccessTime = new Map<string, number>();
+  // Lightweight fallback for evicted parents: spanId -> OTel span
+  // Prevents children from being orphaned when their parent was evicted from spanMap.
+  const evictedParents = new Map<string, OTelSpan>();
+  // Access timestamps for LRU eviction of evictedParents
+  const evictedParentsAccessTime = new Map<string, number>();
 
   function touchSpan(spanId: string): void {
     spanAccessTime.set(spanId, Date.now());
@@ -47,6 +60,24 @@ export function createOTelExporter(config?: OTelExporterConfig): TraceExporter {
     for (const [id] of sortedEntries) {
       if (evicted >= count) break;
       if (!spanMap.has(id)) continue;
+
+      // Before evicting, save the span reference in evictedParents so children
+      // can still be linked to it later. Cap the evictedParents map size.
+      const otelSpan = spanMap.get(id);
+      if (otelSpan) {
+        evictedParents.set(id, otelSpan);
+        evictedParentsAccessTime.set(id, Date.now());
+        // Evict oldest entries from evictedParents if over the limit
+        if (evictedParents.size > maxEvictedParents) {
+          const evictedSorted = [...evictedParentsAccessTime.entries()].sort((a, b) => a[1] - b[1]);
+          const evictCount = Math.ceil(maxEvictedParents * 0.1);
+          for (let j = 0; j < evictCount && j < evictedSorted.length; j++) {
+            evictedParents.delete(evictedSorted[j][0]);
+            evictedParentsAccessTime.delete(evictedSorted[j][0]);
+          }
+        }
+      }
+
       spanMap.delete(id);
       spanParentMap.delete(id);
       spanAccessTime.delete(id);
@@ -98,10 +129,12 @@ export function createOTelExporter(config?: OTelExporterConfig): TraceExporter {
     },
 
     async exportSpan(harnessSpan: Span): Promise<void> {
-      const parentOTelSpan = harnessSpan.parentId ? spanMap.get(harnessSpan.parentId) : undefined;
+      // Check spanMap first, then fall back to evictedParents for already-evicted spans
+      const parentOTelSpan = harnessSpan.parentId
+        ? (spanMap.get(harnessSpan.parentId) ?? evictedParents.get(harnessSpan.parentId))
+        : undefined;
 
-      // If parentId was specified but the parent span has been evicted, log a warning
-      // and create the span as a root span (no parent context).
+      // If parentId was specified but neither map has it, log a warning and create root span
       if (harnessSpan.parentId && !parentOTelSpan) {
         if (typeof console !== 'undefined') {
           console.warn(
@@ -109,6 +142,11 @@ export function createOTelExporter(config?: OTelExporterConfig): TraceExporter {
             `Creating span '${harnessSpan.id}' as a root span.`,
           );
         }
+      }
+
+      // Update evictedParents access time when the parent was found there
+      if (harnessSpan.parentId && evictedParents.has(harnessSpan.parentId) && parentOTelSpan) {
+        evictedParentsAccessTime.set(harnessSpan.parentId, Date.now());
       }
 
       const parentContext = parentOTelSpan
@@ -168,6 +206,22 @@ export function createOTelExporter(config?: OTelExporterConfig): TraceExporter {
     },
 
     async flush(): Promise<void> {
+      // Before clearing the spanMap, migrate all spans to evictedParents so that
+      // children arriving after flush can still be linked to their parent context.
+      const now = Date.now();
+      for (const [id, otelSpan] of spanMap) {
+        evictedParents.set(id, otelSpan);
+        evictedParentsAccessTime.set(id, now);
+      }
+      // Enforce the evictedParents size limit after the bulk migration
+      if (evictedParents.size > maxEvictedParents) {
+        const evictedSorted = [...evictedParentsAccessTime.entries()].sort((a, b) => a[1] - b[1]);
+        const evictCount = evictedParents.size - maxEvictedParents;
+        for (let i = 0; i < evictCount && i < evictedSorted.length; i++) {
+          evictedParents.delete(evictedSorted[i][0]);
+          evictedParentsAccessTime.delete(evictedSorted[i][0]);
+        }
+      }
       spanMap.clear();
       spanParentMap.clear();
       spanAccessTime.clear();

@@ -96,10 +96,15 @@ export function createLangfuseExporter(config: LangfuseExporterConfig): TraceExp
 
       const attrs = config.sanitize ? config.sanitize(span.attributes) : span.attributes;
 
+      // Prioritize explicit kind attribute. Fallback heuristics only apply when
+      // harness.span.kind is not set, to avoid misclassifying non-LLM operations
+      // that happen to have token counts or a model reference field.
       const isGeneration =
         attrs['harness.span.kind'] === 'generation' ||
-        attrs['model'] !== undefined ||
-        (attrs['inputTokens'] !== undefined && attrs['outputTokens'] !== undefined);
+        (attrs['harness.span.kind'] === undefined && (
+          typeof attrs['model'] === 'string' ||
+          (typeof attrs['inputTokens'] === 'number' && typeof attrs['outputTokens'] === 'number')
+        ));
 
       if (isGeneration) {
         lfTrace.generation({

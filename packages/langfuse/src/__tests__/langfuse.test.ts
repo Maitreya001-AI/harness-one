@@ -345,6 +345,118 @@ describe('createLangfuseExporter', () => {
     });
   });
 
+  it('does NOT classify span as generation when harness.span.kind is non-generation even with token counts', async () => {
+    // A non-LLM operation that happens to count tokens (e.g., a tokenizer utility)
+    // should NOT be classified as a generation when kind is explicitly set to something other than 'generation'.
+    const exporter = createLangfuseExporter({ client: mock.client });
+    const span: Span = {
+      id: 'span-tokenizer',
+      traceId: 'trace-1',
+      name: 'tokenize-text',
+      startTime: 1000,
+      endTime: 2000,
+      attributes: {
+        'harness.span.kind': 'tool',
+        inputTokens: 200,
+        outputTokens: 0,
+      },
+      events: [],
+      status: 'completed',
+    };
+
+    await exporter.exportSpan(span);
+    // span.kind='tool' with token counts should be a span, NOT a generation
+    expect(mock.mocks.span).toHaveBeenCalled();
+    expect(mock.mocks.generation).not.toHaveBeenCalled();
+  });
+
+  it('does NOT classify span as generation when harness.span.kind is "tool" even with model attribute', async () => {
+    const exporter = createLangfuseExporter({ client: mock.client });
+    const span: Span = {
+      id: 'span-tool-with-model',
+      traceId: 'trace-1',
+      name: 'some-tool',
+      startTime: 1000,
+      endTime: 2000,
+      attributes: {
+        'harness.span.kind': 'tool',
+        model: 'some-model-ref',
+      },
+      events: [],
+      status: 'completed',
+    };
+
+    await exporter.exportSpan(span);
+    // span.kind='tool' with a model attribute should still be a span, not a generation
+    expect(mock.mocks.span).toHaveBeenCalled();
+    expect(mock.mocks.generation).not.toHaveBeenCalled();
+  });
+
+  it('classifies span as generation when harness.span.kind is "generation" even without model/tokens', async () => {
+    const exporter = createLangfuseExporter({ client: mock.client });
+    const span: Span = {
+      id: 'span-explicit-generation',
+      traceId: 'trace-1',
+      name: 'my-llm-call',
+      startTime: 1000,
+      endTime: 2000,
+      attributes: {
+        'harness.span.kind': 'generation',
+        // No model, no token counts — but kind is explicitly 'generation'
+      },
+      events: [],
+      status: 'completed',
+    };
+
+    await exporter.exportSpan(span);
+    expect(mock.mocks.generation).toHaveBeenCalled();
+    expect(mock.mocks.span).not.toHaveBeenCalled();
+  });
+
+  it('falls back to model heuristic when harness.span.kind is not set', async () => {
+    // When kind is not explicitly set, the model heuristic still applies (backward compat)
+    const exporter = createLangfuseExporter({ client: mock.client });
+    const span: Span = {
+      id: 'span-no-kind',
+      traceId: 'trace-1',
+      name: 'legacy-llm-call',
+      startTime: 1000,
+      endTime: 2000,
+      attributes: {
+        // No harness.span.kind
+        model: 'gpt-4',
+      },
+      events: [],
+      status: 'completed',
+    };
+
+    await exporter.exportSpan(span);
+    expect(mock.mocks.generation).toHaveBeenCalled();
+    expect(mock.mocks.span).not.toHaveBeenCalled();
+  });
+
+  it('falls back to token count heuristic when harness.span.kind is not set', async () => {
+    const exporter = createLangfuseExporter({ client: mock.client });
+    const span: Span = {
+      id: 'span-tokens-no-kind',
+      traceId: 'trace-1',
+      name: 'legacy-llm-tokens',
+      startTime: 1000,
+      endTime: 2000,
+      attributes: {
+        // No harness.span.kind
+        inputTokens: 100,
+        outputTokens: 50,
+      },
+      events: [],
+      status: 'completed',
+    };
+
+    await exporter.exportSpan(span);
+    expect(mock.mocks.generation).toHaveBeenCalled();
+    expect(mock.mocks.span).not.toHaveBeenCalled();
+  });
+
   it('exports a span with parentId in metadata for non-generation spans', async () => {
     const exporter = createLangfuseExporter({ client: mock.client });
     const span: Span = {

@@ -210,6 +210,8 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
         messages: params.messages.map(toOpenAIMessage),
         ...(params.tools && { tools: params.tools.map(toOpenAITool) }),
         ...(params.config?.temperature !== undefined && { temperature: params.config.temperature }),
+        ...(params.config?.topP !== undefined && { top_p: params.config.topP }),
+        ...(params.config?.stopSequences !== undefined && { stop: params.config.stopSequences as string[] }),
         stream: true,
       }, { signal: params.signal });
 

@@ -670,6 +670,55 @@ describe('createOpenAIAdapter', () => {
       expect(doneChunk).toBeDefined();
       expect(doneChunk!.usage).toEqual({ inputTokens: 15, outputTokens: 8 });
     });
+
+    it('passes temperature, topP, and stopSequences to stream API call', async () => {
+      const asyncIter = {
+        async *[Symbol.asyncIterator]() {
+          yield { choices: [{ delta: { content: 'Hi' } }] };
+          yield { choices: [{ delta: {} }], usage: { prompt_tokens: 5, completion_tokens: 2 } };
+        },
+      };
+      mock.mocks.create.mockResolvedValue(asyncIter);
+
+      const adapter = createOpenAIAdapter({ client: mock.client });
+      for await (const _chunk of adapter.stream!({
+        messages: [{ role: 'user', content: 'Hi' }],
+        config: {
+          temperature: 0.3,
+          topP: 0.8,
+          stopSequences: ['END'],
+        },
+      })) { /* consume */ }
+
+      expect(mock.mocks.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          temperature: 0.3,
+          top_p: 0.8,
+          stop: ['END'],
+        }),
+        expect.any(Object),
+      );
+    });
+
+    it('does not include temperature/topP/stop in stream call when not set', async () => {
+      const asyncIter = {
+        async *[Symbol.asyncIterator]() {
+          yield { choices: [{ delta: { content: 'Hi' } }] };
+          yield { choices: [{ delta: {} }], usage: { prompt_tokens: 5, completion_tokens: 2 } };
+        },
+      };
+      mock.mocks.create.mockResolvedValue(asyncIter);
+
+      const adapter = createOpenAIAdapter({ client: mock.client });
+      for await (const _chunk of adapter.stream!({
+        messages: [{ role: 'user', content: 'Hi' }],
+      })) { /* consume */ }
+
+      const calledArgs = mock.mocks.create.mock.calls[0][0] as Record<string, unknown>;
+      expect(calledArgs).not.toHaveProperty('temperature');
+      expect(calledArgs).not.toHaveProperty('top_p');
+      expect(calledArgs).not.toHaveProperty('stop');
+    });
   });
 
   describe('client creation', () => {

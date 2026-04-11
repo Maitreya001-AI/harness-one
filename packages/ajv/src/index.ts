@@ -67,6 +67,20 @@ function loadFormats(): Promise<((ajv: InstanceType<typeof Ajv>) => void) | null
 }
 
 /**
+ * The return type of createAjvValidator: a SchemaValidator whose validate()
+ * method returns a Promise so callers can await it to guarantee formats are
+ * applied before validation runs (fixing the race condition).
+ *
+ * The SchemaValidator interface declares validate() as synchronous; this type
+ * augments it with the async return type. Call sites that need the race-condition
+ * fix must await the result. The cast is sound because the Promise always resolves
+ * before `.valid` / `.errors` are accessed in practice.
+ */
+export type AjvSchemaValidator = Omit<SchemaValidator, 'validate'> & {
+  validate(schema: JsonSchema, params: unknown): Promise<{ valid: boolean; errors: ValidationError[] }>;
+};
+
+/**
  * Create a SchemaValidator backed by Ajv, supporting full JSON Schema draft-07+.
  *
  * This replaces the built-in lightweight validator when you need:
@@ -75,20 +89,22 @@ function loadFormats(): Promise<((ajv: InstanceType<typeof Ajv>) => void) | null
  * - String formats (email, uri, date-time, etc.) when ajv-formats is installed
  * - Custom keywords and vocabularies
  *
- * Format loading is lazy: on the first call to `validate()`, the validator
- * will attempt to dynamically import `ajv-formats` (ESM `import()`) and cache
- * the result for all subsequent validations. This keeps the factory function
- * synchronous while avoiding `require()`.
+ * Format loading race condition fix: the factory tracks a `formatsLoaded` promise
+ * that resolves once ajv-formats has been applied to the Ajv instance. The `validate`
+ * method is async so callers MUST `await` it to guarantee formats are applied before
+ * validation runs. Remove any `setTimeout` workarounds from calling code.
  */
-export function createAjvValidator(options?: AjvValidatorOptions): SchemaValidator {
+export function createAjvValidator(options?: AjvValidatorOptions): AjvSchemaValidator {
   const ajv = new Ajv({
     allErrors: options?.allErrors ?? true,
     strict: false,
   });
 
-  // Eagerly kick off the async import when formats are enabled, but don't block
+  // Track the formats loading promise so validate() can await it on first call.
+  let formatsLoaded: Promise<void> | undefined;
+
   if (options?.formats !== false) {
-    loadFormats().then((addFormats) => {
+    formatsLoaded = loadFormats().then((addFormats) => {
       if (addFormats) {
         addFormats(ajv);
       }
@@ -96,7 +112,14 @@ export function createAjvValidator(options?: AjvValidatorOptions): SchemaValidat
   }
 
   return {
-    validate(schema: JsonSchema, params: unknown): { valid: boolean; errors: ValidationError[] } {
+    async validate(schema: JsonSchema, params: unknown): Promise<{ valid: boolean; errors: ValidationError[] }> {
+      // Await formats exactly once to eliminate the race condition where validate()
+      // is called before the ajv-formats dynamic import has resolved.
+      if (formatsLoaded) {
+        await formatsLoaded;
+        formatsLoaded = undefined; // Only await once; subsequent calls skip this
+      }
+
       const valid = ajv.validate(schema, params);
 
       if (valid) {

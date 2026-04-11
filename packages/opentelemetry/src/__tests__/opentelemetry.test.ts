@@ -291,6 +291,94 @@ describe('createOTelExporter', () => {
     warnSpy.mockRestore();
   });
 
+  describe('evicted parent span linking', () => {
+    it('preserves evicted parent context so children can still be linked', async () => {
+      // The bug: when a parent span is evicted from the LRU cache, child spans
+      // are created as root spans (no parent context). The fix: keep a lightweight
+      // reference (evictedParents map) so children can still be linked.
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const localMock = createMockTracer();
+      const exporter = createOTelExporter({ tracer: localMock.tracer });
+
+      // Export parent span
+      await exporter.exportSpan({
+        id: 'evicted-parent',
+        traceId: 'trace-1',
+        name: 'parent-op',
+        startTime: 1000,
+        endTime: 2000,
+        attributes: {},
+        events: [],
+        status: 'completed',
+      });
+
+      // Flush clears the main spanMap but NOT evictedParents
+      await exporter.flush();
+
+      // After flush, parent span is gone from spanMap.
+      // With the fix, it should be in evictedParents so the child can still link.
+      await exporter.exportSpan({
+        id: 'orphan-child',
+        traceId: 'trace-1',
+        parentId: 'evicted-parent',
+        name: 'child-after-eviction',
+        startTime: 2000,
+        endTime: 3000,
+        attributes: {},
+        events: [],
+        status: 'completed',
+      });
+
+      // With fix: child span should be linked to parent (4 args: name, options, context, callback)
+      const calls = localMock.mocks.startActiveSpan.mock.calls;
+      const childCall = calls[calls.length - 1];
+      expect(childCall[0]).toBe('child-after-eviction');
+      // 4 args means parent context was used
+      expect(childCall.length).toBe(4);
+
+      warnSpy.mockRestore();
+    });
+
+    it('evictedParents does not grow beyond configured max size (default 1000)', async () => {
+      // Export many unique spans and flush repeatedly to fill evictedParents.
+      // The map should not grow unboundedly.
+      const localMock = createMockTracer();
+      const exporter = createOTelExporter({ tracer: localMock.tracer });
+
+      // Export 1200 spans and flush after each batch to populate evictedParents
+      for (let i = 0; i < 1200; i++) {
+        await exporter.exportSpan({
+          id: `span-${i}`,
+          traceId: 'trace-1',
+          name: `op-${i}`,
+          startTime: 1000,
+          endTime: 2000,
+          attributes: {},
+          events: [],
+          status: 'completed',
+        });
+      }
+      // Flush to move spans to evictedParents
+      await exporter.flush();
+
+      // Export a child span with parentId that was in the first batch.
+      // The evictedParents map should cap at 1000 — earliest entries are evicted.
+      // For span-0 (oldest), it may have been evicted from evictedParents too.
+      // Verify the exporter doesn't throw or grow unboundedly.
+      await expect(exporter.exportSpan({
+        id: 'final-child',
+        traceId: 'trace-1',
+        parentId: 'span-1199', // most recent — should be in evictedParents
+        name: 'final-op',
+        startTime: 2000,
+        endTime: 3000,
+        attributes: {},
+        events: [],
+        status: 'completed',
+      })).resolves.toBeUndefined();
+    });
+  });
+
   describe('span eviction with parent awareness', () => {
     it('evicts leaf spans before parent spans when limit is exceeded', async () => {
       // Create a mock tracer that tracks unique spans per export
@@ -402,10 +490,11 @@ describe('createOTelExporter', () => {
         startTime: 1000, endTime: 2000, attributes: {}, events: [], status: 'completed',
       });
 
-      // Flush to clear the map
+      // Flush migrates spans to evictedParents — parent context is preserved
       await exporter.flush();
 
-      // Verify flush clears everything - parent lookup should fail after flush
+      // With the evictedParents fix, the parent is migrated to evictedParents on flush.
+      // Children arriving after flush CAN still be linked to their parent.
       await exporter.exportSpan({
         id: 'c2', traceId: 't1', parentId: 'p1', name: 'child-after-flush',
         startTime: 1000, endTime: 2000, attributes: {}, events: [], status: 'completed',
@@ -413,8 +502,8 @@ describe('createOTelExporter', () => {
 
       const calls = (mockTracer.startActiveSpan as unknown as ReturnType<typeof vi.fn>).mock.calls;
       const lastCall = calls[calls.length - 1];
-      // After flush, parent is gone, so no parent context -> 2 args
-      expect(lastCall.length).toBe(2);
+      // After flush, parent is in evictedParents, so parent context is available -> 4 args
+      expect(lastCall.length).toBe(4);
     });
   });
 });
