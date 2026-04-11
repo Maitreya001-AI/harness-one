@@ -15,7 +15,7 @@ import { createPromptBuilder } from 'harness-one/prompt';
 import type { PromptBuilder } from 'harness-one/prompt';
 import { createRegistry } from 'harness-one/tools';
 import type { ToolRegistry, SchemaValidator } from 'harness-one/tools';
-import { createPipeline, createInjectionDetector, createRateLimiter, createContentFilter, runInput, runOutput } from 'harness-one/guardrails';
+import { createPipeline, createInjectionDetector, createRateLimiter, createContentFilter, createPIIDetector, runInput, runOutput } from 'harness-one/guardrails';
 import type { GuardrailPipeline, Guardrail } from 'harness-one/guardrails';
 import { createSessionManager, createInMemoryConversationStore } from 'harness-one/session';
 import type { SessionManager, ConversationStore } from 'harness-one/session';
@@ -88,6 +88,7 @@ interface HarnessConfigBase {
     readonly injection?: boolean | { sensitivity?: 'low' | 'medium' | 'high' };
     readonly rateLimit?: { max: number; windowMs: number };
     readonly contentFilter?: { blocked?: string[] };
+    readonly pii?: boolean | { types?: Array<'email' | 'phone' | 'ssn' | 'creditCard' | 'apiKey' | 'ipv4' | 'privateKey'> };
   };
 
   /** Cost budget. */
@@ -334,6 +335,25 @@ export function createHarness(config: HarnessConfig): Harness {
         await conversations.append('default', msg);
       }
       for await (const event of loop.run(messages)) {
+        // Validate tool call arguments against input guardrails before executing
+        if (event.type === 'tool_call') {
+          const argContent = typeof event.toolCall.arguments === 'string'
+            ? event.toolCall.arguments
+            : JSON.stringify(event.toolCall.arguments);
+          const argCheck = await runInput(guardrailPipeline, { content: argContent });
+          if (!argCheck.passed) {
+            yield {
+              type: 'error',
+              error: new HarnessError(
+                `Tool arguments blocked by guardrails: ${'reason' in argCheck.verdict ? argCheck.verdict.reason : 'policy violation'}`,
+                'GUARDRAIL_BLOCKED',
+                'Tool call arguments were blocked by input guardrails',
+              ),
+            };
+            yield { type: 'done', reason: 'error', totalUsage: loop.usage };
+            return;
+          }
+        }
         // Run output guardrails on assistant messages
         if (event.type === 'message' && event.message) {
           const outputResult = await runOutput(guardrailPipeline, { content: event.message.content });
@@ -381,9 +401,13 @@ export function createHarness(config: HarnessConfig): Harness {
       if (isShutdown) return;
       isShutdown = true;
       await traces.flush();
+      const EXPORTER_TIMEOUT = 5_000;
       for (const exporter of exporters) {
         if (exporter.shutdown) {
-          await exporter.shutdown();
+          await Promise.race([
+            exporter.shutdown(),
+            new Promise<void>((resolve) => setTimeout(resolve, EXPORTER_TIMEOUT)),
+          ]);
         }
       }
     },
@@ -476,6 +500,27 @@ function createGuardrails(config: HarnessConfig): GuardrailPipeline {
       name: filter.name,
       guard: filter.guard,
       direction: 'output',
+    });
+  }
+
+  if (config.guardrails?.pii) {
+    const piiConfig = typeof config.guardrails.pii === 'object' ? config.guardrails.pii : undefined;
+    const detect = piiConfig?.types
+      ? {
+          email: piiConfig.types.includes('email'),
+          phone: piiConfig.types.includes('phone'),
+          ssn: piiConfig.types.includes('ssn'),
+          creditCard: piiConfig.types.includes('creditCard'),
+          apiKey: piiConfig.types.includes('apiKey'),
+          ipAddress: piiConfig.types.includes('ipv4'),
+          privateKey: piiConfig.types.includes('privateKey'),
+        }
+      : undefined;
+    const detector = createPIIDetector(detect !== undefined ? { detect } : {});
+    entries.push({
+      name: detector.name,
+      guard: detector.guard,
+      direction: 'input',
     });
   }
 
