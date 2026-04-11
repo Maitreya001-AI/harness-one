@@ -255,6 +255,83 @@ describe('noCircularDepsRule specific suggestions (Fix 14)', () => {
   });
 });
 
+// Issue 2: exact path-segment matching (my_context vs context)
+describe('architecture-checker exact segment matching (Issue 2)', () => {
+  it('does NOT match my_context as context', () => {
+    const rule = layerDependencyRule({
+      core: [],
+      context: ['core'],
+    });
+    // src/my_context/foo.ts should not be treated as belonging to "context"
+    const result = rule.check({
+      files: ['src/my_context/foo.ts'],
+      imports: {
+        'src/my_context/foo.ts': ['src/core/types.ts'],
+      },
+    });
+    // my_context is unknown, so no module is found, no violation
+    expect(result.passed).toBe(true);
+  });
+
+  it('does NOT match context_helper as context', () => {
+    const rule = layerDependencyRule({
+      core: [],
+      context: ['core'],
+    });
+    const result = rule.check({
+      files: ['src/context_helper/foo.ts'],
+      imports: {
+        'src/context_helper/foo.ts': ['src/core/types.ts'],
+      },
+    });
+    expect(result.passed).toBe(true);
+  });
+
+  it('matches path ending with /context exactly', () => {
+    const rule = layerDependencyRule({
+      core: [],
+      context: ['core'],
+    });
+    // A path that ends with /context (no trailing slash, no extension)
+    const result = rule.check({
+      files: ['project/context'],
+      imports: {
+        'project/context': ['project/core'],
+      },
+    });
+    // context importing from core is valid
+    expect(result.passed).toBe(true);
+  });
+
+  it('Windows-style backslashes are normalised before matching', () => {
+    const rule = layerDependencyRule({
+      core: [],
+      context: ['core'],
+    });
+    const result = rule.check({
+      files: ['src\\context\\pack.ts'],
+      imports: {
+        'src\\context\\pack.ts': ['src\\core\\types.ts'],
+      },
+    });
+    // After normalisation context importing from core is fine
+    expect(result.passed).toBe(true);
+  });
+
+  it('noCircularDepsRule does NOT match my_context as context', () => {
+    const rule = noCircularDepsRule(['core', 'context']);
+    const result = rule.check({
+      files: ['src/my_context/a.ts', 'src/context/b.ts'],
+      imports: {
+        'src/my_context/a.ts': ['src/context/b.ts'],
+        'src/context/b.ts': ['src/my_context/a.ts'],
+      },
+    });
+    // my_context is not recognised as 'context', so no cross-module cycle
+    expect(result.passed).toBe(true);
+  });
+});
+
 describe('architecture-checker edge cases', () => {
   it('path segment matching does not false-positive on substrings', () => {
     const rule = layerDependencyRule({

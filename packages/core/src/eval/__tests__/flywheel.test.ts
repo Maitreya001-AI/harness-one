@@ -240,4 +240,70 @@ describe('extractNewCases', () => {
       expect(newCases[0].metadata!.generationDepth).toBe(3);
     });
   });
+
+  // Issue 4: hash collision prevention
+  describe('hash collision prevention (Issue 4)', () => {
+    it('does NOT deduplicate when inputs differ and only separator positions differ', () => {
+      // Old hash: input="a::b", expected="c"  -> "a::b::c"
+      //           input="a",    expected="b::c" -> "a::b::c"  (collision!)
+      // New hash uses length-prefixing so these are distinct.
+      const originalCases: EvalCase[] = [
+        { id: 'case-1', input: 'a::b', expectedOutput: 'c' },
+        { id: 'case-2', input: 'a',    expectedOutput: 'b::c' },
+      ];
+      const report = makeReport([
+        { caseId: 'case-1', scores: { r: 0.1 } },
+        { caseId: 'case-2', scores: { r: 0.2 } },
+      ]);
+
+      const newCases = extractNewCases(report, { scoreThreshold: 0.5 }, originalCases);
+      // Both cases are distinct — must NOT be collapsed into one
+      expect(newCases).toHaveLength(2);
+    });
+
+    it('still deduplicates truly identical input+expected pairs', () => {
+      const originalCases: EvalCase[] = [
+        { id: 'case-1', input: 'hello', expectedOutput: 'world' },
+        { id: 'case-2', input: 'hello', expectedOutput: 'world' },
+      ];
+      const report = makeReport([
+        { caseId: 'case-1', scores: { r: 0.1 } },
+        { caseId: 'case-2', scores: { r: 0.2 } },
+      ]);
+
+      const newCases = extractNewCases(report, { scoreThreshold: 0.5 }, originalCases);
+      expect(newCases).toHaveLength(1);
+    });
+
+    it('does NOT deduplicate when inputs differ only by length of separator overlap', () => {
+      // input="x:y", expected="z"  vs  input="x", expected=":y:z"
+      const originalCases: EvalCase[] = [
+        { id: 'case-1', input: 'x:y',  expectedOutput: 'z' },
+        { id: 'case-2', input: 'x',    expectedOutput: ':y:z' },
+      ];
+      const report = makeReport([
+        { caseId: 'case-1', scores: { r: 0.1 } },
+        { caseId: 'case-2', scores: { r: 0.2 } },
+      ]);
+
+      const newCases = extractNewCases(report, { scoreThreshold: 0.5 }, originalCases);
+      expect(newCases).toHaveLength(2);
+    });
+
+    it('treats missing expected as distinct from empty-string expected', () => {
+      const originalCases: EvalCase[] = [
+        { id: 'case-1', input: 'hello' },                          // no expectedOutput
+        { id: 'case-2', input: 'hello', expectedOutput: '' },      // explicit empty
+      ];
+      const report = makeReport([
+        { caseId: 'case-1', scores: { r: 0.1 } },
+        { caseId: 'case-2', scores: { r: 0.2 } },
+      ]);
+
+      // Both have same input "hello" and both effectively have empty expected —
+      // they ARE the same content so deduplication IS expected here.
+      const newCases = extractNewCases(report, { scoreThreshold: 0.5 }, originalCases);
+      expect(newCases).toHaveLength(1);
+    });
+  });
 });

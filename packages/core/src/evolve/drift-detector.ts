@@ -20,6 +20,15 @@ export interface DriftDetector {
 export interface DriftDetectorConfig {
   /** Severity thresholds for numeric deviation ratios. Defaults: low=0.1, medium=0.5. */
   thresholds?: { low: number; medium: number };
+  /**
+   * Absolute difference thresholds used when the baseline value is exactly 0.
+   * Because a ratio-based threshold is undefined for a zero baseline, we fall
+   * back to raw absolute differences.  The defaults (low=1, medium=10) are
+   * intentionally conservative – callers that measure metrics on vastly
+   * different scales (e.g. latency in milliseconds vs. probability [0,1])
+   * should override these to values appropriate for their domain.
+   */
+  zeroBaselineThresholds?: { low: number; medium: number };
 }
 
 /**
@@ -36,16 +45,21 @@ export function createDriftDetector(config?: DriftDetectorConfig): DriftDetector
   const baselines = new Map<string, Record<string, unknown>>();
   const lowThreshold = config?.thresholds?.low ?? 0.1;
   const mediumThreshold = config?.thresholds?.medium ?? 0.5;
+  // Zero-baseline thresholds are configurable so callers can adapt to their
+  // metric scale (e.g. latency in ms vs. probability scores in [0,1]).
+  const zeroLow = config?.zeroBaselineThresholds?.low ?? 1;
+  const zeroMedium = config?.zeroBaselineThresholds?.medium ?? 10;
 
   function classifyWithThresholds(expected: unknown, actual: unknown): 'low' | 'medium' | 'high' {
     if (expected === undefined || actual === undefined) return 'high';
     if (typeof expected === 'number' && typeof actual === 'number') {
-      // Fix 9: Zero-baseline severity — use absolute difference thresholds
+      // When baseline is 0 we cannot compute a meaningful ratio, so we use
+      // configurable absolute difference thresholds instead.
       if (expected === 0) {
         if (actual === 0) return 'low';
         const abs = Math.abs(actual);
-        if (abs < 1) return 'low';
-        if (abs < 10) return 'medium';
+        if (abs < zeroLow) return 'low';
+        if (abs < zeroMedium) return 'medium';
         return 'high';
       }
       const ratio = Math.abs(actual - expected) / Math.abs(expected);

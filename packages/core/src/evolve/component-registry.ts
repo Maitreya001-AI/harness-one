@@ -147,11 +147,29 @@ export function createComponentRegistry(): ComponentRegistry {
  * Supports conditions in the form: `key operator value`
  * where operator is one of: >, <, >=, <=, ==, !=
  *
+ * Also supports AND-chained conditions:
+ *   "latency > 1000 AND accuracy < 0.5"
+ * All clauses must be true for the overall condition to be true.
+ *
  * Returns true if the condition is met (component should retire).
  * Returns false if the condition cannot be parsed or the key is missing from context.
  */
 function evaluateCondition(condition: string, context: Record<string, unknown>): boolean {
-  // Fix 11: Split by whitespace first, then identify the operator token
+  // Support: "clause1 AND clause2 [AND clause3 ...]"
+  // Split is case-insensitive so "and" and "AND" both work.
+  const clauses = condition.split(/\s+AND\s+/i);
+  if (clauses.length > 1) {
+    return clauses.every((clause) => evaluateSingleCondition(clause.trim(), context));
+  }
+  return evaluateSingleCondition(condition.trim(), context);
+}
+
+/**
+ * Evaluate a single `key operator value` clause against a context object.
+ *
+ * Fix 11: Split by whitespace first, then identify the operator token.
+ */
+function evaluateSingleCondition(condition: string, context: Record<string, unknown>): boolean {
   const tokens = condition.trim().split(/\s+/);
   if (tokens.length !== 3) {
     // Not a valid 3-token condition

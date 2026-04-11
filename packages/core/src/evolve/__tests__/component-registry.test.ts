@@ -485,4 +485,86 @@ describe('createComponentRegistry', () => {
       expect(registry.validate('lt-test', { accuracy: 0.8 }).valid).toBe(true);
     });
   });
+
+  // Issue 5: AND condition support
+  describe('AND conditions (Issue 5)', () => {
+    it('retires when both AND clauses are met', () => {
+      const registry = createComponentRegistry();
+      registry.register(makeMeta({
+        id: 'and-retire',
+        retirementCondition: 'latency > 1000 AND accuracy < 0.5',
+      }));
+      // Both conditions met → retire
+      expect(registry.validate('and-retire', { latency: 2000, accuracy: 0.3 }).valid).toBe(false);
+    });
+
+    it('does NOT retire when only the first AND clause is met', () => {
+      const registry = createComponentRegistry();
+      registry.register(makeMeta({
+        id: 'and-first-only',
+        retirementCondition: 'latency > 1000 AND accuracy < 0.5',
+      }));
+      // Only latency exceeded, accuracy is fine
+      expect(registry.validate('and-first-only', { latency: 2000, accuracy: 0.8 }).valid).toBe(true);
+    });
+
+    it('does NOT retire when only the second AND clause is met', () => {
+      const registry = createComponentRegistry();
+      registry.register(makeMeta({
+        id: 'and-second-only',
+        retirementCondition: 'latency > 1000 AND accuracy < 0.5',
+      }));
+      // Only accuracy is low, latency is fine
+      expect(registry.validate('and-second-only', { latency: 100, accuracy: 0.3 }).valid).toBe(true);
+    });
+
+    it('does NOT retire when neither AND clause is met', () => {
+      const registry = createComponentRegistry();
+      registry.register(makeMeta({
+        id: 'and-neither',
+        retirementCondition: 'latency > 1000 AND accuracy < 0.5',
+      }));
+      expect(registry.validate('and-neither', { latency: 100, accuracy: 0.8 }).valid).toBe(true);
+    });
+
+    it('supports three-clause AND', () => {
+      const registry = createComponentRegistry();
+      registry.register(makeMeta({
+        id: 'three-and',
+        retirementCondition: 'a > 1 AND b > 2 AND c > 3',
+      }));
+      expect(registry.validate('three-and', { a: 2, b: 3, c: 4 }).valid).toBe(false); // all met
+      expect(registry.validate('three-and', { a: 2, b: 3, c: 1 }).valid).toBe(true);  // c not met
+    });
+
+    it('AND is case-insensitive', () => {
+      const registry = createComponentRegistry();
+      registry.register(makeMeta({
+        id: 'and-lower',
+        retirementCondition: 'latency > 1000 and accuracy < 0.5',
+      }));
+      expect(registry.validate('and-lower', { latency: 2000, accuracy: 0.3 }).valid).toBe(false);
+      expect(registry.validate('and-lower', { latency: 100, accuracy: 0.3 }).valid).toBe(true);
+    });
+
+    it('single clause without AND still works', () => {
+      const registry = createComponentRegistry();
+      registry.register(makeMeta({
+        id: 'single',
+        retirementCondition: 'score > 100',
+      }));
+      expect(registry.validate('single', { score: 150 }).valid).toBe(false);
+      expect(registry.validate('single', { score: 50 }).valid).toBe(true);
+    });
+
+    it('AND condition where one key is missing returns valid (not retired)', () => {
+      const registry = createComponentRegistry();
+      registry.register(makeMeta({
+        id: 'missing-key',
+        retirementCondition: 'latency > 1000 AND accuracy < 0.5',
+      }));
+      // accuracy key missing → second clause returns false → AND fails → not retired
+      expect(registry.validate('missing-key', { latency: 2000 }).valid).toBe(true);
+    });
+  });
 });

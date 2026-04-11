@@ -182,9 +182,22 @@ export function layerDependencyRule(layers: Record<string, string[]>): Architect
   };
 }
 
+/**
+ * Determine which module a file path belongs to.
+ *
+ * Uses exact directory-segment matching so that a module named "context" does
+ * not accidentally match paths like "src/my_context/foo.ts" or
+ * "src/scorecard/bar.ts".  A match only occurs when the module name appears as
+ * a complete path segment delimited by slashes (or at the very end of the
+ * path).
+ */
 function getModule(filePath: string, modules: string[]): string | undefined {
-  const segments = filePath.split('/');
-  return modules.find((m) => segments.includes(m));
+  const normalizedPath = filePath.replace(/\\/g, '/');
+  return modules.find((m) => {
+    // Require the module name to be surrounded by slashes, or to end the path
+    const pattern = `/${m}/`;
+    return normalizedPath.includes(pattern) || normalizedPath.endsWith(`/${m}`);
+  });
 }
 
 /** Find a cycle path using DFS. Returns the cycle path or null. */

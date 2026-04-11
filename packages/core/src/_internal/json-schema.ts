@@ -32,15 +32,64 @@ interface ValidationError {
 interface ValidationResult {
   valid: boolean;
   errors: ValidationError[];
+  /** Keywords present in the schema that are not evaluated by this validator. */
+  warnings: string[];
+}
+
+/**
+ * JSON Schema keywords that this validator does not evaluate.
+ * Their presence in a schema is silently ignored during validation, which can
+ * lead to false-positive "valid" results.  We surface them as warnings so
+ * callers are aware that their schemas may not be fully enforced.
+ */
+const UNSUPPORTED_KEYWORDS = [
+  '$ref',
+  '$defs',
+  'allOf',
+  'anyOf',
+  'oneOf',
+  'if',
+  'then',
+  'else',
+  'additionalProperties',
+  'not',
+] as const;
+
+/**
+ * Recursively walk a schema object and collect any unsupported keyword names.
+ * Each unique keyword is reported at most once regardless of how many times it
+ * appears in the schema tree.
+ */
+function detectUnsupportedKeywords(schema: Record<string, unknown>): string[] {
+  const found = new Set<string>();
+
+  function walk(obj: Record<string, unknown>): void {
+    for (const key of Object.keys(obj)) {
+      if ((UNSUPPORTED_KEYWORDS as readonly string[]).includes(key)) {
+        found.add(key);
+      }
+      if (typeof obj[key] === 'object' && obj[key] !== null && !Array.isArray(obj[key])) {
+        walk(obj[key] as Record<string, unknown>);
+      }
+    }
+  }
+
+  walk(schema);
+  return Array.from(found);
 }
 
 /**
  * Validate data against a JSON Schema (supported subset).
  *
+ * Returns `{ valid, errors, warnings }`.  `warnings` lists any schema keywords
+ * that are present but NOT evaluated by this validator (e.g. `$ref`, `allOf`).
+ * A non-empty `warnings` array does not affect `valid`, but callers should be
+ * aware that the data has not been checked against those constraints.
+ *
  * @example
  * ```ts
  * const result = validateJsonSchema({ type: 'string' }, 'hello');
- * // { valid: true, errors: [] }
+ * // { valid: true, errors: [], warnings: [] }
  * ```
  *
  * @example
@@ -49,7 +98,7 @@ interface ValidationResult {
  *   { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] },
  *   {}
  * );
- * // { valid: false, errors: [{ path: '.name', message: 'Property "name" is required' }] }
+ * // { valid: false, errors: [{ path: '.name', message: 'Property "name" is required' }], warnings: [] }
  * ```
  */
 export function validateJsonSchema(
@@ -58,7 +107,8 @@ export function validateJsonSchema(
 ): ValidationResult {
   const errors: ValidationError[] = [];
   validate(schema as SchemaObject, data, '', errors);
-  return { valid: errors.length === 0, errors };
+  const warnings = detectUnsupportedKeywords(schema as Record<string, unknown>);
+  return { valid: errors.length === 0, errors, warnings };
 }
 
 /** Maximum allowed regex pattern length to prevent DoS. */

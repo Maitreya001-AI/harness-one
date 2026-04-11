@@ -124,7 +124,18 @@ function average(values: number[]): number {
   return values.reduce((sum, v) => sum + v, 0) / values.length;
 }
 
-/** Simple content hash for deduplication. */
+/**
+ * Content hash for deduplication.
+ *
+ * Uses length-prefix encoding to prevent collisions between inputs that happen
+ * to contain the separator sequence.  For example, without length-prefixing:
+ *   input="a::b", expected="c"  →  "a::b::c"
+ *   input="a",    expected="b::c" →  "a::b::c"   (collision!)
+ *
+ * With length-prefixing and a NUL byte delimiter both produce distinct strings:
+ *   "4:a::b\x003:c"  vs  "1:a\x005:b::c"
+ */
 function hashContent(input: string, expected?: string): string {
-  return `${input}::${expected ?? ''}`;
+  const exp = expected ?? '';
+  return `${input.length}:${input}\0${exp.length}:${exp}`;
 }

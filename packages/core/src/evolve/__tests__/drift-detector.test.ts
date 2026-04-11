@@ -423,6 +423,74 @@ describe('createDriftDetector', () => {
     });
   });
 
+  // Issue 1: configurable zero-baseline thresholds
+  describe('configurable zeroBaselineThresholds (Issue 1)', () => {
+    it('uses custom zeroBaselineThresholds for low severity', () => {
+      // With zeroLow=0.01 even 0.005 should be low
+      const detector = createDriftDetector({
+        zeroBaselineThresholds: { low: 0.01, medium: 0.1 },
+      });
+      detector.setBaseline('comp-1', { value: 0 });
+      const report = detector.check('comp-1', { value: 0.005 });
+      expect(report.deviations[0].severity).toBe('low');
+    });
+
+    it('uses custom zeroBaselineThresholds for medium severity', () => {
+      const detector = createDriftDetector({
+        zeroBaselineThresholds: { low: 0.01, medium: 0.1 },
+      });
+      detector.setBaseline('comp-1', { value: 0 });
+      // 0.05 >= zeroLow(0.01) and < zeroMedium(0.1) => medium
+      const report = detector.check('comp-1', { value: 0.05 });
+      expect(report.deviations[0].severity).toBe('medium');
+    });
+
+    it('uses custom zeroBaselineThresholds for high severity', () => {
+      const detector = createDriftDetector({
+        zeroBaselineThresholds: { low: 0.01, medium: 0.1 },
+      });
+      detector.setBaseline('comp-1', { value: 0 });
+      // 0.5 >= zeroMedium(0.1) => high
+      const report = detector.check('comp-1', { value: 0.5 });
+      expect(report.deviations[0].severity).toBe('high');
+    });
+
+    it('defaults to zeroLow=1, zeroMedium=10 when not configured', () => {
+      const detector = createDriftDetector();
+      detector.setBaseline('comp-1', { value: 0 });
+
+      // 0.5 < zeroLow(1) => low
+      const low = detector.check('comp-1', { value: 0.5 });
+      expect(low.deviations[0].severity).toBe('low');
+
+      // 5 >= zeroLow(1) and < zeroMedium(10) => medium
+      const med = detector.check('comp-1', { value: 5 });
+      expect(med.deviations[0].severity).toBe('medium');
+
+      // 15 >= zeroMedium(10) => high
+      const high = detector.check('comp-1', { value: 15 });
+      expect(high.deviations[0].severity).toBe('high');
+    });
+
+    it('large zeroBaselineThresholds make everything low', () => {
+      const detector = createDriftDetector({
+        zeroBaselineThresholds: { low: 1000, medium: 10000 },
+      });
+      detector.setBaseline('comp-1', { value: 0 });
+      // 500 < zeroLow(1000) => low
+      const report = detector.check('comp-1', { value: 500 });
+      expect(report.deviations[0].severity).toBe('low');
+    });
+
+    it('negative actual value uses absolute difference', () => {
+      const detector = createDriftDetector();
+      detector.setBaseline('comp-1', { value: 0 });
+      // abs(-5) = 5 => medium
+      const report = detector.check('comp-1', { value: -5 });
+      expect(report.deviations[0].severity).toBe('medium');
+    });
+  });
+
   // Fix 8: hasBaseline method
   describe('hasBaseline (Fix 8)', () => {
     it('returns false when no baseline is set', () => {

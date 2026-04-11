@@ -8,11 +8,11 @@ describe('validateJsonSchema', () => {
     const schema = { type: 'string' };
 
     it('accepts a string', () => {
-      expect(validateJsonSchema(schema, 'hello')).toEqual({ valid: true, errors: [] });
+      expect(validateJsonSchema(schema, 'hello')).toEqual({ valid: true, errors: [], warnings: [] });
     });
 
     it('accepts empty string', () => {
-      expect(validateJsonSchema(schema, '')).toEqual({ valid: true, errors: [] });
+      expect(validateJsonSchema(schema, '')).toEqual({ valid: true, errors: [], warnings: [] });
     });
 
     it('rejects number', () => {
@@ -31,19 +31,19 @@ describe('validateJsonSchema', () => {
     const schema = { type: 'number' };
 
     it('accepts integer', () => {
-      expect(validateJsonSchema(schema, 42)).toEqual({ valid: true, errors: [] });
+      expect(validateJsonSchema(schema, 42)).toEqual({ valid: true, errors: [], warnings: [] });
     });
 
     it('accepts float', () => {
-      expect(validateJsonSchema(schema, 3.14)).toEqual({ valid: true, errors: [] });
+      expect(validateJsonSchema(schema, 3.14)).toEqual({ valid: true, errors: [], warnings: [] });
     });
 
     it('accepts 0', () => {
-      expect(validateJsonSchema(schema, 0)).toEqual({ valid: true, errors: [] });
+      expect(validateJsonSchema(schema, 0)).toEqual({ valid: true, errors: [], warnings: [] });
     });
 
     it('accepts negative', () => {
-      expect(validateJsonSchema(schema, -1)).toEqual({ valid: true, errors: [] });
+      expect(validateJsonSchema(schema, -1)).toEqual({ valid: true, errors: [], warnings: [] });
     });
 
     it('rejects string', () => {
@@ -59,7 +59,7 @@ describe('validateJsonSchema', () => {
     const schema = { type: 'integer' };
 
     it('accepts integer', () => {
-      expect(validateJsonSchema(schema, 42)).toEqual({ valid: true, errors: [] });
+      expect(validateJsonSchema(schema, 42)).toEqual({ valid: true, errors: [], warnings: [] });
     });
 
     it('rejects float', () => {
@@ -67,7 +67,7 @@ describe('validateJsonSchema', () => {
     });
 
     it('accepts 0', () => {
-      expect(validateJsonSchema(schema, 0)).toEqual({ valid: true, errors: [] });
+      expect(validateJsonSchema(schema, 0)).toEqual({ valid: true, errors: [], warnings: [] });
     });
   });
 
@@ -75,11 +75,11 @@ describe('validateJsonSchema', () => {
     const schema = { type: 'boolean' };
 
     it('accepts true', () => {
-      expect(validateJsonSchema(schema, true)).toEqual({ valid: true, errors: [] });
+      expect(validateJsonSchema(schema, true)).toEqual({ valid: true, errors: [], warnings: [] });
     });
 
     it('accepts false', () => {
-      expect(validateJsonSchema(schema, false)).toEqual({ valid: true, errors: [] });
+      expect(validateJsonSchema(schema, false)).toEqual({ valid: true, errors: [], warnings: [] });
     });
 
     it('rejects 0', () => {
@@ -91,7 +91,7 @@ describe('validateJsonSchema', () => {
     const schema = { type: 'null' };
 
     it('accepts null', () => {
-      expect(validateJsonSchema(schema, null)).toEqual({ valid: true, errors: [] });
+      expect(validateJsonSchema(schema, null)).toEqual({ valid: true, errors: [], warnings: [] });
     });
 
     it('rejects undefined', () => {
@@ -107,11 +107,11 @@ describe('validateJsonSchema', () => {
     const schema = { type: 'array' };
 
     it('accepts empty array', () => {
-      expect(validateJsonSchema(schema, [])).toEqual({ valid: true, errors: [] });
+      expect(validateJsonSchema(schema, [])).toEqual({ valid: true, errors: [], warnings: [] });
     });
 
     it('accepts array with items', () => {
-      expect(validateJsonSchema(schema, [1, 2, 3])).toEqual({ valid: true, errors: [] });
+      expect(validateJsonSchema(schema, [1, 2, 3])).toEqual({ valid: true, errors: [], warnings: [] });
     });
 
     it('rejects object', () => {
@@ -127,11 +127,11 @@ describe('validateJsonSchema', () => {
     const schema = { type: 'object' };
 
     it('accepts empty object', () => {
-      expect(validateJsonSchema(schema, {})).toEqual({ valid: true, errors: [] });
+      expect(validateJsonSchema(schema, {})).toEqual({ valid: true, errors: [], warnings: [] });
     });
 
     it('accepts object with properties', () => {
-      expect(validateJsonSchema(schema, { a: 1 })).toEqual({ valid: true, errors: [] });
+      expect(validateJsonSchema(schema, { a: 1 })).toEqual({ valid: true, errors: [], warnings: [] });
     });
 
     it('rejects array', () => {
@@ -155,11 +155,11 @@ describe('validateJsonSchema', () => {
     };
 
     it('accepts valid object', () => {
-      expect(validateJsonSchema(schema, { name: 'Alice', age: 30 })).toEqual({ valid: true, errors: [] });
+      expect(validateJsonSchema(schema, { name: 'Alice', age: 30 })).toEqual({ valid: true, errors: [], warnings: [] });
     });
 
     it('accepts object with extra properties', () => {
-      expect(validateJsonSchema(schema, { name: 'Alice', age: 30, extra: true })).toEqual({ valid: true, errors: [] });
+      expect(validateJsonSchema(schema, { name: 'Alice', age: 30, extra: true })).toEqual({ valid: true, errors: [], warnings: [] });
     });
 
     it('rejects invalid property type', () => {
@@ -180,7 +180,7 @@ describe('validateJsonSchema', () => {
     };
 
     it('accepts when required field is present', () => {
-      expect(validateJsonSchema(schema, { name: 'Alice' })).toEqual({ valid: true, errors: [] });
+      expect(validateJsonSchema(schema, { name: 'Alice' })).toEqual({ valid: true, errors: [], warnings: [] });
     });
 
     it('rejects when required field is missing', () => {
@@ -217,7 +217,7 @@ describe('validateJsonSchema', () => {
 
     it('accepts valid nested object', () => {
       const result = validateJsonSchema(schema, { address: { street: '123 Main St', city: 'NYC' } });
-      expect(result).toEqual({ valid: true, errors: [] });
+      expect(result).toEqual({ valid: true, errors: [], warnings: [] });
     });
 
     it('rejects invalid nested property', () => {
@@ -242,11 +242,11 @@ describe('validateJsonSchema', () => {
     };
 
     it('accepts valid array items', () => {
-      expect(validateJsonSchema(schema, [1, 2, 3])).toEqual({ valid: true, errors: [] });
+      expect(validateJsonSchema(schema, [1, 2, 3])).toEqual({ valid: true, errors: [], warnings: [] });
     });
 
     it('accepts empty array', () => {
-      expect(validateJsonSchema(schema, [])).toEqual({ valid: true, errors: [] });
+      expect(validateJsonSchema(schema, [])).toEqual({ valid: true, errors: [], warnings: [] });
     });
 
     it('rejects invalid array item', () => {
@@ -264,7 +264,7 @@ describe('validateJsonSchema', () => {
           required: ['id'],
         },
       };
-      expect(validateJsonSchema(objArraySchema, [{ id: 1 }, { id: 2 }])).toEqual({ valid: true, errors: [] });
+      expect(validateJsonSchema(objArraySchema, [{ id: 1 }, { id: 2 }])).toEqual({ valid: true, errors: [], warnings: [] });
 
       const result = validateJsonSchema(objArraySchema, [{ id: 1 }, {}]);
       expect(result.valid).toBe(false);
@@ -278,7 +278,7 @@ describe('validateJsonSchema', () => {
     const schema = { enum: ['red', 'green', 'blue'] };
 
     it('accepts valid enum value', () => {
-      expect(validateJsonSchema(schema, 'red')).toEqual({ valid: true, errors: [] });
+      expect(validateJsonSchema(schema, 'red')).toEqual({ valid: true, errors: [], warnings: [] });
     });
 
     it('rejects invalid enum value', () => {
@@ -289,31 +289,31 @@ describe('validateJsonSchema', () => {
 
     it('supports numeric enums', () => {
       const numSchema = { enum: [1, 2, 3] };
-      expect(validateJsonSchema(numSchema, 2)).toEqual({ valid: true, errors: [] });
+      expect(validateJsonSchema(numSchema, 2)).toEqual({ valid: true, errors: [], warnings: [] });
       expect(validateJsonSchema(numSchema, 4).valid).toBe(false);
     });
 
     it('supports null in enum', () => {
       const nullSchema = { enum: ['a', null] };
-      expect(validateJsonSchema(nullSchema, null)).toEqual({ valid: true, errors: [] });
+      expect(validateJsonSchema(nullSchema, null)).toEqual({ valid: true, errors: [], warnings: [] });
     });
 
     it('supports object values in enum', () => {
       const objSchema = { enum: [{ a: 1 }, { b: 2 }] };
-      expect(validateJsonSchema(objSchema, { a: 1 })).toEqual({ valid: true, errors: [] });
+      expect(validateJsonSchema(objSchema, { a: 1 })).toEqual({ valid: true, errors: [], warnings: [] });
       expect(validateJsonSchema(objSchema, { c: 3 }).valid).toBe(false);
     });
 
     it('supports array values in enum', () => {
       const arrSchema = { enum: [[1, 2], [3, 4]] };
-      expect(validateJsonSchema(arrSchema, [1, 2])).toEqual({ valid: true, errors: [] });
+      expect(validateJsonSchema(arrSchema, [1, 2])).toEqual({ valid: true, errors: [], warnings: [] });
       expect(validateJsonSchema(arrSchema, [5, 6]).valid).toBe(false);
     });
 
     it('supports nested object values in enum', () => {
       const nestedSchema = { enum: [{ a: { b: { c: 1 } } }, { x: [1, 2] }] };
-      expect(validateJsonSchema(nestedSchema, { a: { b: { c: 1 } } })).toEqual({ valid: true, errors: [] });
-      expect(validateJsonSchema(nestedSchema, { x: [1, 2] })).toEqual({ valid: true, errors: [] });
+      expect(validateJsonSchema(nestedSchema, { a: { b: { c: 1 } } })).toEqual({ valid: true, errors: [], warnings: [] });
+      expect(validateJsonSchema(nestedSchema, { x: [1, 2] })).toEqual({ valid: true, errors: [], warnings: [] });
       expect(validateJsonSchema(nestedSchema, { a: { b: { c: 2 } } }).valid).toBe(false);
     });
   });
@@ -324,7 +324,7 @@ describe('validateJsonSchema', () => {
     const schema = { type: 'string', pattern: '^[A-Z]+$' };
 
     it('accepts matching string', () => {
-      expect(validateJsonSchema(schema, 'HELLO')).toEqual({ valid: true, errors: [] });
+      expect(validateJsonSchema(schema, 'HELLO')).toEqual({ valid: true, errors: [], warnings: [] });
     });
 
     it('rejects non-matching string', () => {
@@ -346,12 +346,12 @@ describe('validateJsonSchema', () => {
     const schema = { type: 'number', minimum: 0, maximum: 100 };
 
     it('accepts value within range', () => {
-      expect(validateJsonSchema(schema, 50)).toEqual({ valid: true, errors: [] });
+      expect(validateJsonSchema(schema, 50)).toEqual({ valid: true, errors: [], warnings: [] });
     });
 
     it('accepts boundary values', () => {
-      expect(validateJsonSchema(schema, 0)).toEqual({ valid: true, errors: [] });
-      expect(validateJsonSchema(schema, 100)).toEqual({ valid: true, errors: [] });
+      expect(validateJsonSchema(schema, 0)).toEqual({ valid: true, errors: [], warnings: [] });
+      expect(validateJsonSchema(schema, 100)).toEqual({ valid: true, errors: [], warnings: [] });
     });
 
     it('rejects value below minimum', () => {
@@ -373,12 +373,12 @@ describe('validateJsonSchema', () => {
     const schema = { type: 'string', minLength: 2, maxLength: 5 };
 
     it('accepts string within length bounds', () => {
-      expect(validateJsonSchema(schema, 'abc')).toEqual({ valid: true, errors: [] });
+      expect(validateJsonSchema(schema, 'abc')).toEqual({ valid: true, errors: [], warnings: [] });
     });
 
     it('accepts boundary lengths', () => {
-      expect(validateJsonSchema(schema, 'ab')).toEqual({ valid: true, errors: [] });
-      expect(validateJsonSchema(schema, 'abcde')).toEqual({ valid: true, errors: [] });
+      expect(validateJsonSchema(schema, 'ab')).toEqual({ valid: true, errors: [], warnings: [] });
+      expect(validateJsonSchema(schema, 'abcde')).toEqual({ valid: true, errors: [], warnings: [] });
     });
 
     it('rejects string below minLength', () => {
@@ -449,13 +449,130 @@ describe('validateJsonSchema', () => {
     });
   });
 
+  // ─── Issue 3: Unsupported keyword warnings ────────────────
+
+  describe('unsupported keyword warnings (Issue 3)', () => {
+    it('returns empty warnings for fully-supported schema', () => {
+      const result = validateJsonSchema({ type: 'string' }, 'hello');
+      expect(result.warnings).toEqual([]);
+    });
+
+    it('warns about $ref', () => {
+      const result = validateJsonSchema({ $ref: '#/$defs/Foo', type: 'string' }, 'hello');
+      expect(result.warnings).toContain('$ref');
+    });
+
+    it('warns about $defs', () => {
+      const result = validateJsonSchema({ $defs: { Foo: { type: 'string' } } }, {});
+      expect(result.warnings).toContain('$defs');
+    });
+
+    it('warns about allOf', () => {
+      const result = validateJsonSchema({ allOf: [{ type: 'string' }] }, 'hello');
+      expect(result.warnings).toContain('allOf');
+    });
+
+    it('warns about anyOf', () => {
+      const result = validateJsonSchema({ anyOf: [{ type: 'string' }, { type: 'number' }] }, 42);
+      expect(result.warnings).toContain('anyOf');
+    });
+
+    it('warns about oneOf', () => {
+      const result = validateJsonSchema({ oneOf: [{ type: 'string' }, { type: 'number' }] }, 'x');
+      expect(result.warnings).toContain('oneOf');
+    });
+
+    it('warns about if/then/else', () => {
+      const result = validateJsonSchema(
+        { if: { type: 'string' }, then: { minLength: 1 }, else: { type: 'number' } },
+        'x',
+      );
+      expect(result.warnings).toContain('if');
+      expect(result.warnings).toContain('then');
+      expect(result.warnings).toContain('else');
+    });
+
+    it('warns about additionalProperties', () => {
+      const result = validateJsonSchema(
+        { type: 'object', additionalProperties: false },
+        { extra: 1 },
+      );
+      expect(result.warnings).toContain('additionalProperties');
+    });
+
+    it('warns about not', () => {
+      const result = validateJsonSchema({ not: { type: 'string' } }, 42);
+      expect(result.warnings).toContain('not');
+    });
+
+    it('detects nested unsupported keywords', () => {
+      const result = validateJsonSchema(
+        {
+          type: 'object',
+          properties: {
+            name: { type: 'string', allOf: [{ minLength: 1 }] },
+          },
+        },
+        { name: 'Alice' },
+      );
+      expect(result.warnings).toContain('allOf');
+    });
+
+    it('each keyword reported at most once even if present multiple times', () => {
+      const result = validateJsonSchema(
+        {
+          type: 'object',
+          properties: {
+            a: { allOf: [{ type: 'string' }] },
+            b: { allOf: [{ type: 'number' }] },
+          },
+        },
+        { a: 'x', b: 1 },
+      );
+      const allOfCount = result.warnings.filter((w) => w === 'allOf').length;
+      expect(allOfCount).toBe(1);
+    });
+
+    it('valid is still true even with warnings', () => {
+      const result = validateJsonSchema({ type: 'string', $ref: '#/foo' }, 'hello');
+      expect(result.valid).toBe(true);
+      expect(result.warnings).toContain('$ref');
+    });
+
+    it('valid can be false with warnings simultaneously', () => {
+      const result = validateJsonSchema({ type: 'number', $ref: '#/foo' }, 'not-a-number');
+      expect(result.valid).toBe(false);
+      expect(result.warnings).toContain('$ref');
+    });
+
+    it('warns about all unsupported keywords together', () => {
+      const schema = {
+        $ref: '#',
+        $defs: {},
+        allOf: [],
+        anyOf: [],
+        oneOf: [],
+        if: {},
+        then: {},
+        else: {},
+        additionalProperties: false,
+        not: {},
+      };
+      const result = validateJsonSchema(schema, {});
+      const expected = ['$ref', '$defs', 'allOf', 'anyOf', 'oneOf', 'if', 'then', 'else', 'additionalProperties', 'not'];
+      for (const kw of expected) {
+        expect(result.warnings).toContain(kw);
+      }
+    });
+  });
+
   // ─── Edge cases ───────────────────────────────────────────
 
   describe('edge cases', () => {
     it('validates with empty schema (accepts anything)', () => {
-      expect(validateJsonSchema({}, 'anything')).toEqual({ valid: true, errors: [] });
-      expect(validateJsonSchema({}, null)).toEqual({ valid: true, errors: [] });
-      expect(validateJsonSchema({}, 42)).toEqual({ valid: true, errors: [] });
+      expect(validateJsonSchema({}, 'anything')).toEqual({ valid: true, errors: [], warnings: [] });
+      expect(validateJsonSchema({}, null)).toEqual({ valid: true, errors: [], warnings: [] });
+      expect(validateJsonSchema({}, 42)).toEqual({ valid: true, errors: [], warnings: [] });
     });
 
     it('collects multiple errors', () => {
@@ -496,7 +613,7 @@ describe('validateJsonSchema', () => {
 
     it('combined constraints: type + enum + pattern', () => {
       const schema = { type: 'string', enum: ['YES', 'NO'], pattern: '^[A-Z]+$' };
-      expect(validateJsonSchema(schema, 'YES')).toEqual({ valid: true, errors: [] });
+      expect(validateJsonSchema(schema, 'YES')).toEqual({ valid: true, errors: [], warnings: [] });
       expect(validateJsonSchema(schema, 'MAYBE').valid).toBe(false);
     });
   });
