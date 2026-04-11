@@ -41,6 +41,7 @@ function createPipeline(config: {
   output?: Array<{ name: string; guard: Guardrail }>;
   failClosed?: boolean;  // 默认 true
   onEvent?: (event: GuardrailEvent) => void;
+  maxResults?: number;   // 限制 PipelineResult.results 数组长度，默认不限制
 }): GuardrailPipeline
 ```
 
@@ -99,15 +100,23 @@ createInjectionDetector 的标准化流程：
 3. 西里尔字母同形字映射（a/e/o/c/p/y/x/i）
 4. 空白归一化
 5. 移除 Markdown 格式字符
-6. 按灵敏度级别匹配模式：low（9 个精确模式）→ medium（+4 个模糊模式）→ high（+5 个激进模式 + base64 检测）
+6. 按灵敏度级别匹配模式：low（9 个精确模式）→ medium（+4 个模糊模式 + base64 检测 + 数学字母数字 Unicode 块检测）→ high（+5 个激进模式）
+
+内容长度超过 100KB 时，注入检测切换为滑动窗口模式：将内容分割为若干重叠窗口逐段扫描，避免对超大输入进行全量正则匹配，防止 ReDoS 风险。
 
 ### 速率限制
 
 滑动窗口算法 + LRU key 淘汰（maxKeys 默认 10000）。每次请求清除过期时间戳，检查窗口内计数。
 
-### 自愈循环
+### 内容过滤 ReDoS 防护
+
+`createContentFilter` 在注册用户提供的 `blockedPatterns` 时，对每个正则表达式执行安全性预检：用短测试字符串测量匹配耗时，超过阈值的正则被拒绝并抛出错误，防止恶意或病态正则导致的灾难性回溯（ReDoS）。
+
+### 自愈循环与 token 估算
 
 withSelfHealing 执行逻辑：对每次尝试，逐个运行 guardrails，收集 block/modify 失败原因。全部通过则返回成功；否则用 `buildRetryPrompt` 构建重试提示，调用 `regenerate` 获取新内容，重复直到 maxRetries。
+
+`estimateTokens` 回调用于累计各轮内容的 token 用量，与 `maxTotalTokens` 配合实现自愈过程的总 token 预算控制。内置默认估算器已优化为单次遍历（`Math.ceil(text.length / 4)`），避免不必要的中间字符串分配。
 
 ## 依赖关系
 

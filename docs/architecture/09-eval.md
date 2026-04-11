@@ -89,6 +89,8 @@ function extractNewCases(report: EvalReport, config: FlywheelConfig): EvalCase[]
 
 从 EvalReport 中筛选平均分低于 scoreThreshold 的结果，按平均分升序排列（最差的优先），截取 maxNewCases 个，转化为带 `flywheel` 和 `auto-generated` tag 的新 EvalCase。
 
+生成的 EvalCase ID 使用抗碰撞哈希：`hash(originalCaseId + timestamp + averageScore)`，确保同一用例在不同轮次飞轮运行中生成的 ID 不重复，可安全合并到同一测试套件而不发生覆盖。
+
 ### 串行执行
 
 `runner.run()` 串行执行所有用例（`for...of`），有意避免并行以尊重 LLM API 速率限制。

@@ -6,6 +6,156 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.1.0] — 2026-04-10
+
+### Fixed
+
+#### Core (`harness-one`)
+
+- **AgentLoop**: Timer leak in tool timeout `Promise.race` — timeout handle is
+  now cleared in the `finally` branch regardless of resolve/reject path.
+- **AgentLoop**: Conversation trimming edge case — the trimmer now preserves
+  every system message instead of keeping only the first one.
+- **AgentLoop**: Fallback adapter race condition — a mutex guards concurrent
+  fallback selections so two concurrent failures cannot both promote the same
+  secondary adapter.
+- **AgentLoop**: Cumulative stream-byte counter is reset on stream error so
+  `maxStreamBytes` enforcement is not skewed by a failed prior attempt.
+
+#### Guardrails
+
+- **Pipeline**: Timer leak in pipeline timeout `Promise.race` — timeout handle
+  is cleared in `finally`.
+- **Injection detector**: Base64-bypass at medium sensitivity closed — detector
+  now decodes and re-scans base64-encoded fragments before scoring.
+- **Injection detector**: Mathematical alphanumeric homoglyph support added —
+  Unicode math-bold, math-italic, and script codepoints are normalised before
+  pattern matching.
+- **Content guardrail**: Truncation replaced with a sliding window for payloads
+  larger than 100 KB, preventing silent data loss.
+- **Schema validator**: ReDoS protection extended to user-supplied `pattern`
+  values — `isSafePattern()` is called before compiling any regex provided via
+  config.
+- **Self-healing**: Double token estimation removed — usage was being counted
+  once during planning and again during execution.
+
+#### Prompt
+
+- **Template builder**: Variable injection vulnerability patched — template
+  variable values are sanitized before interpolation.
+- **Registry**: Semver validation added on `register()` — malformed version
+  strings are rejected with a descriptive error.
+
+#### Context
+
+- **Truncation**: Oversized single message is always preserved rather than
+  silently dropped when it alone exceeds the context budget.
+- **Memory**: Sliding window optimization reduces working data structures from 4
+  to 2, cutting peak memory during large context operations.
+
+#### Memory
+
+- **FS store**: `update()` TOCTOU race condition eliminated — read-modify-write
+  is now serialized per key.
+- **Vector store**: Dimension validation added — mismatched embedding dimensions
+  raise an error at write time instead of silently corrupting similarity scores.
+
+#### Session
+
+- **LRU eviction**: Locked sessions are skipped during eviction candidates
+  selection, preventing eviction of sessions with active locks.
+- **Auth context**: Shallow `Object.freeze` replaced with a recursive deep
+  freeze so nested objects on the auth context are also immutable.
+
+#### Observe
+
+- **Trace eviction**: `isEvicting` guard wrapped in `try-finally` — the flag is
+  always cleared even if the eviction callback throws.
+- **CostTracker**: `updateUsage()` was not called for streaming chunks; the
+  running total is now updated incrementally on every streaming delta.
+
+#### OpenAI adapter
+
+- **`stream()`**: `temperature`, `topP`, and `stopSequences` parameters were
+  silently dropped; they are now forwarded to the SDK call.
+
+#### AJV
+
+- **Format loading**: Race condition on async `validate()` fixed — format
+  plugins are awaited before the first schema compilation.
+
+#### Langfuse
+
+- **Generation detection**: Heuristic was too broad; explicit `span.kind` is
+  now checked first before falling back to name-based inference.
+- **CostTracker**: `updateUsage()` was missing from the Langfuse cost tracker
+  implementation; added to match the core interface.
+
+#### OpenTelemetry
+
+- **Parent span eviction**: Evicting a parent span no longer orphans its
+  children — an `evictedParents` map provides a fallback root context so child
+  spans remain correctly rooted.
+
+#### Full (`harness-one-full`)
+
+- **Exporter shutdown**: `shutdown()` previously hung indefinitely; a 5-second
+  timeout now forces resolution.
+- **Tool call arguments**: Arguments from tool calls were not passed through
+  guardrail validation; they are now screened before the tool handler is invoked.
+
+#### Eval
+
+- **Flywheel hash collision**: Length-prefix encoding added to the hash
+  input — concatenated fields can no longer produce the same hash via
+  value-boundary collisions.
+
+#### Evolve
+
+- **Drift detector**: Magic-number zero-baseline thresholds replaced with
+  `zeroBaselineThresholds` config, allowing callers to tune sensitivity.
+- **Architecture checker**: Fragile substring path matching replaced with exact
+  segment matching, eliminating false positives from partial directory names.
+- **Retirement condition**: Missing `AND` clause support added — conditions can
+  now require multiple criteria to be satisfied simultaneously.
+
+#### Infrastructure
+
+- **Vitest configs**: 8 coverage configurations were excluding source files from
+  coverage reporting; all are now included.
+- **ESLint**: `no-console` rule added project-wide with exemptions for CLI
+  entry-points and test files.
+- **package.json**: Legacy `main`, `module`, and `types` fields added to the 8
+  packages that were missing them, restoring compatibility with non-ESM tooling.
+
+---
+
+### Added
+
+- `maxStreamBytes` and `maxToolArgBytes` config options in `AgentLoop` to cap
+  per-call data volumes.
+- `maxResults` config option in the guardrail pipeline for limiting the number
+  of findings returned per run.
+- `sanitize` option in the prompt builder and registry to control variable
+  sanitization behavior.
+- `onTransition` observability hook in `SkillEngine` for tracking state
+  transitions.
+- `updateUsage()` method in `CostTracker` for incremental streaming token
+  accounting.
+- `pii` guardrails config in `createHarness()` for enabling PII detection at
+  harness construction time.
+- `zeroBaselineThresholds` config in the drift detector for configurable
+  zero-baseline sensitivity.
+- `warnings` field in `ValidationResult` JSON Schema — non-fatal issues are now
+  surfaced without causing validation failure.
+- `AND` clause support in component retirement conditions.
+- `evictedParents` map in the OpenTelemetry exporter to maintain span parentage
+  after parent eviction.
+- `no-console` ESLint rule with CLI and test file exemptions.
+- Legacy `main` / `module` / `types` fields in 8 `package.json` files.
+
+---
+
 ## [Unreleased]
 
 ### Changed — harness-one-full

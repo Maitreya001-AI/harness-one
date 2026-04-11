@@ -100,13 +100,19 @@ DriftDetector.check() 逐字段对比 baseline 和 current：
 
 使用内部 `deepEqual()` 递归比较对象和数组。
 
+漂移阈值可通过 `createDriftDetector(config?)` 的 `thresholds` 配置项覆盖默认值：`{ low: number; medium: number; high: number }`（对应数值偏差的百分比边界）。不提供 config 时使用上述默认值（10% / 50%）。
+
 ### 循环依赖检测
 
 `noCircularDepsRule` 从 imports 记录构建有向图，对每个模块执行 DFS，通过递归栈检测回边（cycle）。
 
 ### 层级依赖规则
 
-`layerDependencyRule` 接收 `{ module: allowedDeps[] }` 映射，检查每个文件的 import 目标是否在允许列表中。模块识别通过路径中包含 `/{module}/` 或以 `{module}/` 开头。
+`layerDependencyRule` 接收 `{ module: allowedDeps[] }` 映射，检查每个文件的 import 目标是否在允许列表中。模块识别使用精确路径段匹配：路径按 `/` 分割后检查各段是否与模块名完全相等，而非子串包含。这避免了 `core` 误匹配 `core-utils` 或 `hardcore` 等同名前缀目录的问题。
+
+### JSON Schema 不支持关键字警告
+
+`createArchitectureChecker()` 使用内部 JSON Schema 验证器校验规则上下文。当规则的 schema 定义中包含验证器不支持的关键字（如 `unevaluatedProperties`、`$dynamicRef` 等 Draft 2019-09+ 特性）时，checker 会通过 `onWarning` 回调（如配置了的话）发出警告而非静默忽略，帮助开发者发现 schema 与验证器能力不匹配的问题。
 
 ### 品味编码导出
 
@@ -133,7 +139,7 @@ DriftDetector.check() 逐字段对比 baseline 和 current：
 
 ## 已知限制
 
-- 字符串退役条件仅支持简单 `key op value` 格式。复杂逻辑（AND/OR）需使用函数形式的退役条件
+- 字符串退役条件除简单 `key op value` 格式外，现支持 AND 子句：`condition1 AND condition2`，多个子条件全部成立时触发退役。OR 逻辑仍需使用函数形式的退役条件
 - DriftDetector 不持久化基线，进程重启后丢失
 - 架构规则的 `getModule()` 基于简单路径字符串匹配，嵌套同名目录可能误判
 - TasteCodingRegistry 无持久化

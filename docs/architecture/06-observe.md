@@ -60,7 +60,9 @@ function createCostTracker(config?: {
   alertThresholds?: { warning: number; critical: number };  // 默认 0.8 / 0.95（Langfuse 实现中可通过 config 覆盖）
 }): CostTracker
 ```
-CostTracker 接口：`setPricing()`, `recordUsage()`, `getTotalCost()`, `getCostByModel()`, `getCostByTrace()`, `setBudget()`, `checkBudget()`, `onAlert()`, `getAlertMessage()`, `reset()`.
+CostTracker 接口：`setPricing()`, `recordUsage()`, `updateUsage()`, `getTotalCost()`, `getCostByModel()`, `getCostByTrace()`, `setBudget()`, `checkBudget()`, `onAlert()`, `getAlertMessage()`, `reset()`.
+
+`updateUsage(traceId, partialUsage)` 用于流式场景：当 token 用量随流式响应逐步累积时，可多次调用此方法更新同一 traceId 的用量，而无需在流结束后一次性 `recordUsage()`。最终成本基于累积的完整用量计算。
 
 实现特点：
 - 使用独立闭包函数（checkBudgetFn、getAlertMessageFn）代替 `this` 引用，支持安全解构：`const { recordUsage, checkBudget } = createCostTracker()`
@@ -76,7 +78,7 @@ Trace 内部维护 MutableTrace/MutableSpan 结构（可写），通过 `toReado
 
 ### LRU 淘汰
 
-`maxTraces` 控制内存中的最大 trace 数量。新 trace 创建时检查是否超限，超限则按 FIFO 顺序淘汰最旧的 trace 及其所有 span。
+`maxTraces` 控制内存中的最大 trace 数量。新 trace 创建时检查是否超限，超限则按 FIFO 顺序淘汰最旧的 trace 及其所有 span。淘汰逻辑包裹在 `try-finally` 块中，确保即使淘汰过程中发生异常，内部状态（tracks Map、accessOrder）也能正确清理，不留悬空引用。
 
 ### ID 生成
 

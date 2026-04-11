@@ -52,11 +52,15 @@ function createPromptRegistry(): PromptRegistry
 ```
 返回：`register()`, `get(id, version?)`, `resolve(id, variables, version?)`, `list()`, `has()`.
 
+`register()` 支持 `sanitize` 选项：启用后，模板内容在存储前经过 HTML/脚本注入清理，防止用户提供的模板内容通过变量注入引入恶意标记。`register()` 同时校验 `version` 字段格式——版本号必须符合 semver（`major.minor.patch`），非法格式抛出 HarnessError。
+
 **createSkillEngine()**
 ```ts
 function createSkillEngine(): SkillEngine
 ```
 返回：`registerSkill()`, `startSkill()`, `getCurrentPrompt()`, `getAvailableTools()`, `processTurn()`, `advanceTo()`, `reset()`, `isComplete()` + 只读属性 `currentStage`, `turnCount`, `stageHistory`.
+
+SkillEngine 支持 `onTransition` 回调（在 `startSkill()` 或 `createSkillEngine()` 的 config 中注册）：每次阶段转换成功后调用，入参为 `{ from: string; to: string; reason: TransitionCondition['type'] }`。用于日志记录、埋点或触发副作用（如通知上层 AgentLoop 切换工具集）。
 
 **createAsyncPromptRegistry(backend)**
 ```ts

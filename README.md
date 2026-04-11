@@ -81,7 +81,9 @@ The execution engine. Calls your LLM adapter in a loop, dispatches tool calls, a
 
 Adapters receive `ChatParams.signal` (an `AbortSignal`) and should forward it to their underlying SDK to cancel in-flight requests when the loop is aborted. `LLMConfig.extra` accepts a `Record<string, unknown>` for provider-specific options that fall outside the standard fields.
 
-`maxConversationMessages` defaults to **200** — the loop automatically trims conversation history once it exceeds this length. Pass `maxConversationMessages: Infinity` to disable.
+`maxConversationMessages` defaults to **200** — the loop automatically trims conversation history once it exceeds this length, always preserving all leading system messages. Pass `maxConversationMessages: Infinity` to disable.
+
+`maxStreamBytes` (default **10 MB**) caps the total bytes consumed from a single streaming response. `maxToolArgBytes` (default **5 MB**) caps the byte length of any individual tool-call argument payload. Both prevent unbounded memory growth from runaway streams or malformed tool calls.
 
 Pass an optional `traceManager` to get automatic observability: one trace per `run()`, one span per iteration, child spans per tool call.
 
@@ -103,7 +105,9 @@ const loop = new AgentLoop({
   adapter,
   maxIterations: 10,
   maxTotalTokens: 100_000,
-  maxConversationMessages: 200,  // default; trims history automatically
+  maxConversationMessages: 200,  // default; trims history, preserving system messages
+  maxStreamBytes: 10_485_760,    // default 10 MB; caps streaming response size
+  maxToolArgBytes: 5_242_880,    // default 5 MB; caps tool argument payload size
   onToolCall: async (call) => ({ result: `Executed ${call.name}` }),
   traceManager: myTraceManager,  // optional; auto-creates spans
 });
@@ -123,8 +127,10 @@ for await (const event of loop.run(messages)) {
 
 Multi-layer prompt assembly optimized for KV-cache stability, template registry with versioning, multi-stage skill workflows, and progressive disclosure.
 
+Template variable substitution sanitizes values by default (`sanitize: true`) to prevent injection through variable content. The prompt registry validates semver on `register()` and rejects malformed version strings. `SkillEngine` exposes an `onTransition` hook for observing state machine transitions.
+
 ```typescript
-import { createPromptBuilder, createPromptRegistry } from 'harness-one/prompt';
+import { createPromptBuilder, createPromptRegistry, createSkillEngine } from 'harness-one/prompt';
 
 const builder = createPromptBuilder({ separator: '\n\n' });
 
@@ -136,22 +142,32 @@ builder.addLayer({
   cacheable: true,
 });
 
-// Dynamic layers added after
+// Dynamic layers added after; variables are sanitized by default
 builder.addLayer({
   name: 'context',
   content: 'User project: {{project}}',
   priority: 10,
   cacheable: false,
+  sanitize: true,  // default; strips injection characters from variable values
 });
 
 builder.setVariable('project', 'my-app');
 const result = builder.build();
 // result.systemPrompt, result.stablePrefixHash, result.metadata
+
+// SkillEngine: observe state transitions for debugging / tracing
+const engine = createSkillEngine({
+  onTransition: ({ from, to, skill, context }) => {
+    console.log(`skill ${skill}: ${from} → ${to}`);
+  },
+});
 ```
 
 ### harness-one/context -- Context Engineering
 
 Token budget management with named segments, HEAD/MID/TAIL context packing with automatic trimming, and cache stability analysis across iterations.
+
+The `truncate` compression strategy always retains at least the final message so the conversation is never left empty. The sliding window compressor uses an optimized 2-Set implementation for O(1) eviction.
 
 ```typescript
 import { createBudget, packContext, analyzeCacheStability } from 'harness-one/context';
@@ -210,6 +226,8 @@ const loop = new AgentLoop({
 
 Pipeline of input/output guardrails with fail-closed semantics, built-in detectors for injection and content filtering, rate limiting, and self-healing retry loops.
 
+The injection detector at `sensitivity: 'medium'` includes base64 payload detection. The Unicode homoglyph scanner covers mathematical alphanumeric lookalikes (U+1D400–U+1D467) in addition to standard confusables. Content analysis on payloads larger than 100 KB uses sliding window analysis rather than truncation so no content is silently skipped. User-supplied regex patterns in `createContentFilter` are validated against ReDoS at construction time. `createPipeline` accepts a `maxResults` option (default **1000**) to cap the number of events retained for bounded memory use. `withSelfHealing` uses optimized token estimation internally.
+
 ```typescript
 import {
   createPipeline,
@@ -222,11 +240,12 @@ import {
 
 const pipeline = createPipeline({
   input: [
-    createInjectionDetector({ sensitivity: 'medium' }),
-    createContentFilter({ blocked: ['password'] }),
+    createInjectionDetector({ sensitivity: 'medium' }), // includes base64 detection
+    createContentFilter({ blocked: ['password'] }),      // regex validated against ReDoS
     createRateLimiter({ max: 10, windowMs: 60_000 }),
   ],
   failClosed: true,
+  maxResults: 1000,  // default; caps retained events
 });
 
 const result = await runInput(pipeline, { content: userMessage });
@@ -260,10 +279,12 @@ const harness = createHarness({
     injection: { sensitivity: 'medium' }, // or true for defaults
     rateLimit: { max: 10, windowMs: 60_000 },
     contentFilter: { blocked: ['confidential'] }, // applied to output
+    pii: true,  // auto-wires PII detector; or { redact: true } for redaction mode
   },
 });
 
 // Guardrails fire automatically — blocked input/output yields an 'error' event
+// Tool call arguments are also validated against input guardrails before execution
 for await (const event of harness.run(messages)) {
   if (event.type === 'error') console.error('Blocked:', event.error.message);
   if (event.type === 'message') console.log(event.message.content);
@@ -272,7 +293,9 @@ for await (const event of harness.run(messages)) {
 
 ### harness-one/observe -- Observability
 
-Structured tracing with spans and exporters, plus token cost tracking with budget alerts.
+Structured tracing with spans and exporters, plus token cost tracking with budget alerts. Trace eviction uses a try-finally guard so the `isEvicting` flag is always released even if an exporter throws.
+
+`costTracker.updateUsage()` applies incremental token deltas for streaming responses — call it on each chunk and `recordUsage()` at the end for the final snapshot.
 
 ```typescript
 import {
@@ -297,12 +320,15 @@ const costTracker = createCostTracker({
 });
 
 costTracker.onAlert((alert) => console.warn(alert.message));
+
+// Streaming: accumulate deltas, then record final usage
+costTracker.updateUsage({ traceId, model: 'claude-3', outputTokensDelta: 12 }); // per chunk
 costTracker.recordUsage({ traceId, model: 'claude-3', inputTokens: 1000, outputTokens: 500 });
 ```
 
 ### harness-one/session -- Session Management
 
-Session lifecycle with TTL-based expiry, LRU eviction, exclusive locking, and automatic garbage collection.
+Session lifecycle with TTL-based expiry, LRU eviction, exclusive locking, and automatic garbage collection. LRU eviction skips sessions that are currently locked (with a safety counter to prevent infinite loops). Auth context stored on a session is deep-frozen recursively, not just at the top level, preventing accidental mutation of nested objects.
 
 ```typescript
 import { createSessionManager } from 'harness-one/session';
@@ -316,6 +342,7 @@ const session = sm.create({ userId: 'alice' });
 const accessed = sm.access(session.id);
 
 // Exclusive locking for concurrent safety
+// LRU eviction will skip this session until unlocked
 const { unlock } = sm.lock(session.id);
 try {
   // Critical section
@@ -358,7 +385,9 @@ await relay.save({
 });
 ```
 
-**File-system store**: `createFileSystemStore` serializes each entry as an individual JSON file. An index file maps keys to IDs. All writes (including `update()`) run inside an in-process index lock that prevents concurrent read-modify-write corruption. Raw I/O is delegated to `fs-io.ts`, keeping the business logic layer testable in isolation.
+**Vector stores**: `write()` validates that the dimension of any provided embedding vector matches the store's configured dimension; a `HarnessError` is thrown on mismatch rather than silently storing an incompatible vector.
+
+**File-system store**: `createFileSystemStore` serializes each entry as an individual JSON file. An index file maps keys to IDs. `update()` performs a full read-modify-write cycle inside the index lock for atomicity — partial updates never leave the store in an inconsistent state. Raw I/O is delegated to `fs-io.ts`, keeping the business logic layer testable in isolation.
 
 ### harness-one/eval -- Evaluation & Validation
 
@@ -400,6 +429,8 @@ const result = await runGeneratorEvaluator({
 
 Component registry with model assumptions and retirement conditions, drift detection for tracking metric changes, architecture rule enforcement, and taste-coding registries for institutional knowledge.
 
+The drift detector supports configurable zero-baseline thresholds so metrics that start at zero do not produce false positives. The architecture checker uses exact path-segment matching (not substring matching) to avoid false positive rule violations. `ValidationResult` includes an `unsupportedKeywords` array when a JSON Schema contains keywords the validator does not implement. The data flywheel uses length-prefix encoding in its hashing scheme to prevent hash collisions across different input shapes. Component retirement conditions support AND clauses for multi-condition gates.
+
 ```typescript
 import {
   createComponentRegistry,
@@ -416,16 +447,17 @@ registry.register({
   name: 'Context Packer',
   description: 'Packs messages into context window',
   modelAssumption: 'Models have limited context windows',
-  retirementCondition: 'When models support unlimited context',
+  // AND clause: all conditions must be true before retirement is suggested
+  retirementCondition: { all: ['Models support unlimited context', 'Cost is negligible'] },
   createdAt: '2025-01-01',
 });
 
-// Detect metric drift
-const detector = createDriftDetector();
+// Detect metric drift — zeroThreshold avoids false positives for metrics starting at 0
+const detector = createDriftDetector({ zeroThreshold: 0.01 });
 detector.setBaseline('ctx-packer', { latencyP50: 12, cacheHitRate: 0.85 });
 const drift = detector.check('ctx-packer', { latencyP50: 18, cacheHitRate: 0.72 });
 
-// Enforce architecture rules
+// Enforce architecture rules (exact path-segment matching)
 const checker = createArchitectureChecker();
 checker.addRule(noCircularDepsRule(['core', 'context', 'tools']));
 checker.addRule(layerDependencyRule({
@@ -610,6 +642,7 @@ const harness = createHarness({
   guardrails: {
     injection: { sensitivity: 'medium' },
     rateLimit: { max: 10, windowMs: 60_000 },
+    pii: true,  // auto-wires PII detector via guardrails.pii config
   },
   budget: 5.0,
 });
@@ -636,7 +669,7 @@ const harness = createHarness({
 });
 ```
 
-**harness.run() auto-wiring**: guardrails fire on every user message (input) and every assistant message + tool result (output). The `AgentLoop` is created internally with `maxConversationMessages: 200` by default.
+**harness.run() auto-wiring**: guardrails fire on every user message (input) and every assistant message + tool result (output). Tool call arguments are also validated against input guardrails before execution. The `AgentLoop` is created internally with `maxConversationMessages: 200` by default.
 
 ```typescript
 harness.tools.register(myTool);
@@ -646,6 +679,7 @@ for await (const event of harness.run(messages)) {
   if (event.type === 'done') break;
 }
 
+// shutdown() allows up to 5 seconds per exporter for graceful flush
 await harness.shutdown();
 ```
 
@@ -665,9 +699,16 @@ const harness = createHarness({
 
 | Field | Type | Effect |
 |-------|------|--------|
-| `langfuse` | `Langfuse` instance | Enables Langfuse trace export and cost tracking |
+| `langfuse` | `Langfuse` instance | Enables Langfuse trace export and cost tracking; generation detection prioritizes explicit `harness.span.kind` attribute |
 | `redis` | `Redis` instance | Enables Redis-backed persistent memory |
 | `tokenizer` | `'tiktoken'` \| `(text) => number` \| `{ encode }` | Token counting — string enables tiktoken globally; function/object avoids global side-effects |
+
+**Integration package notes**:
+
+- **OpenAI adapter** (`@harness-one/openai`): `stream()` forwards `temperature`, `topP`, and `stopSequences` from `LLMConfig` to the underlying API call.
+- **AJV validator** (`@harness-one/ajv`): async `validate()` awaits format plugin loading before validating, preventing a race condition where format keywords were silently ignored on the first call.
+- **Langfuse** (`@harness-one/langfuse`): span kind detection checks the explicit `harness.span.kind` attribute first before falling back to heuristics.
+- **OpenTelemetry** (`@harness-one/opentelemetry`): when a parent span is evicted from the active-spans map before a child span finishes, the parent's context is preserved for correct child linking.
 
 **Observability auto-wiring**: pass a `traceManager` to `AgentLoop` directly if you need per-iteration and per-tool spans without managing traces manually:
 

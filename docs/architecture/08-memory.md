@@ -77,7 +77,13 @@ CompactionPolicy 通过 gradeWeights 控制清理优先级（默认 critical: 1.
 
 所有索引操作（write/delete/compact/clear）通过异步互斥锁（`withIndexLock`）串行化，防止并发 read-modify-write 导致索引损坏。互斥锁为进程内实现，不适用于多进程场景。
 
+`update(id, updates)` 在互斥锁内完成读取-修改-写回三步操作。锁保证整个 update 过程的原子性，并发 update 调用不会出现写覆盖（last-write-wins 导致更新丢失）问题。
+
 compact() 使用批量删除（Promise.all，每批 50 个文件）并行执行文件删除，代替逐个串行删除。
+
+### 向量维度校验
+
+`searchByVector()` 在执行相似度计算前，校验查询向量与存储条目向量的维度是否一致。维度不匹配时抛出 `HarnessError`，而非返回无意义的相似度分数或静默错误。
 
 ### 接力机制
 
