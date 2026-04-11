@@ -65,6 +65,17 @@ export { createEventBus } from './event-bus.js';
 // Execution strategies
 export { createSequentialStrategy, createParallelStrategy } from './execution-strategies.js';
 
+// Error classifier (extracted from AgentLoop)
+export { categorizeAdapterError } from './error-classifier.js';
+
+// Conversation pruner (extracted from AgentLoop)
+export type { PruneResult } from './conversation-pruner.js';
+export { pruneConversation } from './conversation-pruner.js';
+
+// Resilient loop
+export type { ResilientLoopConfig, ResilientLoop } from './resilience.js';
+export { createResilientLoop } from './resilience.js';
+
 // Test utilities
 export type { MockAdapterConfig } from './test-utils.js';
 export { createMockAdapter } from './test-utils.js';
