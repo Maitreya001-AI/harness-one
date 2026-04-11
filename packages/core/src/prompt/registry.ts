@@ -7,6 +7,23 @@
 import { HarnessError } from '../core/errors.js';
 import type { PromptTemplate, PromptBackend } from './types.js';
 
+/** Numeric version pattern: one or more dot-separated numeric segments (e.g. "1.0", "1.2.3"). */
+const SEMVER_RE = /^\d+(\.\d+)+$/;
+
+/**
+ * Validate that a version string contains only numeric dot-separated segments.
+ * Rejects non-numeric identifiers like "1.a.3", "latest", "1.2.x".
+ * Throws a HarnessError if invalid.
+ */
+function validateSemver(version: string): void {
+  if (!SEMVER_RE.test(version)) {
+    throw new HarnessError(
+      `Invalid semver version: "${version}". Expected format: "major.minor.patch" (numeric segments only)`,
+      'INVALID_CONFIG',
+    );
+  }
+}
+
 /**
  * Compare two semantic version strings (e.g. "1.10.2" vs "1.2.3").
  * Returns a positive number if a > b, negative if a < b, or 0 if equal.
@@ -35,8 +52,10 @@ export interface PromptRegistry {
   register(template: PromptTemplate, options?: RegisterOptions): void;
   /** Get a template by ID and optional version. */
   get(id: string, version?: string): PromptTemplate | undefined;
-  /** Resolve a template's variables and return the final string. */
-  resolve(id: string, variables: Record<string, string>, version?: string): string;
+  /** Resolve a template's variables and return the final string.
+   * @param sanitize - When true (default), strip {{...}} patterns from injected values to prevent recursive expansion.
+   */
+  resolve(id: string, variables: Record<string, string>, version?: string, sanitize?: boolean): string;
   /** List all registered templates. */
   list(): PromptTemplate[];
   /** Check if a template ID exists. */
@@ -74,6 +93,7 @@ export function createPromptRegistry(): PromptRegistry {
 
   return {
     register(template: PromptTemplate, options?: RegisterOptions): void {
+      validateSemver(template.version);
       const frozen = Object.freeze({ ...template });
       let versions = store.get(template.id);
       if (!versions) {
@@ -103,7 +123,7 @@ export function createPromptRegistry(): PromptRegistry {
       return getLatestVersion(id);
     },
 
-    resolve(id: string, variables: Record<string, string>, version?: string): string {
+    resolve(id: string, variables: Record<string, string>, version?: string, sanitize = true): string {
       const template = this.get(id, version);
       if (!template) {
         throw new HarnessError(
@@ -122,7 +142,10 @@ export function createPromptRegistry(): PromptRegistry {
             `Provide a value for "{{${varName}}}"`,
           );
         }
-        content = content.replaceAll(`{{${varName}}}`, variables[varName]);
+        const rawValue = variables[varName];
+        // Strip any {{...}} patterns from injected values to prevent recursive expansion
+        const safeValue = sanitize ? rawValue.replace(/\{\{(\w+)\}\}/g, '$1') : rawValue;
+        content = content.replaceAll(`{{${varName}}}`, safeValue);
       }
       return content;
     },
@@ -202,8 +225,10 @@ export interface AsyncPromptRegistry {
   register(template: PromptTemplate): void;
   /** Get a template by ID — checks local cache first, then falls back to backend. */
   get(id: string, version?: string): Promise<PromptTemplate | undefined>;
-  /** Resolve a template's variables — fetches from backend if not cached locally. */
-  resolve(id: string, variables: Record<string, string>, version?: string): Promise<string>;
+  /** Resolve a template's variables — fetches from backend if not cached locally.
+   * @param sanitize - When true (default), strip {{...}} patterns from injected values to prevent recursive expansion.
+   */
+  resolve(id: string, variables: Record<string, string>, version?: string, sanitize?: boolean): Promise<string>;
   /** List all templates from both local cache and backend. */
   list(): Promise<PromptTemplate[]>;
   /** Check if a template ID exists in local cache only. */
@@ -243,7 +268,7 @@ export function createAsyncPromptRegistry(backend: PromptBackend): AsyncPromptRe
       return remote;
     },
 
-    async resolve(id: string, variables: Record<string, string>, version?: string): Promise<string> {
+    async resolve(id: string, variables: Record<string, string>, version?: string, sanitize = true): Promise<string> {
       const template = await this.get(id, version);
       if (!template) {
         throw new HarnessError(
@@ -262,7 +287,10 @@ export function createAsyncPromptRegistry(backend: PromptBackend): AsyncPromptRe
             `Provide a value for "{{${varName}}}"`,
           );
         }
-        content = content.replaceAll(`{{${varName}}}`, variables[varName]);
+        const rawValue = variables[varName];
+        // Strip any {{...}} patterns from injected values to prevent recursive expansion
+        const safeValue = sanitize ? rawValue.replace(/\{\{(\w+)\}\}/g, '$1') : rawValue;
+        content = content.replaceAll(`{{${varName}}}`, safeValue);
       }
       return content;
     },

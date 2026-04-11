@@ -39,10 +39,13 @@ export function createPromptBuilder(config?: {
   separator?: string;
   maxTokens?: number;
   model?: string;
+  /** When true (default), strip {{...}} patterns from injected variable values to prevent recursive expansion. */
+  sanitize?: boolean;
 }): PromptBuilder {
   const separator = config?.separator ?? '\n\n';
   const maxTokens = config?.maxTokens;
   const model = config?.model ?? 'default';
+  const sanitize = config?.sanitize !== false; // default: true
   const layers = new Map<string, PromptLayer>();
   const variables = new Map<string, string>();
   // Dirty flag: set when layers or variables change, cleared after build().
@@ -59,7 +62,12 @@ export function createPromptBuilder(config?: {
   function replaceVariables(text: string): string {
     return text.replace(/\{\{(\w+)\}\}/g, (_match, key: string) => {
       const value = variables.get(key);
-      return value !== undefined ? value : `{{${key}}}`;
+      if (value === undefined) return `{{${key}}}`;
+      if (sanitize) {
+        // Strip any {{...}} patterns from injected values to prevent recursive expansion
+        return value.replace(/\{\{(\w+)\}\}/g, '$1');
+      }
+      return value;
     });
   }
 

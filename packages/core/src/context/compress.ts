@@ -117,6 +117,13 @@ function createTruncateStrategy(): CompressionStrategy {
           tokenCount += tokens;
         }
       }
+
+      // Safety net: if every message individually exceeds the budget,
+      // always preserve the last message to avoid returning an empty array.
+      if (result.length === 0 && messages.length > 0) {
+        result.push(messages[messages.length - 1]);
+      }
+
       return result;
     },
   };
@@ -127,13 +134,13 @@ function createSlidingWindowStrategy(windowSize: number): CompressionStrategy {
     name: 'sliding-window',
     async compress(messages, targetTokens, options) {
       const preserve = options?.preserve;
-      // H5: Track by index instead of reference identity
-      const preservedIndices: number[] = [];
+      // Use 2 Sets: preserved indices and windowed indices (consolidates 4 data structures to 2)
+      const preserved = new Set<number>();
       const restIndices: number[] = [];
 
       for (let i = 0; i < messages.length; i++) {
         if (preserve && preserve(messages[i])) {
-          preservedIndices.push(i);
+          preserved.add(i);
         } else {
           restIndices.push(i);
         }
@@ -142,22 +149,24 @@ function createSlidingWindowStrategy(windowSize: number): CompressionStrategy {
       // Keep the last windowSize non-preserved messages, then trim to fit token budget
       const windowedIndices = restIndices.slice(-windowSize);
       // Trim windowed messages from the front to fit within token budget
-      let tokenCount = preservedIndices.reduce((sum, idx) => sum + msgTokens(messages[idx]), 0);
-      const fittedWindowedIndices: Set<number> = new Set();
+      let tokenCount = 0;
+      for (const idx of preserved) {
+        tokenCount += msgTokens(messages[idx]);
+      }
+      const windowed = new Set<number>();
       for (let i = windowedIndices.length - 1; i >= 0; i--) {
         const idx = windowedIndices[i];
         const tokens = msgTokens(messages[idx]);
         if (tokenCount + tokens <= targetTokens) {
-          fittedWindowedIndices.add(idx);
+          windowed.add(idx);
           tokenCount += tokens;
         }
       }
 
-      // H5: Merge using index-based lookup (Set for O(1)) in original order
-      const preservedSet = new Set(preservedIndices);
+      // Merge using index-based lookup in original order
       const result: Message[] = [];
       for (let i = 0; i < messages.length; i++) {
-        if (preservedSet.has(i) || fittedWindowedIndices.has(i)) {
+        if (preserved.has(i) || windowed.has(i)) {
           result.push(messages[i]);
         }
       }

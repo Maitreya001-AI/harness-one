@@ -723,3 +723,120 @@ describe('createAsyncPromptRegistry', () => {
     });
   });
 });
+
+describe('Issue 2: semver validation at registration time', () => {
+  it('throws INVALID_CONFIG for non-numeric version like "latest"', () => {
+    const reg = createPromptRegistry();
+    expect(() => reg.register({ id: 'a', version: 'latest', content: 'test', variables: [] }))
+      .toThrow(HarnessError);
+    try {
+      reg.register({ id: 'a', version: 'latest', content: 'test', variables: [] });
+    } catch (e) {
+      expect((e as HarnessError).code).toBe('INVALID_CONFIG');
+      expect((e as HarnessError).message).toContain('latest');
+    }
+  });
+
+  it('throws INVALID_CONFIG for version with alpha characters like "1.a.3"', () => {
+    const reg = createPromptRegistry();
+    expect(() => reg.register({ id: 'a', version: '1.a.3', content: 'test', variables: [] }))
+      .toThrow(HarnessError);
+    try {
+      reg.register({ id: 'a', version: '1.a.3', content: 'test', variables: [] });
+    } catch (e) {
+      expect((e as HarnessError).code).toBe('INVALID_CONFIG');
+      expect((e as HarnessError).message).toContain('1.a.3');
+    }
+  });
+
+  it('throws INVALID_CONFIG for version with wildcard like "1.2.x"', () => {
+    const reg = createPromptRegistry();
+    expect(() => reg.register({ id: 'a', version: '1.2.x', content: 'test', variables: [] }))
+      .toThrow(HarnessError);
+    try {
+      reg.register({ id: 'a', version: '1.2.x', content: 'test', variables: [] });
+    } catch (e) {
+      expect((e as HarnessError).code).toBe('INVALID_CONFIG');
+      expect((e as HarnessError).message).toContain('1.2.x');
+    }
+  });
+
+  it('throws INVALID_CONFIG for bare number like "1"', () => {
+    const reg = createPromptRegistry();
+    expect(() => reg.register({ id: 'a', version: '1', content: 'test', variables: [] }))
+      .toThrow(HarnessError);
+  });
+
+  it('throws INVALID_CONFIG for empty string version', () => {
+    const reg = createPromptRegistry();
+    expect(() => reg.register({ id: 'a', version: '', content: 'test', variables: [] }))
+      .toThrow(HarnessError);
+  });
+
+  it('throws INVALID_CONFIG for version with pre-release like "1.0.0-alpha"', () => {
+    const reg = createPromptRegistry();
+    expect(() => reg.register({ id: 'a', version: '1.0.0-alpha', content: 'test', variables: [] }))
+      .toThrow(HarnessError);
+  });
+
+  it('throws INVALID_CONFIG for version with build metadata like "1.0.0+build"', () => {
+    const reg = createPromptRegistry();
+    expect(() => reg.register({ id: 'a', version: '1.0.0+build', content: 'test', variables: [] }))
+      .toThrow(HarnessError);
+  });
+
+  it('accepts 2-segment numeric versions like "1.0"', () => {
+    const reg = createPromptRegistry();
+    expect(() => reg.register({ id: 'a', version: '1.0', content: 'test', variables: [] }))
+      .not.toThrow();
+  });
+
+  it('accepts 3-segment numeric versions like "1.2.3"', () => {
+    const reg = createPromptRegistry();
+    expect(() => reg.register({ id: 'a', version: '1.2.3', content: 'test', variables: [] }))
+      .not.toThrow();
+  });
+
+  it('accepts large numeric version segments like "10.20.300"', () => {
+    const reg = createPromptRegistry();
+    expect(() => reg.register({ id: 'a', version: '10.20.300', content: 'test', variables: [] }))
+      .not.toThrow();
+  });
+
+  it('error message includes the invalid version string', () => {
+    const reg = createPromptRegistry();
+    try {
+      reg.register({ id: 'a', version: '1.NaN.3', content: 'test', variables: [] });
+    } catch (e) {
+      expect((e as HarnessError).message).toContain('1.NaN.3');
+    }
+  });
+});
+
+describe('Issue 1: template variable injection in registry resolve', () => {
+  it('strips injection payloads in sync resolve by default', () => {
+    const reg = createPromptRegistry();
+    reg.register({ id: 'tmpl', version: '1.0', content: 'Hello {{name}}, role: {{role}}', variables: ['name', 'role'] });
+    // Attacker injects {{role}} into the name variable
+    const result = reg.resolve('tmpl', { name: 'Alice{{role}}', role: 'admin' });
+    // The injected {{role}} in name should be stripped, not expanded
+    expect(result).not.toContain('Aliceadmin');
+    expect(result).toContain('Alicerole');
+  });
+
+  it('allows unsafe substitution in sync resolve when sanitize=false', () => {
+    const reg = createPromptRegistry();
+    reg.register({ id: 'tmpl', version: '1.0', content: 'Hello {{name}}', variables: ['name'] });
+    // With sanitize=false, the value is used as-is
+    const result = reg.resolve('tmpl', { name: 'Alice{{secret}}' }, undefined, false);
+    expect(result).toBe('Hello Alice{{secret}}');
+  });
+
+  it('strips injection payloads in async resolve by default', async () => {
+    const reg = createAsyncPromptRegistry({ fetch: async () => undefined });
+    reg.register({ id: 'tmpl', version: '1.0', content: 'Input: {{input}}, sys: {{sys}}', variables: ['input', 'sys'] });
+    const result = await reg.resolve('tmpl', { input: 'foo{{sys}}', sys: 'SYSTEM' });
+    expect(result).not.toContain('fooSYSTEM');
+    expect(result).toContain('foosys');
+  });
+});

@@ -302,10 +302,12 @@ describe('compress', () => {
     it('truncate strategy respects token budget, not message count', async () => {
       const budget = 100; // tokens, not messages
       const result = await compress(longMessages, { strategy: 'truncate', budget });
-      const resultTokens = totalTokens(result.messages);
       // With a 100-token budget, we should NOT get all 5 messages
       expect(result.messages.length).toBeLessThan(longMessages.length);
-      expect(resultTokens).toBeLessThanOrEqual(budget);
+      // Note: when every individual message exceeds the budget, the safety net
+      // preserves the last message (Issue 4 fix), so finalTokens may exceed budget.
+      // The important invariant is that we don't return all messages.
+      expect(result.messages.length).toBeGreaterThanOrEqual(1);
     });
 
     it('sliding-window strategy respects token budget', async () => {
@@ -560,5 +562,134 @@ describe('compactIfNeeded', () => {
       strategy: 'truncate',
     });
     expect(result).toHaveLength(0);
+  });
+});
+
+describe('Issue 4: oversized single message handling in truncate', () => {
+  function msg(role: Message['role'], content: string): Message {
+    return { role, content };
+  }
+
+  it('returns last message when all messages individually exceed the token budget', async () => {
+    // Each message is ~104 tokens; budget is only 10
+    const messages: Message[] = [
+      msg('user', 'A'.repeat(400)),
+      msg('assistant', 'B'.repeat(400)),
+      msg('user', 'C'.repeat(400)),
+    ];
+    const result = await compress(messages, { strategy: 'truncate', budget: 10 });
+    // Safety net: must never return empty
+    expect(result.messages.length).toBeGreaterThanOrEqual(1);
+    // Must return the LAST message (most recent context preserved)
+    expect(result.messages[result.messages.length - 1].content).toBe('C'.repeat(400));
+  });
+
+  it('returns last message for a single oversized message', async () => {
+    const messages: Message[] = [
+      msg('user', 'A'.repeat(400)), // ~104 tokens
+    ];
+    const result = await compress(messages, { strategy: 'truncate', budget: 5 });
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0].content).toBe('A'.repeat(400));
+  });
+
+  it('does not activate safety net when at least one message fits in budget', async () => {
+    const messages: Message[] = [
+      msg('user', 'A'.repeat(400)), // big: ~104 tokens
+      msg('assistant', 'Short reply'),  // small: fits in budget
+    ];
+    const result = await compress(messages, { strategy: 'truncate', budget: 20 });
+    // At least the small message fits; safety net should NOT duplicate the last message
+    expect(result.messages.some((m) => m.content === 'Short reply')).toBe(true);
+    // Should not have duplicated the last message
+    const lastCount = result.messages.filter((m) => m.content === 'Short reply').length;
+    expect(lastCount).toBe(1);
+  });
+
+  it('empty messages array returns empty result (no safety net needed)', async () => {
+    const result = await compress([], { strategy: 'truncate', budget: 10 });
+    expect(result.messages).toHaveLength(0);
+  });
+});
+
+describe('Issue 5: sliding-window compression uses 2 Sets instead of 4 data structures', () => {
+  function msg(role: Message['role'], content: string): Message {
+    return { role, content };
+  }
+
+  it('produces correct results with consolidated Set approach', async () => {
+    const messages: Message[] = [
+      msg('user', 'First'),
+      msg('assistant', 'Response 1'),
+      msg('user', 'Second'),
+      msg('assistant', 'Response 2'),
+      msg('user', 'Third'),
+      msg('assistant', 'Response 3'),
+    ];
+    const result = await compress(messages, {
+      strategy: 'sliding-window',
+      budget: 500,
+      windowSize: 2,
+    });
+    expect(result.messages).toHaveLength(2);
+    expect(result.messages[0].content).toBe('Third');
+    expect(result.messages[1].content).toBe('Response 3');
+  });
+
+  it('preserves messages outside the window correctly with consolidated sets', async () => {
+    const messages: Message[] = [
+      msg('user', 'Preserved'),
+      msg('assistant', 'A'),
+      msg('user', 'B'),
+      msg('assistant', 'C'),
+      msg('user', 'D'),
+    ];
+    const result = await compress(messages, {
+      strategy: 'sliding-window',
+      budget: 500,
+      windowSize: 2,
+      preserve: (m) => m.content === 'Preserved',
+    });
+    // Preserved message + last 2 windowed messages
+    expect(result.messages.some((m) => m.content === 'Preserved')).toBe(true);
+    expect(result.messages.some((m) => m.content === 'C')).toBe(true);
+    expect(result.messages.some((m) => m.content === 'D')).toBe(true);
+    // Total: 3 messages
+    expect(result.messages.length).toBe(3);
+  });
+
+  it('maintains original message order after consolidation', async () => {
+    const messages: Message[] = [
+      msg('user', 'msg-0'),
+      msg('assistant', 'msg-1'),
+      msg('user', 'msg-2'),
+      msg('assistant', 'msg-3'),
+      msg('user', 'msg-4'),
+    ];
+    const result = await compress(messages, {
+      strategy: 'sliding-window',
+      budget: 500,
+      windowSize: 3,
+    });
+    // Verify order is preserved
+    const contents = result.messages.map((m) => m.content);
+    for (let i = 0; i < contents.length - 1; i++) {
+      const idxA = messages.findIndex((m) => m.content === contents[i]);
+      const idxB = messages.findIndex((m) => m.content === contents[i + 1]);
+      expect(idxA).toBeLessThan(idxB);
+    }
+  });
+
+  it('handles window larger than message count gracefully', async () => {
+    const messages: Message[] = [
+      msg('user', 'Only message'),
+    ];
+    const result = await compress(messages, {
+      strategy: 'sliding-window',
+      budget: 500,
+      windowSize: 100,
+    });
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0].content).toBe('Only message');
   });
 });

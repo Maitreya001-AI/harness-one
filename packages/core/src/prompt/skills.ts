@@ -76,6 +76,21 @@ export interface SkillEngine {
   isComplete(): boolean;
 }
 
+/** Configuration options for createSkillEngine. */
+export interface SkillEngineConfig {
+  /**
+   * Optional observability callback invoked whenever a stage transition occurs.
+   * Useful for production monitoring and logging.
+   */
+  onTransition?: (event: {
+    skillName: string;
+    from: string;
+    to: string;
+    reason: string;
+    turn: number;
+  }) => void;
+}
+
 /**
  * Create a new SkillEngine instance.
  *
@@ -87,7 +102,7 @@ export interface SkillEngine {
  * const result = engine.processTurn('hello');
  * ```
  */
-export function createSkillEngine(): SkillEngine {
+export function createSkillEngine(config?: SkillEngineConfig): SkillEngine {
   const skills = new Map<string, SkillDefinition>();
   const stageMaps = new Map<string, Map<string, SkillStage>>();
   let activeSkill: SkillDefinition | null = null;
@@ -277,7 +292,16 @@ export function createSkillEngine(): SkillEngine {
 
         if (matched) {
           const previousStage = stage.id;
+          // Capture turnCount before advanceToStage resets it to 0
+          const turnAtTransition = turnCount;
           advanceToStage(transition.to);
+          config?.onTransition?.({
+            skillName: activeSkill!.name,
+            from: previousStage,
+            to: transition.to,
+            reason: reason ?? 'Condition met',
+            turn: turnAtTransition,
+          });
           return { advanced: true, previousStage, currentStage: transition.to, ...(reason !== undefined && { reason }) };
         }
       }
@@ -288,8 +312,18 @@ export function createSkillEngine(): SkillEngine {
         const fallback = stage.transitions.find(t => t.condition.type !== 'manual');
         if (fallback) {
           const previousStage = stage.id;
+          const maxTurnsReason = `Max turns (${stage.maxTurns}) reached`;
+          // Capture turnCount before advanceToStage resets it to 0
+          const turnAtTransition = turnCount;
           advanceToStage(fallback.to);
-          return { advanced: true, previousStage, currentStage: fallback.to, reason: `Max turns (${stage.maxTurns}) reached` };
+          config?.onTransition?.({
+            skillName: activeSkill!.name,
+            from: previousStage,
+            to: fallback.to,
+            reason: maxTurnsReason,
+            turn: turnAtTransition,
+          });
+          return { advanced: true, previousStage, currentStage: fallback.to, reason: maxTurnsReason };
         }
       }
 

@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createSkillEngine } from '../skills.js';
+import type { SkillEngineConfig } from '../skills.js';
 import { HarnessError } from '../../core/errors.js';
 import type { SkillDefinition, TransitionCondition } from '../types.js';
 
@@ -686,5 +687,135 @@ describe('createSkillEngine', () => {
       expect(engine.processTurn('z').advanced).toBe(true);
       expect(engine.currentStage.id).toBe('c');
     });
+  });
+});
+
+type TransitionEvent = Parameters<NonNullable<SkillEngineConfig['onTransition']>>[0];
+
+describe('Issue 3: SkillEngine onTransition observability callback', () => {
+  it('calls onTransition when a keyword condition triggers a transition', () => {
+    const events: TransitionEvent[] = [];
+    const engine = createSkillEngine({
+      onTransition: (event) => events.push(event),
+    });
+    engine.registerSkill(twoStageSkill);
+    engine.startSkill('onboarding');
+
+    engine.processTurn("I'm ready to start");
+
+    expect(events).toHaveLength(1);
+    expect(events[0].from).toBe('welcome');
+    expect(events[0].to).toBe('setup');
+    expect(events[0].reason).toBe('Keyword match');
+    expect(events[0].skillName).toBe('Onboarding');
+    expect(typeof events[0].turn).toBe('number');
+  });
+
+  it('calls onTransition with correct event shape for turn_count transition', () => {
+    const events: TransitionEvent[] = [];
+    const skill: SkillDefinition = {
+      id: 'tc',
+      name: 'Turn Count Skill',
+      description: 'test',
+      initialStage: 'a',
+      stages: [
+        { id: 'a', name: 'A', prompt: 'A', transitions: [
+          { to: 'b', condition: { type: 'turn_count', count: 2 } },
+        ]},
+        { id: 'b', name: 'B', prompt: 'B', transitions: [] },
+      ],
+    };
+    const engine = createSkillEngine({ onTransition: (e) => events.push(e) });
+    engine.registerSkill(skill);
+    engine.startSkill('tc');
+
+    engine.processTurn('one');
+    engine.processTurn('two');
+
+    expect(events).toHaveLength(1);
+    expect(events[0].skillName).toBe('Turn Count Skill');
+    expect(events[0].from).toBe('a');
+    expect(events[0].to).toBe('b');
+    expect(events[0].reason).toContain('Turn count');
+    expect(events[0].turn).toBe(2);
+  });
+
+  it('calls onTransition for maxTurns auto-advance', () => {
+    const events: TransitionEvent[] = [];
+    const skill: SkillDefinition = {
+      id: 'max',
+      name: 'Max Skill',
+      description: 'test',
+      initialStage: 'a',
+      stages: [
+        { id: 'a', name: 'A', prompt: 'A', maxTurns: 2, transitions: [
+          { to: 'b', condition: { type: 'keyword', keywords: ['skip'] } },
+        ]},
+        { id: 'b', name: 'B', prompt: 'B', transitions: [] },
+      ],
+    };
+    const engine = createSkillEngine({ onTransition: (e) => events.push(e) });
+    engine.registerSkill(skill);
+    engine.startSkill('max');
+
+    engine.processTurn('nope');
+    engine.processTurn('still nope');
+
+    expect(events).toHaveLength(1);
+    expect(events[0].from).toBe('a');
+    expect(events[0].to).toBe('b');
+    expect(events[0].reason).toContain('Max turns');
+  });
+
+  it('does not call onTransition when no transition occurs', () => {
+    const onTransitionFn = vi.fn();
+    const engine = createSkillEngine({ onTransition: onTransitionFn });
+    engine.registerSkill(twoStageSkill);
+    engine.startSkill('onboarding');
+
+    engine.processTurn('just chatting');
+    engine.processTurn('still no keyword');
+
+    expect(onTransitionFn).not.toHaveBeenCalled();
+  });
+
+  it('does not call onTransition when no config is provided (backwards compat)', () => {
+    // Should not throw without config
+    const engine = createSkillEngine();
+    engine.registerSkill(twoStageSkill);
+    engine.startSkill('onboarding');
+
+    expect(() => engine.processTurn("I'm ready to start")).not.toThrow();
+  });
+
+  it('calls onTransition for each transition in a multi-stage journey', () => {
+    const events: TransitionEvent[] = [];
+    const skill: SkillDefinition = {
+      id: 'multi',
+      name: 'Multi Stage',
+      description: 'test',
+      initialStage: 'a',
+      stages: [
+        { id: 'a', name: 'A', prompt: 'A', transitions: [
+          { to: 'b', condition: { type: 'keyword', keywords: ['next'] } },
+        ]},
+        { id: 'b', name: 'B', prompt: 'B', transitions: [
+          { to: 'c', condition: { type: 'keyword', keywords: ['finish'] } },
+        ]},
+        { id: 'c', name: 'C', prompt: 'C', transitions: [] },
+      ],
+    };
+    const engine = createSkillEngine({ onTransition: (e) => events.push(e) });
+    engine.registerSkill(skill);
+    engine.startSkill('multi');
+
+    engine.processTurn('next');
+    engine.processTurn('finish');
+
+    expect(events).toHaveLength(2);
+    expect(events[0].from).toBe('a');
+    expect(events[0].to).toBe('b');
+    expect(events[1].from).toBe('b');
+    expect(events[1].to).toBe('c');
   });
 });
