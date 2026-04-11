@@ -54,9 +54,18 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
    * Expects embeddings to be provided as-is. The function computes raw cosine
    * similarity. For optimal results, embeddings should be L2-normalized before
    * storage, in which case cosine similarity reduces to a dot product.
+   *
+   * @throws {HarnessError} When vectors have different lengths (dimension mismatch).
    */
   function cosineSimilarity(a: readonly number[], b: readonly number[]): number {
-    if (a.length !== b.length || a.length === 0) return 0;
+    if (a.length !== b.length) {
+      throw new HarnessError(
+        `Embedding dimension mismatch: ${a.length} vs ${b.length}`,
+        'INVALID_INPUT',
+        'Ensure all embeddings use the same model and dimensionality',
+      );
+    }
+    if (a.length === 0) return 0;
     let dot = 0, normA = 0, normB = 0;
     for (let i = 0; i < a.length; i++) {
       dot += a[i] * b[i];
@@ -67,8 +76,35 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
     return denom === 0 ? 0 : dot / denom;
   }
 
+  /**
+   * Get the dimension of existing embeddings in the store, or undefined if none exist.
+   * Used for dimension validation in write().
+   */
+  function getExistingEmbeddingDimension(): number | undefined {
+    for (const entry of entries.values()) {
+      const emb = entry.metadata?.['embedding'];
+      if (Array.isArray(emb) && emb.length > 0) {
+        return emb.length;
+      }
+    }
+    return undefined;
+  }
+
   return {
     async write(input) {
+      // Validate embedding dimension consistency before storing
+      const inputEmbedding = input.metadata?.['embedding'];
+      if (Array.isArray(inputEmbedding)) {
+        const existingDim = getExistingEmbeddingDimension();
+        if (existingDim !== undefined && inputEmbedding.length !== existingDim) {
+          throw new HarnessError(
+            `Embedding dimension mismatch: new entry has ${inputEmbedding.length} dimensions but store contains embeddings with ${existingDim} dimensions`,
+            'INVALID_INPUT',
+            'Ensure all embeddings use the same model and dimensionality',
+          );
+        }
+      }
+
       const now = Date.now();
       const entry: MemoryEntry = {
         id: generateId(),

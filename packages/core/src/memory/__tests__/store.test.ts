@@ -414,13 +414,27 @@ describe('createInMemoryStore', () => {
       expect(results[0].score).toBe(0);
     });
 
-    it('handles mismatched vector lengths gracefully (returns score 0)', async () => {
+    it('throws HarnessError on mismatched vector dimensions (Issue 2 fix)', async () => {
       await store.write({ key: 'k1', content: 'a', grade: 'useful', metadata: { embedding: [1, 0] } });
 
-      // Query with a different dimensionality
-      const results = await store.searchByVector!({ embedding: [1, 0, 0], minScore: 0 });
-      expect(results.length).toBe(1);
-      expect(results[0].score).toBe(0);
+      // Query with a different dimensionality should throw instead of silently returning 0
+      await expect(
+        store.searchByVector!({ embedding: [1, 0, 0], minScore: 0 })
+      ).rejects.toThrow(HarnessError);
+    });
+
+    it('throws HarnessError with INVALID_INPUT code on dimension mismatch', async () => {
+      await store.write({ key: 'k1', content: 'a', grade: 'useful', metadata: { embedding: [1, 0] } });
+
+      try {
+        await store.searchByVector!({ embedding: [0, 0, 1], minScore: 0 });
+        expect.fail('Expected HarnessError to be thrown');
+      } catch (err) {
+        expect((err as HarnessError).code).toBe('INVALID_INPUT');
+        expect((err as HarnessError).message).toContain('Embedding dimension mismatch');
+        // query is 3-dim, stored entry is 2-dim => cosineSimilarity receives (query=3, stored=2)
+        expect((err as HarnessError).message).toContain('3 vs 2');
+      }
     });
 
     it('handles empty embedding arrays gracefully (returns score 0)', async () => {
@@ -430,6 +444,46 @@ describe('createInMemoryStore', () => {
       // Empty arrays => length 0 => score 0
       expect(results.length).toBe(1);
       expect(results[0].score).toBe(0);
+    });
+
+    it('write() throws HarnessError when embedding dimension mismatches existing entries (Issue 2 fix)', async () => {
+      await store.write({ key: 'k1', content: 'a', grade: 'useful', metadata: { embedding: [1, 0, 0] } });
+
+      await expect(
+        store.write({ key: 'k2', content: 'b', grade: 'useful', metadata: { embedding: [1, 0] } })
+      ).rejects.toThrow(HarnessError);
+    });
+
+    it('write() throws with INVALID_INPUT code on dimension mismatch', async () => {
+      await store.write({ key: 'k1', content: 'a', grade: 'useful', metadata: { embedding: [1, 0, 0] } });
+
+      try {
+        await store.write({ key: 'k2', content: 'b', grade: 'useful', metadata: { embedding: [0, 1] } });
+        expect.fail('Expected HarnessError');
+      } catch (err) {
+        expect((err as HarnessError).code).toBe('INVALID_INPUT');
+        expect((err as HarnessError).message).toContain('dimension mismatch');
+      }
+    });
+
+    it('write() allows first embedding of any dimension', async () => {
+      await expect(
+        store.write({ key: 'k1', content: 'a', grade: 'useful', metadata: { embedding: [1, 0] } })
+      ).resolves.not.toThrow();
+    });
+
+    it('write() allows consistent embedding dimensions', async () => {
+      await store.write({ key: 'k1', content: 'a', grade: 'useful', metadata: { embedding: [1, 0] } });
+      await expect(
+        store.write({ key: 'k2', content: 'b', grade: 'useful', metadata: { embedding: [0, 1] } })
+      ).resolves.not.toThrow();
+    });
+
+    it('write() allows entries without embeddings alongside entries with embeddings', async () => {
+      await store.write({ key: 'k1', content: 'a', grade: 'useful', metadata: { embedding: [1, 0] } });
+      await expect(
+        store.write({ key: 'k2', content: 'b', grade: 'useful' })
+      ).resolves.not.toThrow();
     });
 
     it('uses default limit of 10', async () => {

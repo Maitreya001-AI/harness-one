@@ -5,10 +5,25 @@
  */
 
 import type { Guardrail } from './types.js';
+import { HarnessError } from '../core/errors.js';
 
 /** Escape special regex characters so a literal string can be used inside a RegExp. */
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Detect patterns that are likely ReDoS candidates.
+ * Rejects patterns with nested quantifiers like `(a+)+`, `(\w+)*`, or adjacent quantifiers
+ * that can cause catastrophic backtracking.
+ */
+function isReDoSCandidate(pattern: string): boolean {
+  // Nested quantifiers: closing paren or bracket followed immediately by a quantifier,
+  // e.g. (a+)+ or (\w+)* or (\w+)?
+  if (/(\+|\*|\{)\s*\)(\+|\*|\{|\?)/.test(pattern)) return true;
+  // Adjacent quantifiers without grouping: e.g. a++ or a*+ or a*?
+  if (/(\+|\*)\s*(\+|\*|\?)/.test(pattern)) return true;
+  return false;
 }
 
 /**
@@ -43,7 +58,18 @@ export function createContentFilter(config: {
       regex: new RegExp(prefix + escaped + suffix, 'gi'),
     };
   });
-  const patterns = config.blockedPatterns ?? [];
+  const rawPatterns = config.blockedPatterns ?? [];
+  // Validate each user-provided pattern for ReDoS candidates before accepting it
+  for (const pat of rawPatterns) {
+    if (isReDoSCandidate(pat.source)) {
+      throw new HarnessError(
+        `Blocked pattern /${pat.source}/ is a potential ReDoS candidate (contains nested or adjacent quantifiers)`,
+        'REDOS_PATTERN',
+        'Simplify the pattern to avoid nested quantifiers like (a+)+ or (\\w+)*',
+      );
+    }
+  }
+  const patterns = rawPatterns;
 
   const guard: Guardrail = (ctx) => {
     // Normalize content with NFKC before checking against keywords

@@ -72,18 +72,54 @@ describe('createAuthContext', () => {
   });
 });
 
-// Fix 15: Document shallow freeze — verify the behavior described in JSDoc
-describe('shallow freeze behavior', () => {
+// Issue 4 fix: Deep freeze — nested objects within metadata are now also frozen
+describe('deep freeze behavior (Issue 4 fix)', () => {
   it('top-level metadata is frozen', () => {
     const ctx = createAuthContext({ userId: 'u-1', metadata: { nested: { deep: true } } });
     expect(Object.isFrozen(ctx.metadata)).toBe(true);
   });
 
-  it('nested objects within metadata can still be mutated (shallow freeze limitation)', () => {
+  it('nested objects within metadata are deeply frozen (Issue 4 fix)', () => {
     const nested = { deep: true };
     const ctx = createAuthContext({ userId: 'u-1', metadata: { nested } });
-    // Shallow freeze means nested object is NOT frozen
-    expect(Object.isFrozen(ctx.metadata!.nested)).toBe(false);
+    // Deep freeze means nested object IS frozen
+    expect(Object.isFrozen(ctx.metadata!['nested'])).toBe(true);
+  });
+
+  it('deeply nested objects at multiple levels are all frozen', () => {
+    const ctx = createAuthContext({
+      userId: 'u-1',
+      metadata: {
+        level1: {
+          level2: {
+            value: 42,
+          },
+        },
+      },
+    });
+    expect(Object.isFrozen(ctx.metadata)).toBe(true);
+    expect(Object.isFrozen(ctx.metadata!['level1'])).toBe(true);
+    expect(Object.isFrozen((ctx.metadata!['level1'] as Record<string, unknown>)['level2'])).toBe(true);
+  });
+
+  it('mutation of nested metadata object is silently prevented in strict mode', () => {
+    const ctx = createAuthContext({ userId: 'u-1', metadata: { nested: { deep: true } } });
+    const nested = ctx.metadata!['nested'] as Record<string, unknown>;
+    // In non-strict mode, assignment to frozen prop is silently ignored
+    expect(() => {
+      try {
+        nested['deep'] = false;
+      } catch {
+        // TypeError in strict mode — also acceptable
+      }
+    }).not.toThrow();
+    // The value should remain unchanged
+    expect(nested['deep']).toBe(true);
+  });
+
+  it('arrays in metadata are deeply frozen', () => {
+    const ctx = createAuthContext({ userId: 'u-1', metadata: { items: [1, 2, 3] } });
+    expect(Object.isFrozen(ctx.metadata!['items'])).toBe(true);
   });
 });
 

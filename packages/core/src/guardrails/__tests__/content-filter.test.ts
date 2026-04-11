@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createContentFilter } from '../content-filter.js';
+import { HarnessError } from '../../core/errors.js';
 
 describe('createContentFilter', () => {
   // ---- Blocks content matching blocked keywords ----
@@ -258,5 +259,70 @@ describe('createContentFilter', () => {
   it('has name "content-filter"', () => {
     const filter = createContentFilter({});
     expect(filter.name).toBe('content-filter');
+  });
+
+  // ---- Issue 6: ReDoS validation for user-provided blockedPatterns ----
+
+  describe('Issue 6: ReDoS validation for blockedPatterns', () => {
+    it('throws HarnessError with REDOS_PATTERN code for nested quantifier pattern (a+)+', () => {
+      expect(() => createContentFilter({ blockedPatterns: [/(a+)+/] }))
+        .toThrow(HarnessError);
+      try {
+        createContentFilter({ blockedPatterns: [/(a+)+/] });
+      } catch (err) {
+        expect(err).toBeInstanceOf(HarnessError);
+        expect((err as HarnessError).code).toBe('REDOS_PATTERN');
+        expect((err as HarnessError).message).toContain('ReDoS');
+      }
+    });
+
+    it('throws for pattern with (\\w+)* (Kleene star over quantified group)', () => {
+      expect(() => createContentFilter({ blockedPatterns: [/(\w+)*/] }))
+        .toThrow(HarnessError);
+    });
+
+    it('throws for pattern with adjacent quantifiers like a++', () => {
+      // Note: JavaScript regex doesn't support possessive quantifiers but the source
+      // string pattern (a+)+ should be caught
+      expect(() => createContentFilter({ blockedPatterns: [/(a+)+b/] }))
+        .toThrow(HarnessError);
+    });
+
+    it('throws for (\\S+)+ pattern', () => {
+      expect(() => createContentFilter({ blockedPatterns: [/(\S+)+/] }))
+        .toThrow(HarnessError);
+    });
+
+    it('accepts safe patterns without nested quantifiers', () => {
+      expect(() => createContentFilter({ blockedPatterns: [/secret\d+/i] })).not.toThrow();
+      expect(() => createContentFilter({ blockedPatterns: [/api_key_\w+/] })).not.toThrow();
+      expect(() => createContentFilter({ blockedPatterns: [/password\s*=\s*\S+/] })).not.toThrow();
+    });
+
+    it('accepts empty blockedPatterns without throwing', () => {
+      expect(() => createContentFilter({ blockedPatterns: [] })).not.toThrow();
+    });
+
+    it('error message includes the offending pattern source', () => {
+      try {
+        createContentFilter({ blockedPatterns: [/(a+)+/] });
+        expect.fail('Should have thrown');
+      } catch (err) {
+        expect((err as HarnessError).message).toContain('(a+)+');
+      }
+    });
+
+    it('validates each pattern independently — throws on the first dangerous one', () => {
+      // First pattern is safe, second is dangerous
+      expect(() => createContentFilter({
+        blockedPatterns: [/safe\d+/, /(\w+)*/],
+      })).toThrow(HarnessError);
+    });
+
+    it('safe pattern still blocks content after validation passes', () => {
+      const { guard } = createContentFilter({ blockedPatterns: [/secret\d+/i] });
+      expect(guard({ content: 'The code is secret123' }).action).toBe('block');
+      expect(guard({ content: 'no secrets here' }).action).toBe('allow');
+    });
   });
 });

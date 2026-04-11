@@ -122,10 +122,25 @@ export function createSessionManager(config?: {
   }
 
   function evictLRU(): void {
-    while (sessions.size > maxSessions && accessOrder.size > 0) {
+    // Safety counter: prevent infinite loop when all sessions are locked.
+    // If every remaining session is locked, we cannot evict any of them —
+    // the loop must terminate even though sessions.size > maxSessions.
+    let attempts = 0;
+    const maxAttempts = accessOrder.size;
+
+    while (sessions.size > maxSessions && accessOrder.size > 0 && attempts < maxAttempts) {
       const oldestId = accessOrder.keys().next().value as string;
-      accessOrder.delete(oldestId);
       const session = sessions.get(oldestId);
+
+      if (session && session.status === 'locked') {
+        // Skip locked sessions: move to end of access order and try next
+        accessOrder.delete(oldestId);
+        accessOrder.set(oldestId, true);
+        attempts++;
+        continue;
+      }
+
+      accessOrder.delete(oldestId);
       if (session) {
         // Fix 11: Emit distinct 'evicted' event before destroying via LRU
         emit('evicted', oldestId, 'lru_capacity');

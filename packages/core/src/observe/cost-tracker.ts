@@ -21,6 +21,13 @@ export interface CostTracker {
   setPricing(pricing: ModelPricing[]): void;
   /** Record token usage and return the record with computed cost. */
   recordUsage(usage: Omit<TokenUsageRecord, 'estimatedCost' | 'timestamp'>): TokenUsageRecord;
+  /**
+   * Update the most recent usage record for a given traceId with partial new token counts.
+   * Used for streaming scenarios where token counts arrive incrementally.
+   * Recalculates cost difference and adjusts the running total accordingly.
+   * Returns the updated record, or undefined if no record exists for the traceId.
+   */
+  updateUsage(traceId: string, usage: Partial<Omit<TokenUsageRecord, 'estimatedCost' | 'timestamp' | 'traceId' | 'model'>>): TokenUsageRecord | undefined;
   /** Get total cost across all usage. */
   getTotalCost(): number;
   /** Get cost breakdown by model. */
@@ -218,6 +225,70 @@ export function createCostTracker(config?: {
       }
 
       return record;
+    },
+
+    updateUsage(traceId: string, usage: Partial<Omit<TokenUsageRecord, 'estimatedCost' | 'timestamp' | 'traceId' | 'model'>>): TokenUsageRecord | undefined {
+      // Find the most recent record for the given traceId
+      let existingRecord: TokenUsageRecord | undefined;
+      let existingIndex = -1;
+      for (let i = records.length - 1; i >= 0; i--) {
+        if (records[i].traceId === traceId) {
+          existingRecord = records[i];
+          existingIndex = i;
+          break;
+        }
+      }
+
+      if (!existingRecord || existingIndex === -1) return undefined;
+
+      // Build the updated record with merged token counts
+      const updatedFields: Omit<TokenUsageRecord, 'estimatedCost' | 'timestamp'> = {
+        traceId: existingRecord.traceId,
+        model: existingRecord.model,
+        inputTokens: usage.inputTokens ?? existingRecord.inputTokens,
+        outputTokens: usage.outputTokens ?? existingRecord.outputTokens,
+        ...(usage.cacheReadTokens !== undefined
+          ? { cacheReadTokens: usage.cacheReadTokens }
+          : existingRecord.cacheReadTokens !== undefined
+            ? { cacheReadTokens: existingRecord.cacheReadTokens }
+            : {}),
+        ...(usage.cacheWriteTokens !== undefined
+          ? { cacheWriteTokens: usage.cacheWriteTokens }
+          : existingRecord.cacheWriteTokens !== undefined
+            ? { cacheWriteTokens: existingRecord.cacheWriteTokens }
+            : {}),
+      };
+
+      const newCost = computeCost(updatedFields);
+      const oldCost = existingRecord.estimatedCost;
+      const costDelta = newCost - oldCost;
+
+      const updatedRecord: TokenUsageRecord = {
+        ...updatedFields,
+        estimatedCost: newCost,
+        timestamp: existingRecord.timestamp,
+      };
+
+      // Mutate in place (same array slot — no eviction impact)
+      records[existingIndex] = updatedRecord;
+
+      // Adjust running totals
+      runningSum.add(costDelta);
+
+      const modelSum = modelTotals.get(existingRecord.model);
+      if (modelSum) {
+        modelSum.add(costDelta);
+      }
+
+      // Check budget alerts after update
+      if (budget !== undefined) {
+        const alert = checkBudgetFn();
+        if (alert) {
+          emitAlert(alert);
+        }
+      }
+
+      return updatedRecord;
     },
 
     getTotalCost(): number {

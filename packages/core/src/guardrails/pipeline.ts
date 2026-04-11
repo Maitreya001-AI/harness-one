@@ -26,6 +26,7 @@ interface PipelineInternalData {
   output: PipelineEntry[];
   failClosed: boolean;
   onEvent: ((event: GuardrailEvent) => void) | undefined;
+  maxResults: number;
 }
 
 /** A branded pipeline object that carries internal data via a symbol key. */
@@ -73,6 +74,8 @@ export function createPipeline(config: {
   onEvent?: (event: GuardrailEvent) => void;
   /** Default timeout (ms) for guards that don't specify their own timeoutMs. Default: 5000. Set to 0 to disable. */
   defaultTimeoutMs?: number;
+  /** Maximum number of guardrail events to retain in results. Oldest non-error events are evicted when exceeded. Default: 1000. */
+  maxResults?: number;
 }): GuardrailPipeline {
   const defaultTimeoutMs = config.defaultTimeoutMs ?? 5000;
 
@@ -92,9 +95,28 @@ export function createPipeline(config: {
     output: applyDefaults(config.output ?? []),
     failClosed: config.failClosed ?? true,
     onEvent: config.onEvent,
+    maxResults: config.maxResults ?? 1000,
   };
   const branded: BrandedPipeline = { [PIPELINE_BRAND]: internalData };
   return branded as unknown as GuardrailPipeline;
+}
+
+/**
+ * Push an event into results, evicting the oldest non-error event if the cap is reached.
+ * Error events (block from errors) are never evicted to preserve audit trail.
+ */
+function pushEvent(results: GuardrailEvent[], event: GuardrailEvent, maxResults: number): void {
+  if (results.length >= maxResults) {
+    // Evict the oldest non-block event to keep the array bounded
+    const evictIdx = results.findIndex((e) => e.verdict.action !== 'block');
+    if (evictIdx !== -1) {
+      results.splice(evictIdx, 1);
+    } else {
+      // All events are block events — evict the oldest one
+      results.shift();
+    }
+  }
+  results.push(event);
 }
 
 async function runGuardrails(
@@ -118,12 +140,20 @@ async function runGuardrails(
 
     try {
       if (entry.timeoutMs !== undefined) {
-        verdict = await Promise.race([
-          Promise.resolve(entry.guard(guardCtx)),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error(`Guardrail "${entry.name}" timed out after ${entry.timeoutMs}ms`)), entry.timeoutMs),
-          ),
-        ]);
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          verdict = await Promise.race([
+            Promise.resolve(entry.guard(guardCtx)),
+            new Promise<never>((_, reject) => {
+              timer = setTimeout(
+                () => reject(new Error(`Guardrail "${entry.name}" timed out after ${entry.timeoutMs}ms`)),
+                entry.timeoutMs,
+              );
+            }),
+          ]);
+        } finally {
+          if (timer !== undefined) clearTimeout(timer);
+        }
       } else {
         verdict = await entry.guard(guardCtx);
       }
@@ -137,7 +167,7 @@ async function runGuardrails(
           verdict,
           latencyMs: performance.now() - start,
         };
-        results.push(event);
+        pushEvent(results, event, pipeline.maxResults);
         pipeline.onEvent?.(event);
         return { passed: false, verdict, results };
       }
@@ -149,7 +179,7 @@ async function runGuardrails(
         verdict: errorVerdict,
         latencyMs: performance.now() - start,
       };
-      results.push(errorEvent);
+      pushEvent(results, errorEvent, pipeline.maxResults);
       pipeline.onEvent?.(errorEvent);
       continue;
     }
@@ -160,7 +190,7 @@ async function runGuardrails(
       verdict,
       latencyMs: performance.now() - start,
     };
-    results.push(event);
+    pushEvent(results, event, pipeline.maxResults);
     pipeline.onEvent?.(event);
 
     if (verdict.action === 'block') {

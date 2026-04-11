@@ -45,6 +45,22 @@ const HOMOGLYPH_MAP: Record<string, string> = {
   '\u2170': 'i', // ⅰ (small roman numeral one) → Latin i
   '\u2174': 'v', // ⅴ (small roman numeral five) → Latin v
   '\u2179': 'x', // ⅹ (small roman numeral ten) → Latin x
+  // Mathematical bold uppercase A-Z: U+1D400–U+1D419
+  ...Object.fromEntries(
+    Array.from({ length: 26 }, (_, i) => [String.fromCodePoint(0x1D400 + i), String.fromCharCode(65 + i).toLowerCase()]),
+  ),
+  // Mathematical bold lowercase a-z: U+1D41A–U+1D433
+  ...Object.fromEntries(
+    Array.from({ length: 26 }, (_, i) => [String.fromCodePoint(0x1D41A + i), String.fromCharCode(97 + i)]),
+  ),
+  // Mathematical italic uppercase A-Z: U+1D434–U+1D44D
+  ...Object.fromEntries(
+    Array.from({ length: 26 }, (_, i) => [String.fromCodePoint(0x1D434 + i), String.fromCharCode(65 + i).toLowerCase()]),
+  ),
+  // Mathematical italic lowercase a-z: U+1D44E–U+1D467
+  ...Object.fromEntries(
+    Array.from({ length: 26 }, (_, i) => [String.fromCodePoint(0x1D44E + i), String.fromCharCode(97 + i)]),
+  ),
 };
 
 // Markdown formatting characters to strip
@@ -106,10 +122,10 @@ export function createInjectionDetector(config?: {
       patterns = [...BASE_PATTERNS, ...extraPatterns];
       break;
     case 'medium':
-      patterns = [...BASE_PATTERNS, ...MEDIUM_PATTERNS, ...extraPatterns];
+      patterns = [...BASE_PATTERNS, ...MEDIUM_PATTERNS, ...BASE64_PATTERNS, ...extraPatterns];
       break;
     case 'high':
-      patterns = [...BASE_PATTERNS, ...MEDIUM_PATTERNS, ...HIGH_PATTERNS, ...extraPatterns, ...BASE64_PATTERNS];
+      patterns = [...BASE_PATTERNS, ...MEDIUM_PATTERNS, ...HIGH_PATTERNS, ...BASE64_PATTERNS, ...extraPatterns];
       break;
   }
 
@@ -121,22 +137,36 @@ export function createInjectionDetector(config?: {
     let normalized = ctx.content.replace(ZERO_WIDTH_RE, '');
     // Normalize Unicode (NFKC collapses many confusables)
     normalized = normalized.normalize('NFKC');
-    // Apply Cyrillic-to-Latin and Greek-to-Latin homoglyph mapping
-    normalized = normalized.replace(/[\u0430\u0435\u043E\u0441\u0440\u0443\u0445\u0456\u0501\u03BF\u03B1\u03B5\u03BD\u03BA\u03C4\u03B7\u03B9\u0251\u0261\u026A\u0274\u025B\u027E\u028C\u1E77\u217E\u217C\u2170\u2174\u2179]/g, (ch) => HOMOGLYPH_MAP[ch] ?? ch);
+    // Apply Cyrillic-to-Latin, Greek-to-Latin, IPA, and mathematical homoglyph mapping
+    // Uses unicode flag (u) to correctly handle surrogate-pair code points (U+1D400 and above)
+    normalized = normalized.replace(/[\u0430\u0435\u043E\u0441\u0440\u0443\u0445\u0456\u0501\u03BF\u03B1\u03B5\u03BD\u03BA\u03C4\u03B7\u03B9\u0251\u0261\u026A\u0274\u025B\u027E\u028C\u1E77\u217E\u217C\u2170\u2174\u2179\u{1D400}-\u{1D433}\u{1D434}-\u{1D467}]/gu, (ch) => HOMOGLYPH_MAP[ch] ?? ch);
     // Normalize whitespace (newlines, tabs, multiple spaces → single space)
     normalized = normalized.replace(/\s+/g, ' ');
     // Strip markdown formatting characters
     normalized = normalized.replace(MARKDOWN_RE, '');
 
-    // Truncate for pattern checking to prevent ReDoS on very large inputs.
-    // The original content is preserved in the result; only pattern checking uses the truncated version.
-    const patternInput = normalized.length > MAX_PATTERN_INPUT_LENGTH
-      ? normalized.slice(0, MAX_PATTERN_INPUT_LENGTH)
-      : normalized;
+    // Process content in overlapping sliding windows to prevent bypassing detection
+    // via injection placed beyond the window boundary. Each window overlaps the previous
+    // by WINDOW_OVERLAP chars to catch patterns that span window boundaries.
+    const WINDOW_OVERLAP = 200;
 
-    for (const pattern of patterns) {
-      if (pattern.test(patternInput)) {
-        return { action: 'block', reason: 'Potential prompt injection detected: injection pattern detected' };
+    if (normalized.length <= MAX_PATTERN_INPUT_LENGTH) {
+      for (const pattern of patterns) {
+        if (pattern.test(normalized)) {
+          return { action: 'block', reason: 'Potential prompt injection detected: injection pattern detected' };
+        }
+      }
+    } else {
+      let offset = 0;
+      while (offset < normalized.length) {
+        const window = normalized.slice(offset, offset + MAX_PATTERN_INPUT_LENGTH);
+        for (const pattern of patterns) {
+          if (pattern.test(window)) {
+            return { action: 'block', reason: 'Potential prompt injection detected: injection pattern detected' };
+          }
+        }
+        // Advance by window size minus overlap so we don't miss cross-boundary patterns
+        offset += MAX_PATTERN_INPUT_LENGTH - WINDOW_OVERLAP;
       }
     }
 

@@ -669,3 +669,140 @@ describe('Fix 7: Pipeline deep clones meta on modify', () => {
     expect((metas[2] as Record<string, unknown>).guard2Added).toBeUndefined();
   });
 });
+
+// =============================================================================
+// Issue 1: Timer leak fix — clearTimeout after race resolves
+// =============================================================================
+
+describe('Issue 1: timer leak fix — clearTimeout after guardrail completes', () => {
+  it('does not leave dangling timers when fast guardrail wins the race', async () => {
+    const timerIds: ReturnType<typeof setTimeout>[] = [];
+    const originalClearTimeout = globalThis.clearTimeout;
+    const clearedIds: ReturnType<typeof setTimeout>[] = [];
+    const clearSpy = vi.spyOn(globalThis, 'clearTimeout').mockImplementation((id) => {
+      if (id !== undefined) clearedIds.push(id as ReturnType<typeof setTimeout>);
+      return originalClearTimeout(id);
+    });
+    const originalSetTimeout = globalThis.setTimeout;
+    const setSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation((fn, ms, ...args) => {
+      const id = originalSetTimeout(fn as () => void, ms, ...args);
+      timerIds.push(id);
+      return id;
+    });
+
+    const fastGuard: Guardrail = () => ({ action: 'allow' });
+    const pipeline = createPipeline({
+      input: [{ name: 'fast', guard: fastGuard, timeoutMs: 5000 }],
+      defaultTimeoutMs: 0,
+    });
+    await runInput(pipeline, { content: 'hello' });
+
+    clearSpy.mockRestore();
+    setSpy.mockRestore();
+
+    // Every timer that was set for the guardrail race should have been cleared
+    for (const id of timerIds) {
+      expect(clearedIds).toContain(id);
+    }
+  });
+
+  it('clears timer even when guardrail throws (failClosed path)', async () => {
+    const clearedIds: ReturnType<typeof setTimeout>[] = [];
+    const originalClearTimeout = globalThis.clearTimeout;
+    const originalSetTimeout = globalThis.setTimeout;
+    const timerIds: ReturnType<typeof setTimeout>[] = [];
+
+    const setSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation((fn, ms, ...args) => {
+      const id = originalSetTimeout(fn as () => void, ms, ...args);
+      timerIds.push(id);
+      return id;
+    });
+    const clearSpy = vi.spyOn(globalThis, 'clearTimeout').mockImplementation((id) => {
+      if (id !== undefined) clearedIds.push(id as ReturnType<typeof setTimeout>);
+      return originalClearTimeout(id);
+    });
+
+    const throwGuard: Guardrail = () => { throw new Error('boom'); };
+    const pipeline = createPipeline({
+      input: [{ name: 'thrower', guard: throwGuard, timeoutMs: 5000 }],
+      defaultTimeoutMs: 0,
+    });
+    await runInput(pipeline, { content: 'hello' });
+
+    setSpy.mockRestore();
+    clearSpy.mockRestore();
+
+    // Timer should still be cleared even when guard threw
+    for (const id of timerIds) {
+      expect(clearedIds).toContain(id);
+    }
+  });
+});
+
+// =============================================================================
+// Issue 2: Unbounded results array — maxResults cap
+// =============================================================================
+
+describe('Issue 2: maxResults cap — results array stays bounded', () => {
+  it('caps results at maxResults, evicting oldest non-block events', async () => {
+    const guards = Array.from({ length: 10 }, (_, i) => ({
+      name: `g${i}`,
+      guard: allowGuard,
+    }));
+    const pipeline = createPipeline({
+      input: guards,
+      maxResults: 5,
+      defaultTimeoutMs: 0,
+    });
+    const result = await runInput(pipeline, { content: 'hello' });
+    // Results should never exceed maxResults
+    expect(result.results.length).toBeLessThanOrEqual(5);
+  });
+
+  it('defaults to maxResults=1000 (accepts 1000 events without eviction)', async () => {
+    const guards = Array.from({ length: 100 }, (_, i) => ({
+      name: `g${i}`,
+      guard: allowGuard,
+    }));
+    const pipeline = createPipeline({
+      input: guards,
+      defaultTimeoutMs: 0,
+    });
+    const result = await runInput(pipeline, { content: 'hello' });
+    // All 100 events fit within default 1000 cap
+    expect(result.results.length).toBe(100);
+  });
+
+  it('retains all block events even when cap is exceeded', async () => {
+    // 3 allow guards + 1 block guard, maxResults=2
+    const pipeline = createPipeline({
+      input: [
+        { name: 'a1', guard: allowGuard },
+        { name: 'a2', guard: allowGuard },
+        { name: 'blocker', guard: blockGuard },
+      ],
+      maxResults: 2,
+      defaultTimeoutMs: 0,
+    });
+    const result = await runInput(pipeline, { content: 'hello' });
+    // Results should be capped at 2 and include the block event
+    expect(result.results.length).toBeLessThanOrEqual(2);
+    const hasBlock = result.results.some((e) => e.verdict.action === 'block');
+    expect(hasBlock).toBe(true);
+  });
+
+  it('maxResults=1 keeps only the most recent event', async () => {
+    const pipeline = createPipeline({
+      input: [
+        { name: 'g1', guard: allowGuard },
+        { name: 'g2', guard: allowGuard },
+        { name: 'g3', guard: allowGuard },
+      ],
+      maxResults: 1,
+      defaultTimeoutMs: 0,
+    });
+    const result = await runInput(pipeline, { content: 'hello' });
+    expect(result.results.length).toBe(1);
+    expect(result.results[0].guardrail).toBe('g3');
+  });
+});

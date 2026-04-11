@@ -565,4 +565,139 @@ describe('createCostTracker', () => {
       expect(Math.abs(total - expected)).toBeLessThan(1e-10);
     });
   });
+
+  // Issue 6: Streaming token support via updateUsage()
+  describe('updateUsage (Issue 6 fix)', () => {
+    it('updates the most recent record for a traceId and returns the updated record', () => {
+      const tracker = createCostTracker({ pricing });
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 500, outputTokens: 0 });
+      const updated = tracker.updateUsage('t1', { inputTokens: 1000, outputTokens: 500 });
+      expect(updated).toBeDefined();
+      expect(updated!.inputTokens).toBe(1000);
+      expect(updated!.outputTokens).toBe(500);
+      expect(updated!.traceId).toBe('t1');
+    });
+
+    it('returns undefined for unknown traceId', () => {
+      const tracker = createCostTracker({ pricing });
+      const result = tracker.updateUsage('nonexistent', { inputTokens: 1000 });
+      expect(result).toBeUndefined();
+    });
+
+    it('recalculates estimatedCost after update', () => {
+      const tracker = createCostTracker({ pricing });
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      // initial cost: 1000/1000 * 0.003 = 0.003
+      expect(tracker.getTotalCost()).toBeCloseTo(0.003, 4);
+
+      const updated = tracker.updateUsage('t1', { inputTokens: 1000, outputTokens: 500 });
+      // updated cost: 1000/1000 * 0.003 + 500/1000 * 0.015 = 0.003 + 0.0075 = 0.0105
+      expect(updated!.estimatedCost).toBeCloseTo(0.0105, 4);
+    });
+
+    it('adjusts running total by cost delta after update', () => {
+      const tracker = createCostTracker({ pricing });
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      // Initial total: 0.003
+      expect(tracker.getTotalCost()).toBeCloseTo(0.003, 4);
+
+      tracker.updateUsage('t1', { inputTokens: 1000, outputTokens: 500 });
+      // New total: 0.0105 (not 0.003 + 0.0105)
+      expect(tracker.getTotalCost()).toBeCloseTo(0.0105, 4);
+    });
+
+    it('adjusts per-model total by cost delta after update', () => {
+      const tracker = createCostTracker({ pricing });
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      tracker.updateUsage('t1', { outputTokens: 500 });
+
+      const byModel = tracker.getCostByModel();
+      // 1000/1000 * 0.003 + 500/1000 * 0.015 = 0.0105
+      expect(byModel['claude-3']).toBeCloseTo(0.0105, 4);
+    });
+
+    it('updates most recent record when multiple records for same traceId exist', () => {
+      const tracker = createCostTracker({ pricing });
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 100, outputTokens: 0 });
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 200, outputTokens: 0 });
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 300, outputTokens: 0 });
+
+      const updated = tracker.updateUsage('t1', { inputTokens: 999 });
+      expect(updated!.inputTokens).toBe(999);
+    });
+
+    it('preserves unchanged token fields when only updating some fields', () => {
+      const tracker = createCostTracker({
+        pricing: [{
+          model: 'claude-3',
+          inputPer1kTokens: 0.003,
+          outputPer1kTokens: 0.015,
+          cacheReadPer1kTokens: 0.001,
+          cacheWritePer1kTokens: 0.002,
+        }],
+      });
+      tracker.recordUsage({
+        traceId: 't1',
+        model: 'claude-3',
+        inputTokens: 1000,
+        outputTokens: 500,
+        cacheReadTokens: 200,
+        cacheWriteTokens: 100,
+      });
+
+      // Update only outputTokens — other fields preserved
+      const updated = tracker.updateUsage('t1', { outputTokens: 1000 });
+      expect(updated!.inputTokens).toBe(1000);
+      expect(updated!.outputTokens).toBe(1000);
+      expect(updated!.cacheReadTokens).toBe(200);
+      expect(updated!.cacheWriteTokens).toBe(100);
+    });
+
+    it('fires budget alert after update increases cost over threshold', () => {
+      const handler = vi.fn();
+      const tracker = createCostTracker({ pricing, budget: 0.005 });
+      tracker.onAlert(handler);
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 500, outputTokens: 0 });
+      // 0.0015 — under 80% of 0.005
+      expect(handler).not.toHaveBeenCalled();
+
+      // Update to push over budget
+      tracker.updateUsage('t1', { inputTokens: 1000, outputTokens: 500 });
+      // 0.0105 > 0.005 — critical
+      expect(handler).toHaveBeenCalled();
+      expect(handler.mock.calls[0][0].type).toBe('critical');
+    });
+
+    it('handles streaming: successive updateUsage calls simulate token accumulation', () => {
+      const tracker = createCostTracker({ pricing });
+      tracker.recordUsage({ traceId: 'stream-1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+
+      // Simulate streaming: output tokens arrive incrementally
+      tracker.updateUsage('stream-1', { outputTokens: 100 });
+      tracker.updateUsage('stream-1', { outputTokens: 200 });
+      tracker.updateUsage('stream-1', { outputTokens: 500 });
+
+      // Final total should reflect only the last update (500 output tokens), not cumulative
+      // 1000/1000 * 0.003 + 500/1000 * 0.015 = 0.003 + 0.0075 = 0.0105
+      expect(tracker.getTotalCost()).toBeCloseTo(0.0105, 4);
+    });
+
+    it('does not double-count when updateUsage is called multiple times', () => {
+      const tracker = createCostTracker({ pricing });
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+
+      tracker.updateUsage('t1', { outputTokens: 500 });
+      tracker.updateUsage('t1', { outputTokens: 500 }); // same value again
+
+      // Should still be: 1000/1000*0.003 + 500/1000*0.015 = 0.0105 (not doubled)
+      expect(tracker.getTotalCost()).toBeCloseTo(0.0105, 4);
+    });
+
+    it('preserves original timestamp on update', () => {
+      const tracker = createCostTracker({ pricing });
+      const original = tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      const updated = tracker.updateUsage('t1', { outputTokens: 100 });
+      expect(updated!.timestamp).toBe(original.timestamp);
+    });
+  });
 });

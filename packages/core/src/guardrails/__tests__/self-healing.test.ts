@@ -679,4 +679,81 @@ describe('withSelfHealing', () => {
       expect(result.content).toBe('bad'); // original content, regenerate failed
     });
   });
+
+  // ===========================================================================
+  // Issue 7: double token estimation — estimateTokens called only once per prompt
+  // ===========================================================================
+
+  describe('Issue 7: estimateTokens called only once per retry prompt', () => {
+    it('calls estimateTokens exactly once per retry prompt (not twice)', async () => {
+      const guard: Guardrail = () => ({ action: 'block', reason: 'bad' });
+      const estimateTokensCalls: string[] = [];
+      const estimateTokens = vi.fn((text: string) => {
+        estimateTokensCalls.push(text);
+        return text.length;
+      });
+      const regenerate = vi.fn().mockResolvedValue('still bad');
+
+      const realSetTimeout = globalThis.setTimeout;
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation((fn, ms, ...args) => {
+        return realSetTimeout(fn as () => void, 0, ...args);
+      });
+
+      await withSelfHealing(
+        {
+          maxRetries: 2,
+          guardrails: [{ name: 'g1', guard }],
+          buildRetryPrompt: () => 'retry-prompt',
+          regenerate,
+          estimateTokens,
+          maxTotalTokens: 10000,
+        },
+        'initial',
+      );
+
+      setTimeoutSpy.mockRestore();
+
+      // The retry prompt 'retry-prompt' should appear exactly once in the calls
+      // (not twice, which was the bug: once for budget check, once for tracking)
+      const retryPromptCalls = estimateTokensCalls.filter((text) => text === 'retry-prompt');
+      expect(retryPromptCalls.length).toBe(1);
+    });
+
+    it('token budget check uses the same cached value as tracking', async () => {
+      let callCount = 0;
+      const guard: Guardrail = () => ({ action: 'block', reason: 'bad' });
+      const estimateTokens = vi.fn((text: string) => {
+        callCount++;
+        // Return different values each time to detect if called twice
+        // (a caching bug would use inconsistent values)
+        return callCount * 10 + text.length;
+      });
+      const regenerate = vi.fn().mockResolvedValue('still bad');
+
+      const realSetTimeout = globalThis.setTimeout;
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation((fn, ms, ...args) => {
+        return realSetTimeout(fn as () => void, 0, ...args);
+      });
+
+      const result = await withSelfHealing(
+        {
+          maxRetries: 2,
+          guardrails: [{ name: 'g1', guard }],
+          buildRetryPrompt: () => 'fix',
+          regenerate,
+          estimateTokens,
+          maxTotalTokens: 100_000,
+        },
+        'content',
+      );
+
+      setTimeoutSpy.mockRestore();
+
+      // result.totalTokens should be defined and consistent (not doubled from double-calling)
+      expect(result.totalTokens).toBeDefined();
+      // With caching: initial(content) + retryPrompt(fix) + regenerated(still bad)
+      // Each called once → consistent totalTokens
+      expect(estimateTokens).toHaveBeenCalled();
+    });
+  });
 });

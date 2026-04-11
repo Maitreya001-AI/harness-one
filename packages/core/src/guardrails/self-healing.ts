@@ -85,16 +85,15 @@ export async function withSelfHealing(
 
     const retryPrompt = config.buildRetryPrompt(content, failures);
 
+    // Estimate retry prompt tokens once and reuse for both budget check and tracking
+    const retryPromptTokens = estimateTokens ? estimateTokens(retryPrompt) : 0;
+
     // Check token budget before regeneration
     if (estimateTokens && maxTotalTokens !== undefined) {
-      const promptTokens = estimateTokens(retryPrompt);
-      if (totalTokens !== undefined && totalTokens + promptTokens > maxTotalTokens) {
+      if (totalTokens !== undefined && totalTokens + retryPromptTokens > maxTotalTokens) {
         return { content, attempts: attempt, passed: false, ...(totalTokens !== undefined && { totalTokens }) };
       }
     }
-
-    // Track retry prompt tokens in the budget before attempting regeneration
-    const retryPromptTokens = estimateTokens ? estimateTokens(retryPrompt) : 0;
 
     try {
       content = await Promise.race([

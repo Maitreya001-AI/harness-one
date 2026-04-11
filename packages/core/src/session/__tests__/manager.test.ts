@@ -197,6 +197,62 @@ describe('createSessionManager', () => {
       sm.dispose();
     });
 
+    // Issue 3 fix: LRU eviction must skip locked sessions
+    it('does not evict locked sessions during LRU eviction (Issue 3 fix)', () => {
+      const sm = createSessionManager({ maxSessions: 2, gcIntervalMs: 0 });
+      const s1 = sm.create();
+      const s2 = sm.create();
+
+      // Lock s1 and s2 so they cannot be evicted
+      sm.lock(s1.id);
+      sm.lock(s2.id);
+
+      // Creating a third session exceeds maxSessions=2, but both existing are locked.
+      // Since only s3 (the new session) is unlockable, s3 gets evicted instead of locked sessions.
+      // The key guarantee: locked sessions s1 and s2 are NOT evicted.
+      sm.create();
+
+      // Both locked sessions should still be alive — they must not be evicted
+      expect(sm.get(s1.id)).toBeDefined();
+      expect(sm.get(s2.id)).toBeDefined();
+      sm.dispose();
+    });
+
+    it('evicts unlocked session before locked session (Issue 3 fix)', () => {
+      const sm = createSessionManager({ maxSessions: 2, gcIntervalMs: 0 });
+      const s1 = sm.create();
+      const s2 = sm.create();
+
+      // Lock s1 (LRU candidate) so eviction skips it, evicts s2 instead
+      const { unlock } = sm.lock(s1.id);
+
+      // s3 triggers eviction: s1 is locked (skip), s2 is the next candidate
+      sm.create();
+
+      // s1 is locked, should survive
+      expect(sm.get(s1.id)).toBeDefined();
+      // s2 should be evicted (unlocked, next in LRU order)
+      expect(sm.get(s2.id)).toBeUndefined();
+
+      unlock();
+      sm.dispose();
+    });
+
+    it('eviction safety counter prevents infinite loop when all sessions locked (Issue 3 fix)', () => {
+      const sm = createSessionManager({ maxSessions: 1, gcIntervalMs: 0 });
+      const s1 = sm.create();
+
+      // Lock the only session
+      sm.lock(s1.id);
+
+      // This should NOT hang — the safety counter terminates the loop
+      expect(() => sm.create()).not.toThrow();
+
+      // The locked session must still exist
+      expect(sm.get(s1.id)).toBeDefined();
+      sm.dispose();
+    });
+
     it('natural expiry via gc does NOT emit evicted event', () => {
       const events: SessionEvent[] = [];
       const sm = createSessionManager({ ttlMs: 1, gcIntervalMs: 0 });

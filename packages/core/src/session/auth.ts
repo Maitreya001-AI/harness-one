@@ -17,14 +17,27 @@ export interface AuthContext {
 }
 
 /**
- * Create a frozen AuthContext from a plain configuration object.
+ * Recursively freeze an object and all nested objects/arrays.
  *
- * All arrays and the metadata object are shallow-frozen to prevent
- * accidental mutation.
+ * Prevents mutation of deeply nested structures. Handles cycles by checking
+ * Object.isFrozen() before recursing — already-frozen objects are skipped.
+ */
+function deepFreeze<T>(obj: T): T {
+  if (obj === null || typeof obj !== 'object') return obj;
+  Object.freeze(obj);
+  for (const value of Object.values(obj as Record<string, unknown>)) {
+    if (typeof value === 'object' && value !== null && !Object.isFrozen(value)) {
+      deepFreeze(value);
+    }
+  }
+  return obj;
+}
+
+/**
+ * Create a deeply frozen AuthContext from a plain configuration object.
  *
- * **Note (Fix 15):** `Object.freeze()` is shallow. Nested objects within
- * metadata can still be mutated. For deep immutability, deep-clone before
- * passing or use a deep-freeze utility.
+ * All arrays, the metadata object, and any nested objects within metadata are
+ * recursively frozen to prevent accidental mutation at any depth.
  *
  * @example
  * ```ts
@@ -43,13 +56,13 @@ export function createAuthContext(config: {
   permissions?: string[];
   metadata?: Record<string, unknown>;
 }): AuthContext {
-  return Object.freeze({
+  return deepFreeze({
     userId: config.userId,
     ...(config.tenantId !== undefined && { tenantId: config.tenantId }),
-    ...(config.roles !== undefined && { roles: Object.freeze([...config.roles]) }),
-    ...(config.permissions !== undefined && { permissions: Object.freeze([...config.permissions]) }),
-    ...(config.metadata !== undefined && { metadata: Object.freeze({ ...config.metadata }) }),
-  });
+    ...(config.roles !== undefined && { roles: [...config.roles] }),
+    ...(config.permissions !== undefined && { permissions: [...config.permissions] }),
+    ...(config.metadata !== undefined && { metadata: { ...config.metadata } }),
+  }) as AuthContext;
 }
 
 /** Check whether the auth context has a specific role. */
