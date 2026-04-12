@@ -6,6 +6,157 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.2.0] — 2026-04-12
+
+The 50-issue architecture-review release. Based on the 7-axis deep
+architectural review (see
+`~/Documents/harness-one_Architecture_Review_20260412/`), this release
+closes every identified gap — 8 P0, 22 P1, and 20 P2 findings —
+organized into eight focused commits.
+
+### Breaking
+
+- `HarnessConfig.langfuse`: previously accepted any object; now validates
+  the client has a `.trace()` method at construction and throws
+  `HarnessError('INVALID_CONFIG')` otherwise.
+- `createConversationStore`, `createInMemoryStore`, and `createRelay` may
+  now throw `HarnessError('STORE_CORRUPTION')` when loaded data fails
+  schema validation — previously these paths cast `JSON.parse(...) as T`
+  and admitted malformed shapes silently.
+- `AgentLoop.run()` is no longer re-entrant: a second concurrent call on
+  the same instance throws `HarnessError('INVALID_STATE')`.
+
+### Added — contract completeness (Wave 1)
+
+- `TraceExporter` lifecycle hooks are now actually invoked by
+  `TraceManager`:
+  - `initialize?()` called lazily on first export (or eagerly via
+    `tm.initialize()`)
+  - `isHealthy?()` gates each export attempt
+  - `shouldExport?(trace)` gates trace export (per-trace sampling)
+- `createTraceManager({ defaultSamplingRate, logger })` — global sampling
+  rate with runtime `tm.setSamplingRate(rate)`; structured logger option
+  replaces `console.warn` fallback.
+- `TraceManager.flush()` / `dispose()` now wait for pending in-flight
+  span/trace exports before returning.
+- AgentLoop iteration spans carry `iteration`, `adapter`,
+  `conversationLength`, `streaming`, `toolCount`, `inputTokens`,
+  `outputTokens` — previously only the last two.
+- Adapter retries emit an `adapter_retry` span event with `attempt`,
+  `errorCategory`, and error preview.
+- Tool spans carry `toolName` and `toolCallId` attributes plus
+  `errorMessage` on failure — previously the tool name was only in the
+  span name.
+- `harness.run()` emits guardrail checks as child spans of a
+  `harness.run` trace (`guardrail:input`, `guardrail:output`,
+  `guardrail:tool-args`, `guardrail:tool-result`) — previously the
+  guardrail pipeline's internal events never reached observability.
+- Anthropic adapter: when a tool-call's `arguments` field is not a JSON
+  object, substitute `{}` with a `console.warn` instead of casting the
+  raw string to `Record<string, unknown>`.
+- `AgentAdapter.name` is now part of the interface; built-in adapters
+  set `"<provider>:<model>"` (e.g., `"anthropic:claude-sonnet-4"`).
+
+### Added — persistence safety (Wave 2)
+
+- New `harness-one/memory` runtime validators:
+  `validateMemoryEntry`, `validateIndex`, `validateRelayState`,
+  `parseJsonSafe`. Every `JSON.parse(...) as T` at a disk/network
+  boundary now validates shape first.
+- Applied at: `memory/fs-io.ts` (readIndex, readEntry),
+  `memory/relay.ts` (both load paths), `redis/src/index.ts` (getEntry,
+  query, update, compact).
+
+### Added — release pipeline (Wave 3)
+
+- `@changesets/cli` wired in: root `changeset` / `version` / `release`
+  scripts; `.changeset/config.json` fixes `harness-one` and
+  `harness-one-full` in lockstep.
+- CI:
+  - `test:coverage` enforces per-package thresholds (lines/statements
+    80%, branches 75%).
+  - New "Verify build artifacts" step asserts each `packages/*/dist`
+    ships `.js.map` and `.d.ts.map` files.
+  - New `changeset-check` job on PRs fails when changes under
+    `packages/` aren't accompanied by a changeset.
+
+### Added — hot-path performance (Wave 4)
+
+- Token estimator: single O(n) char-code scan (was two `text.match`
+  calls per estimate). Precomputed ASCII bitmap for code/punctuation;
+  numeric range compares for CJK.
+- Session manager: two-structure LRU (`unlockedOrder` Map +
+  `lockedIds` Set) gives O(1) eviction instead of potentially walking
+  all sessions when most are locked. O(1) capacity check too.
+- PII detector: digit/"@" preflights skip whole classes of regex
+  invocations for alpha-only content.
+- Injection detector: large payloads (>100KB) check prefix+suffix
+  slices instead of sliding overlapping windows across the whole
+  content — injection attempts cluster at boundaries.
+- Conversation pruner: index-based slicing with single array
+  allocation (was 3-5 intermediate `Array.slice` copies).
+
+### Added — extensibility seams (Wave 5)
+
+- `ToolMiddleware<TParams>` type + `ToolDefinition.middleware` field:
+  onion-style wrappers for retry, auth, circuit-breaker, timing around
+  a tool's `execute` without modifying the tool itself.
+- `MemoryStoreCapabilities` type + `MemoryStore.capabilities` and
+  `MemoryStore.writeBatch?()` — third-party backends declare atomic
+  guarantees, TTL support, batch writes.
+- `ConversationStoreCapabilities` — symmetric capability declarations
+  for atomic append/save/delete and distributed semantics.
+- `createAgentLoop(config)` factory alias for `new AgentLoop(config)` —
+  consistent `createX()` style; class remains exported for subclassers.
+- `docs/provider-spec.md` — canonical `AgentAdapter` contract,
+  required/optional fields, conformance checklist for new adapters.
+- `runMemoryStoreConformance(runner, factory)` testkit in
+  `harness-one/memory` — framework-agnostic conformance suite for
+  `MemoryStore` implementations.
+
+### Added — observability + ergonomics (Wave 6)
+
+- `CostTracker` gets `strictMode` (throws on missing model / non-finite
+  tokens) and `warnUnpricedModels` (one-time warning per model without
+  pricing registered).
+- `SpanAttributes` / `SpanAttributeValue` strong types re-exported from
+  `harness-one/observe`; matches OTel attribute constraint.
+- New root `harness-one` entry re-exports the commonly-used APIs from
+  every submodule so users can `import { AgentLoop, createRegistry,
+  createTraceManager } from 'harness-one'`. Submodule imports remain
+  available for tree-shaking.
+- `Orchestrator.toReadonly()` now deep-clones `agent.metadata` via
+  `structuredClone` so callers cannot mutate nested state.
+- `createHarness({ logger })` — harness-level warnings (no-budget,
+  default session, conversation-append failure) route through a
+  user-supplied logger.
+
+### Added — `harness.run()` safety
+
+- `harness.run(messages, { sessionId })` — per-request session id so
+  concurrent runs don't interleave messages in the hard-coded `"default"`
+  bucket. First `"default"` use logs a one-time warning.
+- `createHarness` warns once at construction when no `budget` is set —
+  production deployments without a budget have unbounded token spend.
+
+### Fixed — P2 polish (Wave 8)
+
+- `AgentLoop.run()` re-entrancy guard throws `INVALID_STATE` instead of
+  silently racing state.
+- `output-parser.ts` wraps `JSON.parse` and converts `SyntaxError` into
+  `HarnessError('PARSE_INVALID_JSON')` with `cause` preserved.
+- `registerTokenizer(model, tokenizer)` returns boolean (true = newly
+  installed, false = overwrote existing).
+
+### Tests
+
+- 3200 tests pass (up from 3104 at the start of the release).
+- ~100 new tests across Waves 1, 2, 5, 7.
+- New E2E file `packages/full/src/__tests__/e2e.test.ts` exercises
+  `createHarness` with a real (unmocked) `AgentLoop`.
+
+---
+
 ## [0.1.2] — 2026-04-12
 
 47 production-readiness issues resolved from comprehensive audit
