@@ -276,6 +276,18 @@ export class AgentLoop {
    * ```
    */
   async *run(messages: Message[]): AsyncGenerator<AgentEvent> {
+    // Re-entrancy guard: two concurrent run() calls on the same instance
+    // would race on _iteration, cumulativeUsage, and abortController. The
+    // supported pattern is "one run per AgentLoop instance" or "serialize
+    // calls". Detect misuse and fail loudly instead of silently corrupting
+    // state.
+    if (this._status === 'running') {
+      throw new HarnessError(
+        'AgentLoop.run() is already running — re-entrancy is not supported',
+        'INVALID_STATE',
+        'Await the first run() before calling again, or use separate AgentLoop instances for parallel execution',
+      );
+    }
     const conversation = [...messages];
     this._status = 'running';
     let iteration = 0;

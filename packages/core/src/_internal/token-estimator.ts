@@ -17,13 +17,20 @@ const registry = new Map<string, Tokenizer>();
 /**
  * Register a tokenizer for a specific model.
  *
+ * Returns `true` if a new tokenizer was installed, `false` if this model
+ * already had one and the call was a no-op. The boolean lets callers
+ * detect unintended overwrites or double-registration in init code.
+ *
  * @example
  * ```ts
- * registerTokenizer('gpt-4', { encode: (text) => myEncoder.encode(text) });
+ * const registered = registerTokenizer('gpt-4', { encode: (text) => myEncoder.encode(text) });
+ * if (!registered) console.warn('tokenizer for gpt-4 was already registered');
  * ```
  */
-export function registerTokenizer(model: string, tokenizer: Tokenizer): void {
+export function registerTokenizer(model: string, tokenizer: Tokenizer): boolean {
+  const isNew = !registry.has(model);
   registry.set(model, tokenizer);
+  return isNew;
 }
 
 /**

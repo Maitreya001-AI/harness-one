@@ -17,6 +17,28 @@ export interface OutputParser<T = unknown> {
 }
 
 /**
+ * Wrapper for JSON.parse that converts native SyntaxError into
+ * `HarnessError('PARSE_INVALID_JSON')` with a contextual hint and the
+ * original error as `cause`. Keeps upstream callers' retry loops informative
+ * instead of seeing a bare "Unexpected token" message.
+ */
+function parseJsonOrThrow<T>(input: string, source: string): T {
+  try {
+    return JSON.parse(input) as T;
+  } catch (err) {
+    if (err instanceof SyntaxError) {
+      throw new HarnessError(
+        `Failed to parse JSON in ${source}: ${err.message}`,
+        'PARSE_INVALID_JSON',
+        'The LLM produced invalid JSON. Regenerate with explicit format instructions, or tighten the response schema.',
+        err,
+      );
+    }
+    throw err;
+  }
+}
+
+/**
  * Creates a JSON output parser that extracts and parses JSON from LLM output.
  *
  * Handles JSON wrapped in markdown code blocks (` ```json ... ``` `) as well
@@ -52,7 +74,7 @@ export function createJsonOutputParser<T = unknown>(schema?: JsonSchema): Output
             'Provide valid JSON inside the code block',
           );
         }
-        return JSON.parse(inner) as T;
+        return parseJsonOrThrow<T>(inner, 'code block');
       }
 
       // Check for unclosed code block (``` without closing ```)
@@ -64,7 +86,7 @@ export function createJsonOutputParser<T = unknown>(schema?: JsonSchema): Output
         );
       }
 
-      return JSON.parse(text.trim()) as T;
+      return parseJsonOrThrow<T>(text.trim(), 'response text');
     },
     getFormatInstructions(): string {
       return schema
