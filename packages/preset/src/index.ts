@@ -1,5 +1,5 @@
 /**
- * harness-one-full — Batteries-included harness-one with all integrations.
+ * @harness-one/preset — Batteries-included harness-one preset with all integrations.
  *
  * Provides a `createHarness()` factory that wires together the core library
  * with provider adapters, observability, memory, validation, and more.

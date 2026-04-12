@@ -178,6 +178,10 @@ interface BoundaryPolicy {
 - **视图缓存** —— `forAgent()` 缓存每个 Agent 的 scoped view，但策略查找是动态的（`setPolicies()` 后立即生效）
 - **读/写不对称** —— 读取失败静默返回 undefined（不中断流程），写入失败抛出错误（防止静默数据丢失）
 
+## Agent 元数据深拷贝（0.2.0）
+
+`Orchestrator.toReadonly()` 返回 `AgentRegistration` 时，使用 `structuredClone` 对 `metadata` 做**深拷贝**。此前实现使用浅拷贝（`{ ...metadata }`），导致调用方可以通过 `agent.metadata.user.id = ...` 修改嵌套对象，从而污染 orchestrator 内部状态——虽然接口层面声明为 `readonly`。0.2.0 起 `metadata` 被完整隔离；嵌套结构也不可外部修改。
+
 ## MessageQueue
 
 `MessageQueue` 从 `orchestrator.ts` 中提取为独立文件，提供带背压信号的有界消息队列：

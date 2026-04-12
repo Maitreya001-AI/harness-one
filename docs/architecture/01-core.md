@@ -52,7 +52,7 @@ core 模块定义了 harness-one 的共享类型契约（Message、TokenUsage、
 | `ToolValidationError` | `TOOL_VALIDATION` | 工具参数校验失败 |
 | `TokenBudgetExceededError` | `TOKEN_BUDGET_EXCEEDED` | 累计 token 超出预算 |
 
-### AgentLoop 类
+### AgentLoop 类 + createAgentLoop 工厂
 
 ```ts
 class AgentLoop {
@@ -64,9 +64,16 @@ class AgentLoop {
   dispose(): void
   async *run(messages: Message[]): AsyncGenerator<AgentEvent>
 }
+
+// 0.2.0 新增：与 harness-one 其余 `createX()` 风格对齐的工厂别名。
+function createAgentLoop(config: AgentLoopConfig): AgentLoop;
 ```
 
+两种形式等价。`new AgentLoop(...)` 给需要 subclass 访问的用户使用；`createAgentLoop(...)` 更便于用中间件包装（可以把返回值赋给一个对象字面量并插入装饰器）。
+
 **行为**：在循环中调用 `adapter.chat()`（或 `adapter.stream()`），如果 LLM 返回 toolCalls，则依次调用 `onToolCall` 并将结果回填，继续循环直到 LLM 不再请求工具或触发安全阀（maxIterations / maxTotalTokens / abort）。
+
+**非重入（0.2.0 新增）**：`run()` 在同一实例上并发调用会抛 `HarnessError('INVALID_STATE')`。两路并发时 `_iteration` / `cumulativeUsage` / `abortController` 会竞争，过去可能静默损坏状态；现在直接失败暴露误用。模式：**每条并发请求一个 AgentLoop 实例**，或把调用序列化。
 
 **构造时输入验证**：`AgentLoopConfig` 中所有数值参数（`maxIterations`、`maxTotalTokens`、`maxStreamBytes`、`maxToolArgBytes`、`toolTimeoutMs`）在构造时校验，非正数或非有限值会立即抛出错误，防止无效配置静默生效。
 
@@ -137,6 +144,23 @@ AgentLoop 在超出 token 预算时裁剪历史对话。裁剪逻辑始终保留
 ### Generator 安全
 
 `finally` 块检测外部 `.return()` / `.throw()` 关闭，确保 `done` 事件至少被标记。
+
+### 迭代 span 富化（0.2.0）
+
+当构造时传入 `traceManager`，AgentLoop 会在每次迭代开始时创建 `iteration-N` span，并附着以下**可查询属性**（此前只有 `inputTokens`/`outputTokens`）：
+
+| 属性 | 值示例 | 用途 |
+|---|---|---|
+| `iteration` | `1` | 聚合同一迭代索引的 span（工具循环识别） |
+| `adapter` | `"anthropic:claude-sonnet-4"` | 按 adapter 切片延迟 / 错误率 |
+| `conversationLength` | `42` | 压缩压力信号 |
+| `streaming` | `false` | 区分 chat() vs stream() 路径 |
+| `toolCount` | `3` | 一次迭代返回的工具调用数（工具爆炸预警） |
+| `inputTokens` / `outputTokens` | `1234` / `567` | 与 cost tracker 对齐 |
+
+**adapter 重试（0.2.0）**：重试不再隐身——每次可重试错误触发 `adapter_retry` span event，属性含 `attempt`、`errorCategory`、`path`（`'chat'` 或 `'stream'`），错误消息预览前 500 字符。当重试耗尽进入 error 路径时，`errorCategory` / `error` 也写到 span 属性上再调用 `endSpan(..., 'error')`。
+
+**工具 span 错误归因**：每个工具调用的子 span 在创建时即设 `toolName` 和 `toolCallId` 属性（不只在 span.name 字符串里），失败时再补 `errorMessage` / `errorName` 后以 `'error'` 状态关闭。trace 后端可按 `toolName` 直接聚合失败率。
 
 ## 依赖关系
 

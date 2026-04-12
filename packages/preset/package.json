@@ -1,7 +1,7 @@
 {
-  "name": "harness-one-full",
+  "name": "@harness-one/preset",
   "version": "0.1.0",
-  "description": "Batteries-included harness-one with all integrations",
+  "description": "Batteries-included harness-one preset with all integrations",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -41,11 +41,14 @@
   },
   "license": "MIT",
   "author": "harness-one contributors",
-  "keywords": ["ai", "agent", "harness", "full", "batteries-included"],
+  "keywords": ["ai", "agent", "harness", "preset", "full", "batteries-included"],
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/Maitreya001-AI/harness-one",
-    "directory": "packages/full"
+    "directory": "packages/preset"
   },
   "bugs": {
     "url": "https://github.com/Maitreya001-AI/harness-one/issues"

@@ -6,16 +6,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-## [0.2.0] — 2026-04-12
+## [0.2.0] — 2026-04-13
 
 The 50-issue architecture-review release. Based on the 7-axis deep
 architectural review (see
 `~/Documents/harness-one_Architecture_Review_20260412/`), this release
 closes every identified gap — 8 P0, 22 P1, and 20 P2 findings —
-organized into eight focused commits.
+organized into eight focused commits. Also renames the batteries-included
+preset package.
 
 ### Breaking
 
+- **Package rename**: `harness-one-full` → `@harness-one/preset`. Runtime
+  behavior is identical; migration is a one-line rename. See
+  `.changeset/rename-preset.md` for the diff.
 - `HarnessConfig.langfuse`: previously accepted any object; now validates
   the client has a `.trace()` method at construction and throws
   `HarnessError('INVALID_CONFIG')` otherwise.

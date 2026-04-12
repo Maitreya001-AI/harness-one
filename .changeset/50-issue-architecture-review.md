@@ -1,6 +1,6 @@
 ---
 "harness-one": minor
-"harness-one-full": minor
+"@harness-one/preset": minor
 "@harness-one/redis": minor
 "@harness-one/langfuse": patch
 "@harness-one/anthropic": patch

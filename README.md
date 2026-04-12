@@ -2,6 +2,8 @@
 
 > Universal primitives for AI agent harness engineering. The hard 30% of harness infrastructure, done once and done right.
 
+**Languages**: **English** (this file) · [中文版 → `README.zh-CN.md`](./README.zh-CN.md)
+
 ## What is Harness Engineering?
 
 An AI agent is **Model + Harness**. The model provides intelligence; the harness provides everything else: context management, tool routing, safety guardrails, observability, memory, evaluation, and session orchestration.
@@ -17,11 +19,35 @@ Harness engineering is the discipline of building robust, production-grade infra
 
 ## Quick Start
 
+Two install paths:
+
 ```bash
+# À la carte — the core package (tree-shakeable submodules).
 npm install harness-one
+
+# Batteries-included preset — core + all integrations wired via createHarness().
+npm install @harness-one/preset @anthropic-ai/sdk
 ```
 
+### Using `harness-one` directly
+
+Every public API is re-exported from the root entry **and** from its submodule
+path. Use whichever fits your tree-shaker:
+
 ```typescript
+// Root entry — good for prototyping and examples
+import {
+  AgentLoop,
+  createAgentLoop,
+  defineTool,
+  createRegistry,
+  toolSuccess,
+  createPipeline,
+  createInjectionDetector,
+  runInput,
+} from 'harness-one';
+
+// Or submodule imports — good for production, better tree-shaking
 import { AgentLoop } from 'harness-one/core';
 import { defineTool, createRegistry, toolSuccess } from 'harness-one/tools';
 import { createPipeline, createInjectionDetector, runInput } from 'harness-one/guardrails';
@@ -51,8 +77,8 @@ const pipeline = createPipeline({
   failClosed: true,
 });
 
-// Create agent loop
-const loop = new AgentLoop({
+// Create agent loop — class form or factory form, your choice
+const loop = createAgentLoop({
   adapter: yourLLMAdapter, // Implement AgentAdapter interface
   maxIterations: 10,
   onToolCall: registry.handler(),
@@ -72,6 +98,10 @@ if (check.passed) {
   }
 }
 ```
+
+`AgentLoop.run()` is **not re-entrant**: calling it again while a previous call is
+still running throws `HarnessError('INVALID_STATE')`. Create one `AgentLoop`
+instance per concurrent run, or await the previous run before starting a new one.
 
 ## Modules
 
@@ -263,7 +293,7 @@ const healed = await withSelfHealing({
 
 #### Auto-wiring in createHarness()
 
-When using `harness-one-full`, guardrails are automatically applied inside `harness.run()` — no manual `runInput`/`runOutput` calls required:
+When using `@harness-one/preset`, guardrails are automatically applied inside `harness.run()` — no manual `runInput`/`runOutput` calls required. Each guardrail check also emits a child span on the `harness.run` trace (`guardrail:input`, `guardrail:output`, `guardrail:tool-args`, `guardrail:tool-result`) so blocked requests are auditable post-hoc.
 
 - **Input guardrails** run on every `user` role message before the agent loop starts.
 - **Output guardrails** run on every `assistant` message and every `tool_result` yielded by the loop.
@@ -647,19 +677,26 @@ Not all features are at the same maturity level. This table clarifies what's pro
 | Resilient Loop | New | Outer retry with fresh context (REQ-015) |
 | Dataset Export | New | Trace-to-JSONL for fine-tuning (REQ-018) |
 
-## harness-one-full — Batteries Included
+## @harness-one/preset — Batteries Included
 
-`harness-one-full` wires all modules and integrations together in a single `createHarness()` call. Install it when you want a fully-configured harness without writing boilerplate.
+> Previously published as `harness-one-full`. The package was renamed to
+> `@harness-one/preset` in 0.2.0 to match the rest of the `@harness-one/*`
+> integration scope. See `.changeset/rename-preset.md` for the migration
+> diff — runtime behavior is unchanged.
+
+`@harness-one/preset` wires all modules and integrations together in a single
+`createHarness()` call. Install it when you want a fully-configured harness
+without writing boilerplate.
 
 ```bash
-npm install harness-one-full @anthropic-ai/sdk
+npm install @harness-one/preset @anthropic-ai/sdk
 ```
 
 **Preferred pattern — inject a pre-built adapter** (`AdapterHarnessConfig`):
 
 ```typescript
 import { createAnthropicAdapter } from '@harness-one/anthropic';
-import { createHarness } from 'harness-one-full';
+import { createHarness } from '@harness-one/preset';
 
 const adapter = createAnthropicAdapter({
   client: anthropicClient,
@@ -674,15 +711,22 @@ const harness = createHarness({
     rateLimit: { max: 10, windowMs: 60_000 },
     pii: true,  // auto-wires PII detector via guardrails.pii config
   },
-  budget: 5.0,
+  budget: 5.0,         // REQUIRED for production — see warning below
+  pricing: [{ model: 'claude-sonnet-4-20250514', inputPer1kTokens: 0.003, outputPer1kTokens: 0.015 }],
 });
 ```
+
+> **Heads-up**: when `budget` is omitted, `createHarness()` logs a one-time
+> warning — token usage is otherwise unbounded. Always set `budget` in
+> production. Similarly, `harness.run(messages)` without `{ sessionId }`
+> logs a one-time warning: the default `"default"` session is unsafe when
+> multiple concurrent `run()` calls share a harness instance.
 
 **Provider-based shorthand** (still supported):
 
 ```typescript
 import Anthropic from '@anthropic-ai/sdk';
-import { createHarness } from 'harness-one-full';
+import { createHarness } from '@harness-one/preset';
 
 // HarnessConfig is a discriminated union keyed by `provider`.
 // TypeScript narrows the required `client` field by provider.
@@ -699,17 +743,22 @@ const harness = createHarness({
 });
 ```
 
-**harness.run() auto-wiring**: guardrails fire on every user message (input) and every assistant message + tool result (output). Tool call arguments are also validated against input guardrails before execution. The `AgentLoop` is created internally with `maxConversationMessages: 200` by default.
+**harness.run() auto-wiring**: guardrails fire on every user message (input) and every assistant message + tool result (output). Tool call arguments are also validated against input guardrails before execution. The `AgentLoop` is created internally with `maxConversationMessages: 200` by default, and the shared `traceManager` is passed through so every iteration / tool call / guardrail check shows up as a span in your configured exporter.
 
 ```typescript
 harness.tools.register(myTool);
-for await (const event of harness.run(messages)) {
+
+// Always pass a per-request sessionId in multi-tenant servers.
+// Concurrent run() calls to the same session will interleave messages;
+// pass distinct sessionIds to isolate conversation histories.
+for await (const event of harness.run(messages, { sessionId: userId })) {
   if (event.type === 'message') console.log(event.message.content);
   if (event.type === 'error') console.error('Blocked:', event.error.message);
   if (event.type === 'done') break;
 }
 
-// shutdown() allows up to 5 seconds per exporter for graceful flush
+// shutdown() allows up to 5 seconds per exporter for graceful flush.
+// flush() / dispose() wait for pending span/trace exports.
 await harness.shutdown();
 ```
 

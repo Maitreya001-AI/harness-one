@@ -92,44 +92,6 @@ importers:
         specifier: ^2.0.0
         version: 2.1.9(@types/node@22.19.17)
 
-  packages/full:
-    dependencies:
-      '@harness-one/ajv':
-        specifier: workspace:*
-        version: link:../ajv
-      '@harness-one/anthropic':
-        specifier: workspace:*
-        version: link:../anthropic
-      '@harness-one/openai':
-        specifier: workspace:*
-        version: link:../openai
-      harness-one:
-        specifier: workspace:*
-        version: link:../core
-    devDependencies:
-      tsup:
-        specifier: ^8.0.0
-        version: 8.5.1(postcss@8.5.8)(typescript@5.9.3)(yaml@2.8.3)
-      typescript:
-        specifier: ^5.5.0
-        version: 5.9.3
-      vitest:
-        specifier: ^2.0.0
-        version: 2.1.9(@types/node@22.19.17)
-    optionalDependencies:
-      '@harness-one/langfuse':
-        specifier: workspace:*
-        version: link:../langfuse
-      '@harness-one/opentelemetry':
-        specifier: workspace:*
-        version: link:../opentelemetry
-      '@harness-one/redis':
-        specifier: workspace:*
-        version: link:../redis
-      '@harness-one/tiktoken':
-        specifier: workspace:*
-        version: link:../tiktoken
-
   packages/langfuse:
     dependencies:
       harness-one:
@@ -186,6 +148,44 @@ importers:
       vitest:
         specifier: ^2.0.0
         version: 2.1.9(@types/node@22.19.17)
+
+  packages/preset:
+    dependencies:
+      '@harness-one/ajv':
+        specifier: workspace:*
+        version: link:../ajv
+      '@harness-one/anthropic':
+        specifier: workspace:*
+        version: link:../anthropic
+      '@harness-one/openai':
+        specifier: workspace:*
+        version: link:../openai
+      harness-one:
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      tsup:
+        specifier: ^8.0.0
+        version: 8.5.1(postcss@8.5.8)(typescript@5.9.3)(yaml@2.8.3)
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.0.0
+        version: 2.1.9(@types/node@22.19.17)
+    optionalDependencies:
+      '@harness-one/langfuse':
+        specifier: workspace:*
+        version: link:../langfuse
+      '@harness-one/opentelemetry':
+        specifier: workspace:*
+        version: link:../opentelemetry
+      '@harness-one/redis':
+        specifier: workspace:*
+        version: link:../redis
+      '@harness-one/tiktoken':
+        specifier: workspace:*
+        version: link:../tiktoken
 
   packages/redis:
     dependencies:

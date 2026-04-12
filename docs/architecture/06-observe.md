@@ -26,6 +26,8 @@ observe 模块提供两个核心能力：TraceManager 管理分布式追踪（Tr
 | `Trace` | 追踪：id、name、startTime、endTime、metadata、spans、status |
 | `Span` | 跨度：id、traceId、parentId、name、attributes、events、status |
 | `SpanEvent` | 跨度事件：name、timestamp、attributes |
+| `SpanAttributeValue` | 允许的 attr 值类型（0.2.0）：`string \| number \| boolean \| readonly string[] \| readonly number[] \| readonly boolean[]`，与 OTel 语义兼容 |
+| `SpanAttributes` | `Readonly<Record<string, SpanAttributeValue>>`（0.2.0）；新代码应使用此类型，接口层兼容仍为 `Record<string, unknown>` |
 | `TokenUsageRecord` | token 用量记录：含 estimatedCost 和 timestamp |
 | `CostAlert` | 成本告警：type (warning/critical)、currentCost、budget、percentUsed |
 | `TraceExporter` | 导出器接口：exportTrace、exportSpan、flush + 可选生命周期方法 |
@@ -37,14 +39,19 @@ observe 模块提供两个核心能力：TraceManager 管理分布式追踪（Tr
 ```ts
 function createTraceManager(config?: {
   exporters?: TraceExporter[];
-  maxTraces?: number;  // 默认 1000，LRU 淘汰；非正数值在构造时被拒绝
+  maxTraces?: number;            // 默认 1000，LRU 淘汰；非正数值在构造时被拒绝
+  onExportError?: (err: unknown) => void;
+  logger?: { warn: (msg: string, meta?: Record<string, unknown>) => void }; // 0.2.0
+  defaultSamplingRate?: number;  // 0.2.0，[0, 1]，默认 1（全采）
 }): TraceManager
 ```
-TraceManager 接口：`startTrace()`, `startSpan()`, `addSpanEvent()`, `setSpanAttributes()`, `endSpan()`, `endTrace()`, `getTrace()`, `getActiveSpans()`, `flush()`, `dispose()`.
+TraceManager 接口：`startTrace()`, `startSpan()`, `addSpanEvent()`, `setSpanAttributes()`, `endSpan()`, `endTrace()`, `getTrace()`, `getActiveSpans()`, `flush()`, `initialize()` (0.2.0)、`setSamplingRate(rate)` (0.2.0)、`dispose()`.
 
-- `getActiveSpans(): Array<{ id: string; traceId: string; name: string; startTime: number }>` — 返回仍处于 'running' 状态的 span，用于检测泄漏的 span。
-- `dispose(): Promise<void>` — 执行 flush + shutdown + 清理所有内部状态。
-- `startSpan()` 的 parentId 参数现在会被校验——如果提供了 parentId，必须是同一 trace 中已存在的 span，否则抛出 SPAN_NOT_FOUND 错误。
+- `initialize(): Promise<void>` — 主动调用每个 exporter 的 `initialize?()`。未调用时首个导出触发懒加载。
+- `setSamplingRate(rate)` — 运行时调节全局采样率，接受 [0, 1]。per-exporter `shouldExport()` 优先级更高。
+- `flush() / dispose()` — **都会等待所有 in-flight span/trace 导出落地**（0.2.0 修复：此前 `flush()` 只让 exporter 自身 flush，外层仍有未 settle 的 `.then()` 链）。
+- `getActiveSpans(olderThanMs?)` — 返回仍处于 'running' 状态的 span，用于检测泄漏。
+- `startSpan()` 的 parentId 必须是同一 trace 中已存在的 span，否则抛出 `SPAN_NOT_FOUND`。
 
 **createConsoleExporter(config?)** / **createNoOpExporter()**
 ```ts
@@ -57,12 +64,17 @@ function createNoOpExporter(): TraceExporter
 function createCostTracker(config?: {
   pricing?: ModelPricing[];
   budget?: number;
-  alertThresholds?: { warning: number; critical: number };  // 默认 0.8 / 0.95（Langfuse 实现中可通过 config 覆盖）
+  alertThresholds?: { warning: number; critical: number };  // 默认 0.8 / 0.95
   maxRecords?: number;  // 环形缓冲区容量上限，默认 10,000
   maxModels?: number;   // modelTotals 二级索引上限，默认 1000，FIFO 淘汰
   maxTraces?: number;   // traceTotals 二级索引上限，默认 10,000，FIFO 淘汰
+  strictMode?: boolean;          // 0.2.0，默认 false
+  warnUnpricedModels?: boolean;  // 0.2.0，默认 true
 }): CostTracker
 ```
+
+- `strictMode: true`：`recordUsage()` 收到 `model` 缺失或 `inputTokens/outputTokens` 非有限数时抛 `HarnessError('INVALID_INPUT')`。适合测试期暴露 adapter 上报数据的缺陷。生产默认关闭以保持向后兼容。
+- `warnUnpricedModels: true`（默认）：首次看到未注册定价的 model 时打一条 `console.warn`，指向 `setPricing()`。同一 model 只警告一次。避免"cost 全为 0 却不知道为什么"这种盲点。
 CostTracker 接口：`setPricing()`, `recordUsage()`, `updateUsage()`, `getTotalCost()`, `getCostByModel()`, `getCostByTrace()`, `setBudget()`, `checkBudget()`, `onAlert()`, `getAlertMessage()`, `reset()`.
 
 `updateUsage(traceId, partialUsage)` 用于流式场景：当 token 用量随流式响应逐步累积时，可多次调用此方法更新同一 traceId 的用量，而无需在流结束后一次性 `recordUsage()`。最终成本基于累积的完整用量计算。
@@ -108,16 +120,18 @@ cost = (inputTokens/1000 * inputPrice) + (outputTokens/1000 * outputPrice)
 
 ## TraceExporter 生命周期方法
 
-`TraceExporter` 接口除必选的 `exportTrace()`、`exportSpan()`、`flush()` 外，新增四个可选生命周期方法：
+`TraceExporter` 接口除必选的 `exportTrace()`、`exportSpan()`、`flush()` 外，有四个可选生命周期方法——**从 0.2.0 起全部由 TraceManager 真正调用**（此前仅 `shutdown?()` 被 `dispose()` 使用，其余三个声明但未实现，构成契约残缺）：
 
-| 方法 | 说明 |
-|------|------|
-| `initialize?()` | 初始化导出器（如建立后端连接）。在首次导出前调用 |
-| `isHealthy?()` | 同步健康检查，返回 `false` 时可跳过导出或触发告警 |
-| `shouldExport?(trace)` | 采样控制——返回 `false` 时跳过该 trace 的导出。用于实现概率采样或基于属性的过滤 |
-| `shutdown?()` | 优雅关闭（如刷新缓冲区、断开连接） |
+| 方法 | 调用时机（0.2.0） |
+|------|-------------------|
+| `initialize?()` | 懒调用——首个 `exportTrace`/`exportSpan` 触发；或调用方主动 `tm.initialize()` 一次性预热 |
+| `isHealthy?()` | 每次导出前检查；返回 `false` 时跳过该 exporter 的本次导出 |
+| `shouldExport?(trace)` | `endTrace` 时对该 exporter 询问是否导出此 trace（sampling / attribute 过滤） |
+| `shutdown?()` | `tm.dispose()` 时调用 |
 
-所有方法均为可选，已有的 exporter 实现无需修改。
+**全局 sampling**：没有 per-exporter `shouldExport?()` 时，`defaultSamplingRate` 会生效（`Math.random() < rate` 才导出）。两者同时提供时 `shouldExport?()` 优先。
+
+**懒初始化容错**：`initialize()` 失败时错误通过 `onExportError` / logger 报告，但不会永久阻塞后续 exportSpan/exportTrace 调用——每次导出仍会尝试 awaitting 缓存的 `initialize()` promise（已 settled），避免 exporter 因初次连接失败从此下线。
 
 ## 扩展点
 
@@ -125,11 +139,23 @@ cost = (inputTokens/1000 * inputPrice) + (outputTokens/1000 * outputPrice)
 - 通过 `ModelPricing` 配置任意模型的定价
 - `onAlert()` 回调可触发自动降级或切换模型
 
+## harness.run() 的 trace 布局（0.2.0）
+
+当使用 `@harness-one/preset` 的 `createHarness()` 时，`harness.run()` 会为每次调用创建一个**顶层 trace** `harness.run`，并把以下内容挂在它下面：
+
+- **顶层 span**：`harness.run` 自身携带 `sessionId`、`messageCount` metadata。
+- **guardrail 子 span**：每次守卫检查启动一个名为 `guardrail:input` / `guardrail:tool-args` / `guardrail:output` / `guardrail:tool-result` 的 span，属性含 `passed`、`verdict`、`latencyMs`、可选 `reason`（被拦时）。失败的守卫 span 以 `'error'` 状态结束。
+- **iteration-N span**：由内部 AgentLoop 创建（和普通 loop 使用相同的 TraceManager），属性在 `01-core.md` 里列出。
+- **tool:&lt;name&gt; span**：每次工具调用一个子 span。
+
+因此，一次线上事故的 trace 链路为：`harness.run` → `guardrail:input` → `iteration-1` → `tool:search` → `guardrail:tool-result` → `iteration-2` → ... → `guardrail:output` → 结束。SRE 可以按属性过滤"今天哪些 session 被 guardrail 拦了"、"哪个工具失败最多"、"rate-limit retry 次数最高的 trace 是哪条"。
+
 ## 设计决策
 
 1. **Exporter 异步且不阻塞**——exportTrace/exportSpan 的 Promise rejection 通过 `onExportError` 回调报告，不影响业务流程
 2. **LRU 而非 TTL**——按数量而非时间淘汰，更适合长期运行的 agent 进程
 3. **成本与追踪分离**——TraceManager 和 CostTracker 是独立的，可单独使用
+4. **契约与实现对齐（0.2.0）**——TraceExporter 接口声明的生命周期钩子全部由 TraceManager 真正调用；避免"声明即谎言"的契约残缺
 
 ## Failure Taxonomy
 

@@ -1,5 +1,5 @@
 /**
- * Environment-based configuration helper for harness-one-full.
+ * Environment-based configuration helper for @harness-one/preset.
  *
  * Reads well-known HARNESS_* environment variables and returns a
  * partial HarnessConfig that can be spread into createHarness().
