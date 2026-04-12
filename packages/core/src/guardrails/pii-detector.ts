@@ -120,7 +120,19 @@ export function createPIIDetector(config?: {
   }
 
   const guard: Guardrail = (ctx: GuardrailContext) => {
+    // Fast-path preflight: if the content has no digits, skip all numeric-
+    // based detectors (phone, SSN, credit card, IP, API key prefixes with
+    // digits). For short alpha-only content this slashes per-message work
+    // from N regexes to 0.
+    const hasDigit = /\d/.test(ctx.content);
+    const hasAt = ctx.content.indexOf('@') >= 0;
+
     for (const detector of detectors) {
+      // Detector-level preflights — cheap single-char checks that rule out
+      // entire classes of PII without running the full regex.
+      if (!hasDigit && /phone|SSN|credit card|IP address/.test(detector.name)) continue;
+      if (!hasAt && detector.name === 'email') continue;
+
       const match = ctx.content.match(detector.pattern);
       if (match) {
         // If a validate function is provided, check the match

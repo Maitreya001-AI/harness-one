@@ -42,37 +42,56 @@ export function estimateTokens(model: string, text: string): number {
   return heuristicEstimate(text);
 }
 
-// CJK Unicode ranges
-const CJK_RE = /[\u2E80-\u9FFF\uF900-\uFAFF\uFE30-\uFE4F]/g;
-// Code/punctuation characters
-const CODE_RE = /[{}()\[\];:=<>!&|+\-*/%^~?@#$\\`"',.]/g;
-
 /**
- * Heuristic token estimation.
+ * Heuristic token estimation — single-pass O(n) character classifier.
  *
- * - General English text: ~4 chars per token
- * - CJK characters: ~1.5 chars per token
- * - Code/punctuation: ~3 chars per token
+ * Replaces an earlier implementation that called `text.match(CJK_RE)` and
+ * `text.match(CODE_RE)` separately, which scanned the text twice. For large
+ * messages (50 KB+), the extra scan dominated context-packing latency.
+ *
+ * Character classes (approximations, calibrated against tiktoken):
+ * - CJK: U+2E80–U+9FFF, U+F900–U+FAFF, U+FE30–U+FE4F → ~1.5 chars/token
+ * - Code/punctuation: `{}()[];:=<>!&|+-*\/%^~?@#$\`"',.` → ~3 chars/token
+ * - Default: everything else → ~4 chars/token
  * - Framing overhead: +4 tokens per message
+ *
+ * We precompute a bitmap for code/punctuation (ASCII-only, so a tight
+ * boolean array indexed by char code) and check CJK ranges with numeric
+ * comparisons on the UTF-16 code unit — avoids per-char regex overhead.
  */
+const CODE_PUNCT_BITMAP = new Uint8Array(128);
+for (const c of "{}()[];:=<>!&|+-*/%^~?@#$\\`\"',.") {
+  const cc = c.charCodeAt(0);
+  if (cc < 128) CODE_PUNCT_BITMAP[cc] = 1;
+}
+
+function isCJK(cc: number): boolean {
+  // U+2E80..U+9FFF
+  if (cc >= 0x2e80 && cc <= 0x9fff) return true;
+  // U+F900..U+FAFF
+  if (cc >= 0xf900 && cc <= 0xfaff) return true;
+  // U+FE30..U+FE4F
+  if (cc >= 0xfe30 && cc <= 0xfe4f) return true;
+  return false;
+}
+
 function heuristicEstimate(text: string): number {
-  if (text.length === 0) return 4; // framing only
+  const len = text.length;
+  if (len === 0) return 4; // framing only
 
-  // Count CJK characters
-  const cjkMatches = text.match(CJK_RE);
-  const cjkCount = cjkMatches ? cjkMatches.length : 0;
+  let cjkCount = 0;
+  let codeCount = 0;
 
-  // Count code/punctuation characters
-  const codeMatches = text.match(CODE_RE);
-  const codeCount = codeMatches ? codeMatches.length : 0;
+  for (let i = 0; i < len; i++) {
+    const cc = text.charCodeAt(i);
+    if (cc < 128) {
+      if (CODE_PUNCT_BITMAP[cc]) codeCount++;
+    } else if (isCJK(cc)) {
+      cjkCount++;
+    }
+  }
 
-  // Remaining characters are "normal" text
-  const normalCount = text.length - cjkCount - codeCount;
+  const normalCount = len - cjkCount - codeCount;
 
-  const cjkTokens = cjkCount / 1.5;
-  const codeTokens = codeCount / 3;
-  const normalTokens = normalCount / 4;
-  const framing = 4;
-
-  return Math.ceil(cjkTokens + codeTokens + normalTokens + framing);
+  return Math.ceil(cjkCount / 1.5 + codeCount / 3 + normalCount / 4 + 4);
 }

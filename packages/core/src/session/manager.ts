@@ -84,7 +84,14 @@ export function createSessionManager(config?: {
   }
 
   const sessions = new Map<string, MutableSession>();
-  const accessOrder = new Map<string, true>(); // Map insertion order for O(1) LRU
+  /**
+   * Split the LRU order by lock state. `unlockedOrder` contains only
+   * evictable sessions — we pop from its head in O(1) instead of linearly
+   * scanning past locked sessions. `lockedIds` is a membership set so
+   * lock/unlock transitions are constant-time.
+   */
+  const unlockedOrder = new Map<string, true>(); // LRU of active (unlocked)
+  const lockedIds = new Set<string>();
   const eventHandlers: ((event: SessionEvent) => void)[] = [];
   let nextId = 1;
 
@@ -123,33 +130,36 @@ export function createSessionManager(config?: {
   }
 
   // O(1) LRU using Map insertion order: delete + re-set moves entry to end.
+  // Only the unlocked order needs LRU positioning; locked sessions are
+  // temporarily off the eviction path and rejoin the queue on unlock.
   function touchAccessOrder(id: string): void {
-    accessOrder.delete(id);
-    accessOrder.set(id, true);
+    if (lockedIds.has(id)) return; // locked sessions carry no LRU position
+    unlockedOrder.delete(id);
+    unlockedOrder.set(id, true);
+  }
+
+  function markLocked(id: string): void {
+    unlockedOrder.delete(id);
+    lockedIds.add(id);
+  }
+
+  function markUnlocked(id: string): void {
+    lockedIds.delete(id);
+    unlockedOrder.delete(id);
+    unlockedOrder.set(id, true);
   }
 
   function evictLRU(): void {
-    // Safety counter: prevent infinite loop when all sessions are locked.
-    // If every remaining session is locked, we cannot evict any of them —
-    // the loop must terminate even though sessions.size > maxSessions.
-    let attempts = 0;
-    const maxAttempts = accessOrder.size;
-
-    while (sessions.size > maxSessions && accessOrder.size > 0 && attempts < maxAttempts) {
-      const oldestId = accessOrder.keys().next().value as string;
+    // O(1) per eviction: pop from the head of unlockedOrder until sessions
+    // fit the cap or no unlocked session remains. Locked sessions are never
+    // scanned. If every session is locked at capacity, create() raises
+    // SESSION_LIMIT — that's the correct behavior rather than silently
+    // exceeding the cap.
+    while (sessions.size > maxSessions && unlockedOrder.size > 0) {
+      const oldestId = unlockedOrder.keys().next().value as string;
+      unlockedOrder.delete(oldestId);
       const session = sessions.get(oldestId);
-
-      if (session && session.status === 'locked') {
-        // Skip locked sessions: move to end of access order and try next
-        accessOrder.delete(oldestId);
-        accessOrder.set(oldestId, true);
-        attempts++;
-        continue;
-      }
-
-      accessOrder.delete(oldestId);
       if (session) {
-        // Fix 11: Emit distinct 'evicted' event before destroying via LRU
         emit('evicted', oldestId, 'lru_capacity');
         sessions.delete(oldestId);
         emit('destroyed', oldestId);
@@ -181,16 +191,15 @@ export function createSessionManager(config?: {
 
   const manager: SessionManager = {
     create(metadata?: Record<string, unknown>): Session {
-      // Check if at capacity and all existing sessions are locked (un-evictable)
-      if (sessions.size >= maxSessions) {
-        const allLocked = Array.from(sessions.values()).every(s => s.status === 'locked');
-        if (allLocked) {
-          throw new HarnessError(
-            'Cannot create session: all sessions are locked and max capacity reached',
-            'SESSION_LIMIT',
-            'Unlock or destroy an existing session before creating a new one',
-          );
-        }
+      // O(1) capacity check: if we're at cap and have no evictable sessions,
+      // creating one more would overflow since we can't evict any. Previously
+      // this scanned all sessions — now we use the unlockedOrder size.
+      if (sessions.size >= maxSessions && unlockedOrder.size === 0) {
+        throw new HarnessError(
+          'Cannot create session: all sessions are locked and max capacity reached',
+          'SESSION_LIMIT',
+          'Unlock or destroy an existing session before creating a new one',
+        );
       }
       const id = genId();
       const now = Date.now();
@@ -202,7 +211,7 @@ export function createSessionManager(config?: {
         status: 'active',
       };
       sessions.set(id, session);
-      accessOrder.set(id, true);
+      unlockedOrder.set(id, true);
       evictLRU();
       emit('created', id);
       return toReadonly(session);
@@ -264,16 +273,13 @@ export function createSessionManager(config?: {
       }
 
       session.status = 'locked';
+      markLocked(id);
       emit('locked', id);
 
-      // Capture the session reference at lock time so unlock operates on the
-      // same object without re-fetching from the Map. This makes the
-      // check-and-modify atomic: no window between fetching and mutating.
       const lockedSession = session;
 
       return {
         unlock: () => {
-          // Verify the session still exists in the map (not destroyed).
           if (!sessions.has(id)) {
             throw new HarnessError(
               `Session was destroyed while locked: ${id}`,
@@ -281,10 +287,10 @@ export function createSessionManager(config?: {
               'Do not destroy a session while it is locked',
             );
           }
-          // Use the captured reference for atomic check-and-modify.
           if (lockedSession.status === 'locked') {
             lockedSession.status = 'active';
             lockedSession.lastAccessedAt = Date.now();
+            markUnlocked(id);
             emit('unlocked', id);
           }
         },
@@ -292,7 +298,8 @@ export function createSessionManager(config?: {
     },
 
     destroy(id: string): void {
-      accessOrder.delete(id);
+      unlockedOrder.delete(id);
+      lockedIds.delete(id);
       sessions.delete(id);
       emit('destroyed', id);
     },
@@ -319,7 +326,8 @@ export function createSessionManager(config?: {
           if (!alreadyExpired) {
             session.status = 'expired';
           }
-          accessOrder.delete(id);
+          unlockedOrder.delete(id);
+          lockedIds.delete(id);
           sessions.delete(id);
           emit('destroyed', id);
           count++;
@@ -354,7 +362,8 @@ export function createSessionManager(config?: {
       if (gcTimer) clearInterval(gcTimer);
       // Clear all sessions to release memory and prevent stale references.
       sessions.clear();
-      accessOrder.clear();
+      unlockedOrder.clear();
+      lockedIds.clear();
       // Clear event handlers to prevent memory leaks when handlers close over
       // external state that would otherwise be retained by the disposed manager.
       eventHandlers.length = 0;

@@ -48,44 +48,51 @@ export function pruneConversation(
 
   const warning = `Conversation pruned from ${conversation.length} to ${maxMessages} messages`;
 
-  // Preserve all leading system messages (there may be 0 or more)
+  // Index-based pruning: compute head/tail boundaries without allocating
+  // intermediate arrays, then materialize a single result array at the end.
+  // Previously this used 3–5 Array.slice() calls producing O(n) copies each.
+
   let systemCount = 0;
   while (systemCount < conversation.length && conversation[systemCount].role === 'system') {
     systemCount++;
   }
-  const head = conversation.slice(0, Math.max(1, systemCount));
-  const tailSize = maxMessages - head.length;
-  let tail = conversation.slice(-Math.max(1, tailSize));
+  const headEnd = Math.max(1, systemCount); // inclusive upper bound exclusive
+  const tailSize = maxMessages - headEnd;
+  let tailStart = conversation.length - Math.max(1, tailSize);
+  if (tailStart < headEnd) tailStart = headEnd;
 
-  // Validate pruned tail: ensure no orphaned tool messages at the start.
-  // A tool message must be preceded by an assistant message with matching toolCallId.
-  // Walk forward from the start of tail, dropping orphaned tool messages and
-  // any assistant messages whose tool calls have lost their corresponding results.
-  while (tail.length > 0 && tail[0].role === 'tool') {
-    tail = tail.slice(1);
+  // Advance tailStart past orphaned tool messages (no preceding assistant
+  // inside the tail window).
+  while (tailStart < conversation.length && conversation[tailStart].role === 'tool') {
+    tailStart++;
   }
 
-  // Ensure the tail doesn't start with an assistant message that has tool calls
-  // without their corresponding tool result messages (which may have been pruned).
-  if (tail.length > 0 && tail[0].role === 'assistant') {
-    const assistantMsg = tail[0];
-    if (assistantMsg.toolCalls && assistantMsg.toolCalls.length > 0) {
-      // Check if all tool call results are present in the remaining tail
-      const toolCallIds = new Set(assistantMsg.toolCalls.map(tc => tc.id));
-      const resultIds = new Set(
-        tail.filter(m => m.role === 'tool').map(m => (m as { toolCallId: string }).toolCallId)
-      );
-      const allPresent = [...toolCallIds].every(id => resultIds.has(id));
-      if (!allPresent) {
-        // Drop the assistant message with incomplete tool calls
-        tail = tail.slice(1);
-        // Also drop any orphaned tool messages that followed it
-        while (tail.length > 0 && tail[0].role === 'tool') {
-          tail = tail.slice(1);
+  // If the tail now starts with an assistant that has tool_calls, make sure
+  // every corresponding tool-result message is still inside the tail window.
+  // If not, drop the assistant + any following orphan tool messages.
+  if (tailStart < conversation.length && conversation[tailStart].role === 'assistant') {
+    const assistantMsg = conversation[tailStart];
+    if (assistantMsg.role === 'assistant' && assistantMsg.toolCalls && assistantMsg.toolCalls.length > 0) {
+      const needed = new Set(assistantMsg.toolCalls.map(tc => tc.id));
+      for (let i = tailStart + 1; i < conversation.length && needed.size > 0; i++) {
+        const m = conversation[i];
+        if (m.role === 'tool') needed.delete((m as { toolCallId: string }).toolCallId);
+      }
+      if (needed.size > 0) {
+        tailStart++;
+        while (tailStart < conversation.length && conversation[tailStart].role === 'tool') {
+          tailStart++;
         }
       }
     }
   }
 
-  return { pruned: [...head, ...tail], warning };
+  // Materialize the result in one allocation.
+  const result: Message[] = new Array(headEnd + (conversation.length - tailStart));
+  let w = 0;
+  for (let i = 0; i < headEnd; i++) result[w++] = conversation[i];
+  for (let i = tailStart; i < conversation.length; i++) result[w++] = conversation[i];
+  result.length = w;
+
+  return { pruned: result, warning };
 }
