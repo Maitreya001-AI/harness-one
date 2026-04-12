@@ -46,8 +46,8 @@ export function createConfigFromEnv(
   return {
     ...(provider !== undefined && { provider }),
     ...(model !== undefined && { model }),
-    ...(maxIterations !== undefined && !isNaN(maxIterations) && { maxIterations }),
-    ...(maxTotalTokens !== undefined && !isNaN(maxTotalTokens) && { maxTotalTokens }),
-    ...(budget !== undefined && !isNaN(budget) && { budget }),
+    ...(maxIterations !== undefined && !isNaN(maxIterations) && isFinite(maxIterations) && maxIterations > 0 && { maxIterations }),
+    ...(maxTotalTokens !== undefined && !isNaN(maxTotalTokens) && isFinite(maxTotalTokens) && maxTotalTokens > 0 && { maxTotalTokens }),
+    ...(budget !== undefined && !isNaN(budget) && isFinite(budget) && budget > 0 && { budget }),
   } as Partial<HarnessConfig>;
 }

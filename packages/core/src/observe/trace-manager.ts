@@ -138,7 +138,7 @@ export function createTraceManager(config?: {
       }
       // Then, evict oldest running traces from the LRU order if still over capacity.
       while (traces.size > maxTraces && traceOrder.length > 0) {
-        const oldestId = traceOrder.shift()!;
+        const oldestId = traceOrder.shift() as string;
         const trace = traces.get(oldestId);
         if (trace) {
           // Finalize any still-running spans before removal (Fix 1)
@@ -266,10 +266,10 @@ export function createTraceManager(config?: {
         exporter.exportSpan({ ...span, events: [...span.events] }).catch((err) => {
           if (onExportError) {
             onExportError(err);
+          } else {
+            // Default: warn rather than silently discard
+            console.warn('[harness-one] trace export error:', err);
           }
-          // When no onExportError callback is provided, silently discard the
-          // error to avoid unexpected console output from a library module.
-          // Consumers who need visibility should pass an onExportError handler.
         });
       }
     },
@@ -299,10 +299,10 @@ export function createTraceManager(config?: {
         exporter.exportTrace(readonlyTrace).catch((err) => {
           if (onExportError) {
             onExportError(err);
+          } else {
+            // Default: warn rather than silently discard
+            console.warn('[harness-one] trace export error:', err);
           }
-          // When no onExportError callback is provided, silently discard the
-          // error to avoid unexpected console output from a library module.
-          // Consumers who need visibility should pass an onExportError handler.
         });
       }
     },
@@ -340,8 +340,9 @@ export function createTraceManager(config?: {
         if (result.status === 'rejected') {
           if (onExportError) {
             onExportError(result.reason);
+          } else {
+            console.warn('[harness-one] trace export error:', result.reason);
           }
-          // Silent discard when no onExportError — see endSpan/endTrace comments.
         }
       }
       // 2. Call shutdown() on all exporters that support it — use allSettled so one failure doesn't block others
@@ -350,8 +351,9 @@ export function createTraceManager(config?: {
         if (result.status === 'rejected') {
           if (onExportError) {
             onExportError(result.reason);
+          } else {
+            console.warn('[harness-one] trace export error:', result.reason);
           }
-          // Silent discard when no onExportError — see endSpan/endTrace comments.
         }
       }
       // 3. Clear internal maps
@@ -371,22 +373,24 @@ export function createTraceManager(config?: {
  * const tm = createTraceManager({ exporters: [exporter] });
  * ```
  */
-export function createConsoleExporter(config?: { verbose?: boolean }): TraceExporter {
+export function createConsoleExporter(config?: { verbose?: boolean; output?: (line: string) => void }): TraceExporter {
   const verbose = config?.verbose ?? false;
+  // eslint-disable-next-line no-console
+  const output = config?.output ?? console.log;
   return {
     name: 'console',
     async exportTrace(trace: Trace): Promise<void> {
       if (verbose) {
-        console.log('[trace]', JSON.stringify(trace, null, 2));
+        output(`[trace] ${JSON.stringify(trace, null, 2)}`);
       } else {
-        console.log(`[trace] ${trace.name} (${trace.status}) ${trace.spans.length} spans`);
+        output(`[trace] ${trace.name} (${trace.status}) ${trace.spans.length} spans`);
       }
     },
     async exportSpan(span: Span): Promise<void> {
       if (verbose) {
-        console.log('[span]', JSON.stringify(span, null, 2));
+        output(`[span] ${JSON.stringify(span, null, 2)}`);
       } else {
-        console.log(`[span] ${span.name} (${span.status})`);
+        output(`[span] ${span.name} (${span.status})`);
       }
     },
     async flush(): Promise<void> {

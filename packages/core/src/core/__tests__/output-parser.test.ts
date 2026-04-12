@@ -174,6 +174,34 @@ describe('parseWithRetry', () => {
     expect(attempts).toBe(3);
   });
 
+  it('times out regenerate calls with default 30s timeout', async () => {
+    const parser = createJsonOutputParser<{ x: number }>();
+    // Create a regenerate that never resolves
+    const regenerate = vi.fn().mockReturnValue(new Promise(() => {}));
+
+    // Use a very short timeout via options to test the mechanism
+    await expect(
+      parseWithRetry(parser, 'bad json', regenerate, { maxRetries: 3, regenerateTimeoutMs: 50 }),
+    ).rejects.toThrow('Regenerate timed out');
+  });
+
+  it('accepts regenerateTimeoutMs via options object', async () => {
+    const parser = createJsonOutputParser<{ x: number }>();
+    const regenerate = vi.fn().mockReturnValue(new Promise(() => {}));
+
+    await expect(
+      parseWithRetry(parser, 'bad json', regenerate, { maxRetries: 2, regenerateTimeoutMs: 10 }),
+    ).rejects.toThrow('Regenerate timed out');
+    expect(regenerate).toHaveBeenCalledTimes(1);
+  });
+
+  it('still accepts numeric maxRetries for backward compatibility', async () => {
+    const parser = createJsonOutputParser();
+    const regenerate = vi.fn().mockResolvedValue('bad');
+    await expect(parseWithRetry(parser, 'bad', regenerate, 1)).rejects.toThrow();
+    expect(regenerate).not.toHaveBeenCalled();
+  });
+
   it('works with a custom OutputParser', async () => {
     const custom: OutputParser<number> = {
       parse(text: string): number {

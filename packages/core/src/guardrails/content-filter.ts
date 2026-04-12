@@ -84,7 +84,8 @@ export function createContentFilter(config: {
     }
 
     for (const pattern of patterns) {
-      if (pattern.test(ctx.content)) {
+      pattern.lastIndex = 0;
+      if (pattern.test(contentNormalized)) {
         return { action: 'block', reason: `Content matches blocked pattern: ${pattern.source}` };
       }
     }

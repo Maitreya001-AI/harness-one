@@ -106,6 +106,9 @@ export function createCacheMonitor(config?: CacheMonitorConfig): CacheMonitor {
     },
 
     getTimeSeries(bucketMs = 60_000): readonly CacheMetricsBucket[] {
+      if (!bucketMs || bucketMs <= 0) {
+        bucketMs = 60_000; // Default to 1-minute buckets
+      }
       if (rawPoints.length === 0) return [];
 
       const buckets = new Map<number, { calls: number; hitRateSum: number; cacheRead: number; cacheWrite: number }>();
@@ -127,7 +130,7 @@ export function createCacheMonitor(config?: CacheMonitorConfig): CacheMonitor {
       const sortedKeys = [...buckets.keys()].sort((a, b) => a - b);
 
       for (const key of sortedKeys) {
-        const bucket = buckets.get(key)!;
+        const bucket = buckets.get(key) as { calls: number; hitRateSum: number; cacheRead: number; cacheWrite: number };
         result.push({
           timestamp: key,
           calls: bucket.calls,

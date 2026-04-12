@@ -251,4 +251,69 @@ describe('createFailureTaxonomy', () => {
       expect(results[i - 1].confidence).toBeGreaterThanOrEqual(results[i].confidence);
     }
   });
+
+  // FIX 4: Configurable thresholds
+  describe('configurable thresholds', () => {
+    it('toolLoopMinRun overrides default minimum run length', () => {
+      // Default minRun=3, override to 5
+      const taxonomy = createFailureTaxonomy({ thresholds: { toolLoopMinRun: 5 } });
+      // 4 consecutive spans: should NOT trigger with minRun=5
+      const spans4 = Array.from({ length: 4 }, (_, i) =>
+        makeSpan({ id: `s${i}`, name: 'callTool' }),
+      );
+      const trace4 = makeTrace({ spans: spans4 });
+      const results4 = taxonomy.classify(trace4);
+      expect(results4.find(r => r.mode === 'tool_loop')).toBeUndefined();
+
+      // 5 consecutive spans: should trigger with minRun=5
+      const spans5 = Array.from({ length: 5 }, (_, i) =>
+        makeSpan({ id: `s${i}`, name: 'callTool' }),
+      );
+      const trace5 = makeTrace({ spans: spans5 });
+      const results5 = taxonomy.classify(trace5);
+      const loop = results5.find(r => r.mode === 'tool_loop');
+      expect(loop).toBeDefined();
+      // confidence: 0.5 + (5-5)*0.1 = 0.5
+      expect(loop!.confidence).toBeCloseTo(0.5);
+    });
+
+    it('earlyStopMaxSpans overrides default max span count', () => {
+      // Default maxSpans=2, override to allow up to 4 spans
+      const taxonomy = createFailureTaxonomy({ thresholds: { earlyStopMaxSpans: 4 } });
+      // 3 spans with short duration: should now trigger with maxSpans=4
+      const trace = makeTrace({
+        startTime: 0, endTime: 2000, status: 'completed',
+        spans: [
+          makeSpan({ id: 's0' }),
+          makeSpan({ id: 's1' }),
+          makeSpan({ id: 's2' }),
+        ],
+      });
+      const results = taxonomy.classify(trace);
+      expect(results.find(r => r.mode === 'early_stop')).toBeDefined();
+    });
+
+    it('budgetExceededConfidence overrides default confidence', () => {
+      const taxonomy = createFailureTaxonomy({ thresholds: { budgetExceededConfidence: 0.7 } });
+      const trace = makeTrace({
+        status: 'error',
+        spans: [makeSpan({ id: 's1', name: 'budget_check', status: 'error', attributes: { budget: true } })],
+      });
+      const results = taxonomy.classify(trace);
+      const result = results.find(r => r.mode === 'budget_exceeded');
+      expect(result).toBeDefined();
+      expect(result!.confidence).toBeCloseTo(0.7);
+    });
+
+    it('uses default thresholds when none provided', () => {
+      const taxonomy = createFailureTaxonomy();
+      // Default behavior: 3 consecutive spans triggers tool_loop
+      const spans = Array.from({ length: 3 }, (_, i) =>
+        makeSpan({ id: `s${i}`, name: 'callTool' }),
+      );
+      const trace = makeTrace({ spans });
+      const results = taxonomy.classify(trace);
+      expect(results.find(r => r.mode === 'tool_loop')).toBeDefined();
+    });
+  });
 });

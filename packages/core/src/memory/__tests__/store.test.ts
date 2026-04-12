@@ -618,4 +618,197 @@ describe('createInMemoryStore', () => {
       expect(ids.size).toBe(20);
     });
   });
+
+  describe('secondary indexes', () => {
+    describe('query by tag uses index and returns correct results', () => {
+      it('returns entries matching a single tag after writes', async () => {
+        await store.write({ key: 'k1', content: 'a', grade: 'useful', tags: ['alpha', 'beta'] });
+        await store.write({ key: 'k2', content: 'b', grade: 'useful', tags: ['beta', 'gamma'] });
+        await store.write({ key: 'k3', content: 'c', grade: 'useful', tags: ['gamma'] });
+
+        const results = await store.query({ tags: ['alpha'] });
+        expect(results).toHaveLength(1);
+        expect(results[0].key).toBe('k1');
+      });
+
+      it('returns entries matching any of multiple tags (OR semantics)', async () => {
+        await store.write({ key: 'k1', content: 'a', grade: 'useful', tags: ['alpha'] });
+        await store.write({ key: 'k2', content: 'b', grade: 'useful', tags: ['beta'] });
+        await store.write({ key: 'k3', content: 'c', grade: 'useful', tags: ['gamma'] });
+
+        const results = await store.query({ tags: ['alpha', 'gamma'] });
+        expect(results).toHaveLength(2);
+        const keys = results.map(r => r.key);
+        expect(keys).toContain('k1');
+        expect(keys).toContain('k3');
+      });
+
+      it('returns empty when no entries match the tag', async () => {
+        await store.write({ key: 'k1', content: 'a', grade: 'useful', tags: ['alpha'] });
+        const results = await store.query({ tags: ['nonexistent'] });
+        expect(results).toHaveLength(0);
+      });
+    });
+
+    describe('query by grade uses index and returns correct results', () => {
+      it('returns only entries matching the grade', async () => {
+        await store.write({ key: 'k1', content: 'a', grade: 'critical' });
+        await store.write({ key: 'k2', content: 'b', grade: 'useful' });
+        await store.write({ key: 'k3', content: 'c', grade: 'ephemeral' });
+        await store.write({ key: 'k4', content: 'd', grade: 'critical' });
+
+        const results = await store.query({ grade: 'critical' });
+        expect(results).toHaveLength(2);
+        const keys = results.map(r => r.key);
+        expect(keys).toContain('k1');
+        expect(keys).toContain('k4');
+      });
+
+      it('returns empty when no entries match the grade', async () => {
+        await store.write({ key: 'k1', content: 'a', grade: 'useful' });
+        const results = await store.query({ grade: 'ephemeral' });
+        expect(results).toHaveLength(0);
+      });
+    });
+
+    describe('indexes are maintained after delete', () => {
+      it('tag index is updated when an entry is deleted', async () => {
+        const e1 = await store.write({ key: 'k1', content: 'a', grade: 'useful', tags: ['alpha'] });
+        await store.write({ key: 'k2', content: 'b', grade: 'useful', tags: ['alpha'] });
+
+        await store.delete(e1.id);
+
+        const results = await store.query({ tags: ['alpha'] });
+        expect(results).toHaveLength(1);
+        expect(results[0].key).toBe('k2');
+      });
+
+      it('grade index is updated when an entry is deleted', async () => {
+        const e1 = await store.write({ key: 'k1', content: 'a', grade: 'critical' });
+        await store.write({ key: 'k2', content: 'b', grade: 'critical' });
+
+        await store.delete(e1.id);
+
+        const results = await store.query({ grade: 'critical' });
+        expect(results).toHaveLength(1);
+        expect(results[0].key).toBe('k2');
+      });
+    });
+
+    describe('indexes are maintained after update', () => {
+      it('grade index reflects updated grade', async () => {
+        const entry = await store.write({ key: 'k1', content: 'a', grade: 'useful' });
+        await store.update(entry.id, { grade: 'critical' });
+
+        const usefulResults = await store.query({ grade: 'useful' });
+        expect(usefulResults).toHaveLength(0);
+
+        const criticalResults = await store.query({ grade: 'critical' });
+        expect(criticalResults).toHaveLength(1);
+        expect(criticalResults[0].key).toBe('k1');
+      });
+
+      it('tag index reflects updated tags', async () => {
+        const entry = await store.write({ key: 'k1', content: 'a', grade: 'useful', tags: ['old-tag'] });
+        await store.update(entry.id, { tags: ['new-tag'] });
+
+        const oldResults = await store.query({ tags: ['old-tag'] });
+        expect(oldResults).toHaveLength(0);
+
+        const newResults = await store.query({ tags: ['new-tag'] });
+        expect(newResults).toHaveLength(1);
+        expect(newResults[0].key).toBe('k1');
+      });
+    });
+
+    describe('indexes are maintained after compact', () => {
+      it('compacted entries are removed from tag and grade indexes', async () => {
+        await store.write({ key: 'k1', content: 'a', grade: 'ephemeral', tags: ['shared'] });
+        await store.write({ key: 'k2', content: 'b', grade: 'critical', tags: ['shared'] });
+
+        await store.compact({ maxEntries: 1 });
+
+        // Only critical remains
+        const tagResults = await store.query({ tags: ['shared'] });
+        expect(tagResults).toHaveLength(1);
+        expect(tagResults[0].grade).toBe('critical');
+
+        const ephemeralResults = await store.query({ grade: 'ephemeral' });
+        expect(ephemeralResults).toHaveLength(0);
+      });
+    });
+
+    describe('indexes are maintained after clear', () => {
+      it('all indexes are cleared', async () => {
+        await store.write({ key: 'k1', content: 'a', grade: 'useful', tags: ['alpha'] });
+        await store.write({ key: 'k2', content: 'b', grade: 'critical', tags: ['beta'] });
+
+        await store.clear();
+
+        const tagResults = await store.query({ tags: ['alpha'] });
+        expect(tagResults).toHaveLength(0);
+
+        const gradeResults = await store.query({ grade: 'useful' });
+        expect(gradeResults).toHaveLength(0);
+      });
+    });
+
+    describe('combined index filters produce correct results', () => {
+      it('grade + tags intersection returns correct entries', async () => {
+        await store.write({ key: 'k1', content: 'a', grade: 'critical', tags: ['alpha'] });
+        await store.write({ key: 'k2', content: 'b', grade: 'useful', tags: ['alpha'] });
+        await store.write({ key: 'k3', content: 'c', grade: 'critical', tags: ['beta'] });
+
+        const results = await store.query({ grade: 'critical', tags: ['alpha'] });
+        expect(results).toHaveLength(1);
+        expect(results[0].key).toBe('k1');
+      });
+
+      it('grade + tags + search filters combined', async () => {
+        await store.write({ key: 'k1', content: 'hello world', grade: 'critical', tags: ['alpha'] });
+        await store.write({ key: 'k2', content: 'hello universe', grade: 'critical', tags: ['alpha'] });
+        await store.write({ key: 'k3', content: 'hello world', grade: 'useful', tags: ['alpha'] });
+
+        const results = await store.query({ grade: 'critical', tags: ['alpha'], search: 'world' });
+        expect(results).toHaveLength(1);
+        expect(results[0].key).toBe('k1');
+      });
+    });
+
+    describe('index correctness with maxEntries eviction', () => {
+      it('evicted entries are removed from indexes', async () => {
+        const bounded = createInMemoryStore({ maxEntries: 2 });
+        await bounded.write({ key: 'k1', content: 'a', grade: 'ephemeral', tags: ['evict-me'] });
+        await bounded.write({ key: 'k2', content: 'b', grade: 'useful', tags: ['keep'] });
+        // This write should evict k1 (ephemeral, lowest grade)
+        await bounded.write({ key: 'k3', content: 'c', grade: 'useful', tags: ['keep'] });
+
+        const evictedResults = await bounded.query({ tags: ['evict-me'] });
+        expect(evictedResults).toHaveLength(0);
+
+        const ephemeralResults = await bounded.query({ grade: 'ephemeral' });
+        expect(ephemeralResults).toHaveLength(0);
+      });
+    });
+
+    describe('entries without tags work correctly', () => {
+      it('entries with no tags do not appear in tag index queries', async () => {
+        await store.write({ key: 'k1', content: 'a', grade: 'useful' }); // no tags
+        await store.write({ key: 'k2', content: 'b', grade: 'useful', tags: ['alpha'] });
+
+        const results = await store.query({ tags: ['alpha'] });
+        expect(results).toHaveLength(1);
+        expect(results[0].key).toBe('k2');
+      });
+
+      it('entries with empty tags array do not appear in tag queries', async () => {
+        await store.write({ key: 'k1', content: 'a', grade: 'useful', tags: [] });
+        await store.write({ key: 'k2', content: 'b', grade: 'useful', tags: ['alpha'] });
+
+        const results = await store.query({ tags: ['alpha'] });
+        expect(results).toHaveLength(1);
+        expect(results[0].key).toBe('k2');
+      });
+    });
+  });
 });

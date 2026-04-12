@@ -506,4 +506,830 @@ describe('createOTelExporter', () => {
       expect(lastCall.length).toBe(4);
     });
   });
+
+  describe('evicted parent TTL expiration', () => {
+    it('evicted parent entries expire after the default TTL (5 minutes)', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const localMock = createMockTracer();
+      const exporter = createOTelExporter({ tracer: localMock.tracer });
+
+      // Export a parent span
+      await exporter.exportSpan({
+        id: 'ttl-parent',
+        traceId: 'trace-1',
+        name: 'parent-op',
+        startTime: 1000,
+        endTime: 2000,
+        attributes: {},
+        events: [],
+        status: 'completed',
+      });
+
+      // Flush to move to evictedParents
+      await exporter.flush();
+
+      // Advance time past the default TTL (5 minutes = 300,000ms)
+      vi.useFakeTimers();
+      vi.setSystemTime(Date.now() + 300_001);
+
+      // Child arriving after TTL should NOT link to the expired parent
+      await exporter.exportSpan({
+        id: 'ttl-child',
+        traceId: 'trace-1',
+        parentId: 'ttl-parent',
+        name: 'child-after-ttl',
+        startTime: 2000,
+        endTime: 3000,
+        attributes: {},
+        events: [],
+        status: 'completed',
+      });
+
+      const calls = localMock.mocks.startActiveSpan.mock.calls;
+      const childCall = calls[calls.length - 1];
+      expect(childCall[0]).toBe('child-after-ttl');
+      // Expired parent should not provide context -> 2 args (root span)
+      expect(childCall.length).toBe(2);
+
+      // Warning should be logged about the missing parent
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Parent span 'ttl-parent' not found"),
+      );
+
+      vi.useRealTimers();
+      warnSpy.mockRestore();
+    });
+
+    it('evicted parent entries are available within the TTL window', async () => {
+      const localMock = createMockTracer();
+      const exporter = createOTelExporter({ tracer: localMock.tracer });
+
+      // Export a parent span
+      await exporter.exportSpan({
+        id: 'ttl-parent-ok',
+        traceId: 'trace-1',
+        name: 'parent-op',
+        startTime: 1000,
+        endTime: 2000,
+        attributes: {},
+        events: [],
+        status: 'completed',
+      });
+
+      // Flush to move to evictedParents
+      await exporter.flush();
+
+      // Advance time but stay within the default TTL (5 minutes)
+      vi.useFakeTimers();
+      vi.setSystemTime(Date.now() + 299_999);
+
+      // Child arriving within TTL should still link to the parent
+      await exporter.exportSpan({
+        id: 'ttl-child-ok',
+        traceId: 'trace-1',
+        parentId: 'ttl-parent-ok',
+        name: 'child-within-ttl',
+        startTime: 2000,
+        endTime: 3000,
+        attributes: {},
+        events: [],
+        status: 'completed',
+      });
+
+      const calls = localMock.mocks.startActiveSpan.mock.calls;
+      const childCall = calls[calls.length - 1];
+      expect(childCall[0]).toBe('child-within-ttl');
+      // Parent should still provide context -> 4 args
+      expect(childCall.length).toBe(4);
+
+      vi.useRealTimers();
+    });
+
+    it('TTL is configurable via evictedParentsTtlMs option', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const localMock = createMockTracer();
+      // Set a short TTL of 10 seconds
+      const exporter = createOTelExporter({
+        tracer: localMock.tracer,
+        evictedParentsTtlMs: 10_000,
+      });
+
+      // Export a parent span
+      await exporter.exportSpan({
+        id: 'short-ttl-parent',
+        traceId: 'trace-1',
+        name: 'parent-op',
+        startTime: 1000,
+        endTime: 2000,
+        attributes: {},
+        events: [],
+        status: 'completed',
+      });
+
+      // Flush to move to evictedParents
+      await exporter.flush();
+
+      // Advance time past the short TTL (10 seconds)
+      vi.useFakeTimers();
+      vi.setSystemTime(Date.now() + 10_001);
+
+      // Child arriving after the custom TTL should NOT link
+      await exporter.exportSpan({
+        id: 'short-ttl-child',
+        traceId: 'trace-1',
+        parentId: 'short-ttl-parent',
+        name: 'child-after-short-ttl',
+        startTime: 2000,
+        endTime: 3000,
+        attributes: {},
+        events: [],
+        status: 'completed',
+      });
+
+      const calls = localMock.mocks.startActiveSpan.mock.calls;
+      const childCall = calls[calls.length - 1];
+      expect(childCall[0]).toBe('child-after-short-ttl');
+      // Expired parent -> root span (2 args)
+      expect(childCall.length).toBe(2);
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Parent span 'short-ttl-parent' not found"),
+      );
+
+      vi.useRealTimers();
+      warnSpy.mockRestore();
+    });
+
+    it('stale evicted parents are cleaned up on new insertions', async () => {
+      const localMock = createMockTracer();
+      // Small evicted parents pool and short TTL for easy testing
+      const exporter = createOTelExporter({
+        tracer: localMock.tracer,
+        maxEvictedParents: 5,
+        evictedParentsTtlMs: 1_000,
+      });
+
+      // Export 5 spans and flush to fill evictedParents
+      for (let i = 0; i < 5; i++) {
+        await exporter.exportSpan({
+          id: `stale-${i}`,
+          traceId: 'trace-1',
+          name: `op-${i}`,
+          startTime: 1000,
+          endTime: 2000,
+          attributes: {},
+          events: [],
+          status: 'completed',
+        });
+      }
+      await exporter.flush();
+
+      // Advance time past TTL so all entries are stale
+      vi.useFakeTimers();
+      vi.setSystemTime(Date.now() + 1_001);
+
+      // Export a new span and flush -- stale entries should be cleaned up,
+      // making room without hitting the size limit
+      await exporter.exportSpan({
+        id: 'fresh-span',
+        traceId: 'trace-1',
+        name: 'fresh-op',
+        startTime: 3000,
+        endTime: 4000,
+        attributes: {},
+        events: [],
+        status: 'completed',
+      });
+      await exporter.flush();
+
+      // Now try to link to 'fresh-span' -- it should be in evictedParents
+      // (the stale ones were cleaned up, so fresh-span was not evicted from evictedParents)
+      await exporter.exportSpan({
+        id: 'fresh-child',
+        traceId: 'trace-1',
+        parentId: 'fresh-span',
+        name: 'fresh-child-op',
+        startTime: 4000,
+        endTime: 5000,
+        attributes: {},
+        events: [],
+        status: 'completed',
+      });
+
+      const calls = localMock.mocks.startActiveSpan.mock.calls;
+      const childCall = calls[calls.length - 1];
+      expect(childCall[0]).toBe('fresh-child-op');
+      // Fresh entry is within TTL -> parent context available (4 args)
+      expect(childCall.length).toBe(4);
+
+      vi.useRealTimers();
+    });
+  });
+
+  describe('maxSpans eviction trigger', () => {
+    it('evicts spans when spanMap exceeds maxSpans limit', async () => {
+      const localMock = createMockTracer();
+      // Use a very small maxSpans so we can trigger eviction easily
+      const exporter = createOTelExporter({ tracer: localMock.tracer, maxSpans: 2 });
+
+      // Export 3 spans to exceed maxSpans=2, triggering evictSpans(1)
+      await exporter.exportSpan({
+        id: 'evict-a',
+        traceId: 'trace-1',
+        name: 'op-a',
+        startTime: 1000,
+        endTime: 2000,
+        attributes: {},
+        events: [],
+        status: 'completed',
+      });
+      await exporter.exportSpan({
+        id: 'evict-b',
+        traceId: 'trace-1',
+        name: 'op-b',
+        startTime: 2000,
+        endTime: 3000,
+        attributes: {},
+        events: [],
+        status: 'completed',
+      });
+      // This third span should trigger eviction of the oldest span (evict-a)
+      await exporter.exportSpan({
+        id: 'evict-c',
+        traceId: 'trace-1',
+        name: 'op-c',
+        startTime: 3000,
+        endTime: 4000,
+        attributes: {},
+        events: [],
+        status: 'completed',
+      });
+
+      // Evicted span (evict-a) should be in evictedParents, so a child can link
+      await exporter.exportSpan({
+        id: 'child-of-evicted',
+        traceId: 'trace-1',
+        parentId: 'evict-a',
+        name: 'child-after-eviction',
+        startTime: 4000,
+        endTime: 5000,
+        attributes: {},
+        events: [],
+        status: 'completed',
+      });
+
+      const calls = localMock.mocks.startActiveSpan.mock.calls;
+      const childCall = calls[calls.length - 1];
+      expect(childCall[0]).toBe('child-after-eviction');
+      // evict-a was evicted but saved to evictedParents, so parent context should be available
+      expect(childCall.length).toBe(4);
+    });
+
+    it('evicts spans and overflows evictedParents when maxEvictedParents is tiny', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const localMock = createMockTracer();
+      // maxSpans=1 forces eviction every span, maxEvictedParents=1 caps the fallback map
+      const exporter = createOTelExporter({
+        tracer: localMock.tracer,
+        maxSpans: 1,
+        maxEvictedParents: 1,
+      });
+
+      // Export 3 spans; each new one evicts the previous from spanMap
+      // With maxEvictedParents=1, only the most recent evicted span stays
+      await exporter.exportSpan({
+        id: 'overflow-a',
+        traceId: 'trace-1',
+        name: 'op-a',
+        startTime: 1000,
+        endTime: 2000,
+        attributes: {},
+        events: [],
+        status: 'completed',
+      });
+      await exporter.exportSpan({
+        id: 'overflow-b',
+        traceId: 'trace-1',
+        name: 'op-b',
+        startTime: 2000,
+        endTime: 3000,
+        attributes: {},
+        events: [],
+        status: 'completed',
+      });
+      await exporter.exportSpan({
+        id: 'overflow-c',
+        traceId: 'trace-1',
+        name: 'op-c',
+        startTime: 3000,
+        endTime: 4000,
+        attributes: {},
+        events: [],
+        status: 'completed',
+      });
+
+      // overflow-a was evicted from both spanMap and evictedParents (overflow limit)
+      // So a child referencing it should be created as a root span
+      await exporter.exportSpan({
+        id: 'child-of-lost',
+        traceId: 'trace-1',
+        parentId: 'overflow-a',
+        name: 'orphan-child',
+        startTime: 4000,
+        endTime: 5000,
+        attributes: {},
+        events: [],
+        status: 'completed',
+      });
+
+      const calls = localMock.mocks.startActiveSpan.mock.calls;
+      const childCall = calls[calls.length - 1];
+      expect(childCall[0]).toBe('orphan-child');
+      // Parent lost from both maps -> root span (2 args)
+      expect(childCall.length).toBe(2);
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Parent span 'overflow-a' not found"),
+      );
+      warnSpy.mockRestore();
+    });
+  });
+
+  describe('exportTrace cleans up child spans from spanMap', () => {
+    it('removes trace child spans from spanMap after exportTrace', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const localMock = createMockTracer();
+      const exporter = createOTelExporter({ tracer: localMock.tracer });
+
+      // Export a span that will be referenced as a child in the trace
+      await exporter.exportSpan({
+        id: 'trace-child-1',
+        traceId: 'trace-1',
+        name: 'child-op',
+        startTime: 1000,
+        endTime: 2000,
+        attributes: {},
+        events: [],
+        status: 'completed',
+      });
+      await exporter.exportSpan({
+        id: 'trace-child-2',
+        traceId: 'trace-1',
+        name: 'child-op-2',
+        startTime: 1500,
+        endTime: 2500,
+        attributes: {},
+        events: [],
+        status: 'completed',
+      });
+
+      // Export the trace, which should clean up its children from spanMap
+      const trace: Trace = {
+        id: 'trace-1',
+        name: 'traced-run',
+        startTime: 1000,
+        endTime: 3000,
+        metadata: {},
+        spans: [
+          {
+            id: 'trace-child-1',
+            traceId: 'trace-1',
+            name: 'child-op',
+            startTime: 1000,
+            endTime: 2000,
+            attributes: {},
+            events: [],
+            status: 'completed',
+          },
+          {
+            id: 'trace-child-2',
+            traceId: 'trace-1',
+            name: 'child-op-2',
+            startTime: 1500,
+            endTime: 2500,
+            attributes: {},
+            events: [],
+            status: 'completed',
+          },
+        ],
+        status: 'completed',
+      };
+      await exporter.exportTrace(trace);
+
+      // After exportTrace, the child spans should be removed from the map.
+      // Trying to link a new child to trace-child-1 should create a root span
+      // (unless it ended up in evictedParents -- exportTrace does NOT migrate to evictedParents).
+      await exporter.exportSpan({
+        id: 'late-child',
+        traceId: 'trace-1',
+        parentId: 'trace-child-1',
+        name: 'late-linking',
+        startTime: 3000,
+        endTime: 4000,
+        attributes: {},
+        events: [],
+        status: 'completed',
+      });
+
+      const calls = localMock.mocks.startActiveSpan.mock.calls;
+      const lateCall = calls[calls.length - 1];
+      expect(lateCall[0]).toBe('late-linking');
+      // trace-child-1 was deleted by exportTrace cleanup -> root span (2 args)
+      expect(lateCall.length).toBe(2);
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Parent span 'trace-child-1' not found"),
+      );
+      warnSpy.mockRestore();
+    });
+  });
+
+  describe('span status mapping for traces', () => {
+    it('does not set status for a running trace', async () => {
+      const localMock = createMockTracer();
+      const exporter = createOTelExporter({ tracer: localMock.tracer });
+      const trace: Trace = {
+        id: 'trace-running',
+        name: 'running-trace',
+        startTime: 1000,
+        metadata: {},
+        spans: [],
+        status: 'running',
+      };
+
+      await exporter.exportTrace(trace);
+
+      // setStatus should NOT be called for running status
+      expect(localMock.mocks.setStatus).not.toHaveBeenCalled();
+    });
+
+    it('ends trace span without endTime when endTime is not provided', async () => {
+      const localMock = createMockTracer();
+      const exporter = createOTelExporter({ tracer: localMock.tracer });
+      const trace: Trace = {
+        id: 'trace-no-end',
+        name: 'no-end-trace',
+        startTime: 1000,
+        metadata: {},
+        spans: [],
+        status: 'completed',
+      };
+
+      await exporter.exportTrace(trace);
+
+      // end() should be called with undefined (no endTime)
+      expect(localMock.mocks.end).toHaveBeenCalledWith(undefined);
+    });
+  });
+
+  describe('non-primitive attribute handling edge cases', () => {
+    it('skips null and undefined attributes without logging debug warnings', async () => {
+      const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
+      const localMock = createMockTracer();
+      const exporter = createOTelExporter({ tracer: localMock.tracer });
+
+      await exporter.exportSpan({
+        id: 'span-nulls',
+        traceId: 'trace-1',
+        name: 'null-attrs',
+        startTime: 1000,
+        attributes: { a: null, b: undefined, c: 'valid' } as unknown as Record<string, unknown>,
+        events: [],
+        status: 'completed',
+      });
+
+      const calls = localMock.mocks.setAttribute.mock.calls;
+      const attrNames = calls.map((c: unknown[]) => c[0]);
+      expect(attrNames).not.toContain('a');
+      expect(attrNames).not.toContain('b');
+      expect(attrNames).toContain('c');
+
+      // null and undefined should NOT trigger the debug warning (they're silently skipped)
+      expect(debugSpy).not.toHaveBeenCalled();
+      debugSpy.mockRestore();
+    });
+
+    it('drops array attributes with debug log', async () => {
+      const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
+      const localMock = createMockTracer();
+      const exporter = createOTelExporter({ tracer: localMock.tracer });
+
+      await exporter.exportSpan({
+        id: 'span-array',
+        traceId: 'trace-1',
+        name: 'array-attrs',
+        startTime: 1000,
+        attributes: { items: [1, 2, 3], label: 'ok' } as unknown as Record<string, unknown>,
+        events: [],
+        status: 'completed',
+      });
+
+      const calls = localMock.mocks.setAttribute.mock.calls;
+      const attrNames = calls.map((c: unknown[]) => c[0]);
+      expect(attrNames).not.toContain('items');
+      expect(attrNames).toContain('label');
+
+      expect(debugSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Dropping non-primitive attribute 'items' of type 'object'"),
+      );
+      debugSpy.mockRestore();
+    });
+
+    it('drops function attributes with debug log', async () => {
+      const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
+      const localMock = createMockTracer();
+      const exporter = createOTelExporter({ tracer: localMock.tracer });
+
+      await exporter.exportSpan({
+        id: 'span-fn',
+        traceId: 'trace-1',
+        name: 'fn-attrs',
+        startTime: 1000,
+        attributes: { callback: () => {}, name: 'test' } as unknown as Record<string, unknown>,
+        events: [],
+        status: 'completed',
+      });
+
+      expect(debugSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Dropping non-primitive attribute 'callback' of type 'function'"),
+      );
+      debugSpy.mockRestore();
+    });
+  });
+
+  describe('event attribute filtering', () => {
+    it('filters non-primitive attributes from span events', async () => {
+      const localMock = createMockTracer();
+      const exporter = createOTelExporter({ tracer: localMock.tracer });
+
+      await exporter.exportSpan({
+        id: 'span-event-filter',
+        traceId: 'trace-1',
+        name: 'event-filter',
+        startTime: 1000,
+        attributes: {},
+        events: [
+          {
+            name: 'mixed-event',
+            timestamp: 1000,
+            attributes: {
+              valid_str: 'hello',
+              valid_num: 42,
+              valid_bool: true,
+              invalid_obj: { nested: true },
+              invalid_arr: [1, 2],
+            } as unknown as Record<string, unknown>,
+          },
+        ],
+        status: 'completed',
+      });
+
+      // addEvent should be called with only primitive attributes
+      expect(localMock.mocks.addEvent).toHaveBeenCalledWith(
+        'mixed-event',
+        { valid_str: 'hello', valid_num: 42, valid_bool: true },
+        expect.any(Date),
+      );
+    });
+
+    it('handles events with no attributes', async () => {
+      const localMock = createMockTracer();
+      const exporter = createOTelExporter({ tracer: localMock.tracer });
+
+      await exporter.exportSpan({
+        id: 'span-no-event-attrs',
+        traceId: 'trace-1',
+        name: 'no-event-attrs',
+        startTime: 1000,
+        attributes: {},
+        events: [
+          { name: 'bare-event', timestamp: 1000 },
+        ],
+        status: 'completed',
+      });
+
+      expect(localMock.mocks.addEvent).toHaveBeenCalledWith(
+        'bare-event',
+        {},
+        expect.any(Date),
+      );
+    });
+  });
+
+  describe('trace metadata attribute mapping', () => {
+    it('maps trace metadata to harness.meta.* attributes', async () => {
+      const localMock = createMockTracer();
+      const exporter = createOTelExporter({ tracer: localMock.tracer });
+
+      const trace: Trace = {
+        id: 'trace-meta',
+        name: 'meta-trace',
+        startTime: 1000,
+        endTime: 2000,
+        metadata: { region: 'us-east', version: 3, debug: true },
+        spans: [],
+        status: 'completed',
+      };
+
+      await exporter.exportTrace(trace);
+
+      expect(localMock.mocks.setAttribute).toHaveBeenCalledWith('harness.meta.region', 'us-east');
+      expect(localMock.mocks.setAttribute).toHaveBeenCalledWith('harness.meta.version', 3);
+      expect(localMock.mocks.setAttribute).toHaveBeenCalledWith('harness.meta.debug', true);
+    });
+  });
+
+  describe('LRU eviction performance (Map insertion-order pattern)', () => {
+    it('evictSpans uses O(count) Map iteration instead of O(n log n) sort', async () => {
+      // Reproduction: With the sort-based eviction, evicting 1 span from a map
+      // of N spans is O(N log N). With the Map-based LRU pattern, it should be O(1)
+      // per eviction. We verify correctness: oldest-inserted span is evicted first.
+      const localMock = createMockTracer();
+      const exporter = createOTelExporter({ tracer: localMock.tracer, maxSpans: 3 });
+
+      // Export 3 spans in order: a, b, c
+      await exporter.exportSpan({
+        id: 'lru-a', traceId: 't1', name: 'op-a',
+        startTime: 1000, endTime: 2000, attributes: {}, events: [], status: 'completed',
+      });
+      await exporter.exportSpan({
+        id: 'lru-b', traceId: 't1', name: 'op-b',
+        startTime: 2000, endTime: 3000, attributes: {}, events: [], status: 'completed',
+      });
+      await exporter.exportSpan({
+        id: 'lru-c', traceId: 't1', name: 'op-c',
+        startTime: 3000, endTime: 4000, attributes: {}, events: [], status: 'completed',
+      });
+
+      // Export a child of lru-b to "touch" lru-b (move it to end of LRU)
+      await exporter.exportSpan({
+        id: 'child-of-b', traceId: 't1', parentId: 'lru-b', name: 'child-b',
+        startTime: 3500, endTime: 4500, attributes: {}, events: [], status: 'completed',
+      });
+
+      // Now export another span to trigger eviction. With LRU, lru-a should be evicted
+      // (it's the least recently used), NOT lru-b (which was touched).
+      await exporter.exportSpan({
+        id: 'lru-d', traceId: 't1', name: 'op-d',
+        startTime: 4000, endTime: 5000, attributes: {}, events: [], status: 'completed',
+      });
+
+      // Verify: lru-a is evicted (in evictedParents), lru-b is still in spanMap
+      // Try to link a child to lru-b -- should still be in spanMap (4 args)
+      await exporter.exportSpan({
+        id: 'late-child-b', traceId: 't1', parentId: 'lru-b', name: 'late-child-of-b',
+        startTime: 5000, endTime: 6000, attributes: {}, events: [], status: 'completed',
+      });
+
+      const calls = localMock.mocks.startActiveSpan.mock.calls;
+      const lateChildCall = calls[calls.length - 1];
+      expect(lateChildCall[0]).toBe('late-child-of-b');
+      expect(lateChildCall.length).toBe(4); // parent context found
+    });
+
+    it('touchSpan reorders Map entries via delete-then-reinsert', async () => {
+      // With the LRU pattern, accessing a span should move it to the end of the Map.
+      // Verify that a recently-touched span survives eviction.
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const localMock = createMockTracer();
+      const exporter = createOTelExporter({ tracer: localMock.tracer, maxSpans: 2 });
+
+      // Export span-x then span-y
+      await exporter.exportSpan({
+        id: 'touch-x', traceId: 't1', name: 'x',
+        startTime: 1000, endTime: 2000, attributes: {}, events: [], status: 'completed',
+      });
+      await exporter.exportSpan({
+        id: 'touch-y', traceId: 't1', name: 'y',
+        startTime: 2000, endTime: 3000, attributes: {}, events: [], status: 'completed',
+      });
+
+      // Touch span-x by exporting a child referencing it
+      await exporter.exportSpan({
+        id: 'child-x', traceId: 't1', parentId: 'touch-x', name: 'cx',
+        startTime: 2500, endTime: 3500, attributes: {}, events: [], status: 'completed',
+      });
+      // child-x triggered eviction because maxSpans=2. With LRU, touch-y
+      // (least recently used) should be evicted, NOT touch-x (recently touched).
+
+      // Verify touch-x is still in spanMap (child links with 4 args)
+      await exporter.exportSpan({
+        id: 'child-x2', traceId: 't1', parentId: 'touch-x', name: 'cx2',
+        startTime: 3000, endTime: 4000, attributes: {}, events: [], status: 'completed',
+      });
+
+      const calls = localMock.mocks.startActiveSpan.mock.calls;
+      const cx2Call = calls[calls.length - 1];
+      expect(cx2Call[0]).toBe('cx2');
+      expect(cx2Call.length).toBe(4); // touch-x still in spanMap
+
+      warnSpy.mockRestore();
+    });
+
+    it('flush uses snapshot-then-clear with LRU-ordered evictedParents', async () => {
+      const localMock = createMockTracer();
+      const exporter = createOTelExporter({
+        tracer: localMock.tracer,
+        maxEvictedParents: 3,
+      });
+
+      // Export 5 spans then flush -- only 3 should be kept in evictedParents
+      for (let i = 0; i < 5; i++) {
+        await exporter.exportSpan({
+          id: `flush-${i}`, traceId: 't1', name: `f-${i}`,
+          startTime: 1000 + i, endTime: 2000 + i, attributes: {}, events: [], status: 'completed',
+        });
+      }
+      await exporter.flush();
+
+      // The 3 most recent (flush-2, flush-3, flush-4) should be in evictedParents.
+      // flush-0 and flush-1 should have been dropped.
+      await exporter.exportSpan({
+        id: 'post-flush-child', traceId: 't1', parentId: 'flush-4', name: 'pfc',
+        startTime: 3000, endTime: 4000, attributes: {}, events: [], status: 'completed',
+      });
+
+      const calls = localMock.mocks.startActiveSpan.mock.calls;
+      const pfcCall = calls[calls.length - 1];
+      expect(pfcCall[0]).toBe('pfc');
+      expect(pfcCall.length).toBe(4); // flush-4 preserved
+    });
+
+    it('purgeStaleEvictedParents skips when under threshold', async () => {
+      // With the new purge, it should early-return when evictedParentsAccessTime.size
+      // is under maxEvictedParents. This is a behavioral test: no stale entries
+      // should be removed when under threshold.
+      const localMock = createMockTracer();
+      const exporter = createOTelExporter({
+        tracer: localMock.tracer,
+        maxEvictedParents: 100,
+        evictedParentsTtlMs: 1,
+      });
+
+      // Export 1 span, flush, wait past TTL
+      await exporter.exportSpan({
+        id: 'purge-test', traceId: 't1', name: 'pt',
+        startTime: 1000, endTime: 2000, attributes: {}, events: [], status: 'completed',
+      });
+      await exporter.flush();
+
+      vi.useFakeTimers();
+      vi.setSystemTime(Date.now() + 100);
+
+      // With the new purge (only triggers when over threshold), the stale entry
+      // is still in the map but lazy TTL check in getEvictedParent should handle it.
+      // A child referencing purge-test should get root span (expired by lazy TTL).
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      await exporter.exportSpan({
+        id: 'purge-child', traceId: 't1', parentId: 'purge-test', name: 'pc',
+        startTime: 2000, endTime: 3000, attributes: {}, events: [], status: 'completed',
+      });
+
+      const calls = localMock.mocks.startActiveSpan.mock.calls;
+      const pcCall = calls[calls.length - 1];
+      expect(pcCall[0]).toBe('pc');
+      // Lazy TTL expiry should make the parent unavailable -> root span (2 args)
+      expect(pcCall.length).toBe(2);
+
+      vi.useRealTimers();
+      warnSpy.mockRestore();
+    });
+  });
+
+  describe('span endTime handling', () => {
+    it('ends span without endTime when not provided', async () => {
+      const localMock = createMockTracer();
+      const exporter = createOTelExporter({ tracer: localMock.tracer });
+
+      await exporter.exportSpan({
+        id: 'span-no-end',
+        traceId: 'trace-1',
+        name: 'no-end',
+        startTime: 1000,
+        attributes: {},
+        events: [],
+        status: 'running',
+      });
+
+      expect(localMock.mocks.end).toHaveBeenCalledWith(undefined);
+    });
+
+    it('ends span with Date when endTime is provided', async () => {
+      const localMock = createMockTracer();
+      const exporter = createOTelExporter({ tracer: localMock.tracer });
+
+      await exporter.exportSpan({
+        id: 'span-with-end',
+        traceId: 'trace-1',
+        name: 'with-end',
+        startTime: 1000,
+        endTime: 2000,
+        attributes: {},
+        events: [],
+        status: 'completed',
+      });
+
+      expect(localMock.mocks.end).toHaveBeenCalledWith(new Date(2000));
+    });
+  });
 });

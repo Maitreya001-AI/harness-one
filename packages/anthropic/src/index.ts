@@ -242,8 +242,14 @@ export function createAnthropicAdapter(config: AnthropicAdapterConfig): AgentAda
         }
       }
 
-      const finalMessage = await stream.finalMessage();
-      yield { type: 'done', usage: toTokenUsage(finalMessage.usage) };
+      let finalMsg;
+      try {
+        finalMsg = await stream.finalMessage();
+      } catch {
+        // Stream may have been aborted — use accumulated state
+        return;
+      }
+      yield { type: 'done', usage: toTokenUsage(finalMsg.usage) };
     },
   };
 }

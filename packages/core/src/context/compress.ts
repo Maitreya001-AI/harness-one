@@ -6,7 +6,7 @@
  * @module
  */
 
-import type { Message } from '../core/types.js';
+import type { Message, AgentAdapter } from '../core/types.js';
 import type { CompressionStrategy } from './types.js';
 import { estimateTokens } from '../_internal/token-estimator.js';
 import { HarnessError } from '../core/errors.js';
@@ -228,7 +228,13 @@ function createSummarizeStrategy(
         return [...messages];
       }
 
-      const summary = await summarizer(toSummarize);
+      let summary: string;
+      try {
+        summary = await summarizer(toSummarize);
+      } catch {
+        // Fallback: keep only the most recent messages when summarizer fails
+        return [...messages.slice(-Math.max(1, Math.ceil(messages.length / 2)))];
+      }
       return [
         { role: 'system' as const, content: `[Summary of earlier conversation]: ${summary}` },
         ...toKeep,
@@ -323,5 +329,32 @@ function createPreserveFailuresStrategy(): CompressionStrategy {
 
       return result;
     },
+  };
+}
+
+/**
+ * Create a summarizer function that uses an AgentAdapter to generate summaries.
+ *
+ * The returned function can be passed as the `summarizer` option to the
+ * `summarize` compression strategy.
+ *
+ * @example
+ * ```ts
+ * const summarizer = createAdapterSummarizer(adapter);
+ * const result = await compress(messages, {
+ *   strategy: 'summarize',
+ *   budget: 1000,
+ *   summarizer,
+ * });
+ * ```
+ */
+export function createAdapterSummarizer(adapter: AgentAdapter): (messages: Message[]) => Promise<string> {
+  return async (messages: Message[]): Promise<string> => {
+    const prompt: Message[] = [
+      { role: 'system', content: 'Summarize the following conversation concisely, preserving key facts, decisions, and context needed to continue the conversation. Output only the summary.' },
+      { role: 'user', content: messages.map(m => `[${m.role}]: ${m.content}`).join('\n') },
+    ];
+    const response = await adapter.chat({ messages: prompt });
+    return response.message.content;
   };
 }

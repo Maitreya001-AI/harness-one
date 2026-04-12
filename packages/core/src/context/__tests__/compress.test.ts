@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { compress, compactIfNeeded } from '../compress.js';
-import type { Message } from '../../core/types.js';
+import { compress, compactIfNeeded, createAdapterSummarizer } from '../compress.js';
+import type { Message, AgentAdapter, ChatResponse } from '../../core/types.js';
 import { estimateTokens } from '../../_internal/token-estimator.js';
 
 function msg(role: Message['role'], content: string, meta?: Message['meta']): Message {
@@ -219,6 +219,45 @@ describe('compress', () => {
       expect(result.messages).toHaveLength(3);
       // Summarizer should NOT have been called since toSummarize is empty
       expect(summarizerFn).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('FIX: summarizer failure fallback', () => {
+    it('falls back to keeping recent messages when summarizer throws', async () => {
+      const msgs: Message[] = [
+        msg('user', 'First question'),
+        msg('assistant', 'First answer with lots of extra detail to fill tokens'),
+        msg('user', 'Second question'),
+        msg('assistant', 'Second answer'),
+        msg('user', 'Third'),
+        msg('assistant', 'Third answer'),
+      ];
+
+      const result = await compress(msgs, {
+        strategy: 'summarize',
+        budget: 14,
+        summarizer: async () => { throw new Error('LLM API error'); },
+      });
+
+      // Should not crash — fallback returns the most recent half of messages
+      expect(result.messages.length).toBeGreaterThanOrEqual(1);
+      expect(result.messages.length).toBeLessThanOrEqual(msgs.length);
+      // The last message should always be preserved
+      expect(result.messages[result.messages.length - 1].content).toBe('Third answer');
+    });
+
+    it('fallback returns at least 1 message even for small arrays', async () => {
+      const msgs: Message[] = [
+        msg('user', 'Only message'),
+      ];
+
+      const result = await compress(msgs, {
+        strategy: 'summarize',
+        budget: 1,
+        summarizer: async () => { throw new Error('fail'); },
+      });
+
+      expect(result.messages.length).toBeGreaterThanOrEqual(1);
     });
   });
 
@@ -691,5 +730,137 @@ describe('Issue 5: sliding-window compression uses 2 Sets instead of 4 data stru
     });
     expect(result.messages).toHaveLength(1);
     expect(result.messages[0].content).toBe('Only message');
+  });
+});
+
+describe('createAdapterSummarizer', () => {
+  function msg(role: Message['role'], content: string): Message {
+    return { role, content };
+  }
+
+  function createMockAdapter(responseContent: string): AgentAdapter {
+    return {
+      chat: vi.fn(async (): Promise<ChatResponse> => ({
+        message: { role: 'assistant', content: responseContent },
+        usage: { inputTokens: 10, outputTokens: 5 },
+      })),
+    };
+  }
+
+  it('creates a summarizer function that calls adapter.chat', async () => {
+    const adapter = createMockAdapter('This is the summary');
+    const summarizer = createAdapterSummarizer(adapter);
+
+    const messages: Message[] = [
+      msg('user', 'Hello'),
+      msg('assistant', 'Hi there'),
+    ];
+
+    const result = await summarizer(messages);
+
+    expect(adapter.chat).toHaveBeenCalledOnce();
+    expect(result).toBe('This is the summary');
+  });
+
+  it('returns the summary content from the adapter response', async () => {
+    const expectedSummary = 'User greeted the assistant. Assistant responded with a greeting.';
+    const adapter = createMockAdapter(expectedSummary);
+    const summarizer = createAdapterSummarizer(adapter);
+
+    const messages: Message[] = [
+      msg('user', 'Good morning'),
+      msg('assistant', 'Good morning! How can I help?'),
+    ];
+
+    const result = await summarizer(messages);
+    expect(result).toBe(expectedSummary);
+  });
+
+  it('formats messages correctly for the summary prompt', async () => {
+    const adapter = createMockAdapter('summary');
+    const summarizer = createAdapterSummarizer(adapter);
+
+    const messages: Message[] = [
+      msg('user', 'What is TypeScript?'),
+      msg('assistant', 'TypeScript is a typed superset of JavaScript.'),
+      msg('user', 'Thanks!'),
+    ];
+
+    await summarizer(messages);
+
+    const chatCall = vi.mocked(adapter.chat).mock.calls[0][0];
+    expect(chatCall.messages).toHaveLength(2);
+
+    // First message should be a system prompt instructing summarization
+    expect(chatCall.messages[0].role).toBe('system');
+    expect(chatCall.messages[0].content).toContain('Summarize');
+
+    // Second message should contain the formatted conversation
+    expect(chatCall.messages[1].role).toBe('user');
+    expect(chatCall.messages[1].content).toContain('[user]: What is TypeScript?');
+    expect(chatCall.messages[1].content).toContain('[assistant]: TypeScript is a typed superset of JavaScript.');
+    expect(chatCall.messages[1].content).toContain('[user]: Thanks!');
+  });
+
+  it('works as a summarizer callback for the summarize compression strategy', async () => {
+    const adapter = createMockAdapter('Earlier, the user asked about TypeScript.');
+    const summarizer = createAdapterSummarizer(adapter);
+
+    const messages: Message[] = [
+      msg('user', 'What is TypeScript?'),
+      msg('assistant', 'TypeScript is a typed superset of JavaScript that adds static types.'),
+      msg('user', 'Can you give an example?'),
+      msg('assistant', 'Sure: let x: number = 5;'),
+      msg('user', 'Thanks'),
+      msg('assistant', 'You are welcome!'),
+    ];
+
+    const result = await compress(messages, {
+      strategy: 'summarize',
+      budget: 14,
+      summarizer,
+    });
+
+    // The first message should be a summary
+    expect(result.messages[0].content).toContain('Summary');
+    expect(result.messages[0].content).toContain('Earlier, the user asked about TypeScript.');
+    // adapter.chat should have been called
+    expect(adapter.chat).toHaveBeenCalled();
+  });
+
+  it('handles empty message arrays', async () => {
+    const adapter = createMockAdapter('No conversation to summarize.');
+    const summarizer = createAdapterSummarizer(adapter);
+
+    const result = await summarizer([]);
+
+    expect(adapter.chat).toHaveBeenCalledOnce();
+    expect(result).toBe('No conversation to summarize.');
+
+    // The user message content should be empty since no messages to format
+    const chatCall = vi.mocked(adapter.chat).mock.calls[0][0];
+    expect(chatCall.messages[1].role).toBe('user');
+    expect(chatCall.messages[1].content).toBe('');
+  });
+
+  it('handles single message', async () => {
+    const adapter = createMockAdapter('User said hello.');
+    const summarizer = createAdapterSummarizer(adapter);
+
+    const messages: Message[] = [msg('user', 'Hello')];
+    const result = await summarizer(messages);
+
+    expect(result).toBe('User said hello.');
+    const chatCall = vi.mocked(adapter.chat).mock.calls[0][0];
+    expect(chatCall.messages[1].content).toBe('[user]: Hello');
+  });
+
+  it('propagates adapter errors', async () => {
+    const adapter: AgentAdapter = {
+      chat: vi.fn(async () => { throw new Error('LLM API error'); }),
+    };
+    const summarizer = createAdapterSummarizer(adapter);
+
+    await expect(summarizer([msg('user', 'test')])).rejects.toThrow('LLM API error');
   });
 });

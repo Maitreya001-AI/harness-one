@@ -56,7 +56,7 @@ export function createBudget(config: BudgetConfig): TokenBudget {
     });
   }
 
-  function getSegment(name: string) {
+  function getSegment(name: string): { maxTokens: number; used: number; trimPriority: number; reserved: boolean } {
     const seg = segmentState.get(name);
     if (!seg) {
       throw new HarnessError(

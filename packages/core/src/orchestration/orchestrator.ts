@@ -291,8 +291,9 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
           // selectedId would create a cycle.
           const visited = new Set<string>();
           const queue = [selectedId];
-          while (queue.length > 0) {
-            const current = queue.shift()!;
+          let queueIdx = 0;
+          while (queueIdx < queue.length) {
+            const current = queue[queueIdx++];
             if (visited.has(current)) continue;
             visited.add(current);
             // If selectedId can reach delegatedFrom, it's a cycle
@@ -316,7 +317,7 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
           if (!delegationChain.has(delegatedFrom)) {
             delegationChain.set(delegatedFrom, new Set());
           }
-          delegationChain.get(delegatedFrom)!.add(selectedId);
+          (delegationChain.get(delegatedFrom) as Set<string>).add(selectedId);
         }
 
         emit({ type: 'task_delegated', agentId: selectedId, task });

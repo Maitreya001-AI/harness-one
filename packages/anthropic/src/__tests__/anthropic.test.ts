@@ -394,6 +394,83 @@ describe('createAnthropicAdapter', () => {
       expect(result.usage.cacheWriteTokens).toBe(0);
     });
 
+    it('passes maxTokens, temperature, topP, and stopSequences config to chat call', async () => {
+      mock.mocks.create.mockResolvedValue({
+        content: [{ type: 'text', text: 'OK' }],
+        usage: { input_tokens: 10, output_tokens: 3 },
+      });
+
+      const adapter = createAnthropicAdapter({ client: mock.client });
+      await adapter.chat({
+        messages: [{ role: 'user', content: 'Hi' }],
+        config: {
+          maxTokens: 2048,
+          temperature: 0.7,
+          topP: 0.95,
+          stopSequences: ['STOP'],
+        },
+      });
+
+      expect(mock.mocks.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          max_tokens: 2048,
+          temperature: 0.7,
+          top_p: 0.95,
+          stop_sequences: ['STOP'],
+        }),
+        expect.any(Object),
+      );
+    });
+
+    it('maps all remaining JsonSchema fields (items, enum, default, min/max, pattern, oneOf, anyOf, allOf, const, format) to Anthropic input_schema', async () => {
+      mock.mocks.create.mockResolvedValue({
+        content: [{ type: 'text', text: 'OK' }],
+        usage: { input_tokens: 10, output_tokens: 3 },
+      });
+
+      const adapter = createAnthropicAdapter({ client: mock.client });
+      await adapter.chat({
+        messages: [{ role: 'user', content: 'Hi' }],
+        tools: [{
+          name: 'full_schema_tool',
+          description: 'Tool with all schema fields at top level',
+          parameters: {
+            type: 'object',
+            items: { type: 'string' },
+            enum: ['a', 'b', 'c'],
+            default: 'a',
+            minimum: 0,
+            maximum: 100,
+            minLength: 1,
+            maxLength: 50,
+            pattern: '^[a-z]+$',
+            oneOf: [{ type: 'string' }, { type: 'number' }],
+            anyOf: [{ type: 'boolean' }],
+            allOf: [{ type: 'object' }],
+            const: 'fixed',
+            format: 'email',
+          },
+        }],
+      });
+
+      const calledTools = mock.mocks.create.mock.calls[0][0].tools;
+      const schema = calledTools[0].input_schema;
+      expect(schema.type).toBe('object');
+      expect(schema.items).toEqual({ type: 'string' });
+      expect(schema.enum).toEqual(['a', 'b', 'c']);
+      expect(schema.default).toBe('a');
+      expect(schema.minimum).toBe(0);
+      expect(schema.maximum).toBe(100);
+      expect(schema.minLength).toBe(1);
+      expect(schema.maxLength).toBe(50);
+      expect(schema.pattern).toBe('^[a-z]+$');
+      expect(schema.oneOf).toEqual([{ type: 'string' }, { type: 'number' }]);
+      expect(schema.anyOf).toEqual([{ type: 'boolean' }]);
+      expect(schema.allOf).toEqual([{ type: 'object' }]);
+      expect(schema.const).toBe('fixed');
+      expect(schema.format).toBe('email');
+    });
+
     it('handles assistant message with tool calls in input', async () => {
       mock.mocks.create.mockResolvedValue({
         content: [{ type: 'text', text: 'Done' }],
@@ -563,6 +640,68 @@ describe('createAnthropicAdapter', () => {
       expect((toolChunks[0] as StreamChunk).toolCall!.name).toBe('search');
       expect((toolChunks[0] as StreamChunk).toolCall!.arguments).toBe('{"q":');
       expect((toolChunks[1] as StreamChunk).toolCall!.arguments).toBe('"test"}');
+    });
+
+    it('passes system message, tools, and temperature to stream call', async () => {
+      const mockStream = createMockStream([
+        { type: 'content_block_start', content_block: { type: 'text' } },
+        { type: 'content_block_delta', delta: { type: 'text_delta', text: 'OK' } },
+      ]);
+      mockStream.finalMessage.mockResolvedValue({
+        usage: { input_tokens: 10, output_tokens: 5 },
+      });
+      mock.mocks.stream.mockReturnValue(mockStream);
+
+      const adapter = createAnthropicAdapter({ client: mock.client });
+      const chunks: unknown[] = [];
+      for await (const chunk of adapter.stream!({
+        messages: [
+          { role: 'system', content: 'Be helpful' },
+          { role: 'user', content: 'Hi' },
+        ],
+        tools: [{
+          name: 'search',
+          description: 'Search the web',
+          parameters: { type: 'object', properties: { q: { type: 'string' } } },
+        }],
+        config: { temperature: 0.5 },
+      })) {
+        chunks.push(chunk);
+      }
+
+      expect(mock.mocks.stream).toHaveBeenCalledWith(
+        expect.objectContaining({
+          system: 'Be helpful',
+          messages: [{ role: 'user', content: 'Hi' }],
+          tools: [expect.objectContaining({ name: 'search' })],
+          temperature: 0.5,
+        }),
+        expect.any(Object),
+      );
+    });
+
+    it('handles finalMessage() throwing by breaking gracefully without crashing', async () => {
+      const mockStream = createMockStream([
+        { type: 'content_block_start', content_block: { type: 'text' } },
+        { type: 'content_block_delta', delta: { type: 'text_delta', text: 'Hello' } },
+      ]);
+      mockStream.finalMessage.mockRejectedValue(new Error('Stream aborted'));
+      mock.mocks.stream.mockReturnValue(mockStream);
+
+      const adapter = createAnthropicAdapter({ client: mock.client });
+      const chunks: unknown[] = [];
+      for await (const chunk of adapter.stream!({
+        messages: [{ role: 'user', content: 'Hi' }],
+      })) {
+        chunks.push(chunk);
+      }
+
+      // Should still have the text chunk but no done chunk (stream broke before done)
+      const textChunks = chunks.filter((c: unknown) => (c as StreamChunk).type === 'text_delta');
+      expect(textChunks).toHaveLength(1);
+      // No done event should be emitted since finalMessage threw and we break
+      const doneChunks = chunks.filter((c: unknown) => (c as StreamChunk).type === 'done');
+      expect(doneChunks).toHaveLength(0);
     });
 
     it('yields done chunk with usage from finalMessage', async () => {

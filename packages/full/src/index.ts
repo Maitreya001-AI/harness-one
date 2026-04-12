@@ -321,6 +321,7 @@ export function createHarness(config: HarnessConfig): Harness {
         if (msg.role === 'user') {
           const inputResult = await runInput(guardrailPipeline, { content: msg.content });
           if (!inputResult.passed) {
+            loop.abort();
             yield {
               type: 'error',
               error: new HarnessError(
@@ -333,7 +334,11 @@ export function createHarness(config: HarnessConfig): Harness {
             return;
           }
         }
-        await conversations.append('default', msg);
+        try {
+          await conversations.append('default', msg);
+        } catch (err) {
+          logger.warn('Failed to persist message to conversation store', { error: err });
+        }
       }
       for await (const event of loop.run(messages)) {
         // Validate tool call arguments against input guardrails before executing
@@ -343,6 +348,7 @@ export function createHarness(config: HarnessConfig): Harness {
             : JSON.stringify(event.toolCall.arguments);
           const argCheck = await runInput(guardrailPipeline, { content: argContent });
           if (!argCheck.passed) {
+            loop.abort();
             yield {
               type: 'error',
               error: new HarnessError(
@@ -359,6 +365,7 @@ export function createHarness(config: HarnessConfig): Harness {
         if (event.type === 'message' && event.message) {
           const outputResult = await runOutput(guardrailPipeline, { content: event.message.content });
           if (!outputResult.passed) {
+            loop.abort();
             yield {
               type: 'error',
               error: new HarnessError(
@@ -370,13 +377,18 @@ export function createHarness(config: HarnessConfig): Harness {
             yield { type: 'done', reason: 'error', totalUsage: loop.usage };
             return;
           }
-          await conversations.append('default', event.message);
+          try {
+            await conversations.append('default', event.message);
+          } catch (err) {
+            logger.warn('Failed to persist message to conversation store', { error: err });
+          }
         } else if (event.type === 'tool_result') {
           // Run output guardrails on tool results
           const toolOutputResult = await runOutput(guardrailPipeline, {
             content: typeof event.result === 'string' ? event.result : JSON.stringify(event.result),
           });
           if (!toolOutputResult.passed) {
+            loop.abort();
             yield {
               type: 'error',
               error: new HarnessError(
@@ -388,11 +400,15 @@ export function createHarness(config: HarnessConfig): Harness {
             yield { type: 'done', reason: 'error', totalUsage: loop.usage };
             return;
           }
-          await conversations.append('default', {
-            role: 'tool' as const,
-            content: typeof event.result === 'string' ? event.result : JSON.stringify(event.result),
-            toolCallId: event.toolCallId,
-          });
+          try {
+            await conversations.append('default', {
+              role: 'tool' as const,
+              content: typeof event.result === 'string' ? event.result : JSON.stringify(event.result),
+              toolCallId: event.toolCallId,
+            });
+          } catch (err) {
+            logger.warn('Failed to persist message to conversation store', { error: err });
+          }
         }
         yield event;
       }
@@ -406,15 +422,21 @@ export function createHarness(config: HarnessConfig): Harness {
       for (const exporter of exporters) {
         if (exporter.shutdown) {
           await Promise.race([
-            exporter.shutdown(),
+            Promise.resolve(exporter.shutdown()).catch((err: unknown) => {
+              logger.warn('Exporter shutdown error', { error: err });
+            }),
             new Promise<void>((resolve) => setTimeout(resolve, EXPORTER_TIMEOUT)),
           ]);
         }
       }
+      // Clean up session manager (stops GC timer)
+      sessions.dispose();
     },
 
     async drain(timeoutMs = 30_000): Promise<void> {
       loop.abort();
+      // Clean up session manager (stops GC timer)
+      sessions.dispose();
       // Wait for in-flight operations to settle. Use a 100ms tick for polling,
       // but respect the full timeoutMs deadline for overall drain duration.
       const deadline = Date.now() + timeoutMs;

@@ -247,9 +247,16 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
       }, { signal: params.signal });
 
       const toolCallAccum = new Map<
-        number,
+        string,
         { id: string; name: string; arguments: string }
       >();
+      // Secondary map: index -> ID, so continuation chunks without an id field
+      // can be resolved to the correct accumulator entry via their positional index.
+      const indexToId = new Map<number, string>();
+
+      // Safety limits to prevent OOM from malformed streams
+      const MAX_TOOL_CALLS = 128;
+      const MAX_TOOL_ARG_BYTES = 1_048_576; // 1MB
 
       for await (const chunk of stream) {
         const delta = chunk.choices[0]?.delta;
@@ -261,14 +268,31 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
 
         if (delta.tool_calls) {
           for (const tc of delta.tool_calls) {
-            let accum = toolCallAccum.get(tc.index);
-            if (!accum) {
-              accum = { id: tc.id ?? `tool_${tc.index}`, name: '', arguments: '' };
-              toolCallAccum.set(tc.index, accum);
+            // Determine the lookup key: prefer tc.id, fall back to index-to-ID map,
+            // and finally generate a fallback ID from the index.
+            const id = tc.id ?? indexToId.get(tc.index) ?? `tool_${tc.index}`;
+
+            // Skip new tool calls beyond the safety limit
+            if (toolCallAccum.size >= MAX_TOOL_CALLS && !toolCallAccum.has(id)) {
+              continue;
             }
-            if (tc.id) accum.id = tc.id;
+
+            let accum = toolCallAccum.get(id);
+            if (!accum) {
+              accum = { id, name: '', arguments: '' };
+              toolCallAccum.set(id, accum);
+            }
+            // Update the index-to-ID mapping whenever we see an id for an index
+            if (tc.id) {
+              indexToId.set(tc.index, tc.id);
+              accum.id = tc.id;
+            }
             if (tc.function?.name) accum.name = tc.function.name;
             if (tc.function?.arguments) {
+              // Skip arguments that would exceed the size limit
+              if (accum.arguments.length + tc.function.arguments.length > MAX_TOOL_ARG_BYTES) {
+                continue;
+              }
               accum.arguments += tc.function.arguments;
             }
 
@@ -294,6 +318,7 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
       }
 
       // Only emit bare done if stream ended without a usage chunk
+      console.warn('[harness-one/openai] Stream ended without usage data — token counts will be zero. This may affect cost tracking.');
       yield {
         type: 'done' as const,
         usage: { inputTokens: 0, outputTokens: 0 },

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createCostTracker, KahanSum } from '../cost-tracker.js';
+import type { CostAlert } from '../types.js';
 
 describe('createCostTracker', () => {
   const pricing = [
@@ -100,20 +101,30 @@ describe('createCostTracker', () => {
       expect(tracker.checkBudget()).toBeNull();
     });
 
-    it('returns warning when over 80% (default)', () => {
+    it('returns exceeded when over 100% (default)', () => {
       const tracker = createCostTracker({ pricing, budget: 0.01 });
-      // 0.003 + 0.0075 = 0.0105 > 80% of 0.01
+      // 0.003 + 0.0075 = 0.0105 > 100% of 0.01
       tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 500 });
       const alert = tracker.checkBudget();
       expect(alert).not.toBeNull();
-      // cost is 0.0105 which is > budget, so critical
-      expect(alert!.type).toBe('critical');
+      // cost is 0.0105 which is > budget, so exceeded
+      expect(alert!.type).toBe('exceeded');
     });
 
-    it('returns critical when over 95%', () => {
+    it('returns exceeded when well over budget', () => {
       const tracker = createCostTracker({ pricing, budget: 0.004 });
       tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 500 });
       const alert = tracker.checkBudget();
+      expect(alert!.type).toBe('exceeded');
+    });
+
+    it('returns critical when between 95% and 100%', () => {
+      // budget = 0.0109 => 95% = 0.010355, 100% = 0.0109
+      // cost = 0.0105 => 96.3% (between critical and exceeded)
+      const tracker = createCostTracker({ pricing, budget: 0.0109 });
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 500 });
+      const alert = tracker.checkBudget();
+      expect(alert).not.toBeNull();
       expect(alert!.type).toBe('critical');
     });
 
@@ -134,7 +145,8 @@ describe('createCostTracker', () => {
       tracker.onAlert(handler);
       tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
       expect(handler).toHaveBeenCalled();
-      expect(handler.mock.calls[0][0].type).toBe('critical');
+      // cost 0.003 > budget 0.001 => exceeded
+      expect(handler.mock.calls[0][0].type).toBe('exceeded');
     });
   });
 
@@ -184,13 +196,13 @@ describe('createCostTracker', () => {
       expect(msg).toContain('BUDGET WARNING');
     });
 
-    it('getAlertMessage returns critical at 95% of budget', () => {
+    it('getAlertMessage returns exceeded at 100% of budget', () => {
       const tracker = createCostTracker({ pricing, budget: 0.003 });
-      // 0.003 cost = 100% of 0.003 => critical
+      // 0.003 cost = 100% of 0.003 => exceeded
       tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
       const msg = tracker.getAlertMessage();
       expect(msg).not.toBeNull();
-      expect(msg).toContain('BUDGET CRITICAL');
+      expect(msg).toContain('BUDGET EXCEEDED');
     });
 
     it('cost with zero pricing returns 0', () => {
@@ -251,9 +263,21 @@ describe('createCostTracker', () => {
       expect(msg).toContain('concise');
     });
 
-    it('returns critical message when at or above 95% of budget', () => {
+    it('returns exceeded message when at or above 100% of budget', () => {
       const tracker = createCostTracker({ pricing, budget: 0.003 });
       // 0.003 cost = 100% of 0.003
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      const msg = tracker.getAlertMessage();
+      expect(msg).not.toBeNull();
+      expect(msg).toContain('BUDGET EXCEEDED');
+      expect(msg).toContain('Stop all non-essential operations');
+    });
+
+    it('returns critical message when between 95% and 100% of budget', () => {
+      // budget = 0.00316 => 95% = 0.003002, 100% = 0.00316
+      // cost = 0.003 => ~94.9% -- hmm, that's under 95%. Let me use a tighter budget.
+      // budget = 0.00312 => cost/budget = 0.003/0.00312 = 96.15%
+      const tracker = createCostTracker({ pricing, budget: 0.00312 });
       tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
       const msg = tracker.getAlertMessage();
       expect(msg).not.toBeNull();
@@ -307,7 +331,8 @@ describe('createCostTracker', () => {
       expect(getTotalCost()).toBeCloseTo(0.003, 4);
       const alert = checkBudget();
       expect(alert).not.toBeNull();
-      expect(alert!.type).toBe('critical');
+      // cost 0.003 > budget 0.001 => exceeded
+      expect(alert!.type).toBe('exceeded');
     });
 
     it('getAlertMessage works when destructured', () => {
@@ -323,7 +348,8 @@ describe('createCostTracker', () => {
       });
       const msg = getAlertMessage();
       expect(msg).not.toBeNull();
-      expect(msg).toContain('BUDGET CRITICAL');
+      // cost = 0.003 = 100% of budget => exceeded
+      expect(msg).toContain('BUDGET EXCEEDED');
     });
 
     it('onAlert fires correctly when recordUsage is destructured', () => {
@@ -339,7 +365,8 @@ describe('createCostTracker', () => {
         outputTokens: 0,
       });
       expect(handler).toHaveBeenCalled();
-      expect(handler.mock.calls[0][0].type).toBe('critical');
+      // cost 0.003 > budget 0.001 => exceeded
+      expect(handler.mock.calls[0][0].type).toBe('exceeded');
     });
   });
 
@@ -566,6 +593,182 @@ describe('createCostTracker', () => {
     });
   });
 
+  // REQ-011: Cost-aware auto-mitigation
+  describe('isBudgetExceeded', () => {
+    it('returns false when no budget is set', () => {
+      const tracker = createCostTracker({ pricing });
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      expect(tracker.isBudgetExceeded()).toBe(false);
+    });
+
+    it('returns false when total cost is under budget', () => {
+      const tracker = createCostTracker({ pricing, budget: 1.0 });
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      // cost = 0.003, budget = 1.0
+      expect(tracker.isBudgetExceeded()).toBe(false);
+    });
+
+    it('returns true when total cost equals budget', () => {
+      const tracker = createCostTracker({ pricing, budget: 0.003 });
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      // cost = 0.003, budget = 0.003
+      expect(tracker.isBudgetExceeded()).toBe(true);
+    });
+
+    it('returns true when total cost exceeds budget', () => {
+      const tracker = createCostTracker({ pricing, budget: 0.001 });
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      // cost = 0.003, budget = 0.001
+      expect(tracker.isBudgetExceeded()).toBe(true);
+    });
+
+    it('works when destructured', () => {
+      const { recordUsage, isBudgetExceeded } = createCostTracker({ pricing, budget: 0.001 });
+      recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      expect(isBudgetExceeded()).toBe(true);
+    });
+  });
+
+  describe('budgetUtilization', () => {
+    it('returns 0 when no spend has occurred', () => {
+      const tracker = createCostTracker({ pricing, budget: 1.0 });
+      expect(tracker.budgetUtilization()).toBe(0);
+    });
+
+    it('returns 0 when no budget is set', () => {
+      const tracker = createCostTracker({ pricing });
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      expect(tracker.budgetUtilization()).toBe(0);
+    });
+
+    it('returns 0.5 at half budget', () => {
+      const tracker = createCostTracker({ pricing, budget: 0.006 });
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      // cost = 0.003, budget = 0.006 => 0.5
+      expect(tracker.budgetUtilization()).toBeCloseTo(0.5, 4);
+    });
+
+    it('returns 1.0 at full budget', () => {
+      const tracker = createCostTracker({ pricing, budget: 0.003 });
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      // cost = 0.003, budget = 0.003 => 1.0
+      expect(tracker.budgetUtilization()).toBeCloseTo(1.0, 4);
+    });
+
+    it('can exceed 1.0 when over budget', () => {
+      const tracker = createCostTracker({ pricing, budget: 0.001 });
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      // cost = 0.003, budget = 0.001 => 3.0
+      expect(tracker.budgetUtilization()).toBeCloseTo(3.0, 4);
+    });
+
+    it('resets to 0 after tracker reset', () => {
+      const tracker = createCostTracker({ pricing, budget: 0.003 });
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      expect(tracker.budgetUtilization()).toBeCloseTo(1.0, 4);
+      tracker.reset();
+      expect(tracker.budgetUtilization()).toBe(0);
+    });
+
+    it('works when destructured', () => {
+      const { recordUsage, budgetUtilization } = createCostTracker({ pricing, budget: 0.006 });
+      recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      expect(budgetUtilization()).toBeCloseTo(0.5, 4);
+    });
+  });
+
+  describe('shouldStop', () => {
+    it('returns false when no budget is set', () => {
+      const tracker = createCostTracker({ pricing });
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      expect(tracker.shouldStop()).toBe(false);
+    });
+
+    it('returns false when under budget', () => {
+      const tracker = createCostTracker({ pricing, budget: 1.0 });
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      expect(tracker.shouldStop()).toBe(false);
+    });
+
+    it('returns true when budget is exceeded', () => {
+      const tracker = createCostTracker({ pricing, budget: 0.001 });
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      expect(tracker.shouldStop()).toBe(true);
+    });
+
+    it('returns true when cost exactly equals budget', () => {
+      const tracker = createCostTracker({ pricing, budget: 0.003 });
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      expect(tracker.shouldStop()).toBe(true);
+    });
+
+    it('works when destructured', () => {
+      const { recordUsage, shouldStop } = createCostTracker({ pricing, budget: 0.001 });
+      recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      expect(shouldStop()).toBe(true);
+    });
+  });
+
+  describe('onBudgetExceeded callback', () => {
+    it('fires when cost crosses 100% of budget via recordUsage', () => {
+      const handler = vi.fn();
+      const tracker = createCostTracker({ pricing, budget: 0.005 });
+      tracker.onAlert(handler);
+
+      // First usage: 0.003 = 60% of 0.005 — no alert
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      // Check that no 'exceeded' alert was emitted
+      const exceededCalls1 = handler.mock.calls.filter((c: [CostAlert]) => c[0].type === 'exceeded');
+      expect(exceededCalls1).toHaveLength(0);
+
+      // Second usage: 0.003 + 0.0105 = 0.0135 > 0.005 — exceeded
+      tracker.recordUsage({ traceId: 't2', model: 'claude-3', inputTokens: 1000, outputTokens: 500 });
+      const exceededCalls2 = handler.mock.calls.filter((c: [CostAlert]) => c[0].type === 'exceeded');
+      expect(exceededCalls2).toHaveLength(1);
+      expect(exceededCalls2[0][0].percentUsed).toBeGreaterThanOrEqual(1.0);
+    });
+
+    it('fires when cost crosses 100% of budget via updateUsage', () => {
+      const handler = vi.fn();
+      const tracker = createCostTracker({ pricing, budget: 0.005 });
+      tracker.onAlert(handler);
+
+      // Initial: 0.003 = 60% — no exceeded alert
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+
+      // Update pushes over budget: 0.0105 > 0.005
+      tracker.updateUsage('t1', { inputTokens: 1000, outputTokens: 500 });
+      const exceededCalls = handler.mock.calls.filter((c: [CostAlert]) => c[0].type === 'exceeded');
+      expect(exceededCalls).toHaveLength(1);
+    });
+
+    it('exceeded alert contains correct fields', () => {
+      const handler = vi.fn();
+      const tracker = createCostTracker({ pricing, budget: 0.001 });
+      tracker.onAlert(handler);
+
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      // cost = 0.003, budget = 0.001 => 300% used
+      const exceededCalls = handler.mock.calls.filter((c: [CostAlert]) => c[0].type === 'exceeded');
+      expect(exceededCalls).toHaveLength(1);
+
+      const alert = exceededCalls[0][0];
+      expect(alert.type).toBe('exceeded');
+      expect(alert.currentCost).toBeCloseTo(0.003, 4);
+      expect(alert.budget).toBe(0.001);
+      expect(alert.percentUsed).toBeCloseTo(3.0, 1);
+      expect(alert.message).toContain('Exceeded');
+    });
+
+    it('getAlertMessage returns exceeded message at 100%+ budget', () => {
+      const tracker = createCostTracker({ pricing, budget: 0.001 });
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      const msg = tracker.getAlertMessage();
+      expect(msg).not.toBeNull();
+      expect(msg).toContain('BUDGET EXCEEDED');
+    });
+  });
+
   // Issue 6: Streaming token support via updateUsage()
   describe('updateUsage (Issue 6 fix)', () => {
     it('updates the most recent record for a traceId and returns the updated record', () => {
@@ -663,9 +866,9 @@ describe('createCostTracker', () => {
 
       // Update to push over budget
       tracker.updateUsage('t1', { inputTokens: 1000, outputTokens: 500 });
-      // 0.0105 > 0.005 — critical
+      // 0.0105 > 0.005 — exceeded
       expect(handler).toHaveBeenCalled();
-      expect(handler.mock.calls[0][0].type).toBe('critical');
+      expect(handler.mock.calls[0][0].type).toBe('exceeded');
     });
 
     it('handles streaming: successive updateUsage calls simulate token accumulation', () => {
@@ -698,6 +901,88 @@ describe('createCostTracker', () => {
       const original = tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
       const updated = tracker.updateUsage('t1', { outputTokens: 100 });
       expect(updated!.timestamp).toBe(original.timestamp);
+    });
+  });
+
+  // PERF-03: getCostByTrace uses O(1) traceTotals index
+  describe('getCostByTrace with traceTotals index', () => {
+    it('returns correct cost from traceTotals index after multiple records', () => {
+      const tracker = createCostTracker({ pricing });
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 2000, outputTokens: 0 });
+      tracker.recordUsage({ traceId: 't2', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      // t1: 0.003 + 0.006 = 0.009
+      expect(tracker.getCostByTrace('t1')).toBeCloseTo(0.009, 4);
+      // t2: 0.003
+      expect(tracker.getCostByTrace('t2')).toBeCloseTo(0.003, 4);
+    });
+
+    it('traceTotals persists even after records buffer eviction', () => {
+      const tracker = createCostTracker({
+        pricing: [{ model: 'a', inputPer1kTokens: 1.0, outputPer1kTokens: 0 }],
+        maxRecords: 5,
+      });
+
+      // Record 6 entries for the same trace -- the first record gets evicted from buffer
+      for (let i = 0; i < 6; i++) {
+        tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 1000, outputTokens: 0 });
+      }
+
+      // traceTotals should reflect ALL 6 records even though buffer only has 5
+      expect(tracker.getCostByTrace('t1')).toBeCloseTo(6.0, 2);
+    });
+
+    it('traceTotals adjusts correctly via updateUsage', () => {
+      const tracker = createCostTracker({ pricing });
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      // cost = 0.003
+      tracker.updateUsage('t1', { inputTokens: 2000 });
+      // cost should now be 0.006
+      expect(tracker.getCostByTrace('t1')).toBeCloseTo(0.006, 4);
+    });
+
+    it('traceTotals cleared on reset', () => {
+      const tracker = createCostTracker({ pricing });
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+      tracker.reset();
+      expect(tracker.getCostByTrace('t1')).toBe(0);
+    });
+  });
+
+  // RES-01: modelTotals and traceTotals bounded by maxModels/maxTraces
+  describe('bounded maps (maxModels / maxTraces)', () => {
+    it('evicts oldest model when modelTotals exceeds maxModels', () => {
+      const models = Array.from({ length: 5 }, (_, i) => ({
+        model: `m${i}`, inputPer1kTokens: 1.0, outputPer1kTokens: 0,
+      }));
+      const tracker = createCostTracker({ pricing: models, maxModels: 3 });
+
+      // Record usage for 5 different models -- maxModels is 3
+      for (let i = 0; i < 5; i++) {
+        tracker.recordUsage({ traceId: `t${i}`, model: `m${i}`, inputTokens: 1000, outputTokens: 0 });
+      }
+
+      const byModel = tracker.getCostByModel();
+      // Only 3 models should be tracked (m2, m3, m4 after LRU eviction)
+      expect(Object.keys(byModel).length).toBeLessThanOrEqual(3);
+    });
+
+    it('evicts oldest trace when traceTotals exceeds maxTraces', () => {
+      const tracker = createCostTracker({
+        pricing: [{ model: 'a', inputPer1kTokens: 1.0, outputPer1kTokens: 0 }],
+        maxTraces: 3,
+      });
+
+      // Record usage for 5 different traces -- maxTraces is 3
+      for (let i = 0; i < 5; i++) {
+        tracker.recordUsage({ traceId: `t${i}`, model: 'a', inputTokens: 1000, outputTokens: 0 });
+      }
+
+      // Earliest traces should have been evicted
+      expect(tracker.getCostByTrace('t0')).toBe(0);
+      expect(tracker.getCostByTrace('t1')).toBe(0);
+      // Recent traces should still be tracked
+      expect(tracker.getCostByTrace('t4')).toBeCloseTo(1.0, 2);
     });
   });
 });

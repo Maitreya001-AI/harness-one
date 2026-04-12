@@ -163,6 +163,11 @@ export function createContextBoundary(
       return policyMap.get(agentId);
     },
 
+    clearAgent(agentId: string): void {
+      viewCache.delete(agentId);
+      policyMap.delete(agentId);
+    },
+
     getViolations(): readonly BoundaryViolation[] {
       return violations;
     },

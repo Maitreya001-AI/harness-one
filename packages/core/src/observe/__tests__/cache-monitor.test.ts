@@ -116,6 +116,32 @@ describe('createCacheMonitor', () => {
     expect(metrics2.totalCalls).toBe(0);
   });
 
+  describe('FIX: getTimeSeries handles invalid bucketMs', () => {
+    it('does not throw on bucketMs=0 (division by zero)', () => {
+      const monitor = createCacheMonitor();
+      monitor.record(makeUsage());
+      // bucketMs=0 would cause Math.floor(timestamp / 0) = Infinity
+      // The fix defaults to 60_000
+      const series = monitor.getTimeSeries(0);
+      expect(series.length).toBeGreaterThanOrEqual(1);
+      expect(series[0].calls).toBe(1);
+    });
+
+    it('does not throw on negative bucketMs', () => {
+      const monitor = createCacheMonitor();
+      monitor.record(makeUsage());
+      const series = monitor.getTimeSeries(-1000);
+      expect(series.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('does not throw on NaN bucketMs', () => {
+      const monitor = createCacheMonitor();
+      monitor.record(makeUsage());
+      const series = monitor.getTimeSeries(NaN);
+      expect(series.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
   it('evicts old data points beyond limit', () => {
     const monitor = createCacheMonitor({ maxBuckets: 2 });
     // maxBuckets * 10 = 20, so record 25 to trigger eviction

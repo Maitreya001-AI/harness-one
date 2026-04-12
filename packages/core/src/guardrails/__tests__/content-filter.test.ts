@@ -68,12 +68,13 @@ describe('createContentFilter', () => {
       }
     });
 
-    it('pattern matching uses original case (not lowered)', () => {
-      // Pattern without 'i' flag should be case-sensitive
-      const { guard } = createContentFilter({ blockedPatterns: [/Secret/] });
+    it('pattern matching uses NFKC-normalized lowercase content', () => {
+      // Content is NFKC-normalized and lowercased before pattern matching,
+      // so a pattern for "secret" (lowercase) matches regardless of input case
+      const { guard } = createContentFilter({ blockedPatterns: [/secret/] });
 
       expect(guard({ content: 'This is Secret' }).action).toBe('block');
-      expect(guard({ content: 'this is secret' }).action).toBe('allow');
+      expect(guard({ content: 'this is secret' }).action).toBe('block');
     });
 
     it('pattern with case-insensitive flag matches any case', () => {
@@ -93,7 +94,7 @@ describe('createContentFilter', () => {
       expect(guard({ content: 'normal content' }).action).toBe('allow');
     });
 
-    it('pattern matching checks original content (not lowered)', () => {
+    it('pattern matching checks NFKC-normalized lowercase content', () => {
       const { guard } = createContentFilter({ blockedPatterns: [/^.*$/] });
       const result = guard({ content: 'any content at all' });
       expect(result.action).toBe('block');
@@ -138,13 +139,24 @@ describe('createContentFilter', () => {
       expect(guard({ content: 'TeStWoRd' }).action).toBe('block');
     });
 
-    it('patterns respect their own flags (case-sensitive by default)', () => {
-      const { guard } = createContentFilter({
+    it('patterns match against NFKC-normalized lowercase content', () => {
+      // Since content is lowercased before pattern matching, a pattern with
+      // uppercase letters will NOT match (the content is always lowercase).
+      // Use lowercase patterns to match content regardless of original case.
+      const { guard: guardUpper } = createContentFilter({
         blockedPatterns: [/CaseSensitive/],
       });
 
-      expect(guard({ content: 'CaseSensitive match' }).action).toBe('block');
-      expect(guard({ content: 'casesensitive match' }).action).toBe('allow');
+      // Uppercase pattern won't match because content is lowercased
+      expect(guardUpper({ content: 'CaseSensitive match' }).action).toBe('allow');
+
+      const { guard: guardLower } = createContentFilter({
+        blockedPatterns: [/casesensitive/],
+      });
+
+      // Lowercase pattern matches because content is lowercased
+      expect(guardLower({ content: 'CaseSensitive match' }).action).toBe('block');
+      expect(guardLower({ content: 'casesensitive match' }).action).toBe('block');
     });
 
     it('handles Turkish dotted I correctly (no false positive)', () => {
@@ -251,6 +263,34 @@ describe('createContentFilter', () => {
       // "cafe" with combining acute (caf + e + combining acute) -> NFKC -> caf\u00E9
       // The keyword "cafe" is also NFKC-normalized, so this tests consistent normalization
       expect(guard({ content: 'Visit the cafe today' }).action).toBe('block');
+    });
+  });
+
+  // ---- FIX: lastIndex reset + NFKC normalization for custom patterns ----
+
+  describe('custom pattern lastIndex reset and normalization', () => {
+    it('does not produce intermittent failures with global-flag patterns on repeated calls', () => {
+      const { guard } = createContentFilter({ blockedPatterns: [/secret\d+/gi] });
+
+      // With the 'g' flag, regex.lastIndex advances after each .test() call.
+      // Without resetting lastIndex, the second call may miss the match.
+      const result1 = guard({ content: 'This has secret123 in it' });
+      const result2 = guard({ content: 'This has secret456 in it' });
+      const result3 = guard({ content: 'This has secret789 in it' });
+
+      expect(result1.action).toBe('block');
+      expect(result2.action).toBe('block');
+      expect(result3.action).toBe('block');
+    });
+
+    it('custom patterns benefit from NFKC normalization (catches fullwidth bypass)', () => {
+      // Pattern that matches "secret" followed by digits
+      const { guard } = createContentFilter({ blockedPatterns: [/secret\d+/i] });
+
+      // Fullwidth "secret123" — U+FF53 U+FF45 U+FF43 U+FF52 U+FF45 U+FF54 U+FF11 U+FF12 U+FF13
+      const fullwidthSecret = '\uFF53\uFF45\uFF43\uFF52\uFF45\uFF54\uFF11\uFF12\uFF13';
+      const result = guard({ content: `The code is ${fullwidthSecret}` });
+      expect(result.action).toBe('block');
     });
   });
 

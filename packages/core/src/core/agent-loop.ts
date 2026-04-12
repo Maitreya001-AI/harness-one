@@ -11,6 +11,8 @@ import type { AgentAdapter, ExecutionStrategy, Message, TokenUsage, ToolCallRequ
 import type { AgentEvent, DoneReason } from './events.js';
 import { AbortedError, HarnessError, MaxIterationsError, TokenBudgetExceededError } from './errors.js';
 import { createSequentialStrategy, createParallelStrategy } from './execution-strategies.js';
+import { categorizeAdapterError } from './error-classifier.js';
+import { pruneConversation } from './conversation-pruner.js';
 
 /**
  * Minimal tracing interface accepted by AgentLoop.
@@ -104,6 +106,27 @@ export interface AgentLoopConfig {
    * being forwarded to tool handlers.
    */
   readonly maxToolArgBytes?: number;
+  /**
+   * Maximum number of retries for retryable adapter errors (e.g. rate-limit).
+   *
+   * Defaults to 0 (no retries). Set to a positive number to enable automatic
+   * retry with exponential backoff for retryable errors.
+   */
+  readonly maxAdapterRetries?: number;
+  /**
+   * Base delay in milliseconds for exponential backoff between retries.
+   *
+   * Actual delay is `baseRetryDelayMs * 2^attempt + jitter`.
+   * Defaults to 1000.
+   */
+  readonly baseRetryDelayMs?: number;
+  /**
+   * Error categories eligible for retry.
+   *
+   * Defaults to `['ADAPTER_RATE_LIMIT']`. Set to include `'ADAPTER_NETWORK'`
+   * to also retry transient network errors.
+   */
+  readonly retryableErrors?: readonly string[];
 }
 
 /**
@@ -132,9 +155,14 @@ export class AgentLoop {
   private readonly toolTimeoutMs?: number | undefined;
   private readonly maxStreamBytes: number;
   private readonly maxToolArgBytes: number;
+  private readonly maxAdapterRetries: number;
+  private readonly baseRetryDelayMs: number;
+  private readonly retryableErrors: readonly string[];
 
   private abortController: AbortController;
   private _externalAbortHandler: (() => void) | undefined;
+  /** Tracks the error category from the last failed handleStream call for retry decisions. */
+  private _lastStreamErrorCategory: string | undefined;
   private cumulativeUsage: { inputTokens: number; outputTokens: number } = {
     inputTokens: 0,
     outputTokens: 0,
@@ -159,6 +187,9 @@ export class AgentLoop {
     this.toolTimeoutMs = config.toolTimeoutMs;
     this.maxStreamBytes = config.maxStreamBytes ?? AgentLoop.MAX_STREAM_BYTES;
     this.maxToolArgBytes = config.maxToolArgBytes ?? AgentLoop.MAX_TOOL_ARG_BYTES;
+    this.maxAdapterRetries = config.maxAdapterRetries ?? 0;
+    this.baseRetryDelayMs = config.baseRetryDelayMs ?? 1000;
+    this.retryableErrors = config.retryableErrors ?? ['ADAPTER_RATE_LIMIT'];
 
     if (this.maxIterations < 1) {
       throw new HarnessError('maxIterations must be >= 1', 'INVALID_CONFIG', 'Provide a positive maxIterations value');
@@ -302,20 +333,12 @@ export class AgentLoop {
 
         // H4: Check conversation length and prune if exceeded
         if (this.maxConversationMessages !== undefined && conversation.length > this.maxConversationMessages) {
-          yield {
-            type: 'warning',
-            message: `Conversation pruned from ${conversation.length} to ${this.maxConversationMessages} messages`,
-          };
-          // Preserve all leading system messages (there may be 0 or more)
-          let systemCount = 0;
-          while (systemCount < conversation.length && conversation[systemCount].role === 'system') {
-            systemCount++;
+          const pruneResult = pruneConversation(conversation, this.maxConversationMessages);
+          if (pruneResult.warning) {
+            yield { type: 'warning', message: pruneResult.warning };
           }
-          const head = conversation.slice(0, Math.max(1, systemCount));
-          const tailSize = this.maxConversationMessages - head.length;
-          const tail = conversation.slice(-Math.max(1, tailSize));
           conversation.length = 0;
-          conversation.push(...head, ...tail);
+          conversation.push(...pruneResult.pruned);
         }
 
         // End previous iteration span if one is still open
@@ -329,45 +352,98 @@ export class AgentLoop {
         yield { type: 'iteration_start', iteration };
 
         // C5: Wrap adapter call in try-catch to handle exceptions gracefully
-        let assistantMsg: Message;
-        let responseUsage: TokenUsage;
+        // With retry logic for retryable errors (e.g. rate-limit, network)
+        // These are guaranteed to be assigned when adapterCallSucceeded is true.
+        // The definite assignment assertion (!) tells TypeScript to trust us.
+        let assistantMsg!: Message;
+        let responseUsage!: TokenUsage;
+        let adapterCallSucceeded = false;
 
-        if (this.streaming && this.adapter.stream) {
-          // Streaming path: use adapter.stream()
-          const streamResult = yield* this.handleStream(conversation, cumulativeStreamBytes, maxCumulativeStreamBytes);
-          if (streamResult) {
-            cumulativeStreamBytes += streamResult.bytesRead;
+        for (let attempt = 0; attempt <= this.maxAdapterRetries; attempt++) {
+          // Check abort before each retry attempt
+          if (attempt > 0 && this.isAborted()) {
+            if (iterationSpanId && tm) { tm.endSpan(iterationSpanId, 'error'); iterationSpanId = undefined; }
+            yield { type: 'error', error: new AbortedError() };
+            finalEventEmitted = true;
+            yield this.doneEvent('aborted');
+            return;
+          }
+
+          if (this.streaming && this.adapter.stream) {
+            // Streaming path: use adapter.stream()
+            const streamResult = yield* this.handleStream(conversation, cumulativeStreamBytes, maxCumulativeStreamBytes);
+            if (streamResult) {
+              cumulativeStreamBytes += streamResult.bytesRead;
+              assistantMsg = streamResult.message;
+              responseUsage = streamResult.usage;
+              adapterCallSucceeded = true;
+              break;
+            } else {
+              // handleStream returned null — check if the error is retryable
+              const errorCategory = this._lastStreamErrorCategory;
+              this._lastStreamErrorCategory = undefined;
+
+              if (errorCategory && this.retryableErrors.includes(errorCategory) && attempt < this.maxAdapterRetries) {
+                try {
+                  await this.backoff(attempt);
+                } catch {
+                  // Abort fired during backoff — fall through to abort check at retry loop top
+                }
+                continue;
+              }
+
+              // Not retryable or retries exhausted
+              if (iterationSpanId && tm) { tm.endSpan(iterationSpanId, 'error'); iterationSpanId = undefined; }
+              finalEventEmitted = true;
+              yield this.doneEvent('error');
+              return;
+            }
           } else {
-            if (iterationSpanId && tm) { tm.endSpan(iterationSpanId, 'error'); iterationSpanId = undefined; }
-            finalEventEmitted = true;
-            yield this.doneEvent('error');
-            return;
+            // Non-streaming path: use adapter.chat()
+            try {
+              const response = await this.adapter.chat({
+                messages: conversation,
+                signal: this.abortController.signal,
+                ...(this.tools !== undefined && { tools: this.tools }),
+              });
+              assistantMsg = response.message;
+              responseUsage = response.usage;
+              adapterCallSucceeded = true;
+              break;
+            } catch (err) {
+              const errorCategory = AgentLoop.categorizeAdapterError(err);
+              const isRetryable = this.retryableErrors.includes(errorCategory);
+
+              if (isRetryable && attempt < this.maxAdapterRetries) {
+                try {
+                  await this.backoff(attempt);
+                } catch {
+                  // Abort fired during backoff — fall through to abort check at retry loop top
+                }
+                continue;
+              }
+
+              // Not retryable or retries exhausted — emit error and stop
+              if (iterationSpanId && tm) { tm.endSpan(iterationSpanId, 'error'); iterationSpanId = undefined; }
+              yield { type: 'error', error: err instanceof HarnessError ? err : new HarnessError(
+                err instanceof Error ? err.message : String(err),
+                errorCategory,
+                'Check adapter configuration and API credentials',
+                err instanceof Error ? err : undefined,
+              ) };
+              finalEventEmitted = true;
+              yield this.doneEvent('error');
+              return;
+            }
           }
-          assistantMsg = streamResult.message;
-          responseUsage = streamResult.usage;
-        } else {
-          // Non-streaming path: use adapter.chat()
-          try {
-            const response = await this.adapter.chat({
-              messages: conversation,
-              signal: this.abortController.signal,
-              ...(this.tools !== undefined && { tools: this.tools }),
-            });
-            assistantMsg = response.message;
-            responseUsage = response.usage;
-          } catch (err) {
-            // C5: Emit error event and break gracefully
-            if (iterationSpanId && tm) { tm.endSpan(iterationSpanId, 'error'); iterationSpanId = undefined; }
-            yield { type: 'error', error: err instanceof HarnessError ? err : new HarnessError(
-              err instanceof Error ? err.message : String(err),
-              AgentLoop.categorizeAdapterError(err),
-              'Check adapter configuration and API credentials',
-              err instanceof Error ? err : undefined,
-            ) };
-            finalEventEmitted = true;
-            yield this.doneEvent('error');
-            return;
-          }
+        }
+
+        if (!adapterCallSucceeded) {
+          // Safety: should not reach here, but guard against it
+          if (iterationSpanId && tm) { tm.endSpan(iterationSpanId, 'error'); iterationSpanId = undefined; }
+          finalEventEmitted = true;
+          yield this.doneEvent('error');
+          return;
         }
 
         // Record usage on the iteration span
@@ -474,7 +550,7 @@ export class AgentLoop {
           Object.assign(
             { signal: this.abortController.signal },
             this.isSequentialTool
-              ? { getToolMeta: (name: string) => ({ sequential: this.isSequentialTool!(name) }) }
+              ? { getToolMeta: (name: string) => ({ sequential: this.isSequentialTool?.(name) ?? false }) }
               : {},
           ),
         );
@@ -554,7 +630,7 @@ export class AgentLoop {
     let usage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
 
     try {
-      const stream = this.adapter.stream!({
+      const stream = (this.adapter.stream as NonNullable<typeof this.adapter.stream>)({
         messages: conversation,
         signal: this.abortController.signal,
         ...(this.tools !== undefined && { tools: this.tools }),
@@ -632,9 +708,11 @@ export class AgentLoop {
         }
       }
     } catch (err) {
+      const errorCategory = AgentLoop.categorizeAdapterError(err);
+      this._lastStreamErrorCategory = errorCategory;
       yield { type: 'error', error: err instanceof HarnessError ? err : new HarnessError(
         err instanceof Error ? err.message : String(err),
-        AgentLoop.categorizeAdapterError(err),
+        errorCategory,
         'Check adapter configuration and API credentials',
         err instanceof Error ? err : undefined,
       ) };
@@ -652,13 +730,9 @@ export class AgentLoop {
     return { message, usage, bytesRead: accumulatedBytes };
   }
 
+  /** @deprecated Use the standalone `categorizeAdapterError` from `error-classifier.js` instead. */
   private static categorizeAdapterError(err: unknown): string {
-    const msg = err instanceof Error ? err.message.toLowerCase() : '';
-    if (msg.includes('rate') || msg.includes('429') || msg.includes('too many')) return 'ADAPTER_RATE_LIMIT';
-    if (msg.includes('auth') || msg.includes('401') || msg.includes('api key') || msg.includes('unauthorized')) return 'ADAPTER_AUTH';
-    if (msg.includes('timeout') || msg.includes('econnrefused') || msg.includes('network') || msg.includes('fetch')) return 'ADAPTER_NETWORK';
-    if (msg.includes('parse') || msg.includes('json') || msg.includes('malformed')) return 'ADAPTER_PARSE';
-    return 'ADAPTER_ERROR';
+    return categorizeAdapterError(err);
   }
 
   private isAborted(): boolean {
@@ -668,5 +742,51 @@ export class AgentLoop {
   private doneEvent(reason: DoneReason): AgentEvent {
     this._status = 'completed';
     return { type: 'done', reason, totalUsage: this.usage };
+  }
+
+  /**
+   * Sleep for exponential backoff with jitter.
+   *
+   * Returns a promise that resolves after `baseRetryDelayMs * 2^attempt + jitter`.
+   * The timer is unref'd so it doesn't keep the process alive.
+   * Rejects with AbortedError if the abort signal fires during the wait.
+   */
+  private backoff(attempt: number): Promise<void> {
+    const base = this.baseRetryDelayMs * Math.pow(2, attempt);
+    // Add random jitter: 0-25% of the base delay
+    const jitter = Math.floor(Math.random() * base * 0.25);
+    const delay = base + jitter;
+
+    return new Promise<void>((resolve, reject) => {
+      if (this.isAborted()) {
+        reject(new AbortedError());
+        return;
+      }
+
+      let settled = false;
+
+      const onAbort = (): void => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          reject(new AbortedError());
+        }
+      };
+
+      const timer = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          this.abortController.signal.removeEventListener('abort', onAbort);
+          resolve();
+        }
+      }, delay);
+
+      // Ensure timer doesn't keep the process alive
+      if (typeof timer === 'object' && 'unref' in timer) {
+        (timer as NodeJS.Timeout).unref();
+      }
+
+      this.abortController.signal.addEventListener('abort', onAbort, { once: true });
+    });
   }
 }

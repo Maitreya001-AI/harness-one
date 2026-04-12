@@ -26,7 +26,18 @@ export interface BatchUnlinkResult {
 /**
  * Create a file I/O helper bound to a specific directory.
  */
-export function createFileIO(config: { directory: string; indexFile?: string }) {
+export function createFileIO(config: { directory: string; indexFile?: string }): {
+  ensureDir: () => Promise<void>;
+  entryPath: (id: string) => string;
+  readIndex: () => Promise<Index>;
+  writeIndex: (index: Index) => Promise<void>;
+  readEntry: (id: string) => Promise<MemoryEntry | null>;
+  writeEntry: (entry: MemoryEntry) => Promise<void>;
+  batchRead: (files: string[], batchSize?: number) => Promise<MemoryEntry[]>;
+  batchUnlink: (paths: string[], batchSize?: number) => Promise<BatchUnlinkResult>;
+  listEntryFiles: () => Promise<string[]>;
+  readonly indexFileName: string;
+} {
   const dir = config.directory;
   const indexFileName = config.indexFile ?? '_index.json';
   const indexPath = join(dir, indexFileName);

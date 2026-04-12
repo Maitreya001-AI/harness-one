@@ -43,18 +43,22 @@ export function createLangfuseExporter(config: LangfuseExporterConfig): TraceExp
   const traceTimestamps = new Map<string, number>();
 
   function touchTrace(traceId: string): void {
+    // Delete-then-reinsert to maintain insertion-order = access-order in the Map.
+    // This lets us treat the first entry as the least-recently-used (LRU).
+    traceTimestamps.delete(traceId);
     traceTimestamps.set(traceId, Date.now());
   }
 
   function evictOldestTraces(): void {
-    if (traceMap.size <= MAX_TRACE_MAP_SIZE) return;
-    const evictCount = Math.ceil(MAX_TRACE_MAP_SIZE * 0.1);
-    // Sort by timestamp ascending (oldest first) for deterministic LRU eviction
-    const entries = [...traceTimestamps.entries()].sort((a, b) => a[1] - b[1]);
-    for (let i = 0; i < evictCount && i < entries.length; i++) {
-      const key = entries[i][0];
-      traceMap.delete(key);
-      traceTimestamps.delete(key);
+    // Single-entry LRU eviction: remove only the oldest entry (the first key
+    // in the Map, which preserves insertion/access order thanks to touchTrace).
+    // This avoids the previous O(n log n) batch eviction that caused 20ms+
+    // event-loop pauses when the cache contained complex traces.
+    while (traceMap.size > MAX_TRACE_MAP_SIZE) {
+      const oldest = traceTimestamps.keys().next().value;
+      if (oldest === undefined) break;
+      traceMap.delete(oldest);
+      traceTimestamps.delete(oldest);
     }
   }
 
@@ -266,20 +270,31 @@ export interface LangfuseCostTrackerConfig {
  */
 export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): CostTracker {
   const { client } = config;
+  const maxRecords = config.maxRecords ?? 10_000;
+  if (config.maxRecords !== undefined && config.maxRecords < 1) {
+    throw new HarnessError('maxRecords must be >= 1', 'INVALID_CONFIG', 'Provide a positive maxRecords value');
+  }
   const pricing = new Map<string, ModelPricing>();
   const records: TokenUsageRecord[] = [];
   const alertHandlers: ((alert: CostAlert) => void)[] = [];
   let budget: number | undefined;
   let runningTotal = 0;
-  const maxRecords = config.maxRecords ?? 10_000;
   const RECALIBRATE_INTERVAL = 1000;
   let recordsSinceRecalibrate = 0;
   const warningThreshold = config.warningThreshold ?? 0.8;
   const criticalThreshold = config.criticalThreshold ?? 0.95;
 
+  const warnedModels = new Set<string>();
+
   function computeCost(usage: Omit<TokenUsageRecord, 'estimatedCost' | 'timestamp'>): number {
     const p = pricing.get(usage.model);
-    if (!p) return 0;
+    if (!p) {
+      if (!warnedModels.has(usage.model)) {
+        warnedModels.add(usage.model);
+        console.warn(`[harness-one/langfuse] No pricing configured for model "${usage.model}" — cost will be reported as $0`);
+      }
+      return 0;
+    }
     let cost = 0;
     cost += (usage.inputTokens / 1000) * p.inputPer1kTokens;
     cost += (usage.outputTokens / 1000) * p.outputPer1kTokens;
@@ -343,8 +358,8 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): Co
       });
 
       // Flush to ensure the generation record is persisted to Langfuse
-      client.flushAsync().catch(() => {
-        // Best-effort flush — do not fail the recordUsage call
+      client.flushAsync().catch((err: unknown) => {
+        console.warn('[harness-one/langfuse] flush error:', err);
       });
 
       if (budget !== undefined) {
@@ -467,6 +482,20 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): Co
         return `[BUDGET WARNING] You have used ${(percentUsed * 100).toFixed(0)}% of your token budget. Please be concise.`;
       }
       return null;
+    },
+
+    isBudgetExceeded(): boolean {
+      if (budget === undefined) return false;
+      return tracker.getTotalCost() >= budget;
+    },
+
+    budgetUtilization(): number {
+      if (budget === undefined || budget === 0) return 0;
+      return tracker.getTotalCost() / budget;
+    },
+
+    shouldStop(): boolean {
+      return tracker.isBudgetExceeded();
     },
   };
 

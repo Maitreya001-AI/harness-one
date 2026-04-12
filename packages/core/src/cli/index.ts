@@ -30,7 +30,8 @@ import { c } from './ui.js';
 
 // ── Init command ──────────────────────────────────────────────────────────────
 
-async function promptModules(): Promise<ModuleName[]> {
+/** @internal Exported for testing only. */
+export async function promptModules(): Promise<ModuleName[]> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   const ask = (q: string): Promise<string> =>
     new Promise((res) => rl.question(q, res));
@@ -57,7 +58,8 @@ async function promptModules(): Promise<ModuleName[]> {
   return indices.map((i) => ALL_MODULES[i]);
 }
 
-function writeModuleFiles(modules: ModuleName[], cwd: string): string[] {
+/** @internal Exported for testing only. */
+export function writeModuleFiles(modules: ModuleName[], cwd: string): string[] {
   const dir = join(cwd, 'harness');
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
@@ -78,7 +80,8 @@ function writeModuleFiles(modules: ModuleName[], cwd: string): string[] {
   return written;
 }
 
-async function runInit(parsed: ParsedArgs): Promise<void> {
+/** @internal Exported for testing only. */
+export async function runInit(parsed: ParsedArgs): Promise<void> {
   console.log(c.bold('\nharness-one init\n'));
 
   let modules = parsed.modules;
@@ -108,7 +111,8 @@ async function runInit(parsed: ParsedArgs): Promise<void> {
 
 // ── Audit command ─────────────────────────────────────────────────────────────
 
-function runAudit(): void {
+/** @internal Exported for testing only. */
+export function runAudit(): void {
   console.log(c.bold('\nharness-one audit\n'));
   const cwd = process.cwd();
   const { used, unused, fileCount } = auditProject(cwd);
@@ -137,7 +141,8 @@ function runAudit(): void {
 
 // ── Help ──────────────────────────────────────────────────────────────────────
 
-function showHelp(): void {
+/** @internal Exported for testing only. */
+export function showHelp(): void {
   console.log(`
 ${c.bold('harness-one')} -- CLI scaffolding tool
 

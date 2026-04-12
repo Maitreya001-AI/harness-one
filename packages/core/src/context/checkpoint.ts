@@ -35,7 +35,7 @@ function createInMemoryStorage(): CheckpointStorage {
       return store.get(id);
     },
     list() {
-      return order.filter((id) => store.has(id)).map((id) => store.get(id)!);
+      return order.filter((id) => store.has(id)).map((id) => store.get(id) as Checkpoint);
     },
     delete(id) {
       const had = store.delete(id);
@@ -60,9 +60,12 @@ export function createCheckpointManager(
   let counter = 0;
 
   function generateId(): string {
-    return `cp_${Date.now()}_${++counter}`;
+    return `cp_${Date.now()}_${++counter}_${Math.random().toString(36).slice(2, 6)}`;
   }
   const maxCheckpoints = config?.maxCheckpoints ?? 5;
+  if (maxCheckpoints < 1) {
+    throw new HarnessError('maxCheckpoints must be >= 1', 'INVALID_CONFIG', 'Provide a positive integer for maxCheckpoints');
+  }
   const countTokens = config?.countTokens ?? defaultCountTokens;
   const storage = config?.storage ?? createInMemoryStorage();
 

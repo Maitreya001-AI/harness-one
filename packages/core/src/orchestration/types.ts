@@ -237,6 +237,8 @@ export interface BoundedContext {
   setPolicies(policies: readonly BoundaryPolicy[]): void;
   /** Get the policy for a specific agent. */
   getPolicies(agentId: string): BoundaryPolicy | undefined;
+  /** Remove an agent's cached view and policy, preventing memory leaks on agent removal. */
+  clearAgent(agentId: string): void;
   /** Get all recorded violations (max 1000). */
   getViolations(): readonly BoundaryViolation[];
 }

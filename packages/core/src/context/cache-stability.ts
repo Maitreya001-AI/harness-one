@@ -108,7 +108,8 @@ function computeContentOverlapRatio(
   if (total === 0) return 1;
 
   function messageKey(m: Message): string {
-    return `${m.role}::${m.content}::${m.name ?? ''}`;
+    const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+    return `${m.role}::${content}::${m.name ?? ''}`;
   }
 
   const counts1 = new Map<string, number>();

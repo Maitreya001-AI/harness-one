@@ -50,7 +50,7 @@ export interface TokenUsageRecord {
 
 /** A cost budget alert. */
 export interface CostAlert {
-  readonly type: 'warning' | 'critical';
+  readonly type: 'warning' | 'critical' | 'exceeded';
   readonly currentCost: number;
   readonly budget: number;
   readonly percentUsed: number;
@@ -108,6 +108,15 @@ export interface FailureTaxonomyConfig {
   readonly detectors?: Readonly<Record<string, FailureDetector>>;
   /** Minimum confidence threshold for reporting. Default: 0.5. */
   readonly minConfidence?: number;
+  /** Configurable thresholds for built-in detectors. */
+  readonly thresholds?: {
+    /** Minimum consecutive span run to trigger tool_loop. Default: 3. */
+    readonly toolLoopMinRun?: number;
+    /** Maximum span count for early_stop detection (traces with more are not flagged). Default: 2. */
+    readonly earlyStopMaxSpans?: number;
+    /** Budget exceeded base confidence (0-1). Default: 0.9. */
+    readonly budgetExceededConfidence?: number;
+  };
 }
 
 /** Failure taxonomy for classifying agent failures from traces. */

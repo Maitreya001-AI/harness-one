@@ -120,6 +120,27 @@ describe('createCheckpointManager', () => {
     expect(cp.tokenCount).toBe(42);
   });
 
+  it('throws INVALID_CONFIG when maxCheckpoints < 1', () => {
+    expect(() => createCheckpointManager({ maxCheckpoints: 0 })).toThrow(HarnessError);
+    expect(() => createCheckpointManager({ maxCheckpoints: -1 })).toThrow(HarnessError);
+    try {
+      createCheckpointManager({ maxCheckpoints: 0 });
+    } catch (e) {
+      expect((e as HarnessError).code).toBe('INVALID_CONFIG');
+    }
+  });
+
+  it('generates IDs with random suffix to avoid collisions', () => {
+    const mgr = createCheckpointManager();
+    const cp1 = mgr.save(messages, 'a');
+    const cp2 = mgr.save(messages, 'b');
+    // IDs should be unique
+    expect(cp1.id).not.toBe(cp2.id);
+    // IDs should contain random suffix (4 chars after last underscore)
+    expect(cp1.id).toMatch(/^cp_\d+_\d+_[a-z0-9]{4}$/);
+    expect(cp2.id).toMatch(/^cp_\d+_\d+_[a-z0-9]{4}$/);
+  });
+
   it('uses custom storage backend when provided', () => {
     const stored = new Map<string, Checkpoint>();
     const storage: CheckpointStorage = {

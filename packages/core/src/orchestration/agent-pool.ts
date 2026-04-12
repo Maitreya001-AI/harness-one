@@ -59,13 +59,13 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
   // Note: performance.now() is monotonic and not affected by clock skew.
   // However, for compatibility with fake timers in tests, we use Date.now()
   // for the public createdAt field and performance.now() for internal timing.
-  function monotonicNow(): number {
+  function now(): number {
     return Date.now();
   }
 
   function isExpired(entry: PoolEntry): boolean {
     if (!maxAge) return false;
-    return monotonicNow() - entry.monotonicCreatedAt >= maxAge;
+    return now() - entry.monotonicCreatedAt >= maxAge;
   }
 
   function createEntry(role?: string): PoolEntry {
@@ -144,7 +144,7 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
           }
           clearIdleTimer(entry);
           entry.state = 'active';
-          const pending = pendingQueue.shift()!;
+          const pending = pendingQueue.shift() as PendingAcquire;
           if (pending.timer) clearTimeout(pending.timer);
           pending.resolve(entry.agent);
           found = true;
@@ -212,7 +212,7 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
               timer: null,
             };
 
-            pending.timer = setTimeout(() => {
+            const timer = setTimeout(() => {
               const idx = pendingQueue.indexOf(pending);
               if (idx >= 0) {
                 pendingQueue.splice(idx, 1);
@@ -223,6 +223,11 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
                 ));
               }
             }, timeoutMs);
+            // Ensure timeout doesn't keep the process alive
+            if (typeof timer === 'object' && 'unref' in timer) {
+              (timer as NodeJS.Timeout).unref();
+            }
+            pending.timer = timer;
 
             pendingQueue.push(pending);
           });
@@ -249,7 +254,7 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
       if (pendingQueue.length > 0) {
         clearIdleTimer(entry);
         entry.state = 'active';
-        const pending = pendingQueue.shift()!;
+        const pending = pendingQueue.shift() as PendingAcquire;
         if (pending.timer) clearTimeout(pending.timer);
         pending.resolve(entry.agent);
         return;
@@ -300,7 +305,7 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
 
       // Reject all pending acquire requests
       while (pendingQueue.length > 0) {
-        const pending = pendingQueue.shift()!;
+        const pending = pendingQueue.shift() as PendingAcquire;
         if (pending.timer) clearTimeout(pending.timer);
         pending.reject(new HarnessError('Pool disposed while waiting', 'POOL_DISPOSED'));
       }
@@ -317,7 +322,7 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
       disposed = true;
       // Reject all pending acquire requests
       while (pendingQueue.length > 0) {
-        const pending = pendingQueue.shift()!;
+        const pending = pendingQueue.shift() as PendingAcquire;
         if (pending.timer) clearTimeout(pending.timer);
         pending.reject(new HarnessError('Pool disposed while waiting', 'POOL_DISPOSED'));
       }

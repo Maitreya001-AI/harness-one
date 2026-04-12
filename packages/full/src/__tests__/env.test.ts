@@ -100,6 +100,51 @@ describe('createConfigFromEnv', () => {
     expect(typeof config).toBe('object');
   });
 
+  it('ignores Infinity for HARNESS_MAX_ITERATIONS', () => {
+    const config = createConfigFromEnv({ HARNESS_MAX_ITERATIONS: 'Infinity' });
+    expect(config.maxIterations).toBeUndefined();
+  });
+
+  it('ignores Infinity for HARNESS_MAX_TOKENS', () => {
+    const config = createConfigFromEnv({ HARNESS_MAX_TOKENS: 'Infinity' });
+    expect(config.maxTotalTokens).toBeUndefined();
+  });
+
+  it('ignores Infinity for HARNESS_BUDGET', () => {
+    const config = createConfigFromEnv({ HARNESS_BUDGET: 'Infinity' });
+    expect(config.budget).toBeUndefined();
+  });
+
+  it('ignores negative HARNESS_MAX_ITERATIONS', () => {
+    const config = createConfigFromEnv({ HARNESS_MAX_ITERATIONS: '-5' });
+    expect(config.maxIterations).toBeUndefined();
+  });
+
+  it('ignores zero HARNESS_MAX_ITERATIONS', () => {
+    const config = createConfigFromEnv({ HARNESS_MAX_ITERATIONS: '0' });
+    expect(config.maxIterations).toBeUndefined();
+  });
+
+  it('ignores negative HARNESS_BUDGET', () => {
+    const config = createConfigFromEnv({ HARNESS_BUDGET: '-10.5' });
+    expect(config.budget).toBeUndefined();
+  });
+
+  it('ignores zero HARNESS_BUDGET', () => {
+    const config = createConfigFromEnv({ HARNESS_BUDGET: '0' });
+    expect(config.budget).toBeUndefined();
+  });
+
+  it('ignores negative HARNESS_MAX_TOKENS', () => {
+    const config = createConfigFromEnv({ HARNESS_MAX_TOKENS: '-1000' });
+    expect(config.maxTotalTokens).toBeUndefined();
+  });
+
+  it('ignores zero HARNESS_MAX_TOKENS', () => {
+    const config = createConfigFromEnv({ HARNESS_MAX_TOKENS: '0' });
+    expect(config.maxTotalTokens).toBeUndefined();
+  });
+
   it('ignores invalid HARNESS_PROVIDER values', () => {
     const config = createConfigFromEnv({ HARNESS_PROVIDER: 'invalid-provider' });
     expect(config.provider).toBeUndefined();

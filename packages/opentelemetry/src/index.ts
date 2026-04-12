@@ -24,6 +24,12 @@ export interface OTelExporterConfig {
    * Defaults to 1000.
    */
   readonly maxEvictedParents?: number;
+  /**
+   * Time-to-live in milliseconds for entries in the evicted parents fallback map.
+   * After this duration, evicted parent entries are considered stale and will be
+   * removed on the next read or insertion. Defaults to 300000 (5 minutes).
+   */
+  readonly evictedParentsTtlMs?: number;
   /** Maximum number of active spans to retain before LRU eviction. Defaults to 10000. */
   readonly maxSpans?: number;
 }
@@ -38,6 +44,7 @@ export function createOTelExporter(config?: OTelExporterConfig): TraceExporter {
   const serviceName = config?.serviceName ?? 'harness-one';
   const tracer = config?.tracer ?? otelTrace.getTracer(serviceName);
   const maxEvictedParents = config?.maxEvictedParents ?? 1000;
+  const evictedParentsTtlMs = config?.evictedParentsTtlMs ?? 300_000; // 5 minutes
 
   // Track created OTel spans so children can reference parents
   const spanMap = new Map<string, OTelSpan>();
@@ -52,30 +59,69 @@ export function createOTelExporter(config?: OTelExporterConfig): TraceExporter {
   const evictedParentsAccessTime = new Map<string, number>();
 
   function touchSpan(spanId: string): void {
+    // Delete-then-reinsert to maintain Map insertion order as LRU order.
+    // The first entries in the Map are always the least recently used.
+    spanAccessTime.delete(spanId);
     spanAccessTime.set(spanId, Date.now());
   }
 
-  function evictSpans(count: number): void {
-    // Sort all spans by lastAccessTime ascending (oldest first) for LRU eviction
-    const sortedEntries = [...spanAccessTime.entries()].sort((a, b) => a[1] - b[1]);
-    let evicted = 0;
-    for (const [id] of sortedEntries) {
-      if (evicted >= count) break;
-      if (!spanMap.has(id)) continue;
+  /** Remove evictedParents entries older than the configured TTL. */
+  function purgeStaleEvictedParents(): void {
+    // Only purge when map is large enough to warrant cleanup
+    if (evictedParentsAccessTime.size <= maxEvictedParents) return;
+    const now = Date.now();
+    for (const [spanId, timestamp] of evictedParentsAccessTime) {
+      if (now - timestamp > evictedParentsTtlMs) {
+        evictedParents.delete(spanId);
+        evictedParentsAccessTime.delete(spanId);
+      } else {
+        // Map is ordered by insertion time; entries after this are newer
+        break;
+      }
+    }
+  }
 
-      // Before evicting, save the span reference in evictedParents so children
-      // can still be linked to it later. Cap the evictedParents map size.
+  /** Get an evicted parent span, returning undefined if the entry has expired. */
+  function getEvictedParent(spanId: string): OTelSpan | undefined {
+    const timestamp = evictedParentsAccessTime.get(spanId);
+    if (timestamp === undefined) return undefined;
+    if (Date.now() - timestamp > evictedParentsTtlMs) {
+      // Entry has expired -- remove it lazily
+      evictedParents.delete(spanId);
+      evictedParentsAccessTime.delete(spanId);
+      return undefined;
+    }
+    return evictedParents.get(spanId);
+  }
+
+  function evictSpans(count: number): void {
+    // O(count) eviction using Map insertion order as LRU order.
+    // With the delete-then-reinsert pattern in touchSpan(), the first entries
+    // in spanAccessTime are always the least recently used.
+    let evicted = 0;
+    for (const [id] of spanAccessTime) {
+      if (evicted >= count) break;
+      if (!spanMap.has(id)) {
+        spanAccessTime.delete(id);
+        continue;
+      }
+
+      // Save to evictedParents before removing
       const otelSpan = spanMap.get(id);
       if (otelSpan) {
         evictedParents.set(id, otelSpan);
+        evictedParentsAccessTime.delete(id);
         evictedParentsAccessTime.set(id, Date.now());
-        // Evict oldest entries from evictedParents if over the limit
+        // Lazy purge: only purge if over limit
         if (evictedParents.size > maxEvictedParents) {
-          const evictedSorted = [...evictedParentsAccessTime.entries()].sort((a, b) => a[1] - b[1]);
-          const evictCount = Math.ceil(maxEvictedParents * 0.1);
-          for (let j = 0; j < evictCount && j < evictedSorted.length; j++) {
-            evictedParents.delete(evictedSorted[j][0]);
-            evictedParentsAccessTime.delete(evictedSorted[j][0]);
+          // Evict oldest 10% from evictedParents using Map insertion order
+          const epEvictCount = Math.ceil(maxEvictedParents * 0.1);
+          let removed = 0;
+          for (const [epId] of evictedParentsAccessTime) {
+            if (removed >= epEvictCount) break;
+            evictedParents.delete(epId);
+            evictedParentsAccessTime.delete(epId);
+            removed++;
           }
         }
       }
@@ -133,7 +179,7 @@ export function createOTelExporter(config?: OTelExporterConfig): TraceExporter {
     async exportSpan(harnessSpan: Span): Promise<void> {
       // Check spanMap first, then fall back to evictedParents for already-evicted spans
       const parentOTelSpan = harnessSpan.parentId
-        ? (spanMap.get(harnessSpan.parentId) ?? evictedParents.get(harnessSpan.parentId))
+        ? (spanMap.get(harnessSpan.parentId) ?? getEvictedParent(harnessSpan.parentId))
         : undefined;
 
       // If parentId was specified but neither map has it, log a warning and create root span
@@ -147,7 +193,9 @@ export function createOTelExporter(config?: OTelExporterConfig): TraceExporter {
       }
 
       // Update evictedParents access time when the parent was found there
+      // Use delete-then-reinsert to maintain LRU order in the Map
       if (harnessSpan.parentId && evictedParents.has(harnessSpan.parentId) && parentOTelSpan) {
+        evictedParentsAccessTime.delete(harnessSpan.parentId);
         evictedParentsAccessTime.set(harnessSpan.parentId, Date.now());
       }
 
@@ -208,25 +256,35 @@ export function createOTelExporter(config?: OTelExporterConfig): TraceExporter {
     },
 
     async flush(): Promise<void> {
-      // Before clearing the spanMap, migrate all spans to evictedParents so that
-      // children arriving after flush can still be linked to their parent context.
-      const now = Date.now();
-      for (const [id, otelSpan] of spanMap) {
-        evictedParents.set(id, otelSpan);
-        evictedParentsAccessTime.set(id, now);
-      }
-      // Enforce the evictedParents size limit after the bulk migration
-      if (evictedParents.size > maxEvictedParents) {
-        const evictedSorted = [...evictedParentsAccessTime.entries()].sort((a, b) => a[1] - b[1]);
-        const evictCount = evictedParents.size - maxEvictedParents;
-        for (let i = 0; i < evictCount && i < evictedSorted.length; i++) {
-          evictedParents.delete(evictedSorted[i][0]);
-          evictedParentsAccessTime.delete(evictedSorted[i][0]);
-        }
-      }
+      // Snapshot current spans before clearing
+      const snapshot = new Map(spanMap);
+
+      // Clear maps atomically
       spanMap.clear();
       spanParentMap.clear();
       spanAccessTime.clear();
+
+      // Migrate snapshot to evictedParents for child linking
+      for (const [id, span] of snapshot) {
+        evictedParents.set(id, span);
+        evictedParentsAccessTime.delete(id);
+        evictedParentsAccessTime.set(id, Date.now());
+      }
+
+      // Purge stale entries first (no-op if under threshold)
+      purgeStaleEvictedParents();
+
+      // Purge if still over limit using Map insertion order (oldest first)
+      if (evictedParents.size > maxEvictedParents) {
+        const excess = evictedParents.size - maxEvictedParents;
+        let removed = 0;
+        for (const [epId] of evictedParentsAccessTime) {
+          if (removed >= excess) break;
+          evictedParents.delete(epId);
+          evictedParentsAccessTime.delete(epId);
+          removed++;
+        }
+      }
     },
   };
 }

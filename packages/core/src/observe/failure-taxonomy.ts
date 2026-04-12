@@ -16,12 +16,12 @@ import type {
 // Built-in detectors
 // ---------------------------------------------------------------------------
 
-/** Detect N consecutive spans with the same name (≥3). */
-function createToolLoopDetector(): FailureDetector {
+/** Detect N consecutive spans with the same name (≥minRun, default 3). */
+function createToolLoopDetector(minRun = 3): FailureDetector {
   return {
     detect(trace: Trace) {
       const spans = trace.spans;
-      if (spans.length < 3) return null;
+      if (spans.length < minRun) return null;
 
       let maxRun = 1;
       let currentRun = 1;
@@ -35,12 +35,12 @@ function createToolLoopDetector(): FailureDetector {
         }
       }
 
-      if (maxRun < 3) return null;
+      if (maxRun < minRun) return null;
 
       // Empirically chosen, pending validation against production data.
       // Calibrate using eval framework. Base confidence 0.5 with +0.1 per
-      // additional consecutive span beyond 3, capped at 0.95.
-      const confidence = Math.min(0.5 + (maxRun - 3) * 0.1, 0.95);
+      // additional consecutive span beyond minRun, capped at 0.95.
+      const confidence = Math.min(0.5 + (maxRun - minRun) * 0.1, 0.95);
       return {
         confidence,
         evidence: `${maxRun} consecutive spans with the same name`,
@@ -49,12 +49,12 @@ function createToolLoopDetector(): FailureDetector {
   };
 }
 
-/** Detect completed trace with ≤2 spans and <5s duration. */
-function createEarlyStopDetector(): FailureDetector {
+/** Detect completed trace with ≤maxSpans spans and <5s duration. */
+function createEarlyStopDetector(maxSpans = 2): FailureDetector {
   return {
     detect(trace: Trace) {
       if (trace.status !== 'completed') return null;
-      if (trace.spans.length > 2) return null;
+      if (trace.spans.length > maxSpans) return null;
 
       const duration = (trace.endTime ?? trace.startTime) - trace.startTime;
       if (duration >= 5000) return null;
@@ -70,7 +70,7 @@ function createEarlyStopDetector(): FailureDetector {
 }
 
 /** Detect error trace with budget-related last span. */
-function createBudgetExceededDetector(): FailureDetector {
+function createBudgetExceededDetector(baseConfidence = 0.9): FailureDetector {
   return {
     detect(trace: Trace) {
       if (trace.spans.length === 0) return null;
@@ -85,10 +85,10 @@ function createBudgetExceededDetector(): FailureDetector {
       if (!nameMatch && !attrMatch) return null;
 
       // Empirically chosen, pending validation against production data.
-      // Calibrate using eval framework. High confidence (0.9) because both
+      // Calibrate using eval framework. High confidence because both
       // error status and budget-related naming are strong signals.
       return {
-        confidence: 0.9,
+        confidence: baseConfidence,
         evidence: `Last span "${lastSpan.name}" has error status with budget-related indicators`,
       };
     },
@@ -152,10 +152,11 @@ export function createFailureTaxonomy(config?: FailureTaxonomyConfig): FailureTa
   const detectors = new Map<string, FailureDetector>();
   const stats = new Map<string, number>();
 
-  // Register built-in detectors
-  detectors.set('tool_loop', createToolLoopDetector());
-  detectors.set('early_stop', createEarlyStopDetector());
-  detectors.set('budget_exceeded', createBudgetExceededDetector());
+  // Register built-in detectors (using configurable thresholds where available)
+  const thresholds = config?.thresholds;
+  detectors.set('tool_loop', createToolLoopDetector(thresholds?.toolLoopMinRun));
+  detectors.set('early_stop', createEarlyStopDetector(thresholds?.earlyStopMaxSpans));
+  detectors.set('budget_exceeded', createBudgetExceededDetector(thresholds?.budgetExceededConfidence));
   detectors.set('timeout', createTimeoutDetector());
   detectors.set('hallucination', createHallucinationDetector());
 

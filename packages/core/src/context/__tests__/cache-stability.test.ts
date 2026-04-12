@@ -201,6 +201,33 @@ describe('analyzeCacheStability', () => {
     });
   });
 
+  describe('FIX: messageKey handles non-string content', () => {
+    it('computes correct contentOverlapRatio when content is an array (non-string)', () => {
+      const v1: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hello' }] as unknown as string },
+      ];
+      const v2: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hello' }] as unknown as string },
+      ];
+      const report = analyzeCacheStability(v1, v2);
+      // With the fix, non-string content is JSON.stringified so identical arrays match
+      expect(report.contentOverlapRatio).toBe(1);
+    });
+
+    it('does not produce [object Object] for object content', () => {
+      const v1: Message[] = [
+        { role: 'user', content: { text: 'A' } as unknown as string },
+      ];
+      const v2: Message[] = [
+        { role: 'user', content: { text: 'B' } as unknown as string },
+      ];
+      const report = analyzeCacheStability(v1, v2);
+      // Without the fix, both would produce "user::[object Object]::" and overlap=1
+      // With the fix, they produce different JSON strings and overlap=0
+      expect(report.contentOverlapRatio).toBe(0);
+    });
+  });
+
   describe('H4: JSON.stringify comparison for toolCalls is unstable', () => {
     it('considers messages equal when toolCalls have same fields in different order', () => {
       // JSON.stringify is not order-stable. Two objects with same fields in different

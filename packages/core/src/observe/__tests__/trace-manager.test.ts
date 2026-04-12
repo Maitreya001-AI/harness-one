@@ -202,8 +202,8 @@ describe('createConsoleExporter', () => {
   });
 
   it('exportTrace logs summary in non-verbose mode', async () => {
-    const exporter = createConsoleExporter({ verbose: false });
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const exporter = createConsoleExporter({ verbose: false });
     try {
       await exporter.exportTrace({
         id: 'trace-1',
@@ -225,8 +225,8 @@ describe('createConsoleExporter', () => {
   });
 
   it('exportTrace logs JSON in verbose mode', async () => {
-    const exporter = createConsoleExporter({ verbose: true });
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const exporter = createConsoleExporter({ verbose: true });
     try {
       await exporter.exportTrace({
         id: 'trace-1',
@@ -237,19 +237,19 @@ describe('createConsoleExporter', () => {
         status: 'running',
       });
       expect(spy).toHaveBeenCalledOnce();
-      expect(spy.mock.calls[0][0]).toBe('[trace]');
-      // Verbose mode outputs JSON.stringify with indent
-      const jsonOutput = spy.mock.calls[0][1] as string;
-      expect(jsonOutput).toContain('verbose-trace');
-      expect(jsonOutput).toContain('"id"');
+      const output = spy.mock.calls[0][0] as string;
+      expect(output).toContain('[trace]');
+      // Verbose mode outputs JSON.stringify with indent as a single string
+      expect(output).toContain('verbose-trace');
+      expect(output).toContain('"id"');
     } finally {
       spy.mockRestore();
     }
   });
 
   it('exportSpan logs summary in non-verbose mode', async () => {
-    const exporter = createConsoleExporter({ verbose: false });
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const exporter = createConsoleExporter({ verbose: false });
     try {
       await exporter.exportSpan({
         id: 'span-1',
@@ -271,8 +271,8 @@ describe('createConsoleExporter', () => {
   });
 
   it('exportSpan logs JSON in verbose mode', async () => {
-    const exporter = createConsoleExporter({ verbose: true });
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const exporter = createConsoleExporter({ verbose: true });
     try {
       await exporter.exportSpan({
         id: 'span-1',
@@ -284,10 +284,11 @@ describe('createConsoleExporter', () => {
         status: 'error',
       });
       expect(spy).toHaveBeenCalledOnce();
-      expect(spy.mock.calls[0][0]).toBe('[span]');
-      const jsonOutput = spy.mock.calls[0][1] as string;
-      expect(jsonOutput).toContain('verbose-span');
-      expect(jsonOutput).toContain('"id"');
+      const output = spy.mock.calls[0][0] as string;
+      expect(output).toContain('[span]');
+      // Verbose mode outputs JSON.stringify with indent as a single string
+      expect(output).toContain('verbose-span');
+      expect(output).toContain('"id"');
     } finally {
       spy.mockRestore();
     }
@@ -296,6 +297,85 @@ describe('createConsoleExporter', () => {
   it('flush resolves without error', async () => {
     const exporter = createConsoleExporter();
     await expect(exporter.flush()).resolves.toBeUndefined();
+  });
+
+  it('uses custom output function instead of console.log', async () => {
+    const lines: string[] = [];
+    const output = (line: string): void => { lines.push(line); };
+    const exporter = createConsoleExporter({ output });
+
+    await exporter.exportTrace({
+      id: 'trace-1',
+      name: 'custom-output-trace',
+      startTime: 1000,
+      metadata: {},
+      spans: [],
+      status: 'completed',
+    });
+    await exporter.exportSpan({
+      id: 'span-1',
+      traceId: 'trace-1',
+      name: 'custom-output-span',
+      startTime: 1000,
+      attributes: {},
+      events: [],
+      status: 'completed',
+    });
+
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain('[trace]');
+    expect(lines[0]).toContain('custom-output-trace');
+    expect(lines[1]).toContain('[span]');
+    expect(lines[1]).toContain('custom-output-span');
+  });
+
+  it('uses custom output function in verbose mode', async () => {
+    const lines: string[] = [];
+    const output = (line: string): void => { lines.push(line); };
+    const exporter = createConsoleExporter({ verbose: true, output });
+
+    await exporter.exportTrace({
+      id: 'trace-1',
+      name: 'verbose-custom-trace',
+      startTime: 1000,
+      metadata: {},
+      spans: [],
+      status: 'running',
+    });
+    await exporter.exportSpan({
+      id: 'span-1',
+      traceId: 'trace-1',
+      name: 'verbose-custom-span',
+      startTime: 1000,
+      attributes: { key: 'value' },
+      events: [],
+      status: 'error',
+    });
+
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain('[trace]');
+    expect(lines[0]).toContain('verbose-custom-trace');
+    expect(lines[1]).toContain('[span]');
+    expect(lines[1]).toContain('verbose-custom-span');
+  });
+
+  it('defaults to console.log when no output function provided', async () => {
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const exporter = createConsoleExporter();
+    try {
+      await exporter.exportSpan({
+        id: 'span-1',
+        traceId: 'trace-1',
+        name: 'default-span',
+        startTime: 1000,
+        attributes: {},
+        events: [],
+        status: 'completed',
+      });
+      expect(spy).toHaveBeenCalledOnce();
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 
@@ -360,6 +440,7 @@ describe('export error handling', () => {
   });
 
   it('does not throw when export fails and no onExportError provided', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const failingExporter: TraceExporter = {
       name: 'failing',
       async exportTrace() { throw new Error('trace export failure'); },
@@ -374,6 +455,47 @@ describe('export error handling', () => {
     expect(() => tm.endSpan(spanId)).not.toThrow();
     expect(() => tm.endTrace(traceId)).not.toThrow();
     await new Promise(r => setTimeout(r, 10));
+
+    // Errors are logged via console.warn (not silently discarded)
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it('console.warn fallback includes harness-one prefix for span export errors', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const failingExporter: TraceExporter = {
+      name: 'failing',
+      async exportTrace() {},
+      async exportSpan() { throw new Error('span boom'); },
+      async flush() {},
+    };
+    const tm = createTraceManager({ exporters: [failingExporter] });
+
+    const traceId = tm.startTrace('t');
+    const spanId = tm.startSpan(traceId, 's');
+    tm.endSpan(spanId);
+    await new Promise(r => setTimeout(r, 10));
+
+    expect(warnSpy).toHaveBeenCalledWith('[harness-one] trace export error:', expect.any(Error));
+    warnSpy.mockRestore();
+  });
+
+  it('console.warn fallback includes harness-one prefix for trace export errors', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const failingExporter: TraceExporter = {
+      name: 'failing',
+      async exportTrace() { throw new Error('trace boom'); },
+      async exportSpan() {},
+      async flush() {},
+    };
+    const tm = createTraceManager({ exporters: [failingExporter] });
+
+    const traceId = tm.startTrace('t');
+    tm.endTrace(traceId);
+    await new Promise(r => setTimeout(r, 10));
+
+    expect(warnSpy).toHaveBeenCalledWith('[harness-one] trace export error:', expect.any(Error));
+    warnSpy.mockRestore();
   });
 });
 
@@ -867,7 +989,7 @@ describe('dispose error isolation', () => {
     expect(errors.some(e => (e as Error).message === 'shutdown failed')).toBe(true);
   });
 
-  it('silently discards dispose errors when no onExportError provided (no console.warn)', async () => {
+  it('logs console.warn for dispose errors when no onExportError provided', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const failingExporter: TraceExporter = {
       name: 'failing',
@@ -881,9 +1003,11 @@ describe('dispose error isolation', () => {
     // Should not throw
     await tm.dispose();
 
-    // Library modules should not produce console output — errors are silently
-    // discarded when no onExportError callback is provided.
-    expect(warnSpy).not.toHaveBeenCalled();
+    // When no onExportError callback is provided, errors are logged via
+    // console.warn rather than silently discarded.
+    expect(warnSpy).toHaveBeenCalled();
+    const warnMessages = warnSpy.mock.calls.map(c => c[0]);
+    expect(warnMessages).toContain('[harness-one] trace export error:');
     warnSpy.mockRestore();
   });
 });

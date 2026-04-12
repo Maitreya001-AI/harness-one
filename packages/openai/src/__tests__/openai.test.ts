@@ -940,6 +940,228 @@ describe('createOpenAIAdapter', () => {
       expect(toolChunks).toHaveLength(1);
       expect((toolChunks[0] as StreamChunk).toolCall!.id).toBe('tool_0');
     });
+
+    it('accumulates tool calls by ID rather than index to handle shifted indices', async () => {
+      // Simulate a scenario where a continuation chunk for a tool call arrives
+      // with an ID that was previously seen at a different index. With index-based
+      // keying, the continuation would create a new (wrong) accumulator entry.
+      // With ID-based keying, it correctly appends to the existing entry.
+      const asyncIter = {
+        async *[Symbol.asyncIterator]() {
+          // First chunk: tool call "tc-A" at index 0
+          yield {
+            choices: [{
+              delta: {
+                tool_calls: [{
+                  index: 0,
+                  id: 'tc-A',
+                  function: { name: 'search', arguments: '{"q":' },
+                }],
+              },
+            }],
+          };
+          // Second chunk: continuation of "tc-A" but arrives at index 1 (shifted)
+          // AND carries the id field, so we can match by ID
+          yield {
+            choices: [{
+              delta: {
+                tool_calls: [{
+                  index: 1,
+                  id: 'tc-A',
+                  function: { arguments: '"hello"}' },
+                }],
+              },
+            }],
+          };
+          yield { choices: [{ delta: {} }], usage: { prompt_tokens: 20, completion_tokens: 10 } };
+        },
+      };
+      mock.mocks.create.mockResolvedValue(asyncIter);
+
+      const adapter = createOpenAIAdapter({ client: mock.client });
+      const chunks: unknown[] = [];
+      for await (const chunk of adapter.stream!({
+        messages: [{ role: 'user', content: 'Hi' }],
+      })) {
+        chunks.push(chunk);
+      }
+
+      const toolChunks = chunks.filter((c: unknown) => (c as StreamChunk).type === 'tool_call_delta');
+      expect(toolChunks).toHaveLength(2);
+
+      // Both chunks should reference the same tool call ID
+      expect((toolChunks[0] as StreamChunk).toolCall!.id).toBe('tc-A');
+      expect((toolChunks[0] as StreamChunk).toolCall!.name).toBe('search');
+      // The second chunk should have accumulated onto the SAME entry (same ID),
+      // NOT created a new one. Verify it still carries the accumulated name.
+      expect((toolChunks[1] as StreamChunk).toolCall!.id).toBe('tc-A');
+      expect((toolChunks[1] as StreamChunk).toolCall!.name).toBe('search');
+    });
+
+    it('logs a warning when stream ends without usage data', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const asyncIter = {
+        async *[Symbol.asyncIterator]() {
+          yield { choices: [{ delta: { content: 'Hello' } }] };
+          // No usage chunk
+        },
+      };
+      mock.mocks.create.mockResolvedValue(asyncIter);
+
+      const adapter = createOpenAIAdapter({ client: mock.client });
+      const chunks: unknown[] = [];
+      for await (const chunk of adapter.stream!({
+        messages: [{ role: 'user', content: 'Hi' }],
+      })) {
+        chunks.push(chunk);
+      }
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Stream ended without usage data'),
+      );
+      warnSpy.mockRestore();
+    });
+
+    it('skips new tool calls beyond MAX_TOOL_CALLS limit', async () => {
+      // Generate 129 distinct tool call chunks — only the first 128 should be accumulated
+      const toolCallChunks: unknown[] = [];
+      for (let i = 0; i < 129; i++) {
+        toolCallChunks.push({
+          choices: [{
+            delta: {
+              tool_calls: [{
+                index: i,
+                id: `tc-${i}`,
+                function: { name: `tool_${i}`, arguments: '{}' },
+              }],
+            },
+          }],
+        });
+      }
+
+      const asyncIter = {
+        async *[Symbol.asyncIterator]() {
+          for (const chunk of toolCallChunks) {
+            yield chunk;
+          }
+          yield { choices: [{ delta: {} }], usage: { prompt_tokens: 10, completion_tokens: 5 } };
+        },
+      };
+      mock.mocks.create.mockResolvedValue(asyncIter);
+
+      const adapter = createOpenAIAdapter({ client: mock.client });
+      const chunks: unknown[] = [];
+      for await (const chunk of adapter.stream!({
+        messages: [{ role: 'user', content: 'Hi' }],
+      })) {
+        chunks.push(chunk);
+      }
+
+      const toolChunks = chunks.filter((c: unknown) => (c as StreamChunk).type === 'tool_call_delta');
+      // The 129th tool call should be skipped
+      expect(toolChunks).toHaveLength(128);
+    });
+
+    it('skips tool call arguments that would exceed MAX_TOOL_ARG_BYTES', async () => {
+      // Create a tool call with arguments near the 1MB limit, then try to exceed it
+      const largeArgs = 'x'.repeat(1_048_500); // just under 1MB
+      const overflowArgs = 'y'.repeat(200); // would push over 1MB
+
+      const asyncIter = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            choices: [{
+              delta: {
+                tool_calls: [{
+                  index: 0,
+                  id: 'tc-big',
+                  function: { name: 'big_tool', arguments: largeArgs },
+                }],
+              },
+            }],
+          };
+          yield {
+            choices: [{
+              delta: {
+                tool_calls: [{
+                  index: 0,
+                  function: { arguments: overflowArgs },
+                }],
+              },
+            }],
+          };
+          yield { choices: [{ delta: {} }], usage: { prompt_tokens: 10, completion_tokens: 5 } };
+        },
+      };
+      mock.mocks.create.mockResolvedValue(asyncIter);
+
+      const adapter = createOpenAIAdapter({ client: mock.client });
+      const chunks: unknown[] = [];
+      for await (const chunk of adapter.stream!({
+        messages: [{ role: 'user', content: 'Hi' }],
+      })) {
+        chunks.push(chunk);
+      }
+
+      const toolChunks = chunks.filter((c: unknown) => (c as StreamChunk).type === 'tool_call_delta');
+      // First chunk has the large args; second chunk is skipped entirely (continue before yield)
+      expect(toolChunks).toHaveLength(1);
+      expect((toolChunks[0] as StreamChunk).toolCall!.arguments).toBe(largeArgs);
+    });
+
+    it('correctly accumulates tool calls when continuation chunks lack id and use index for lookup', async () => {
+      // This test verifies the ID-based keying with index fallback:
+      // When a continuation chunk has no `tc.id` but has `tc.index`, the accumulator
+      // must find the right entry by looking up the index-to-ID mapping.
+      const asyncIter = {
+        async *[Symbol.asyncIterator]() {
+          // First chunk for tool call at index 0 with ID
+          yield {
+            choices: [{
+              delta: {
+                tool_calls: [{
+                  index: 0,
+                  id: 'call_abc123',
+                  function: { name: 'get_weather', arguments: '{"city":' },
+                }],
+              },
+            }],
+          };
+          // Continuation: same index 0, NO id field
+          yield {
+            choices: [{
+              delta: {
+                tool_calls: [{
+                  index: 0,
+                  function: { arguments: '"NYC"}' },
+                }],
+              },
+            }],
+          };
+          yield { choices: [{ delta: {} }], usage: { prompt_tokens: 10, completion_tokens: 5 } };
+        },
+      };
+      mock.mocks.create.mockResolvedValue(asyncIter);
+
+      const adapter = createOpenAIAdapter({ client: mock.client });
+      const chunks: unknown[] = [];
+      for await (const chunk of adapter.stream!({
+        messages: [{ role: 'user', content: 'weather' }],
+      })) {
+        chunks.push(chunk);
+      }
+
+      const toolChunks = chunks.filter((c: unknown) => (c as StreamChunk).type === 'tool_call_delta');
+      expect(toolChunks).toHaveLength(2);
+
+      // Both chunks should reference the same tool call ID
+      expect((toolChunks[0] as StreamChunk).toolCall!.id).toBe('call_abc123');
+      expect((toolChunks[0] as StreamChunk).toolCall!.name).toBe('get_weather');
+      expect((toolChunks[1] as StreamChunk).toolCall!.id).toBe('call_abc123');
+      // Arguments should accumulate: first '{"city":' then '"NYC"}'
+      expect((toolChunks[0] as StreamChunk).toolCall!.arguments).toBe('{"city":');
+      expect((toolChunks[1] as StreamChunk).toolCall!.arguments).toBe('"NYC"}');
+    });
   });
 
   describe('client creation', () => {

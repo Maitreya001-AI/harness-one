@@ -108,7 +108,7 @@ export function createSessionManager(config?: {
         try { handler(event); } catch { /* Prevent misbehaving handler from breaking event delivery */ }
       }
       while (pendingEvents.length > 0) {
-        const queued = pendingEvents.shift()!;
+        const queued = pendingEvents.shift() as SessionEvent;
         for (const handler of eventHandlers) {
           try { handler(queued); } catch { /* ignore */ }
         }
@@ -181,6 +181,17 @@ export function createSessionManager(config?: {
 
   const manager: SessionManager = {
     create(metadata?: Record<string, unknown>): Session {
+      // Check if at capacity and all existing sessions are locked (un-evictable)
+      if (sessions.size >= maxSessions) {
+        const allLocked = Array.from(sessions.values()).every(s => s.status === 'locked');
+        if (allLocked) {
+          throw new HarnessError(
+            'Cannot create session: all sessions are locked and max capacity reached',
+            'SESSION_LIMIT',
+            'Unlock or destroy an existing session before creating a new one',
+          );
+        }
+      }
       const id = genId();
       const now = Date.now();
       const session: MutableSession = {
@@ -200,11 +211,12 @@ export function createSessionManager(config?: {
     get(id: string): Session | undefined {
       const session = sessions.get(id);
       if (!session) return undefined;
-      // Mark expired if needed
+      // Check TTL on read — expired sessions are treated as non-existent
       if (session.status === 'active' && isExpired(session)) {
         session.status = 'expired';
         emit('expired', id);
       }
+      if (session.status === 'expired') return undefined;
       return toReadonly(session);
     },
 

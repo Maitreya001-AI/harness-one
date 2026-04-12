@@ -116,7 +116,14 @@ export function createRedisStore(config: RedisStoreConfig): MemoryStore {
       for (let i = 0; i < allIds.length; i += batchSize) {
         const batch = allIds.slice(i, i + batchSize);
         const keys = batch.map(entryKey);
-        const values = await client.mget(...keys);
+        let values: (string | null)[];
+        try {
+          values = await client.mget(...keys);
+        } catch {
+          // Connection failure mid-batch: skip this chunk and continue
+          console.warn('[harness-one/redis] batch read failed, results may be partial');
+          continue;
+        }
 
         for (const raw of values) {
           if (!raw) continue;
@@ -155,6 +162,10 @@ export function createRedisStore(config: RedisStoreConfig): MemoryStore {
       return entries;
     },
 
+    /**
+     * Update an entry. Note: this is NOT atomic across processes.
+     * For concurrent access, use Redis transactions (WATCH/MULTI/EXEC) at the application level.
+     */
     async update(id: string, updates: Partial<Pick<MemoryEntry, 'content' | 'grade' | 'metadata' | 'tags'>>) {
       const raw = await client.get(entryKey(id));
       if (!raw) {
@@ -189,7 +200,13 @@ export function createRedisStore(config: RedisStoreConfig): MemoryStore {
       for (let i = 0; i < allIds.length; i += batchSize) {
         const batch = allIds.slice(i, i + batchSize);
         const keys = batch.map(entryKey);
-        const values = await client.mget(...keys);
+        let values: (string | null)[];
+        try {
+          values = await client.mget(...keys);
+        } catch {
+          // Connection failure mid-batch: skip this chunk and continue
+          continue;
+        }
         for (const raw of values) {
           if (!raw) continue;
           let entry: MemoryEntry;

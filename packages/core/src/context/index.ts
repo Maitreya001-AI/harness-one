@@ -24,7 +24,7 @@ export { createBudget } from './budget.js';
 export { packContext } from './pack.js';
 
 // Compress
-export { compress, compactIfNeeded } from './compress.js';
+export { compress, compactIfNeeded, createAdapterSummarizer } from './compress.js';
 export type { CompressOptions, CompactOptions, CompressResult } from './compress.js';
 
 // Cache stability

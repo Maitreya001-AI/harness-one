@@ -76,7 +76,7 @@ export function createComponentRegistry(): ComponentRegistry {
       let results = Array.from(components.values());
       if (filter?.tags && filter.tags.length > 0) {
         results = results.filter((c) =>
-          filter.tags!.some((t) => c.tags?.includes(t)),
+          filter.tags?.some((t) => c.tags?.includes(t)),
         );
       }
       return results;

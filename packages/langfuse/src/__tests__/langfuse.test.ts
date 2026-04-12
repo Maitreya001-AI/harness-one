@@ -512,6 +512,63 @@ describe('createLangfuseExporter', () => {
     );
   });
 
+  it('evicts exactly one oldest entry (single-entry LRU) when cache overflows', async () => {
+    // BUG REPRODUCTION: Previously, eviction removed 10% of entries in a batch,
+    // causing a 20ms+ event loop pause. True LRU should evict exactly 1 entry.
+    vi.useFakeTimers();
+    // Use a size of 10 so that batch eviction (10% = 1) and single-entry
+    // eviction produce different results when we add 2 entries over the limit.
+    // With batch (10% of 10 = 1), the first overflow evicts 1, reducing to 10,
+    // then the second overflow evicts 1 more -- same as single-entry.
+    // So instead, use size 20 where 10% = 2 entries per batch eviction.
+    // With single-entry: overflow by 1 -> evict 1 oldest.
+    // With batch (10% of 20 = 2): overflow by 1 -> evict 2 entries at once.
+    const maxSize = 20;
+    const exporter = createLangfuseExporter({ client: mock.client, maxTraceMapSize: maxSize });
+
+    // Fill the cache to maxSize
+    for (let i = 0; i < maxSize; i++) {
+      vi.setSystemTime(1000 + i);
+      await exporter.exportTrace({
+        id: `trace-${i}`,
+        name: `test-${i}`,
+        startTime: Date.now(),
+        metadata: {},
+        spans: [],
+        status: 'completed',
+      });
+    }
+
+    // Add exactly one more to trigger eviction (cache goes from 20 -> 21 -> eviction)
+    vi.setSystemTime(3000);
+    await exporter.exportTrace({
+      id: 'trace-new-0',
+      name: 'test-new-0',
+      startTime: Date.now(),
+      metadata: {},
+      spans: [],
+      status: 'completed',
+    });
+
+    // With single-entry LRU: only trace-0 (oldest, timestamp 1000) should be evicted.
+    // With batch eviction (10% of 20 = 2): trace-0 AND trace-1 would both be evicted.
+
+    // Check trace-1: should still be in cache (single-entry only evicts 1)
+    mock.mocks.trace.mockClear();
+    await exporter.exportTrace({
+      id: 'trace-1',
+      name: 'test-1-check',
+      startTime: Date.now(),
+      metadata: {},
+      spans: [],
+      status: 'completed',
+    });
+    // trace() should NOT be called because trace-1 was NOT evicted (only 1 entry evicted)
+    expect(mock.mocks.trace).not.toHaveBeenCalled();
+
+    vi.useRealTimers();
+  });
+
   it('evicts oldest traces deterministically based on access time (LRU)', async () => {
     // Use fake timers to guarantee deterministic timestamp ordering
     vi.useFakeTimers();
@@ -990,6 +1047,64 @@ describe('createLangfuseCostTracker', () => {
     // After reset, recording should still work correctly
     tracker.recordUsage({ traceId: 'post-reset', model: 'a', inputTokens: 1000, outputTokens: 0 });
     expect(tracker.getTotalCost()).toBeCloseTo(0.001);
+  });
+
+  // FIX 5: Empty pricing map warns once per model
+  it('warns once per unknown model when no pricing is configured', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const tracker = createLangfuseCostTracker({ client: mock.client });
+    // No pricing set -- record multiple usages for the same unknown model
+    tracker.recordUsage({ traceId: 't1', model: 'unknown-model', inputTokens: 1000, outputTokens: 0 });
+    tracker.recordUsage({ traceId: 't2', model: 'unknown-model', inputTokens: 1000, outputTokens: 0 });
+    tracker.recordUsage({ traceId: 't3', model: 'another-unknown', inputTokens: 1000, outputTokens: 0 });
+
+    // Should warn once per model, not per call
+    const unknownModelWarns = warnSpy.mock.calls.filter(c =>
+      typeof c[0] === 'string' && c[0].includes('No pricing configured'),
+    );
+    expect(unknownModelWarns).toHaveLength(2); // one for 'unknown-model', one for 'another-unknown'
+    warnSpy.mockRestore();
+  });
+
+  // FIX 6: Flush errors are logged, not silently swallowed
+  it('logs flush errors via console.warn instead of silently swallowing', () => {
+    const flushError = new Error('flush network error');
+    mock.mocks.flushAsync.mockRejectedValue(flushError);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const tracker = createLangfuseCostTracker({ client: mock.client });
+    tracker.setPricing([{ model: 'a', inputPer1kTokens: 0.001, outputPer1kTokens: 0 }]);
+    tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 1000, outputTokens: 0 });
+
+    // Allow promise rejection to be handled
+    return new Promise<void>(resolve => setTimeout(() => {
+      const flushWarns = warnSpy.mock.calls.filter(c =>
+        typeof c[0] === 'string' && c[0].includes('flush error'),
+      );
+      expect(flushWarns.length).toBeGreaterThan(0);
+      warnSpy.mockRestore();
+      resolve();
+    }, 20));
+  });
+
+  // FIX 7: maxRecords validation
+  it('throws when maxRecords is less than 1', () => {
+    expect(() => createLangfuseCostTracker({ client: mock.client, maxRecords: 0 }))
+      .toThrow('maxRecords must be >= 1');
+    expect(() => createLangfuseCostTracker({ client: mock.client, maxRecords: -5 }))
+      .toThrow('maxRecords must be >= 1');
+  });
+
+  it('does not throw when maxRecords is 1 or greater', () => {
+    expect(() => createLangfuseCostTracker({ client: mock.client, maxRecords: 1 }))
+      .not.toThrow();
+    expect(() => createLangfuseCostTracker({ client: mock.client, maxRecords: 100 }))
+      .not.toThrow();
+  });
+
+  it('does not throw when maxRecords is undefined (uses default)', () => {
+    expect(() => createLangfuseCostTracker({ client: mock.client }))
+      .not.toThrow();
   });
 
   it('getTotalCost uses running total (O(1)) not reduce (O(N))', () => {

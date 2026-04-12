@@ -61,6 +61,8 @@ export function createHandoff(orchestrator: AgentOrchestrator, handoffConfig?: H
 export function createHandoff(transport: MessageTransport, handoffConfig?: HandoffConfig): HandoffManager {
   const receipts = new Map<string, HandoffReceipt>();
   const inbox = new Map<string, HandoffPayload[]>();
+  // Note: nextId is a monotonically increasing counter. In practice, reaching
+  // Number.MAX_SAFE_INTEGER (2^53) handoffs is unrealistic for any single session.
   let nextId = 0;
 
   const receiptTtlMs = handoffConfig?.receiptTtlMs;

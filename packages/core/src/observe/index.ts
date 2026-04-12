@@ -36,3 +36,7 @@ export { createFailureTaxonomy } from './failure-taxonomy.js';
 
 // Cache Monitor
 export { createCacheMonitor } from './cache-monitor.js';
+
+// Dataset Exporter
+export type { DatasetEntry, DatasetExporterConfig } from './dataset-exporter.js';
+export { createDatasetExporter } from './dataset-exporter.js';

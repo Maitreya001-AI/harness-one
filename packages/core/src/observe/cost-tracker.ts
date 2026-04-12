@@ -44,6 +44,12 @@ export interface CostTracker {
   reset(): void;
   /** Get a prompt-injectable alert message based on budget usage, or null if under threshold. */
   getAlertMessage(): string | null;
+  /** Returns true when total cost >= budget. Returns false if no budget is set. */
+  isBudgetExceeded(): boolean;
+  /** Returns fraction of budget used (0-1+). Returns 0 if no budget is set. */
+  budgetUtilization(): number;
+  /** Returns true when the budget has been exceeded and processing should stop. */
+  shouldStop(): boolean;
 }
 
 /**
@@ -99,6 +105,8 @@ export function createCostTracker(config?: {
   budget?: number;
   alertThresholds?: { warning: number; critical: number };
   maxRecords?: number;
+  maxModels?: number;
+  maxTraces?: number;
 }): CostTracker {
   const pricing = new Map<string, ModelPricing>();
   const records: TokenUsageRecord[] = [];
@@ -107,6 +115,8 @@ export function createCostTracker(config?: {
   const warningThreshold = config?.alertThresholds?.warning ?? 0.8;
   const criticalThreshold = config?.alertThresholds?.critical ?? 0.95;
   const maxRecords = config?.maxRecords ?? 10_000;
+  const maxModels = config?.maxModels ?? 1000;
+  const maxTraces = config?.maxTraces ?? 10_000;
 
   // Fix 5: Use KahanSum utility for running total
   const runningSum = new KahanSum();
@@ -115,6 +125,9 @@ export function createCostTracker(config?: {
   // modelTotals accumulates costs permanently (not affected by buffer eviction),
   // ensuring getCostByModel() stays consistent with getTotalCost().
   const modelTotals = new Map<string, KahanSum>();
+
+  // PERF-03: Secondary index for O(1) getCostByTrace lookups
+  const traceTotals = new Map<string, KahanSum>();
 
   if (config?.pricing) {
     for (const p of config.pricing) {
@@ -150,6 +163,15 @@ export function createCostTracker(config?: {
     const currentCost = runningSum.total;
     const percentUsed = currentCost / budget;
 
+    if (percentUsed >= 1.0) {
+      return {
+        type: 'exceeded',
+        currentCost,
+        budget,
+        percentUsed,
+        message: `Exceeded: ${(percentUsed * 100).toFixed(1)}% of budget used ($${currentCost.toFixed(4)} / $${budget.toFixed(2)})`,
+      };
+    }
     if (percentUsed >= criticalThreshold) {
       return {
         type: 'critical',
@@ -176,6 +198,9 @@ export function createCostTracker(config?: {
     const currentCost = runningSum.total;
     const percentUsed = currentCost / budget;
 
+    if (percentUsed >= 1.0) {
+      return `[BUDGET EXCEEDED] You have used ${(percentUsed * 100).toFixed(0)}% of your token budget. Stop all non-essential operations.`;
+    }
     if (percentUsed >= criticalThreshold) {
       return `[BUDGET CRITICAL] You have used ${(percentUsed * 100).toFixed(0)}% of your token budget. Be extremely concise.`;
     }
@@ -183,6 +208,20 @@ export function createCostTracker(config?: {
       return `[BUDGET WARNING] You have used ${(percentUsed * 100).toFixed(0)}% of your token budget. Please be concise.`;
     }
     return null;
+  }
+
+  function isBudgetExceededFn(): boolean {
+    if (budget === undefined || budget <= 0) return false;
+    return runningSum.total >= budget;
+  }
+
+  function budgetUtilizationFn(): number {
+    if (budget === undefined || budget <= 0) return 0;
+    return runningSum.total / budget;
+  }
+
+  function shouldStopFn(): boolean {
+    return isBudgetExceededFn();
   }
 
   return {
@@ -207,13 +246,33 @@ export function createCostTracker(config?: {
       // Fix 4: Accumulate per-model cost permanently
       let modelSum = modelTotals.get(usage.model);
       if (!modelSum) {
+        // RES-01: Evict least-recently-used model entry if at capacity
+        if (modelTotals.size >= maxModels) {
+          const firstKey = modelTotals.keys().next().value;
+          if (firstKey !== undefined) modelTotals.delete(firstKey);
+        }
         modelSum = new KahanSum();
         modelTotals.set(usage.model, modelSum);
       }
       modelSum.add(estimatedCost);
 
+      // PERF-03: Accumulate per-trace cost for O(1) getCostByTrace
+      if (usage.traceId) {
+        let traceSum = traceTotals.get(usage.traceId);
+        if (!traceSum) {
+          // RES-01: Evict least-recently-used trace entry if at capacity
+          if (traceTotals.size >= maxTraces) {
+            const firstKey = traceTotals.keys().next().value;
+            if (firstKey !== undefined) traceTotals.delete(firstKey);
+          }
+          traceSum = new KahanSum();
+          traceTotals.set(usage.traceId, traceSum);
+        }
+        traceSum.add(estimatedCost);
+      }
+
       if (records.length > maxRecords) {
-        const evicted = records.shift()!;
+        const evicted = records.shift() as (typeof records)[number];
         runningSum.subtract(evicted.estimatedCost);
       }
 
@@ -281,6 +340,12 @@ export function createCostTracker(config?: {
         modelSum.add(costDelta);
       }
 
+      // PERF-03: Adjust trace total for O(1) getCostByTrace
+      const traceSum = traceTotals.get(traceId);
+      if (traceSum) {
+        traceSum.add(costDelta);
+      }
+
       // Check budget alerts after update
       if (budget !== undefined) {
         const alert = checkBudgetFn();
@@ -307,9 +372,7 @@ export function createCostTracker(config?: {
     },
 
     getCostByTrace(traceId: string): number {
-      return records
-        .filter(r => r.traceId === traceId)
-        .reduce((sum, r) => sum + r.estimatedCost, 0);
+      return traceTotals.get(traceId)?.total ?? 0;
     },
 
     /**
@@ -337,8 +400,15 @@ export function createCostTracker(config?: {
       records.length = 0;
       runningSum.reset();
       modelTotals.clear();
+      traceTotals.clear();
     },
 
     getAlertMessage: getAlertMessageFn,
+
+    isBudgetExceeded: isBudgetExceededFn,
+
+    budgetUtilization: budgetUtilizationFn,
+
+    shouldStop: shouldStopFn,
   };
 }

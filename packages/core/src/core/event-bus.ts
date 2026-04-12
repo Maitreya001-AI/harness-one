@@ -4,10 +4,19 @@
  * @module
  */
 
-/** A handler function for a specific event type. */
+/**
+ * A handler function for a specific event type.
+ * @deprecated The global event bus is not used by any module. Prefer per-module
+ * event subscriptions (e.g. `sessions.onEvent()`). Will be removed in a future major version.
+ */
 export type EventHandler<T = unknown> = (data: T) => void;
 
-/** A simple synchronous pub/sub event bus. */
+/**
+ * A simple synchronous pub/sub event bus.
+ * @deprecated The global event bus is not used by any module. Each module
+ * (sessions, orchestrator, etc.) exposes its own `onEvent()` subscription.
+ * Prefer per-module event subscriptions instead. Will be removed in a future major version.
+ */
 export interface EventBus {
   /** Subscribe to an event. Returns an unsubscribe function. */
   on<T = unknown>(event: string, handler: EventHandler<T>): () => void;
@@ -32,6 +41,10 @@ export interface EventBusOptions {
 
 /**
  * Create an in-process event bus.
+ *
+ * @deprecated The global event bus is not used by any module. Each module
+ * (sessions, orchestrator, etc.) exposes its own `onEvent()` subscription.
+ * Prefer per-module event subscriptions instead. Will be removed in a future major version.
  *
  * @example
  * ```ts

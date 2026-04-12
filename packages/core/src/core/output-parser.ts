@@ -95,13 +95,25 @@ export function createJsonOutputParser<T = unknown>(schema?: JsonSchema): Output
  * );
  * ```
  */
+/** Options for parseWithRetry. */
+export interface ParseWithRetryOptions {
+  /** Maximum number of retry attempts (default: 3). */
+  maxRetries?: number;
+  /** Timeout in milliseconds for each regenerate call (default: 30000). */
+  regenerateTimeoutMs?: number;
+}
+
 export async function parseWithRetry<T>(
   parser: OutputParser<T>,
   text: string,
   regenerate: (feedback: string) => Promise<string>,
-  maxRetries?: number,
+  maxRetriesOrOptions?: number | ParseWithRetryOptions,
 ): Promise<{ result: T; attempts: number }> {
-  const max = maxRetries ?? 3;
+  const opts: ParseWithRetryOptions = typeof maxRetriesOrOptions === 'number'
+    ? { maxRetries: maxRetriesOrOptions }
+    : (maxRetriesOrOptions ?? {});
+  const max = opts.maxRetries ?? 3;
+  const timeoutMs = opts.regenerateTimeoutMs ?? 30_000;
   let current = text;
   for (let attempt = 1; attempt <= max; attempt++) {
     try {
@@ -109,7 +121,12 @@ export async function parseWithRetry<T>(
     } catch (err) {
       if (attempt === max) throw err;
       const feedback = `Parse failed: ${err instanceof Error ? err.message : String(err)}. ${parser.getFormatInstructions()}`;
-      current = await regenerate(feedback);
+      current = await Promise.race([
+        regenerate(feedback),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Regenerate timed out')), timeoutMs),
+        ),
+      ]);
     }
   }
   /* istanbul ignore next -- unreachable after for-loop */

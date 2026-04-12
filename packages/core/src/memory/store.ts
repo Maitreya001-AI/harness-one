@@ -42,6 +42,10 @@ export interface MemoryStore {
 export function createInMemoryStore(config?: { maxEntries?: number }): MemoryStore {
   const maxEntries = config?.maxEntries;
   const entries = new Map<string, MemoryEntry>();
+  /** Secondary index: tag -> set of entry IDs that have that tag. */
+  const tagIndex = new Map<string, Set<string>>();
+  /** Secondary index: grade -> set of entry IDs with that grade. */
+  const gradeIndex = new Map<string, Set<string>>();
   let idCounter = 0;
 
   function generateId(): string {
@@ -90,6 +94,50 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
     return undefined;
   }
 
+  /** Add an entry to the secondary indexes. */
+  function addToIndexes(entry: MemoryEntry): void {
+    // Grade index
+    let gradeSet = gradeIndex.get(entry.grade);
+    if (!gradeSet) {
+      gradeSet = new Set();
+      gradeIndex.set(entry.grade, gradeSet);
+    }
+    gradeSet.add(entry.id);
+
+    // Tag index
+    if (entry.tags) {
+      for (const tag of entry.tags) {
+        let tagSet = tagIndex.get(tag);
+        if (!tagSet) {
+          tagSet = new Set();
+          tagIndex.set(tag, tagSet);
+        }
+        tagSet.add(entry.id);
+      }
+    }
+  }
+
+  /** Remove an entry from the secondary indexes. */
+  function removeFromIndexes(entry: MemoryEntry): void {
+    // Grade index
+    const gradeSet = gradeIndex.get(entry.grade);
+    if (gradeSet) {
+      gradeSet.delete(entry.id);
+      if (gradeSet.size === 0) gradeIndex.delete(entry.grade);
+    }
+
+    // Tag index
+    if (entry.tags) {
+      for (const tag of entry.tags) {
+        const tagSet = tagIndex.get(tag);
+        if (tagSet) {
+          tagSet.delete(entry.id);
+          if (tagSet.size === 0) tagIndex.delete(tag);
+        }
+      }
+    }
+  }
+
   return {
     async write(input) {
       // Validate embedding dimension consistency before storing
@@ -117,6 +165,7 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
         ...(input.tags !== undefined && { tags: input.tags }),
       };
       entries.set(entry.id, entry);
+      addToIndexes(entry);
       // Fix 16: Grade-aware eviction. When maxEntries is exceeded, evict the
       // lowest-grade entry first (ephemeral before useful before critical).
       // Within the same grade, evict the oldest (FIFO by insertion order).
@@ -135,7 +184,11 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
           }
           idx++;
         }
-        if (victim !== null) entries.delete(victim.id);
+        if (victim !== null) {
+          const victimEntry = entries.get(victim.id);
+          if (victimEntry) removeFromIndexes(victimEntry);
+          entries.delete(victim.id);
+        }
       }
       return entry;
     },
@@ -145,18 +198,52 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
     },
 
     async query(filter) {
-      let results = Array.from(entries.values());
+      // Use secondary indexes to narrow candidate set when possible.
+      // Start with candidate IDs from the most selective indexed filter,
+      // then intersect with other indexed filters.
+      let candidateIds: Set<string> | null = null;
 
       if (filter.grade) {
-        results = results.filter((e) => e.grade === filter.grade);
+        const gradeSet = gradeIndex.get(filter.grade);
+        candidateIds = gradeSet ? new Set(gradeSet) : new Set();
       }
+
       if (filter.tags && filter.tags.length > 0) {
-        results = results.filter((e) =>
-          filter.tags!.some((t) => e.tags?.includes(t)),
-        );
+        // OR semantics: union of all tag sets
+        const tagUnion = new Set<string>();
+        for (const tag of filter.tags) {
+          const tagSet = tagIndex.get(tag);
+          if (tagSet) {
+            for (const id of tagSet) tagUnion.add(id);
+          }
+        }
+        if (candidateIds !== null) {
+          // Intersect with grade candidates
+          const intersected = new Set<string>();
+          for (const id of candidateIds) {
+            if (tagUnion.has(id)) intersected.add(id);
+          }
+          candidateIds = intersected;
+        } else {
+          candidateIds = tagUnion;
+        }
       }
+
+      // Resolve candidates to entries, or fall back to full scan
+      let results: MemoryEntry[];
+      if (candidateIds !== null) {
+        results = [];
+        for (const id of candidateIds) {
+          const entry = entries.get(id);
+          if (entry) results.push(entry);
+        }
+      } else {
+        results = Array.from(entries.values());
+      }
+
+      // Apply remaining filters that are not indexed
       if (filter.since !== undefined) {
-        results = results.filter((e) => e.updatedAt >= filter.since!);
+        results = results.filter((e) => e.updatedAt >= (filter.since as number));
       }
       if (filter.search) {
         const term = filter.search.toLowerCase();
@@ -188,17 +275,27 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
           'Check that the entry ID is correct',
         );
       }
+      // Remove old entry from indexes before applying updates
+      removeFromIndexes(existing);
       const updated: MemoryEntry = {
         ...existing,
         ...updates,
         updatedAt: Date.now(),
       };
       entries.set(id, updated);
+      // Add updated entry to indexes
+      addToIndexes(updated);
       return updated;
     },
 
     async delete(id) {
-      return entries.delete(id);
+      const entry = entries.get(id);
+      if (entry) {
+        removeFromIndexes(entry);
+        entries.delete(id);
+        return true;
+      }
+      return false;
     },
 
     async compact(policy) {
@@ -215,6 +312,7 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
       if (policy.maxAge !== undefined) {
         for (const entry of all) {
           if (now - entry.createdAt > policy.maxAge && weights[entry.grade] < 1.0) {
+            removeFromIndexes(entry);
             entries.delete(entry.id);
             freed.push(entry.id);
           }
@@ -227,8 +325,9 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
           (a, b) => weights[a.grade] - weights[b.grade] || a.updatedAt - b.updatedAt,
         );
         while (entries.size > policy.maxEntries && sorted.length > 0) {
-          const victim = sorted.shift()!;
+          const victim = sorted.shift() as MemoryEntry;
           if (weights[victim.grade] < 1.0) {
+            removeFromIndexes(victim);
             entries.delete(victim.id);
             freed.push(victim.id);
           } else {
@@ -250,6 +349,8 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
 
     async clear() {
       entries.clear();
+      tagIndex.clear();
+      gradeIndex.clear();
     },
 
     async searchByVector(options: VectorSearchOptions) {

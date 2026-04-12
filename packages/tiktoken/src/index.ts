@@ -29,19 +29,27 @@ const DEFAULT_MODELS: string[] = [
   'gpt-3.5-turbo',
 ];
 
+/** Tracks whether default models have been registered to prevent redundant global mutations. */
+let defaultsRegistered = false;
+
 /**
  * Register tiktoken encoders for common models.
  *
  * When called without arguments, registers encoders for:
  * gpt-4, gpt-4o, gpt-4o-mini, gpt-3.5-turbo.
  *
+ * Safe to call multiple times — subsequent calls with no arguments are no-ops
+ * when defaults are already registered. Explicit model lists always register.
+ *
  * @param models - Optional list of model names to register.
  */
 export function registerTiktokenModels(models?: string[]): void {
+  if (!models && defaultsRegistered) return;
   const modelList = models ?? DEFAULT_MODELS;
   for (const model of modelList) {
     createTiktokenTokenizer(model);
   }
+  if (!models) defaultsRegistered = true;
 }
 
 /**

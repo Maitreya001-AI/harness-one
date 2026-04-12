@@ -208,9 +208,8 @@ describe('createSessionManager', () => {
       sm.lock(s2.id);
 
       // Creating a third session exceeds maxSessions=2, but both existing are locked.
-      // Since only s3 (the new session) is unlockable, s3 gets evicted instead of locked sessions.
-      // The key guarantee: locked sessions s1 and s2 are NOT evicted.
-      sm.create();
+      // Should throw SESSION_LIMIT since no room can be made.
+      expect(() => sm.create()).toThrow(HarnessError);
 
       // Both locked sessions should still be alive — they must not be evicted
       expect(sm.get(s1.id)).toBeDefined();
@@ -238,15 +237,20 @@ describe('createSessionManager', () => {
       sm.dispose();
     });
 
-    it('eviction safety counter prevents infinite loop when all sessions locked (Issue 3 fix)', () => {
+    it('throws SESSION_LIMIT when all sessions locked and at max capacity (Issue 3 fix)', () => {
       const sm = createSessionManager({ maxSessions: 1, gcIntervalMs: 0 });
       const s1 = sm.create();
 
       // Lock the only session
       sm.lock(s1.id);
 
-      // This should NOT hang — the safety counter terminates the loop
-      expect(() => sm.create()).not.toThrow();
+      // Creating a new session when all existing are locked should throw
+      expect(() => sm.create()).toThrow(HarnessError);
+      try {
+        sm.create();
+      } catch (e) {
+        expect((e as HarnessError).code).toBe('SESSION_LIMIT');
+      }
 
       // The locked session must still exist
       expect(sm.get(s1.id)).toBeDefined();
@@ -271,12 +275,12 @@ describe('createSessionManager', () => {
   });
 
   describe('TTL expiration', () => {
-    it('marks sessions as expired after TTL', () => {
+    it('returns undefined for expired sessions on get()', () => {
       const sm = createSessionManager({ ttlMs: 1, gcIntervalMs: 0 });
       const session = sm.create();
       vi.spyOn(Date, 'now').mockReturnValue(session.createdAt + 100);
       const got = sm.get(session.id);
-      expect(got!.status).toBe('expired');
+      expect(got).toBeUndefined();
       sm.dispose();
     });
   });
@@ -523,22 +527,20 @@ describe('createSessionManager', () => {
 
   // Fix 12: Lazy expiry behavior verification
   describe('lazy expiry', () => {
-    it('expired sessions remain in memory until accessed, listed, or gc runs', () => {
+    it('expired sessions are invisible via get() but cleaned by gc()', () => {
       const sm = createSessionManager({ ttlMs: 1, gcIntervalMs: 0 });
       const session = sm.create();
       vi.spyOn(Date, 'now').mockReturnValue(session.createdAt + 100);
 
-      // The session is expired by TTL but still in memory (not yet cleaned up)
-      // Only when we access/get/list/gc does the status change
-      // get() marks it expired
+      // get() returns undefined for expired sessions (TTL check on read)
       const got = sm.get(session.id);
-      expect(got!.status).toBe('expired');
+      expect(got).toBeUndefined();
 
-      // But it's still in the list until gc runs
+      // list() still shows expired sessions (for admin/debug visibility)
       expect(sm.list()).toHaveLength(1);
       expect(sm.list()[0].status).toBe('expired');
 
-      // gc removes it
+      // gc removes expired sessions from memory
       const removed = sm.gc();
       expect(removed).toBe(1);
       expect(sm.list()).toHaveLength(0);

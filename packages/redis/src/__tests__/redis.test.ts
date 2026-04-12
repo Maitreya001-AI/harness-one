@@ -500,4 +500,134 @@ describe('createRedisStore', () => {
     expect(setCall[3]).toBe(3600);
     expect(pipeline.exec).toHaveBeenCalled();
   });
+
+  // ── Mid-batch connection failure handling ──────────────────────────────
+
+  it('query returns partial results when mget fails mid-batch', async () => {
+    const store = createRedisStore({ client: redis, prefix: 'test' });
+
+    // Write enough entries to span multiple batches (>100)
+    // We'll simulate this by directly manipulating the mock to have many IDs
+    // and making mget fail on the second call
+    const mockRedis = redis as unknown as {
+      smembers: ReturnType<typeof vi.fn>;
+      mget: ReturnType<typeof vi.fn>;
+      _store: Map<string, string>;
+      _sets: Map<string, Set<string>>;
+    };
+
+    // Create 150 entries directly in the store to span 2 batches
+    const indexKey = 'test:__keys__';
+    const keySet = new Set<string>();
+    for (let i = 0; i < 150; i++) {
+      const id = `entry_${i}`;
+      const entry = {
+        id,
+        key: `key_${i}`,
+        content: `content ${i}`,
+        grade: 'useful',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      mockRedis._store.set(`test:${id}`, JSON.stringify(entry));
+      keySet.add(id);
+    }
+    mockRedis._sets.set(indexKey, keySet);
+
+    // Make mget fail on the second call (simulating connection drop mid-batch)
+    let mgetCallCount = 0;
+    mockRedis.mget.mockImplementation(async (...keys: string[]) => {
+      mgetCallCount++;
+      if (mgetCallCount === 2) {
+        throw new Error('Connection lost: ECONNRESET');
+      }
+      return keys.map((k: string) => mockRedis._store.get(k) ?? null);
+    });
+
+    // query should NOT throw — it should return partial results from successful batches
+    const results = await store.query({});
+    // First batch of 100 should succeed, second batch of 50 should fail gracefully
+    expect(results.length).toBe(100);
+  });
+
+  it('query does not throw when mget fails on first batch', async () => {
+    const store = createRedisStore({ client: redis, prefix: 'test' });
+
+    const mockRedis = redis as unknown as {
+      smembers: ReturnType<typeof vi.fn>;
+      mget: ReturnType<typeof vi.fn>;
+      _store: Map<string, string>;
+      _sets: Map<string, Set<string>>;
+    };
+
+    // Create 50 entries
+    const indexKey = 'test:__keys__';
+    const keySet = new Set<string>();
+    for (let i = 0; i < 50; i++) {
+      const id = `entry_${i}`;
+      const entry = {
+        id,
+        key: `key_${i}`,
+        content: `content ${i}`,
+        grade: 'useful',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      mockRedis._store.set(`test:${id}`, JSON.stringify(entry));
+      keySet.add(id);
+    }
+    mockRedis._sets.set(indexKey, keySet);
+
+    // Make mget always fail
+    mockRedis.mget.mockRejectedValue(new Error('Connection refused'));
+
+    // Should return empty array, not throw
+    const results = await store.query({});
+    expect(results).toEqual([]);
+  });
+
+  it('compact handles mget failure mid-batch gracefully', async () => {
+    const store = createRedisStore({ client: redis, prefix: 'test' });
+
+    const mockRedis = redis as unknown as {
+      smembers: ReturnType<typeof vi.fn>;
+      mget: ReturnType<typeof vi.fn>;
+      _store: Map<string, string>;
+      _sets: Map<string, Set<string>>;
+      scard: ReturnType<typeof vi.fn>;
+    };
+
+    // Create 150 entries to span 2 batches
+    const indexKey = 'test:__keys__';
+    const keySet = new Set<string>();
+    for (let i = 0; i < 150; i++) {
+      const id = `entry_${i}`;
+      const entry = {
+        id,
+        key: `key_${i}`,
+        content: `content ${i}`,
+        grade: 'ephemeral',
+        createdAt: Date.now() - 200000, // old entries
+        updatedAt: Date.now() - 200000,
+      };
+      mockRedis._store.set(`test:${id}`, JSON.stringify(entry));
+      keySet.add(id);
+    }
+    mockRedis._sets.set(indexKey, keySet);
+
+    // Make mget fail on the second call
+    let mgetCallCount = 0;
+    mockRedis.mget.mockImplementation(async (...keys: string[]) => {
+      mgetCallCount++;
+      if (mgetCallCount === 2) {
+        throw new Error('Connection lost: ECONNRESET');
+      }
+      return keys.map((k: string) => mockRedis._store.get(k) ?? null);
+    });
+
+    // compact should NOT throw — it should work with entries from successful batches
+    const result = await store.compact({ maxAge: 100000 });
+    // Should have compacted entries from the first batch (100 entries)
+    expect(result.removed).toBe(100);
+  });
 });

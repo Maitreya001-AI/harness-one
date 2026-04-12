@@ -136,7 +136,7 @@ export function createEvalRunner(config: EvalConfig): EvalRunner {
               output: casesWithOutputs[0].output,
               ...(casesWithOutputs[0].evalCase.context !== undefined && { context: casesWithOutputs[0].evalCase.context }),
             }];
-            const probeResult = await scorer.scoreBatch!(probeInput);
+            const probeResult = await (scorer.scoreBatch as NonNullable<typeof scorer.scoreBatch>)(probeInput);
             if (probeResult.length !== 1) {
               throw new HarnessError(
                 `Scorer "${scorer.name}" scoreBatch() pre-check failed: returned ${probeResult.length} results for 1 input`,
@@ -151,7 +151,7 @@ export function createEvalRunner(config: EvalConfig): EvalRunner {
             output,
             ...(evalCase.context !== undefined && { context: evalCase.context }),
           }));
-          const batchScoreResults = await scorer.scoreBatch!(batchInput);
+          const batchScoreResults = await (scorer.scoreBatch as NonNullable<typeof scorer.scoreBatch>)(batchInput);
 
           // Validate batch results
           if (batchScoreResults.length !== cases.length) {
@@ -187,7 +187,7 @@ export function createEvalRunner(config: EvalConfig): EvalRunner {
         for (const scorer of scorers) {
           if (scorer.scoreBatch && batchResults.has(scorer.name)) {
             // Use pre-computed batch results
-            const batchResult = batchResults.get(scorer.name)!;
+            const batchResult = batchResults.get(scorer.name) as Array<{ score: number; explanation: string }>;
             scores[scorer.name] = batchResult[i].score;
             details[scorer.name] = batchResult[i].explanation;
           } else {

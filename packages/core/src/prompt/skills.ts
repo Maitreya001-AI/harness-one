@@ -251,6 +251,8 @@ export function createSkillEngine(config?: SkillEngineConfig): SkillEngine {
       reason?: string;
     } {
       const stage = requireActiveStage();
+      // activeSkill is guaranteed non-null after requireActiveStage() (which throws if null)
+      const currentSkill = activeSkill as SkillDefinition;
       turnCount++;
 
       const ctx: TransitionContext = {
@@ -296,7 +298,7 @@ export function createSkillEngine(config?: SkillEngineConfig): SkillEngine {
           const turnAtTransition = turnCount;
           advanceToStage(transition.to);
           config?.onTransition?.({
-            skillName: activeSkill!.name,
+            skillName: currentSkill.name,
             from: previousStage,
             to: transition.to,
             reason: reason ?? 'Condition met',
@@ -317,7 +319,7 @@ export function createSkillEngine(config?: SkillEngineConfig): SkillEngine {
           const turnAtTransition = turnCount;
           advanceToStage(fallback.to);
           config?.onTransition?.({
-            skillName: activeSkill!.name,
+            skillName: currentSkill.name,
             from: previousStage,
             to: fallback.to,
             reason: maxTurnsReason,

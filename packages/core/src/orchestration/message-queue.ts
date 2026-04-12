@@ -150,7 +150,7 @@ export class MessageQueue {
       messages = messages.filter((m) => m.type === options.type);
     }
     if (options?.since !== undefined) {
-      messages = messages.filter((m) => m.timestamp >= options.since!);
+      messages = messages.filter((m) => m.timestamp >= (options.since as number));
     }
     return messages;
   }

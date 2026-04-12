@@ -213,4 +213,31 @@ describe('createContextBoundary', () => {
       expect(view.get('shared.a')).toBe(1);
     });
   });
+
+  describe('clearAgent', () => {
+    it('removes cached view and policy for a specific agent', () => {
+      boundary = createContextBoundary(context, [
+        { agent: 'worker', allowRead: ['shared.'] },
+      ]);
+      const view1 = boundary.forAgent('worker');
+      expect(view1.get('config.secret')).toBeUndefined(); // denied by policy
+
+      // Clear the agent's cache and policy
+      boundary.clearAgent('worker');
+
+      // Policy should be gone
+      expect(boundary.getPolicies('worker')).toBeUndefined();
+
+      // New view should be created (no policy = full access)
+      const view2 = boundary.forAgent('worker');
+      expect(view2).not.toBe(view1);
+      expect(view2.get('config.secret')).toBe('top-secret');
+    });
+
+    it('is a no-op for unknown agent', () => {
+      boundary = createContextBoundary(context);
+      // Should not throw
+      boundary.clearAgent('nonexistent');
+    });
+  });
 });
