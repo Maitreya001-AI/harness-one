@@ -5,6 +5,8 @@ export type {
   Trace,
   Span,
   SpanEvent,
+  SpanAttributes,
+  SpanAttributeValue,
   TokenUsageRecord,
   CostAlert,
   TraceExporter,

@@ -5,6 +5,7 @@
  */
 
 import type { TokenUsageRecord, CostAlert } from './types.js';
+import { HarnessError } from '../core/errors.js';
 
 /** Pricing configuration for a model. */
 export interface ModelPricing {
@@ -107,6 +108,18 @@ export function createCostTracker(config?: {
   maxRecords?: number;
   maxModels?: number;
   maxTraces?: number;
+  /**
+   * When `true`, `recordUsage()` throws if `model` is missing or empty or if
+   * `inputTokens`/`outputTokens` are non-finite — so missing data surfaces
+   * loudly instead of silently recording zero-cost rows. Default: false
+   * (permissive, back-compat).
+   */
+  strictMode?: boolean;
+  /**
+   * When an unpriced model is recorded, emit a one-time `console.warn`
+   * naming the model so operators can update the pricing config. Default: true.
+   */
+  warnUnpricedModels?: boolean;
 }): CostTracker {
   const pricing = new Map<string, ModelPricing>();
   const records: TokenUsageRecord[] = [];
@@ -117,6 +130,13 @@ export function createCostTracker(config?: {
   const maxRecords = config?.maxRecords ?? 10_000;
   const maxModels = config?.maxModels ?? 1000;
   const maxTraces = config?.maxTraces ?? 10_000;
+  const strictMode = config?.strictMode ?? false;
+  const warnUnpricedModels = config?.warnUnpricedModels ?? true;
+  /**
+   * Tracks models we've already warned about so we emit one warning per
+   * unpriced model, not one per record.
+   */
+  const warnedUnpriced = new Set<string>();
 
   // Fix 5: Use KahanSum utility for running total
   const runningSum = new KahanSum();
@@ -232,6 +252,34 @@ export function createCostTracker(config?: {
     },
 
     recordUsage(usage: Omit<TokenUsageRecord, 'estimatedCost' | 'timestamp'>): TokenUsageRecord {
+      // Strict-mode validation: fail loudly when the adapter has failed to
+      // populate model or token counts. Permissive default preserves the
+      // historical behavior where streaming adapters may record partial data.
+      if (strictMode) {
+        if (!usage.model || typeof usage.model !== 'string' || usage.model.length === 0) {
+          throw new HarnessError(
+            'CostTracker.recordUsage: usage.model is required in strict mode',
+            'INVALID_INPUT',
+            'Provide a non-empty model identifier, or disable strictMode',
+          );
+        }
+        if (!Number.isFinite(usage.inputTokens) || !Number.isFinite(usage.outputTokens)) {
+          throw new HarnessError(
+            'CostTracker.recordUsage: inputTokens/outputTokens must be finite numbers in strict mode',
+            'INVALID_INPUT',
+            'Ensure adapter populates usage, or disable strictMode',
+          );
+        }
+      }
+
+      // One-time warning for unpriced models (so operators can update pricing).
+      if (warnUnpricedModels && usage.model && !pricing.has(usage.model) && !warnedUnpriced.has(usage.model)) {
+        warnedUnpriced.add(usage.model);
+        console.warn(
+          `[harness-one/cost-tracker] No pricing registered for model "${usage.model}". Cost will be reported as 0. Call setPricing() to fix.`,
+        );
+      }
+
       const estimatedCost = computeCost(usage);
       const record: TokenUsageRecord = {
         ...usage,

@@ -210,7 +210,8 @@ describe('createHarness', () => {
         exportSpan: vi.fn(),
         flush: vi.fn(),
       };
-      createHarness({ ...baseConfig, exporters: [customExporter], langfuse: {} as AnthropicHarnessConfig['langfuse'] });
+      const fakeLangfuse = { trace: vi.fn(), flushAsync: vi.fn() };
+      createHarness({ ...baseConfig, exporters: [customExporter], langfuse: fakeLangfuse as unknown as AnthropicHarnessConfig['langfuse'] });
       expect(mocks.createLangfuseExporter).not.toHaveBeenCalled();
     });
   });
@@ -280,12 +281,14 @@ describe('createHarness', () => {
   describe('cost tracking', () => {
     it('sets pricing when provided', () => {
       const pricing = [{ model: 'claude-3', inputPer1kTokens: 0.003, outputPer1kTokens: 0.015 }];
-      createHarness({ ...baseConfig, langfuse: {} as AnthropicHarnessConfig['langfuse'], pricing });
+      const fakeLangfuse = { trace: vi.fn(), flushAsync: vi.fn() };
+      createHarness({ ...baseConfig, langfuse: fakeLangfuse as unknown as AnthropicHarnessConfig['langfuse'], pricing });
       expect(mocks.mockLangfuseCostTracker.setPricing).toHaveBeenCalledWith(pricing);
     });
 
     it('sets budget when provided', () => {
-      createHarness({ ...baseConfig, langfuse: {} as AnthropicHarnessConfig['langfuse'], budget: 10.0 });
+      const fakeLangfuse = { trace: vi.fn(), flushAsync: vi.fn() };
+      createHarness({ ...baseConfig, langfuse: fakeLangfuse as unknown as AnthropicHarnessConfig['langfuse'], budget: 10.0 });
       expect(mocks.mockLangfuseCostTracker.setBudget).toHaveBeenCalledWith(10.0);
     });
   });

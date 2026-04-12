@@ -136,7 +136,14 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
       name: agent.name,
       ...(agent.parentId !== undefined && { parentId: agent.parentId }),
       status: agent.status,
-      ...(agent.metadata !== undefined && { metadata: { ...agent.metadata } }),
+      // Deep clone via structuredClone so callers can't mutate nested
+      // fields and corrupt orchestrator state. A shallow `{ ...metadata }`
+      // leaves nested objects (e.g., `metadata.user`) shared by reference.
+      ...(agent.metadata !== undefined && {
+        metadata: typeof structuredClone === 'function'
+          ? structuredClone(agent.metadata)
+          : JSON.parse(JSON.stringify(agent.metadata)) as Record<string, unknown>,
+      }),
     };
   }
 

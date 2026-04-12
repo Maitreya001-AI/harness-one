@@ -4,6 +4,25 @@
  * @module
  */
 
+/**
+ * Attribute values allowed on traces and spans. Matches the OpenTelemetry
+ * attribute type constraint (primitive or homogeneous primitive array) so
+ * exporters don't silently drop nested objects or mixed arrays. Applies as
+ * a *soft* constraint — the Trace/Span type still declares
+ * `Record<string, unknown>` for backward compat, but new code and
+ * exporters should use this type.
+ */
+export type SpanAttributeValue =
+  | string
+  | number
+  | boolean
+  | readonly string[]
+  | readonly number[]
+  | readonly boolean[];
+
+/** Typed attribute bag for spans and traces. */
+export type SpanAttributes = Readonly<Record<string, SpanAttributeValue>>;
+
 /** A distributed trace containing spans. */
 export interface Trace {
   readonly id: string;
