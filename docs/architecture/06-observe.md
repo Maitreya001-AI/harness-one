@@ -59,6 +59,8 @@ function createCostTracker(config?: {
   budget?: number;
   alertThresholds?: { warning: number; critical: number };  // 默认 0.8 / 0.95（Langfuse 实现中可通过 config 覆盖）
   maxRecords?: number;  // 环形缓冲区容量上限，默认 10,000
+  maxModels?: number;   // modelTotals 二级索引上限，默认 1000，FIFO 淘汰
+  maxTraces?: number;   // traceTotals 二级索引上限，默认 10,000，FIFO 淘汰
 }): CostTracker
 ```
 CostTracker 接口：`setPricing()`, `recordUsage()`, `updateUsage()`, `getTotalCost()`, `getCostByModel()`, `getCostByTrace()`, `setBudget()`, `checkBudget()`, `onAlert()`, `getAlertMessage()`, `reset()`.
@@ -68,6 +70,7 @@ CostTracker 接口：`setPricing()`, `recordUsage()`, `updateUsage()`, `getTotal
 实现特点：
 - 使用独立闭包函数（checkBudgetFn、getAlertMessageFn）代替 `this` 引用，支持安全解构：`const { recordUsage, checkBudget } = createCostTracker()`
 - 环形缓冲区容量由 `maxRecords` 配置（默认 10,000），超出时自动淘汰最旧记录
+- `modelTotals` / `traceTotals` 二级索引提供 O(1) 的 `getCostByModel()` / `getCostByTrace()` 查询；容量由 `maxModels` / `maxTraces` 限制，超出时 FIFO 淘汰最早键
 - 每 1,000 条记录执行一次浮点数重校准，防止精度漂移
 - `getAlertMessage(): string | null` — 返回当前预算告警的人类可读消息，无告警时返回 null
 
@@ -148,6 +151,9 @@ function createFailureTaxonomy(config?: FailureTaxonomyConfig): FailureTaxonomy
 |------|------|--------|------|
 | `detectors` | `Record<string, FailureDetector>` | — | 覆盖或扩展内置检测器 |
 | `minConfidence` | `number` | `0.5` | 低于此阈值的检测结果不报告 |
+| `thresholds.toolLoopMinRun` | `number` | `3` | 触发 `tool_loop` 所需的最小连续同名 Span 数 |
+| `thresholds.earlyStopMaxSpans` | `number` | `2` | `early_stop` 检测的 Span 数上限（超过此值不触发） |
+| `thresholds.budgetExceededConfidence` | `number` | `0.9` | `budget_exceeded` 的基础置信度（0–1） |
 
 ### 5 个内置检测器
 

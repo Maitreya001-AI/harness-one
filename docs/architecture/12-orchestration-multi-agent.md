@@ -149,6 +149,7 @@ function createContextBoundary(
 | `setPolicies(policies)` | 替换全部策略。已缓存的视图动态反映新策略 |
 | `getPolicies(agentId)` | 获取指定 Agent 的策略 |
 | `getViolations()` | 获取所有访问违规记录（最多 1,000 条，FIFO） |
+| `clearAgent(agentId)` | 移除该 Agent 的缓存视图，避免长期运行时视图缓存泄漏 |
 
 ### BoundaryPolicy 结构
 

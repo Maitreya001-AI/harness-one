@@ -6,6 +6,96 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.1.2] — 2026-04-12
+
+47 production-readiness issues resolved from comprehensive audit
+(see `AUDIT-2026-04-12.md` and `docs/forge-fix/audit-47-fixes-20260412/`).
+All 3104 tests pass; ~54 regression tests added.
+
+### Fixed
+
+#### Security & correctness
+
+- **Guardrails / content-filter**: Reset custom-pattern `lastIndex` and
+  match against normalized content — closes a guardrail-bypass vector
+  where stateful `RegExp` and un-normalized input could skip detections.
+- **Context / cache-stability**: `JSON.stringify` non-string `Message.content`
+  when computing `messageKey` so prefix-cache keys stay stable for
+  structured content.
+- **Context / checkpoint**: Validate `maxCheckpoints >= 1` and append a
+  random suffix to checkpoint IDs to eliminate same-millisecond collisions.
+- **Context / compress**: Summarizer calls wrapped in try-catch with a
+  truncation fallback; a summarizer fault no longer kills the run.
+- **OpenAI adapter**: Warn on zero-token fallback; enforce
+  `MAX_TOOL_CALLS = 128` and `MAX_TOOL_ARG_BYTES = 1 MB` to bound
+  accumulated tool-call memory during streaming.
+- **Anthropic adapter**: `finalMessage()` guarded by try-catch so
+  aborted streams exit cleanly instead of leaking generator errors.
+
+#### Performance
+
+- **OpenTelemetry**: Span-cache eviction switched from `O(n log n)`
+  sort-based to `O(1)` LRU `Map` pattern; purge is now threshold-guarded
+  with early break (was `O(n)` full scan every call).
+- **CostTracker**: `traceTotals` secondary index enables `O(1)`
+  `getCostByTrace()` (previously scanned the record buffer).
+- **Orchestrator**: BFS queue uses index-based traversal instead of
+  `Array.shift()` for `O(1)` dequeue.
+
+#### Resource management
+
+- **CostTracker**: `modelTotals` / `traceTotals` bounded by new
+  `maxModels` (default 1000) and `maxTraces` (default 10,000) config,
+  with FIFO eviction — closes unbounded memory growth.
+- **Full harness**: `sessions.dispose()` now runs in both `drain()` and
+  `shutdown()` paths.
+- **ContextBoundary**: New `clearAgent(agentId)` method prevents
+  view-cache leaks when agents are recycled in long-running processes.
+- **OpenTelemetry**: Flush uses snapshot-then-clear for concurrent
+  safety.
+- **Langfuse**: `maxRecords >= 1` validated at construction.
+
+#### Error handling
+
+- **Full harness**: All `conversations.append()` calls wrapped in
+  try-catch with `logger.warn`; `exporter.shutdown()` promise now has
+  `.catch()` so exporter faults cannot surface as unhandled rejections.
+- **TraceManager**: `console.warn` fallback when no `onExportError`
+  callback is registered — export failures are never swallowed silently.
+- **DatasetExporter**: Runtime shape validation before type casts.
+- **Langfuse**: Empty `catch(() => {})` blocks replaced with
+  `console.warn` logging; unpriced models emit a one-time warning.
+- **OutputParser**: `regenerateTimeoutMs` option (default 30s) wraps the
+  regenerate callback in `Promise.race` so a hung regenerator cannot
+  stall the loop.
+- **Full / env**: `isFinite()` + `> 0` checks on every numeric env var.
+- **CacheMonitor**: `bucketMs <= 0` defaults to 60s instead of producing
+  `NaN` buckets.
+
+#### Robustness
+
+- **SessionManager**: Throws `SESSION_LIMIT` when all sessions are
+  locked at capacity (previously blocked forever).
+- **FailureTaxonomy**: Detector thresholds (`toolLoopMinRun`,
+  `earlyStopMaxSpans`, `budgetExceededConfidence`) are now configurable
+  via `FailureTaxonomyConfig.thresholds`.
+- **Redis**: Non-atomic update limitation documented in JSDoc; partial
+  query results emit `console.warn`.
+
+### Documentation
+
+- `AUDIT-2026-04-12.md` — full audit report (47 issues with fixes).
+- `docs/forge-fix/audit-47-fixes-20260412/summary.md` — fix summary by
+  group with test counts.
+- `docs/architecture/06-observe.md` — CostTracker `maxModels` /
+  `maxTraces` / secondary-index behavior, FailureTaxonomy `thresholds`.
+- `docs/architecture/12-orchestration-multi-agent.md` —
+  `ContextBoundary.clearAgent()`.
+- `examples/` — self-healing, cache-monitor, failure-taxonomy,
+  multi-agent, checkpoint-manager, fallback-adapter examples.
+
+---
+
 ## [0.1.1] — 2026-04-11
 
 ### Fixed
