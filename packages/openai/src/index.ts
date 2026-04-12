@@ -189,6 +189,7 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
   const model = config.model ?? 'gpt-4o';
 
   return {
+    name: `openai:${model}`,
     async chat(params: ChatParams): Promise<ChatResponse> {
       const response = await client.chat.completions.create({
         model,

@@ -96,6 +96,12 @@ interface HarnessConfigBase {
   readonly budget?: number;
   /** Model pricing configuration. */
   readonly pricing?: ModelPricing[];
+  /**
+   * Custom logger. When omitted, `createLogger()` is called with defaults.
+   * Supply a logger to route harness-level warnings (no-budget, default
+   * session, conversation-append failures) into your observability stack.
+   */
+  readonly logger?: Logger;
 }
 
 /** Configuration for creating a full Harness instance with Anthropic. */
@@ -164,8 +170,19 @@ export interface Harness {
   readonly conversations: ConversationStore;
   readonly middleware: MiddlewareChain;
 
-  /** Run the agent loop with full pipeline. */
-  run(messages: Message[]): AsyncGenerator<AgentEvent>;
+  /**
+   * Run the agent loop with the full pipeline (guardrails, tracing,
+   * cost tracking, and conversation persistence).
+   *
+   * @param messages - The initial conversation. Must include at least one
+   *   user message for input guardrails to run.
+   * @param options.sessionId - Session identifier for the conversation store.
+   *   Defaults to `"default"`, which is unsafe for concurrent `run()` calls
+   *   in multi-request servers — a warning is logged the first time
+   *   `"default"` is used. Pass a per-request id (e.g., a user id) to isolate
+   *   conversation histories.
+   */
+  run(messages: Message[], options?: { sessionId?: string }): AsyncGenerator<AgentEvent>;
 
   /** Shut down all services. */
   shutdown(): Promise<void>;
@@ -280,7 +297,7 @@ export function createHarness(config: HarnessConfig): Harness {
   const eventBus = createEventBus();
 
   // 14. Logger
-  const logger = createLogger();
+  const logger = config.logger ?? createLogger();
 
   // 15. Conversation store
   const conversations = createInMemoryConversationStore();
@@ -288,15 +305,41 @@ export function createHarness(config: HarnessConfig): Harness {
   // 16. Middleware chain
   const middleware = createMiddlewareChain();
 
-  // 17. Agent loop
+  // 17. Agent loop — wire the shared traceManager so iteration/tool spans
+  // appear alongside harness-level spans in a unified trace backend.
   const loop = new AgentLoop({
     adapter,
+    traceManager: traces,
     ...(config.maxIterations !== undefined && { maxIterations: config.maxIterations }),
     ...(config.maxTotalTokens !== undefined && { maxTotalTokens: config.maxTotalTokens }),
     onToolCall: async (call) => {
       return tools.execute(call);
     },
   });
+
+  // Warn at construction time when running without a cost budget — production
+  // deployments without a budget have no upper bound on token spend. Emits
+  // exactly once per harness instance.
+  if (config.budget === undefined) {
+    logger.warn(
+      'harness-one: no cost budget configured. Runaway token usage is unbounded. ' +
+      'Set HarnessConfig.budget to enable automatic budget alerts and circuit breaking.',
+    );
+  }
+
+  // Warn when the in-memory ConversationStore is used with the default session
+  // id — concurrent run() calls would interleave messages in the same bucket.
+  // Log once at construction. See harness.run({ sessionId }) to opt in.
+  let defaultSessionWarnEmitted = false;
+  function warnDefaultSessionOnce(): void {
+    if (defaultSessionWarnEmitted) return;
+    defaultSessionWarnEmitted = true;
+    logger.warn(
+      'harness-one: harness.run() invoked without a sessionId. All messages are persisted ' +
+      'to the "default" session; concurrent run() calls will interleave. Pass ' +
+      'harness.run(messages, { sessionId }) in multi-request environments.',
+    );
+  }
 
   let isShutdown = false;
 
@@ -315,102 +358,153 @@ export function createHarness(config: HarnessConfig): Harness {
     conversations,
     middleware,
 
-    async *run(messages: Message[]): AsyncGenerator<AgentEvent> {
-      // Run input guardrails on user messages before passing to agent loop
-      for (const msg of messages) {
-        if (msg.role === 'user') {
-          const inputResult = await runInput(guardrailPipeline, { content: msg.content });
-          if (!inputResult.passed) {
-            loop.abort();
-            yield {
-              type: 'error',
-              error: new HarnessError(
-                `Input blocked by guardrail: ${'reason' in inputResult.verdict ? inputResult.verdict.reason : 'policy violation'}`,
-                'GUARDRAIL_BLOCKED',
-                'Modify the input to comply with configured guardrails',
-              ),
-            };
-            yield { type: 'done', reason: 'error', totalUsage: { inputTokens: 0, outputTokens: 0 } };
-            return;
-          }
-        }
+    async *run(
+      messages: Message[],
+      options?: { sessionId?: string },
+    ): AsyncGenerator<AgentEvent> {
+      const sessionId = options?.sessionId ?? 'default';
+      if (sessionId === 'default') warnDefaultSessionOnce();
+
+      // Start a harness-level trace so pre-loop and per-event guardrail checks
+      // produce structured spans a human can correlate to loop iteration spans.
+      const harnessTraceId = traces.startTrace('harness.run', {
+        sessionId,
+        messageCount: messages.length,
+      });
+
+      // Run a guardrail and emit it as a span in the harness trace.
+      async function traceGuardrail<T extends { passed: boolean; verdict: { action: string; reason?: string } }>(
+        spanName: string,
+        fn: () => Promise<T>,
+      ): Promise<T> {
+        const spanId = traces.startSpan(harnessTraceId, spanName);
+        const start = Date.now();
         try {
-          await conversations.append('default', msg);
+          const result = await fn();
+          traces.setSpanAttributes(spanId, {
+            passed: result.passed,
+            verdict: result.verdict.action,
+            latencyMs: Date.now() - start,
+            ...(result.verdict.reason ? { reason: String(result.verdict.reason).slice(0, 500) } : {}),
+          });
+          traces.endSpan(spanId, result.passed ? 'completed' : 'error');
+          return result;
         } catch (err) {
-          logger.warn('Failed to persist message to conversation store', { error: err });
+          traces.setSpanAttributes(spanId, {
+            error: (err instanceof Error ? err.message : String(err)).slice(0, 500),
+          });
+          traces.endSpan(spanId, 'error');
+          throw err;
         }
       }
-      for await (const event of loop.run(messages)) {
-        // Validate tool call arguments against input guardrails before executing
-        if (event.type === 'tool_call') {
-          const argContent = typeof event.toolCall.arguments === 'string'
-            ? event.toolCall.arguments
-            : JSON.stringify(event.toolCall.arguments);
-          const argCheck = await runInput(guardrailPipeline, { content: argContent });
-          if (!argCheck.passed) {
-            loop.abort();
-            yield {
-              type: 'error',
-              error: new HarnessError(
-                `Tool arguments blocked by guardrails: ${'reason' in argCheck.verdict ? argCheck.verdict.reason : 'policy violation'}`,
-                'GUARDRAIL_BLOCKED',
-                'Tool call arguments were blocked by input guardrails',
-              ),
-            };
-            yield { type: 'done', reason: 'error', totalUsage: loop.usage };
-            return;
-          }
-        }
-        // Run output guardrails on assistant messages
-        if (event.type === 'message' && event.message) {
-          const outputResult = await runOutput(guardrailPipeline, { content: event.message.content });
-          if (!outputResult.passed) {
-            loop.abort();
-            yield {
-              type: 'error',
-              error: new HarnessError(
-                `Output blocked by guardrail: ${'reason' in outputResult.verdict ? outputResult.verdict.reason : 'policy violation'}`,
-                'GUARDRAIL_BLOCKED',
-                'The model response was blocked by output guardrails',
-              ),
-            };
-            yield { type: 'done', reason: 'error', totalUsage: loop.usage };
-            return;
+
+      try {
+        // Run input guardrails on user messages before passing to agent loop
+        for (const msg of messages) {
+          if (msg.role === 'user') {
+            const inputResult = await traceGuardrail('guardrail:input', () =>
+              runInput(guardrailPipeline, { content: msg.content }),
+            );
+            if (!inputResult.passed) {
+              loop.abort();
+              yield {
+                type: 'error',
+                error: new HarnessError(
+                  `Input blocked by guardrail: ${'reason' in inputResult.verdict ? inputResult.verdict.reason : 'policy violation'}`,
+                  'GUARDRAIL_BLOCKED',
+                  'Modify the input to comply with configured guardrails',
+                ),
+              };
+              yield { type: 'done', reason: 'error', totalUsage: { inputTokens: 0, outputTokens: 0 } };
+              return;
+            }
           }
           try {
-            await conversations.append('default', event.message);
-          } catch (err) {
-            logger.warn('Failed to persist message to conversation store', { error: err });
-          }
-        } else if (event.type === 'tool_result') {
-          // Run output guardrails on tool results
-          const toolOutputResult = await runOutput(guardrailPipeline, {
-            content: typeof event.result === 'string' ? event.result : JSON.stringify(event.result),
-          });
-          if (!toolOutputResult.passed) {
-            loop.abort();
-            yield {
-              type: 'error',
-              error: new HarnessError(
-                `Tool output blocked by guardrail: ${'reason' in toolOutputResult.verdict ? toolOutputResult.verdict.reason : 'policy violation'}`,
-                'GUARDRAIL_BLOCKED',
-                'A tool result was blocked by output guardrails',
-              ),
-            };
-            yield { type: 'done', reason: 'error', totalUsage: loop.usage };
-            return;
-          }
-          try {
-            await conversations.append('default', {
-              role: 'tool' as const,
-              content: typeof event.result === 'string' ? event.result : JSON.stringify(event.result),
-              toolCallId: event.toolCallId,
-            });
+            await conversations.append(sessionId, msg);
           } catch (err) {
             logger.warn('Failed to persist message to conversation store', { error: err });
           }
         }
-        yield event;
+        for await (const event of loop.run(messages)) {
+          // Validate tool call arguments against input guardrails before executing
+          if (event.type === 'tool_call') {
+            const argContent = typeof event.toolCall.arguments === 'string'
+              ? event.toolCall.arguments
+              : JSON.stringify(event.toolCall.arguments);
+            const argCheck = await traceGuardrail('guardrail:tool-args', () =>
+              runInput(guardrailPipeline, { content: argContent }),
+            );
+            if (!argCheck.passed) {
+              loop.abort();
+              yield {
+                type: 'error',
+                error: new HarnessError(
+                  `Tool arguments blocked by guardrails: ${'reason' in argCheck.verdict ? argCheck.verdict.reason : 'policy violation'}`,
+                  'GUARDRAIL_BLOCKED',
+                  'Tool call arguments were blocked by input guardrails',
+                ),
+              };
+              yield { type: 'done', reason: 'error', totalUsage: loop.usage };
+              return;
+            }
+          }
+          // Run output guardrails on assistant messages
+          if (event.type === 'message' && event.message) {
+            const outputResult = await traceGuardrail('guardrail:output', () =>
+              runOutput(guardrailPipeline, { content: event.message.content }),
+            );
+            if (!outputResult.passed) {
+              loop.abort();
+              yield {
+                type: 'error',
+                error: new HarnessError(
+                  `Output blocked by guardrail: ${'reason' in outputResult.verdict ? outputResult.verdict.reason : 'policy violation'}`,
+                  'GUARDRAIL_BLOCKED',
+                  'The model response was blocked by output guardrails',
+                ),
+              };
+              yield { type: 'done', reason: 'error', totalUsage: loop.usage };
+              return;
+            }
+            try {
+              await conversations.append(sessionId, event.message);
+            } catch (err) {
+              logger.warn('Failed to persist message to conversation store', { error: err });
+            }
+          } else if (event.type === 'tool_result') {
+            // Run output guardrails on tool results
+            const toolOutputResult = await traceGuardrail('guardrail:tool-result', () =>
+              runOutput(guardrailPipeline, {
+                content: typeof event.result === 'string' ? event.result : JSON.stringify(event.result),
+              }),
+            );
+            if (!toolOutputResult.passed) {
+              loop.abort();
+              yield {
+                type: 'error',
+                error: new HarnessError(
+                  `Tool output blocked by guardrail: ${'reason' in toolOutputResult.verdict ? toolOutputResult.verdict.reason : 'policy violation'}`,
+                  'GUARDRAIL_BLOCKED',
+                  'A tool result was blocked by output guardrails',
+                ),
+              };
+              yield { type: 'done', reason: 'error', totalUsage: loop.usage };
+              return;
+            }
+            try {
+              await conversations.append(sessionId, {
+                role: 'tool' as const,
+                content: typeof event.result === 'string' ? event.result : JSON.stringify(event.result),
+                toolCallId: event.toolCallId,
+              });
+            } catch (err) {
+              logger.warn('Failed to persist message to conversation store', { error: err });
+            }
+          }
+          yield event;
+        }
+      } finally {
+        traces.endTrace(harnessTraceId);
       }
     },
 

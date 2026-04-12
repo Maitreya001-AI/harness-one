@@ -25,6 +25,11 @@ export interface AgentLoopTraceManager {
   startTrace(name: string, metadata?: Record<string, unknown>): string;
   startSpan(traceId: string, name: string, parentId?: string): string;
   setSpanAttributes(spanId: string, attributes: Record<string, unknown>): void;
+  /**
+   * Record a timestamped event within a span — used by AgentLoop to record
+   * adapter retries and other diagnostic markers without creating child spans.
+   */
+  addSpanEvent(spanId: string, event: { name: string; attributes?: Record<string, unknown> }): void;
   endSpan(spanId: string, status?: 'completed' | 'error'): void;
   endTrace(traceId: string, status?: 'completed' | 'error'): void;
 }
@@ -344,9 +349,17 @@ export class AgentLoop {
         // End previous iteration span if one is still open
         if (iterationSpanId && tm) { tm.endSpan(iterationSpanId); iterationSpanId = undefined; }
 
-        // Start a new span for this iteration
+        // Start a new span for this iteration.
+        // Attach diagnostic attributes so incident responders can filter by
+        // iteration index / model / context depth without parsing span names.
         if (tm && traceId) {
           iterationSpanId = tm.startSpan(traceId, `iteration-${iteration}`);
+          tm.setSpanAttributes(iterationSpanId, {
+            iteration,
+            adapter: this.adapter.name ?? 'unknown',
+            conversationLength: conversation.length,
+            streaming: this.streaming,
+          });
         }
 
         yield { type: 'iteration_start', iteration };
@@ -384,6 +397,12 @@ export class AgentLoop {
               this._lastStreamErrorCategory = undefined;
 
               if (errorCategory && this.retryableErrors.includes(errorCategory) && attempt < this.maxAdapterRetries) {
+                if (iterationSpanId && tm) {
+                  tm.addSpanEvent(iterationSpanId, {
+                    name: 'adapter_retry',
+                    attributes: { attempt, errorCategory, path: 'stream' },
+                  });
+                }
                 try {
                   await this.backoff(attempt);
                 } catch {
@@ -392,8 +411,15 @@ export class AgentLoop {
                 continue;
               }
 
-              // Not retryable or retries exhausted
-              if (iterationSpanId && tm) { tm.endSpan(iterationSpanId, 'error'); iterationSpanId = undefined; }
+              // Not retryable or retries exhausted — annotate span before closing.
+              if (iterationSpanId && tm) {
+                tm.setSpanAttributes(iterationSpanId, {
+                  errorCategory: errorCategory ?? 'unknown',
+                  path: 'stream',
+                });
+                tm.endSpan(iterationSpanId, 'error');
+                iterationSpanId = undefined;
+              }
               finalEventEmitted = true;
               yield this.doneEvent('error');
               return;
@@ -415,6 +441,17 @@ export class AgentLoop {
               const isRetryable = this.retryableErrors.includes(errorCategory);
 
               if (isRetryable && attempt < this.maxAdapterRetries) {
+                if (iterationSpanId && tm) {
+                  tm.addSpanEvent(iterationSpanId, {
+                    name: 'adapter_retry',
+                    attributes: {
+                      attempt,
+                      errorCategory,
+                      error: (err instanceof Error ? err.message : String(err)).slice(0, 500),
+                      path: 'chat',
+                    },
+                  });
+                }
                 try {
                   await this.backoff(attempt);
                 } catch {
@@ -423,8 +460,16 @@ export class AgentLoop {
                 continue;
               }
 
-              // Not retryable or retries exhausted — emit error and stop
-              if (iterationSpanId && tm) { tm.endSpan(iterationSpanId, 'error'); iterationSpanId = undefined; }
+              // Not retryable or retries exhausted — annotate span, then emit error.
+              if (iterationSpanId && tm) {
+                tm.setSpanAttributes(iterationSpanId, {
+                  errorCategory,
+                  error: (err instanceof Error ? err.message : String(err)).slice(0, 500),
+                  path: 'chat',
+                });
+                tm.endSpan(iterationSpanId, 'error');
+                iterationSpanId = undefined;
+              }
               yield { type: 'error', error: err instanceof HarnessError ? err : new HarnessError(
                 err instanceof Error ? err.message : String(err),
                 errorCategory,
@@ -446,11 +491,15 @@ export class AgentLoop {
           return;
         }
 
-        // Record usage on the iteration span
+        // Record usage + tool-count on the iteration span. toolCount is the
+        // basic signal for tool-loop and tool-call-explosion diagnostics.
         if (iterationSpanId && tm) {
           tm.setSpanAttributes(iterationSpanId, {
             inputTokens: responseUsage.inputTokens,
             outputTokens: responseUsage.outputTokens,
+            toolCount: assistantMsg.role === 'assistant' && assistantMsg.toolCalls
+              ? assistantMsg.toolCalls.length
+              : 0,
           });
         }
 
@@ -505,10 +554,18 @@ export class AgentLoop {
         const executionResults = await this.executionStrategy.execute(
           toolCalls,
           async (call) => {
-            // Create a child span for each tool call when tracing is enabled
+            // Create a child span for each tool call when tracing is enabled.
+            // Attach `toolName` as an attribute (not just span name) so trace
+            // backends can aggregate tool-error rates without parsing names.
             const toolSpanId = (tm && traceId && iterationSpanId)
               ? tm.startSpan(traceId, `tool:${call.name}`, iterationSpanId)
               : undefined;
+            if (toolSpanId && tm) {
+              tm.setSpanAttributes(toolSpanId, {
+                toolName: call.name,
+                toolCallId: call.id,
+              });
+            }
             try {
               const toolPromise = this.onToolCall
                 ? this.onToolCall(call)
@@ -543,7 +600,13 @@ export class AgentLoop {
               if (toolSpanId && tm) { tm.endSpan(toolSpanId); }
               return result;
             } catch (toolErr) {
-              if (toolSpanId && tm) { tm.endSpan(toolSpanId, 'error'); }
+              if (toolSpanId && tm) {
+                tm.setSpanAttributes(toolSpanId, {
+                  errorMessage: (toolErr instanceof Error ? toolErr.message : String(toolErr)).slice(0, 500),
+                  errorName: toolErr instanceof Error ? toolErr.name : 'Unknown',
+                });
+                tm.endSpan(toolSpanId, 'error');
+              }
               throw toolErr;
             }
           },

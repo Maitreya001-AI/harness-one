@@ -87,6 +87,13 @@ export interface TokenUsage {
  * ```
  */
 export interface AgentAdapter {
+  /**
+   * Identifier for the adapter (e.g., `"anthropic"`, `"openai"`). Used as the
+   * `adapter` attribute on iteration spans and as the `model` fallback when
+   * usage is missing. Optional for backwards compatibility; built-in adapters
+   * set this.
+   */
+  readonly name?: string;
   chat(params: ChatParams): Promise<ChatResponse>;
   stream?(params: ChatParams): AsyncIterable<StreamChunk>;
   countTokens?(messages: readonly Message[]): Promise<number>;

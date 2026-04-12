@@ -48,13 +48,29 @@ function toAnthropicMessage(msg: Message): Anthropic.MessageParam {
       content.push({ type: 'text', text: msg.content });
     }
     for (const tc of msg.toolCalls) {
-      let input: unknown;
-      try { input = JSON.parse(tc.arguments); } catch { input = tc.arguments; }
+      // Narrow to object shape — silently casting a string to Record<string, unknown>
+      // would hide LLM output corruption. When JSON is invalid or not an object,
+      // pass an empty object and let the tool execution fail loudly on missing keys.
+      let input: Record<string, unknown> = {};
+      try {
+        const parsed: unknown = JSON.parse(tc.arguments);
+        if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          input = parsed as Record<string, unknown>;
+        } else {
+          console.warn(
+            `[harness-one/anthropic] tool_use input for "${tc.name}" was not a JSON object (got ${typeof parsed}); substituting empty object.`,
+          );
+        }
+      } catch {
+        console.warn(
+          `[harness-one/anthropic] tool_use input for "${tc.name}" was not valid JSON; substituting empty object. Raw arguments may be truncated or malformed.`,
+        );
+      }
       content.push({
         type: 'tool_use',
         id: tc.id,
         name: tc.name,
-        input: input as Record<string, unknown>,
+        input,
       });
     }
     return { role: 'assistant', content };
@@ -170,6 +186,7 @@ export function createAnthropicAdapter(config: AnthropicAdapterConfig): AgentAda
   const model = config.model ?? 'claude-sonnet-4-20250514';
 
   return {
+    name: `anthropic:${model}`,
     async chat(params: ChatParams): Promise<ChatResponse> {
       const { system, rest } = extractSystem(params.messages);
 
