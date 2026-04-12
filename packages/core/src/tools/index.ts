@@ -3,6 +3,7 @@
 // Types
 export type {
   ToolDefinition,
+  ToolMiddleware,
   ToolFeedback,
   ToolResult,
   ToolCall,

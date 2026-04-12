@@ -853,3 +853,21 @@ export class AgentLoop {
     });
   }
 }
+
+/**
+ * Functional alias for `new AgentLoop(config)`. Prefer this form when you
+ * want consistency with the rest of the `harness-one` API (every other
+ * primitive is a `createX()` factory) or when you plan to wrap the loop
+ * in middleware — composition is easier against a plain object than a
+ * class with private fields.
+ *
+ * @example
+ * ```ts
+ * import { createAgentLoop } from 'harness-one/core';
+ * const loop = createAgentLoop({ adapter, traceManager });
+ * for await (const event of loop.run(messages)) { ... }
+ * ```
+ */
+export function createAgentLoop(config: AgentLoopConfig): AgentLoop {
+  return new AgentLoop(config);
+}

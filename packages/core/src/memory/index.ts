@@ -16,7 +16,7 @@ export type {
 } from './types.js';
 
 // Store
-export type { MemoryStore } from './store.js';
+export type { MemoryStore, MemoryStoreCapabilities } from './store.js';
 export { createInMemoryStore } from './store.js';
 
 // File-system store
@@ -41,3 +41,7 @@ export {
   validateRelayState,
   parseJsonSafe,
 } from './_schemas.js';
+
+// Testkit for third-party MemoryStore implementations.
+export type { TestKitRunner } from './testkit.js';
+export { runMemoryStoreConformance } from './testkit.js';

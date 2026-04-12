@@ -38,8 +38,9 @@ export {
 export type { AgentEvent, DoneReason } from './events.js';
 export { assertNever } from './events.js';
 
-// AgentLoop
-export { AgentLoop } from './agent-loop.js';
+// AgentLoop — class and factory alias both exported; see createAgentLoop
+// JSDoc for when to use each form.
+export { AgentLoop, createAgentLoop } from './agent-loop.js';
 export type { AgentLoopConfig, AgentLoopTraceManager } from './agent-loop.js';
 
 // Output parser

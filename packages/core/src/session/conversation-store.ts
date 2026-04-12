@@ -37,7 +37,35 @@ import type { Message } from '../core/types.js';
  * - `load()` should return a fresh copy of the data so callers cannot corrupt the store.
  * - `save()` should copy the input so later mutations to the caller's array are not reflected.
  */
+/**
+ * Declared capabilities of a ConversationStore backend. Callers can gate
+ * features (concurrent writes, cross-process replication) on these rather
+ * than assuming every implementation upholds the full contract.
+ */
+export interface ConversationStoreCapabilities {
+  /**
+   * `append()` is atomic across concurrent callers, including across
+   * processes. In-memory (single-process) stores typically set this to
+   * `true` by virtue of Node.js single-threaded execution; distributed
+   * backends must use an atomic primitive (Redis RPUSH, Postgres
+   * `array_append`, row lock).
+   */
+  readonly atomicAppend?: boolean;
+  /** `save()` replaces the full history in a single transaction. */
+  readonly atomicSave?: boolean;
+  /** `delete()` is atomic and idempotent. */
+  readonly atomicDelete?: boolean;
+  /** Changes are visible to other processes reading the same backend. */
+  readonly distributed?: boolean;
+}
+
 export interface ConversationStore {
+  /**
+   * Declared capabilities. Defaults to all-`false` when omitted. Consumers
+   * SHOULD inspect this before relying on atomic-append semantics.
+   */
+  readonly capabilities?: ConversationStoreCapabilities;
+
   /**
    * Save (overwrite) the full message history for a session.
    * Must be atomic: either the full history is replaced or the operation fails.
@@ -80,6 +108,13 @@ export function createInMemoryConversationStore(): ConversationStore {
   const store = new Map<string, Message[]>();
 
   return {
+    capabilities: {
+      atomicAppend: true, // single-threaded Node guarantees this in-process
+      atomicSave: true,
+      atomicDelete: true,
+      distributed: false, // in-memory is per-process
+    },
+
     async save(sessionId, messages) {
       store.set(sessionId, [...messages]);
     },

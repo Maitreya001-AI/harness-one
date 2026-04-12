@@ -8,7 +8,7 @@ export type { SessionManager } from './manager.js';
 export { createSessionManager } from './manager.js';
 
 // Conversation persistence
-export type { ConversationStore } from './conversation-store.js';
+export type { ConversationStore, ConversationStoreCapabilities } from './conversation-store.js';
 export { createInMemoryConversationStore } from './conversation-store.js';
 
 // Auth context & multi-tenancy

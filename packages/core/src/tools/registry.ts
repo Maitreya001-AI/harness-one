@@ -173,6 +173,29 @@ export function createRegistry(config?: {
       );
     }
 
+    /**
+     * Build a middleware chain terminating in the raw tool.execute(). Middleware
+     * array is invoked outermost-first — the first entry wraps the second,
+     * which wraps the third, and so on, with tool.execute() at the tail. This
+     * mirrors Koa/Express style onion semantics.
+     *
+     * `resolvedTool` is passed explicitly because TypeScript's control-flow
+     * narrowing doesn't follow into a nested function body — inside buildChain,
+     * `tool` would be typed as `ToolDefinition | undefined` even though we
+     * guard against undefined above.
+     */
+    const resolvedTool = tool;
+    function buildChain(sig?: AbortSignal): () => Promise<ToolResult> {
+      const mws = resolvedTool.middleware ?? [];
+      let chain: () => Promise<ToolResult> = () => resolvedTool.execute(params, sig);
+      for (let i = mws.length - 1; i >= 0; i--) {
+        const mw = mws[i];
+        const downstream = chain;
+        chain = () => mw({ toolName: call.name, params, ...(sig !== undefined && { signal: sig }) }, downstream);
+      }
+      return chain;
+    }
+
     // Execute with optional timeout using a simple timer promise pattern
     // that avoids listener leaks by not attaching abort signal listeners.
     if (timeoutMs !== undefined) {
@@ -193,10 +216,8 @@ export function createRegistry(config?: {
           }, timeoutMs);
         });
 
-        const result = await Promise.race([
-          tool.execute(params, ac.signal),
-          timeoutPromise,
-        ]);
+        const chain = buildChain(ac.signal);
+        const result = await Promise.race([chain(), timeoutPromise]);
         return result;
       } finally {
         if (timer !== undefined) clearTimeout(timer);
@@ -208,7 +229,7 @@ export function createRegistry(config?: {
     // If tool.execute() throws (instead of returning a ToolResult error),
     // the pre-claimed turnCalls/sessionCalls counters would never be decremented.
     try {
-      return await tool.execute(params);
+      return await buildChain()();
     } catch (err) {
       return toolError(
         err instanceof Error ? err.message : String(err),

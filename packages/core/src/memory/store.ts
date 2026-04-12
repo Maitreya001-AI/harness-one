@@ -13,8 +13,47 @@ import type {
   VectorSearchOptions,
 } from './types.js';
 
-/** Interface for memory storage backends. */
+/**
+ * Capabilities declared by a MemoryStore implementation. Consumers can
+ * inspect `store.capabilities` to decide whether a feature is supported
+ * (e.g., TTL, atomic batch writes) without probing and catching errors.
+ *
+ * All fields are optional. A missing capability is equivalent to `false`.
+ */
+export interface MemoryStoreCapabilities {
+  /** `write()` is atomic under concurrent callers within a single process. */
+  readonly atomicWrite?: boolean;
+  /** `writeBatch()` is atomic — either every entry is written or none is. */
+  readonly atomicBatch?: boolean;
+  /** `update()` uses compare-and-swap semantics at the store level. */
+  readonly atomicUpdate?: boolean;
+  /** Per-entry TTL via `MemoryEntry.metadata.ttlMs` (auto-expiry on query/read). */
+  readonly ttl?: boolean;
+  /** Vector similarity via `searchByVector()`. */
+  readonly vectorSearch?: boolean;
+  /** Batch writes via `writeBatch()`. */
+  readonly batchWrites?: boolean;
+}
+
+/**
+ * Interface for memory storage backends.
+ *
+ * ### Contract requirements
+ *
+ * - **`write`** MUST be atomic under concurrent single-process access: two
+ *   writes to the same backend never result in partial state.
+ * - **`update`** SHOULD use compare-and-swap where the backend supports it.
+ *   Non-atomic backends must document this in their `capabilities`.
+ * - **`read`** after `write` resolving MUST return the written entry.
+ * - **`delete`** returns `true` iff the entry existed prior to the call.
+ *
+ * Implementations SHOULD declare supported features in `capabilities` so
+ * callers can adapt behavior (e.g., only use `writeBatch` when atomic).
+ */
 export interface MemoryStore {
+  /** Declared capabilities. Defaults to all-`false` when omitted. */
+  readonly capabilities?: MemoryStoreCapabilities;
+
   write(entry: Omit<MemoryEntry, 'id' | 'createdAt' | 'updatedAt'>): Promise<MemoryEntry>;
   read(id: string): Promise<MemoryEntry | null>;
   query(filter: MemoryFilter): Promise<MemoryEntry[]>;
@@ -23,6 +62,15 @@ export interface MemoryStore {
   compact(policy: CompactionPolicy): Promise<CompactionResult>;
   count(): Promise<number>;
   clear(): Promise<void>;
+
+  /**
+   * Optional: write many entries in one call. When `capabilities.atomicBatch`
+   * is `true` the backend guarantees all-or-nothing semantics; otherwise
+   * entries are written sequentially and a mid-batch failure leaves partial
+   * state.
+   */
+  writeBatch?(entries: Array<Omit<MemoryEntry, 'id' | 'createdAt' | 'updatedAt'>>): Promise<MemoryEntry[]>;
+
   /** Optional: Vector similarity search for embedding-backed stores. */
   searchByVector?(options: VectorSearchOptions): Promise<Array<MemoryEntry & { score: number }>>;
 }
@@ -139,6 +187,15 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
   }
 
   return {
+    capabilities: {
+      atomicWrite: true,
+      atomicUpdate: true,
+      atomicBatch: true, // in-memory is single-threaded, so batch is atomic
+      batchWrites: true,
+      ttl: false,
+      vectorSearch: true,
+    },
+
     async write(input) {
       // Validate embedding dimension consistency before storing
       const inputEmbedding = input.metadata?.['embedding'];
@@ -191,6 +248,42 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
         }
       }
       return entry;
+    },
+
+    async writeBatch(inputs) {
+      // Atomic batch write for the in-memory store: build the full list of
+      // new entries first, then commit all in a single synchronous loop.
+      // If any input fails validation, nothing is written.
+      const now = Date.now();
+      const prepared: MemoryEntry[] = [];
+      for (const input of inputs) {
+        const inputEmbedding = input.metadata?.['embedding'];
+        if (Array.isArray(inputEmbedding)) {
+          const existingDim = getExistingEmbeddingDimension();
+          if (existingDim !== undefined && inputEmbedding.length !== existingDim) {
+            throw new HarnessError(
+              `Embedding dimension mismatch: entry has ${inputEmbedding.length} dimensions but store contains embeddings with ${existingDim} dimensions`,
+              'INVALID_INPUT',
+              'Ensure all embeddings use the same model and dimensionality',
+            );
+          }
+        }
+        prepared.push({
+          id: generateId(),
+          key: input.key,
+          content: input.content,
+          grade: input.grade,
+          createdAt: now,
+          updatedAt: now,
+          ...(input.metadata !== undefined && { metadata: input.metadata }),
+          ...(input.tags !== undefined && { tags: input.tags }),
+        });
+      }
+      for (const entry of prepared) {
+        entries.set(entry.id, entry);
+        addToIndexes(entry);
+      }
+      return prepared;
     },
 
     async read(id) {

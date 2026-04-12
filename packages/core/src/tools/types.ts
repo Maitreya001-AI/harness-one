@@ -19,6 +19,37 @@ export type ToolResult<T = unknown> =
   | { success: true; data: T }
   | { success: false; error: ToolFeedback };
 
+/**
+ * Middleware hook wrapping a single tool execution. Use middleware to add
+ * cross-cutting concerns (retry, circuit-breaker, auth headers, timing,
+ * request signing, cache) without modifying the tool's own `execute`.
+ *
+ * The middleware receives the request and a `next` thunk it must call to
+ * invoke the wrapped tool. Middleware can mutate/augment the params, guard
+ * the call, or transform the result — whatever is appropriate for the
+ * concern at hand.
+ *
+ * @example
+ * ```ts
+ * const withRetry: ToolMiddleware = async (ctx, next) => {
+ *   for (let attempt = 0; attempt < 3; attempt++) {
+ *     const result = await next();
+ *     if (result.success) return result;
+ *     if (!result.error.retryable) return result;
+ *   }
+ *   return next();
+ * };
+ * ```
+ */
+export type ToolMiddleware<TParams = unknown> = (
+  ctx: {
+    readonly toolName: string;
+    readonly params: TParams;
+    readonly signal?: AbortSignal;
+  },
+  next: () => Promise<ToolResult>,
+) => Promise<ToolResult>;
+
 /** Definition of a tool that can be registered and executed. */
 export interface ToolDefinition<TParams = unknown> {
   readonly name: string;
@@ -28,6 +59,12 @@ export interface ToolDefinition<TParams = unknown> {
   /** Force sequential execution even in parallel mode. Default: false. */
   readonly sequential?: boolean;
   readonly execute: (params: TParams, signal?: AbortSignal) => Promise<ToolResult>;
+  /**
+   * Optional middleware chain applied around this tool's `execute`. Earlier
+   * entries wrap later ones — the first middleware sees the raw invocation
+   * and calls `next()` to move down the chain. See ToolMiddleware.
+   */
+  readonly middleware?: readonly ToolMiddleware<TParams>[];
 }
 
 /** A parsed tool call with id, name, and arguments. */
