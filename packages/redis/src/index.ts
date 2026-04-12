@@ -15,7 +15,28 @@ import type {
   MemoryFilter,
   CompactionPolicy,
 } from 'harness-one/memory';
+import { validateMemoryEntry, parseJsonSafe } from 'harness-one/memory';
 import { HarnessError } from 'harness-one/core';
+
+/**
+ * Parse + validate a MemoryEntry from a Redis-stored JSON string.
+ * Returns null on corruption (invalid JSON or shape mismatch); callers decide
+ * whether to skip silently or raise. Always logs one line so corruption
+ * isn't invisible.
+ */
+function parseEntryFromRedis(raw: string, id: string): MemoryEntry | null {
+  const parsed = parseJsonSafe(raw);
+  if (!parsed.ok) {
+    console.warn(`[harness-one/redis] corrupted entry ${id}: ${parsed.error.message}`);
+    return null;
+  }
+  try {
+    return validateMemoryEntry(parsed.value, `redis entry ${id}`);
+  } catch (err) {
+    console.warn(`[harness-one/redis] invalid entry shape ${id}: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+}
 
 /** Configuration for the Redis memory store. */
 export interface RedisStoreConfig {
@@ -64,14 +85,14 @@ export function createRedisStore(config: RedisStoreConfig): MemoryStore {
   async function getEntry(id: string): Promise<MemoryEntry | null> {
     const raw = await client.get(entryKey(id));
     if (!raw) return null;
-    try {
-      return JSON.parse(raw) as MemoryEntry;
-    } catch {
-      // Corrupted entry — remove from index silently and return null
+    const entry = parseEntryFromRedis(raw, id);
+    if (!entry) {
+      // Corrupted entry — remove from index so subsequent queries skip it.
       await client.del(entryKey(id));
       await client.srem(indexKey, id);
       return null;
     }
+    return entry;
   }
 
   async function setEntry(entry: MemoryEntry): Promise<void> {
@@ -125,14 +146,11 @@ export function createRedisStore(config: RedisStoreConfig): MemoryStore {
           continue;
         }
 
-        for (const raw of values) {
+        for (let k = 0; k < values.length; k++) {
+          const raw = values[k];
           if (!raw) continue;
-          let entry: MemoryEntry;
-          try {
-            entry = JSON.parse(raw) as MemoryEntry;
-          } catch {
-            continue; // Skip corrupted entries
-          }
+          const entry = parseEntryFromRedis(raw, batch[k]);
+          if (!entry) continue; // Skip corrupted entries (already warned)
 
           if (filter.grade && entry.grade !== filter.grade) continue;
           if (filter.tags && filter.tags.length > 0) {
@@ -171,11 +189,13 @@ export function createRedisStore(config: RedisStoreConfig): MemoryStore {
       if (!raw) {
         throw new HarnessError(`Memory entry not found: ${id}`, 'NOT_FOUND');
       }
-      let existing: MemoryEntry;
-      try {
-        existing = JSON.parse(raw) as MemoryEntry;
-      } catch {
-        throw new HarnessError(`Corrupted memory entry: ${id}`, 'DATA_CORRUPTION', 'Delete and recreate the entry');
+      const existing = parseEntryFromRedis(raw, id);
+      if (!existing) {
+        throw new HarnessError(
+          `Corrupted memory entry: ${id}`,
+          'DATA_CORRUPTION',
+          'Delete and recreate the entry',
+        );
       }
       const updated: MemoryEntry = {
         ...existing,
@@ -207,14 +227,11 @@ export function createRedisStore(config: RedisStoreConfig): MemoryStore {
           // Connection failure mid-batch: skip this chunk and continue
           continue;
         }
-        for (const raw of values) {
+        for (let k = 0; k < values.length; k++) {
+          const raw = values[k];
           if (!raw) continue;
-          let entry: MemoryEntry;
-          try {
-            entry = JSON.parse(raw) as MemoryEntry;
-          } catch {
-            continue; // Skip corrupted entries
-          }
+          const entry = parseEntryFromRedis(raw, batch[k]);
+          if (!entry) continue;
           entries.push(entry);
         }
       }

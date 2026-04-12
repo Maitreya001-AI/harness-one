@@ -11,6 +11,8 @@
 import { readFile, writeFile, mkdir, readdir, unlink, rename } from 'node:fs/promises';
 import { join, basename } from 'node:path';
 import type { MemoryEntry } from './types.js';
+import { validateIndex, validateMemoryEntry, parseJsonSafe } from './_schemas.js';
+import { HarnessError } from '../core/errors.js';
 
 /** Index mapping keys to entry IDs. */
 export interface Index {
@@ -56,7 +58,17 @@ export function createFileIO(config: { directory: string; indexFile?: string }):
   async function readIndex(): Promise<Index> {
     try {
       const raw = await readFile(indexPath, 'utf-8');
-      return JSON.parse(raw) as Index;
+      const parsed = parseJsonSafe(raw);
+      if (!parsed.ok) {
+        throw new HarnessError(
+          `Corrupted memory index at ${indexPath}: ${parsed.error.message}`,
+          'STORE_CORRUPTION',
+          'The index file is not valid JSON. Delete it to rebuild from entry files, ' +
+            'or restore from backup.',
+          parsed.error,
+        );
+      }
+      return validateIndex(parsed.value);
     } catch (err: unknown) {
       // ENOENT is expected on first run -- return empty index
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { keys: {} };
@@ -76,7 +88,17 @@ export function createFileIO(config: { directory: string; indexFile?: string }):
   async function readEntry(id: string): Promise<MemoryEntry | null> {
     try {
       const raw = await readFile(entryPath(id), 'utf-8');
-      return JSON.parse(raw) as MemoryEntry;
+      const parsed = parseJsonSafe(raw);
+      if (!parsed.ok) {
+        throw new HarnessError(
+          `Corrupted memory entry at ${entryPath(id)}: ${parsed.error.message}`,
+          'STORE_CORRUPTION',
+          'The entry file is not valid JSON. Delete the file to drop the entry, ' +
+            'or restore from backup.',
+          parsed.error,
+        );
+      }
+      return validateMemoryEntry(parsed.value, `memory entry ${id}`);
     } catch (err: unknown) {
       // ENOENT means the entry file doesn't exist -- return null
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;

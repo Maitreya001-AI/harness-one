@@ -364,7 +364,7 @@ describe('createRedisStore', () => {
     expect(setCall[0]).toMatch(/^harness:memory:/);
   });
 
-  it('silently cleans up corrupted JSON entry during read', async () => {
+  it('cleans up corrupted JSON entry during read and emits a structured warning', async () => {
     const store = createRedisStore({ client: redis, prefix: 'test' });
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
@@ -374,19 +374,23 @@ describe('createRedisStore', () => {
     const key = `test:${entry.id}`;
     mockRedis._store.set(key, '{corrupted json!!!');
 
-    // Reading should return null without logging a warning
+    // Reading should return null AND log a diagnostic warning — silent corruption
+    // handling was removed in the 2026-04-12 audit because operators need visibility
+    // when bytes on the wire don't match the schema.
     const result = await store.read(entry.id);
     expect(result).toBeNull();
-    expect(warnSpy).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('corrupted entry'),
+    );
 
-    // The corrupted entry should be removed from the store and index
+    // The corrupted entry is still evicted from the store and index.
     expect(mockRedis.del).toHaveBeenCalledWith(`test:${entry.id}`);
     expect(mockRedis.srem).toHaveBeenCalledWith('test:__keys__', entry.id);
 
     warnSpy.mockRestore();
   });
 
-  it('cleans up only the corrupted entry, not valid ones', async () => {
+  it('cleans up only the corrupted entry, not valid ones (with warning on the bad one)', async () => {
     const store = createRedisStore({ client: redis, prefix: 'test' });
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
@@ -397,15 +401,16 @@ describe('createRedisStore', () => {
     const mockRedis = redis as unknown as { _store: Map<string, string> };
     mockRedis._store.set(`test:${entry2.id}`, 'not valid json');
 
-    // Reading the corrupted entry returns null without warning
+    // Corrupted → null + one warning (identifying the entry)
     const corruptResult = await store.read(entry2.id);
     expect(corruptResult).toBeNull();
-    expect(warnSpy).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledTimes(1);
 
-    // Reading the valid entry still works
+    // Valid entry still works, no additional warnings
     const validResult = await store.read(entry1.id);
     expect(validResult).not.toBeNull();
     expect(validResult!.content).toBe('good');
+    expect(warnSpy).toHaveBeenCalledTimes(1);
 
     warnSpy.mockRestore();
   });

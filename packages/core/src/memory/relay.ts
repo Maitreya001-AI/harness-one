@@ -7,6 +7,7 @@
 import type { RelayState } from './types.js';
 import type { MemoryStore } from './store.js';
 import { HarnessError } from '../core/errors.js';
+import { validateRelayState, parseJsonSafe } from './_schemas.js';
 
 /** Interface for cross-context relay operations. */
 export interface ContextRelay {
@@ -57,24 +58,40 @@ export function createRelay(config: {
   let currentId: string | null = null;
   let lastKnownVersion: number = 0;
 
+  /**
+   * Parse + validate a relay state blob. Returns null on corruption (either
+   * invalid JSON or schema mismatch). Corruption is forwarded to onCorruption
+   * if provided — the caller decides whether to log, re-issue, or raise.
+   */
+  function parseRelayContent(entryId: string, content: string): VersionedRelayState | null {
+    const parsed = parseJsonSafe(content);
+    if (!parsed.ok) {
+      if (onCorruption) onCorruption(entryId, parsed.error);
+      return null;
+    }
+    try {
+      const validated = validateRelayState(parsed.value);
+      return validated as VersionedRelayState;
+    } catch (err) {
+      if (onCorruption) onCorruption(entryId, err instanceof Error ? err : new Error(String(err)));
+      return null;
+    }
+  }
+
   async function findRelay(): Promise<{ id: string; state: RelayState; version: number } | null> {
     if (currentId) {
       const entry = await store.read(currentId);
       if (entry) {
-        try {
-          const parsed = JSON.parse(entry.content) as VersionedRelayState;
+        const parsed = parseRelayContent(entry.id, entry.content);
+        if (parsed) {
           const version = parsed._version ?? 0;
           const { _version: _v, ...state } = parsed;
           void _v;
           lastKnownVersion = version;
           return { id: entry.id, state: state as RelayState, version };
-        } catch (err) {
-          if (onCorruption) {
-            onCorruption(entry.id, err instanceof Error ? err : new Error(String(err)));
-          }
-          currentId = null;
-          return null;
         }
+        currentId = null;
+        return null;
       }
       // Cache miss: entry was deleted externally. Clear stale cached ID and re-query.
       currentId = null;
@@ -83,19 +100,14 @@ export function createRelay(config: {
     // Look for an entry with our relay key
     for (const entry of results) {
       if (entry.key === relayKey) {
-        try {
-          const parsed = JSON.parse(entry.content) as VersionedRelayState;
+        const parsed = parseRelayContent(entry.id, entry.content);
+        if (parsed) {
           const version = parsed._version ?? 0;
           const { _version: _v, ...state } = parsed;
           void _v;
           currentId = entry.id;
           lastKnownVersion = version;
           return { id: entry.id, state: state as RelayState, version };
-        } catch (err) {
-          if (onCorruption) {
-            onCorruption(entry.id, err instanceof Error ? err : new Error(String(err)));
-          }
-          continue;
         }
       }
     }
