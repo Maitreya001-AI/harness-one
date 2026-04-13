@@ -6,6 +6,7 @@
 
 import type { DocumentChunk, EmbeddingModel, Retriever, RetrievalResult } from './types.js';
 import { HarnessError } from '../core/errors.js';
+import { createLazyAsync, type LazyAsync } from '../_internal/lazy-async.js';
 
 /** Extended retrieval result that includes skipped chunk tracking (Fix 15). */
 export interface ExtendedRetrievalResult {
@@ -64,6 +65,14 @@ export function createInMemoryRetriever(config: {
   // LRU cache for query embeddings to avoid redundant API calls for repeated queries.
   const queryCacheMax = config.queryCacheSize ?? 64;
   const queryEmbeddingCache = new Map<string, readonly number[]>();
+  // A1-8 (Wave 4b): per-cache-key in-flight lazy handles. When two concurrent
+  // `retrieve()` calls observe a cache miss for the same key, the previous
+  // implementation issued two embed() calls because the "miss detection ->
+  // await embed -> set cache" sequence races across the await. `createLazyAsync`
+  // stores the in-flight promise synchronously, so the second caller joins the
+  // first's promise instead of kicking a duplicate. On rejection the lazy
+  // entry clears itself (and we remove our map slot) so the next caller retries.
+  const inflightEmbeds = new Map<string, LazyAsync<readonly number[]>>();
   // Fix 16: Cache version for invalidation
   const cacheVersion = config.cacheVersion ?? '';
   // SEC-010: Maximum query length (reject longer queries)
@@ -117,7 +126,36 @@ export function createInMemoryRetriever(config: {
       return cached;
     }
 
-    const [embedding] = await config.embedding.embed([query]);
+    // A1-8 (Wave 4b): share one embed() call across concurrent cache misses.
+    // If another caller has already kicked off the embed for this key, join
+    // that in-flight promise instead of starting a duplicate.
+    let lazy = inflightEmbeds.get(cacheKey);
+    if (!lazy) {
+      lazy = createLazyAsync(async () => {
+        const [embedding] = await config.embedding.embed([query]);
+        return embedding;
+      });
+      inflightEmbeds.set(cacheKey, lazy);
+    }
+    let embedding: readonly number[];
+    try {
+      embedding = await lazy.get();
+    } catch (err) {
+      // Evict the lazy entry on rejection so the next caller retries from
+      // scratch (createLazyAsync already cleared its internal promise cache).
+      if (inflightEmbeds.get(cacheKey) === lazy) {
+        inflightEmbeds.delete(cacheKey);
+      }
+      throw err;
+    }
+    // Happy path: remove the inflight slot once the promise settles. We
+    // intentionally keep the slot until AFTER the await so that a concurrent
+    // caller entering getQueryEmbedding during the same microtask joins the
+    // SAME lazy instead of re-creating one.
+    if (inflightEmbeds.get(cacheKey) === lazy) {
+      inflightEmbeds.delete(cacheKey);
+    }
+
     // Insert into LRU cache
     queryEmbeddingCache.set(cacheKey, embedding);
     if (queryEmbeddingCache.size > queryCacheMax) {

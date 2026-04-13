@@ -1302,4 +1302,115 @@ describe('PERF-016 pendingExports leak fix', () => {
 
     await expect(tm.flush()).resolves.toBeUndefined();
   });
+
+  // LM-011 (Wave 4b): `setSamplingRate` used to mutate a closure-scoped
+  // variable read directly by `exportTraceTo()`. Traces that started under a
+  // high sampling rate could be silently dropped if the rate was lowered
+  // before they ended. The fix captures the rate at trace-start and the
+  // export path reads that snapshot.
+  describe('LM-011: sampling rate snapshot at trace-start', () => {
+    it('uses the rate captured at startTrace, not the live rate at endTrace', async () => {
+      // Make sampling non-random by pinning Math.random. When rate is 1.0,
+      // the export must always fire regardless of random output.
+      const exportTrace = vi.fn().mockResolvedValue(undefined);
+      const exporter: TraceExporter = {
+        name: 'snap',
+        exportTrace,
+        async exportSpan() {},
+        async flush() {},
+      };
+      const tm = createTraceManager({
+        exporters: [exporter],
+        defaultSamplingRate: 1,
+      });
+
+      const tid = tm.startTrace('t-snapshot');
+      // Lower the sampling rate mid-flight.
+      tm.setSamplingRate(0);
+      tm.endTrace(tid);
+      await tm.flush();
+
+      // With the fix, the trace snapshot rate (1) is used, so it DOES export.
+      // Without the fix, the live rate (0) would block the export.
+      expect(exportTrace).toHaveBeenCalledTimes(1);
+    });
+
+    it('traces started AFTER setSamplingRate pick up the new rate', async () => {
+      const exportTrace = vi.fn().mockResolvedValue(undefined);
+      const exporter: TraceExporter = {
+        name: 'snap',
+        exportTrace,
+        async exportSpan() {},
+        async flush() {},
+      };
+      const tm = createTraceManager({
+        exporters: [exporter],
+        defaultSamplingRate: 1,
+      });
+
+      tm.setSamplingRate(0);
+      const tid = tm.startTrace('t-after');
+      tm.endTrace(tid);
+      await tm.flush();
+
+      // Rate 0 means never export.
+      expect(exportTrace).not.toHaveBeenCalled();
+    });
+  });
+
+  // CQ-036 (Wave 4b): pendingExports cleanup used `.catch(() => {})` which
+  // silently swallowed rejections. With an injected logger, those rejections
+  // are now routed to `logger.warn`. The rejection typically reaches
+  // `trackExport`'s catch only when the upstream `reportExportError` itself
+  // throws — this models a misconfigured `onExportError` callback.
+  describe('CQ-036: pendingExports cleanup routes to logger', () => {
+    it('logger.warn captures the rejection when onExportError itself throws', async () => {
+      const loggerWarn = vi.fn();
+      const failingExporter: TraceExporter = {
+        name: 'fail',
+        async exportSpan() { throw new Error('span boom'); },
+        async exportTrace() {},
+        async flush() {},
+      };
+      // An onExportError that itself throws — a realistic misconfiguration.
+      // Without the CQ-036 fix, the subsequent trackExport `.catch(() => {})`
+      // would silently swallow this secondary rejection; with the fix, it
+      // routes through `logger.warn`.
+      const tm = createTraceManager({
+        exporters: [failingExporter],
+        logger: { warn: loggerWarn },
+        onExportError: () => { throw new Error('secondary failure'); },
+      });
+      const tid = tm.startTrace('t');
+      const sid = tm.startSpan(tid, 's');
+      tm.endSpan(sid);
+      await tm.flush();
+
+      // The trackExport catch must have been invoked with the secondary
+      // rejection and routed to logger.warn.
+      expect(loggerWarn).toHaveBeenCalled();
+      const cleanupCall = loggerWarn.mock.calls.find((c) =>
+        typeof c[0] === 'string' && c[0].includes('export cleanup'),
+      );
+      expect(cleanupCall).toBeDefined();
+    });
+
+    it('silent swallow (no throw) when no logger is injected', async () => {
+      const failingExporter: TraceExporter = {
+        name: 'fail',
+        async exportSpan() { throw new Error('span boom'); },
+        async exportTrace() {},
+        async flush() {},
+      };
+      const tm = createTraceManager({
+        exporters: [failingExporter],
+        onExportError: () => { throw new Error('secondary failure'); },
+        // No logger — the fallback silent swallow must hold.
+      });
+      const tid = tm.startTrace('t');
+      const sid = tm.startSpan(tid, 's');
+      tm.endSpan(sid);
+      await expect(tm.flush()).resolves.toBeUndefined();
+    });
+  });
 });

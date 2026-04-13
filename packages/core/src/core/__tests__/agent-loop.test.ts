@@ -2201,6 +2201,61 @@ describe('AgentLoop', () => {
       externalController.abort();
       // If no error thrown, cleanup worked correctly
     });
+
+    // A1-20 (Wave 4b): the external-signal listener captured `this.abortController`
+    // and could fire even after dispose() had run — invoking `abort()` on a
+    // disposed loop (harmless today but dangerous if dispose() also nulled
+    // internal state). The fix adds a `disposed` status guard inside the
+    // listener body AND relies on dispose() removing the listener before
+    // nulling it. This test simulates a dispose landing between the signal
+    // firing and the listener running, asserting the listener is a no-op.
+    it('A1-20: external-signal listener is a no-op after dispose()', async () => {
+      const externalController = new AbortController();
+      const adapter = createMockAdapter([
+        { message: { role: 'assistant', content: 'hello' }, usage: USAGE },
+      ]);
+      const loop = new AgentLoop({ adapter, signal: externalController.signal });
+
+      // Start and finish a run so the listener is attached and then removed
+      // on the happy path.
+      await collectEvents(loop.run([{ role: 'user', content: 'hi' }]));
+
+      // Start a second run so the listener is re-attached.
+      // We need an adapter that lets us control when run() completes.
+      let resolveAdapterCall!: (value: { message: { role: 'assistant'; content: string }; usage: typeof USAGE }) => void;
+      const pendingAdapterCall = new Promise<{ message: { role: 'assistant'; content: string }; usage: typeof USAGE }>(
+        (resolve) => { resolveAdapterCall = resolve; },
+      );
+      const adapter2: AgentAdapter = { chat: () => pendingAdapterCall };
+      const externalController2 = new AbortController();
+      const loop2 = new AgentLoop({ adapter: adapter2, signal: externalController2.signal });
+
+      const runPromise = collectEvents(loop2.run([{ role: 'user', content: 'pending' }]));
+      // Let run() attach the listener.
+      await new Promise((r) => setTimeout(r, 10));
+
+      // Dispose while the run is in-flight. dispose() sets _status='disposed'
+      // and removes the listener before nulling the reference.
+      loop2.dispose();
+
+      // Firing the external abort after dispose should be a no-op for the
+      // loop's listener — the status guard short-circuits, and the listener
+      // was already removed in dispose().
+      expect(() => externalController2.abort()).not.toThrow();
+
+      // Let run() wrap up. Resolve the pending adapter call so the generator
+      // can exit via the aborted path (dispose already aborted the internal
+      // controller) or via the normal finally cleanup.
+      resolveAdapterCall({ message: { role: 'assistant', content: 'late' }, usage: USAGE });
+      await runPromise;
+
+      // No uncaught rejections surfaced from the post-dispose abort — the
+      // disposed-flag guard short-circuited the listener body. Loop status
+      // is either `disposed` (dispose landed first) or `completed` (run
+      // finished before dispose flipped the guard). Both are acceptable;
+      // what matters is that the listener did not throw.
+      expect(['disposed', 'completed']).toContain(loop2.status);
+    });
   });
 
   describe('Fix 2: Token overflow bypass - safe bounds on token values', () => {

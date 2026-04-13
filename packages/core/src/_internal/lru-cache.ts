@@ -9,12 +9,20 @@
  * @module
  */
 
+import { HarnessError } from '../core/errors.js';
+
 export class LRUCache<K, V> {
   private readonly map = new Map<K, V>();
 
   constructor(private readonly maxSize: number) {
     if (maxSize < 1) {
-      throw new Error('LRUCache maxSize must be >= 1');
+      // CQ-032: throw via HarnessError so wrappers can catch-by-.code
+      // instead of string-matching the message.
+      throw new HarnessError(
+        'LRUCache maxSize must be >= 1',
+        'INVALID_CONFIG',
+        'Use a value >= 1',
+      );
     }
   }
 

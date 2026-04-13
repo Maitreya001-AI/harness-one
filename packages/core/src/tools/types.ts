@@ -14,10 +14,26 @@ export interface ToolFeedback {
   readonly retryable: boolean;
 }
 
-/** Result of a tool execution — either success with data or failure with feedback. */
+/**
+ * Result of a tool execution — either success with data or failure with feedback.
+ *
+ * Discriminated by the `kind` tag, with `success: boolean` retained for
+ * backward compatibility. New consumers should switch on `result.kind` for
+ * exhaustive pattern-matching:
+ *
+ * ```ts
+ * switch (result.kind) {
+ *   case 'success': return use(result.data);
+ *   case 'error':   return handle(result.error);
+ *   // compile-time exhaustiveness — no `default` branch needed.
+ * }
+ * ```
+ *
+ * Existing code using `if (result.success)` continues to work unchanged.
+ */
 export type ToolResult<T = unknown> =
-  | { success: true; data: T }
-  | { success: false; error: ToolFeedback };
+  | { readonly kind: 'success'; readonly success: true; readonly data: T }
+  | { readonly kind: 'error'; readonly success: false; readonly error: ToolFeedback };
 
 /**
  * Middleware hook wrapping a single tool execution. Use middleware to add
@@ -102,7 +118,7 @@ export interface SchemaValidator {
  * ```
  */
 export function toolSuccess<T>(data: T): ToolResult<T> {
-  return { success: true, data };
+  return { kind: 'success', success: true, data };
 }
 
 /**
@@ -127,6 +143,7 @@ export function toolError(
   retryable = false,
 ): ToolResult<never> {
   return {
+    kind: 'error',
     success: false,
     error: { message, category, suggestedAction, retryable },
   };

@@ -8,6 +8,42 @@ import type { Guardrail, GuardrailContext } from './types.js';
 import { HarnessError } from '../core/errors.js';
 
 /**
+ * A1-19 (Wave 4b): AbortSignal-aware sleep.
+ *
+ * Rejects with a `HarnessError('SELF_HEALING_ABORTED')` if the signal fires
+ * during the sleep. On both resolution paths we clear the timer AND detach the
+ * listener — forgetting either side leaks a handle (the timer keeps the event
+ * loop alive; the listener keeps the AgentLoop/other host alive via the
+ * signal). `{ once: true }` gives us belt-and-braces for the abort case; we
+ * still call `removeEventListener` on success to stay robust against polyfills
+ * that don't honour `once`.
+ */
+function sleepWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new HarnessError('Self-healing aborted', 'SELF_HEALING_ABORTED', 'Abort fired before sleep started'));
+      return;
+    }
+    let onAbort: (() => void) | undefined;
+    const timeoutId = setTimeout(() => {
+      if (signal && onAbort) {
+        try { signal.removeEventListener('abort', onAbort); } catch { /* non-fatal */ }
+      }
+      resolve();
+    }, ms);
+    if (signal) {
+      onAbort = (): void => {
+        clearTimeout(timeoutId);
+        // removeEventListener is idempotent + safe if `once: true` already fired.
+        try { signal.removeEventListener('abort', onAbort as () => void); } catch { /* non-fatal */ }
+        reject(new HarnessError('Self-healing aborted', 'SELF_HEALING_ABORTED', 'Abort fired during backoff sleep'));
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
+  });
+}
+
+/**
  * Run content through guardrails with automatic retry and regeneration.
  *
  * **Early break behavior:** Self-healing breaks on the first guardrail failure
@@ -85,7 +121,18 @@ export async function withSelfHealing(
     // Exponential backoff with jitter: base * (0.5 + random * 0.5)
     const baseMs = Math.min(1000 * Math.pow(2, attempt - 1), 10_000);
     const backoffMs = baseMs * (0.5 + Math.random() * 0.5);
-    await new Promise((resolve) => setTimeout(resolve, backoffMs));
+    // A1-19 (Wave 4b): honour external abort during backoff. Previously we
+    // used a raw setTimeout so aborting during sleep kept the timer armed
+    // until natural expiry (wasted handle + delayed shutdown). `sleepWithAbort`
+    // clears the timer and detaches the listener on either resolution path.
+    try {
+      await sleepWithAbort(backoffMs, config.signal);
+    } catch (err) {
+      if (err instanceof HarnessError && err.code === 'SELF_HEALING_ABORTED') {
+        return { content, attempts: attempt, passed: false, ...(totalTokens !== undefined && { totalTokens }) };
+      }
+      throw err;
+    }
 
     const retryPrompt = config.buildRetryPrompt(content, failures);
 

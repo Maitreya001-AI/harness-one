@@ -149,15 +149,15 @@ export class AgentLoop {
   private readonly adapter: AgentAdapter;
   private readonly maxIterations: number;
   private readonly maxTotalTokens: number;
-  private readonly externalSignal?: AbortSignal | undefined;
-  private readonly onToolCall?: ((call: ToolCallRequest) => Promise<unknown>) | undefined;
-  private readonly tools?: ToolSchema[] | undefined;
-  private readonly maxConversationMessages?: number | undefined;
+  private readonly externalSignal?: AbortSignal;
+  private readonly onToolCall?: (call: ToolCallRequest) => Promise<unknown>;
+  private readonly tools?: ToolSchema[];
+  private readonly maxConversationMessages?: number;
   private readonly streaming: boolean;
   private readonly executionStrategy: ExecutionStrategy;
-  private readonly isSequentialTool?: ((name: string) => boolean) | undefined;
-  private readonly traceManager?: AgentLoopTraceManager | undefined;
-  private readonly toolTimeoutMs?: number | undefined;
+  private readonly isSequentialTool?: (name: string) => boolean;
+  private readonly traceManager?: AgentLoopTraceManager;
+  private readonly toolTimeoutMs?: number;
   private readonly maxStreamBytes: number;
   private readonly maxToolArgBytes: number;
   private readonly maxAdapterRetries: number;
@@ -182,14 +182,18 @@ export class AgentLoop {
     this.adapter = config.adapter;
     this.maxIterations = config.maxIterations ?? 25;
     this.maxTotalTokens = config.maxTotalTokens ?? Infinity;
-    this.externalSignal = config.signal;
-    this.onToolCall = config.onToolCall;
-    this.tools = config.tools;
+    // CQ-035: Under `exactOptionalPropertyTypes`, these optional fields are
+    // typed as `readonly field?: Type` (no explicit `| undefined`). Assign
+    // only when the source value is defined so we never set the property to
+    // `undefined` — leaving it absent instead.
+    if (config.signal !== undefined) this.externalSignal = config.signal;
+    if (config.onToolCall !== undefined) this.onToolCall = config.onToolCall;
+    if (config.tools !== undefined) this.tools = config.tools;
     this.maxConversationMessages = config.maxConversationMessages ?? 200;
     this.streaming = config.streaming ?? false;
-    this.isSequentialTool = config.isSequentialTool;
-    this.traceManager = config.traceManager;
-    this.toolTimeoutMs = config.toolTimeoutMs;
+    if (config.isSequentialTool !== undefined) this.isSequentialTool = config.isSequentialTool;
+    if (config.traceManager !== undefined) this.traceManager = config.traceManager;
+    if (config.toolTimeoutMs !== undefined) this.toolTimeoutMs = config.toolTimeoutMs;
     this.maxStreamBytes = config.maxStreamBytes ?? AgentLoop.MAX_STREAM_BYTES;
     this.maxToolArgBytes = config.maxToolArgBytes ?? AgentLoop.MAX_TOOL_ARG_BYTES;
     this.maxAdapterRetries = config.maxAdapterRetries ?? 0;
@@ -311,7 +315,16 @@ export class AgentLoop {
       if (this.externalSignal.aborted) {
         this.abortController.abort();
       } else {
+        // A1-20 (Wave 4b): the listener must short-circuit once dispose() has
+        // run. Previously dispose() nulled `_externalAbortHandler` but a
+        // listener already queued by the signal's `abort` event could still
+        // execute afterwards, invoking abort() on a disposed loop (and, when
+        // the order of operations in dispose() was unlucky, touching the
+        // nulled reference). Guard the body with a `disposed` status check so
+        // a post-dispose abort is a silent no-op, AND keep `{ once: true }` so
+        // the runtime auto-detaches on fire.
         this._externalAbortHandler = () => {
+          if (this._status === 'disposed') return;
           this.abortController.abort();
         };
         this.externalSignal.addEventListener('abort', this._externalAbortHandler, { once: true });

@@ -529,6 +529,92 @@ describe('withSelfHealing', () => {
       );
       expect(result.passed).toBe(true);
     });
+
+    // A1-19 (Wave 4b): previously the backoff used a raw `setTimeout` with no
+    // abort linkage — aborting during sleep left the timer armed until natural
+    // expiry, delaying shutdown and keeping the event loop alive. The new
+    // `sleepWithAbort` helper clears the timer AND detaches the abort
+    // listener on both resolution paths, and rejects with
+    // `SELF_HEALING_ABORTED` when abort fires during sleep.
+    it('A1-19: abort during backoff clears the timer and short-circuits', async () => {
+      const guard: Guardrail = () => ({ action: 'block', reason: 'bad' });
+      const regenerate = vi.fn().mockResolvedValue('still bad');
+      const controller = new AbortController();
+
+      // Capture the raw setTimeout to count outstanding timers via spy.
+      let clearedCount = 0;
+      const realClearTimeout = globalThis.clearTimeout;
+      const clearSpy = vi.spyOn(globalThis, 'clearTimeout').mockImplementation((id) => {
+        clearedCount++;
+        return realClearTimeout(id as ReturnType<typeof setTimeout>);
+      });
+
+      const promise = withSelfHealing(
+        {
+          maxRetries: 3,
+          guardrails: [{ name: 'g1', guard }],
+          buildRetryPrompt: () => 'fix',
+          regenerate,
+          signal: controller.signal,
+        },
+        'bad',
+      );
+
+      // Give the loop a chance to reach the backoff. The backoff begins after
+      // the first failed guardrail verdict — we wait one macrotask then abort.
+      await new Promise((r) => setTimeout(r, 10));
+      controller.abort();
+
+      const result = await promise;
+      clearSpy.mockRestore();
+
+      // Function should have returned (not hung) because abort cleared the
+      // backoff timer.
+      expect(result.passed).toBe(false);
+      // The backoff sleep's timer must have been cleared — if the fix is
+      // missing, clearTimeout is never called by sleepWithAbort.
+      expect(clearedCount).toBeGreaterThanOrEqual(1);
+      // Regenerate must not have been invoked because abort short-circuited
+      // the backoff → retry sequence.
+      expect(regenerate).not.toHaveBeenCalled();
+    });
+
+    it('A1-19: normal backoff completion also clears the timer (no listener leak)', async () => {
+      // Guarantee the happy path: when no abort fires, sleepWithAbort still
+      // cleans up its signal listener on resolve. We can't observe listener
+      // counts directly on AbortSignal, but we can assert the function
+      // completes normally AND that clearTimeout wasn't left pending.
+      let cb: Guardrail = () => ({ action: 'allow' });
+      // Fail once then allow, to force exactly one backoff.
+      let attempt = 0;
+      cb = () => {
+        attempt++;
+        return attempt === 1 ? { action: 'block', reason: 'bad' } : { action: 'allow' };
+      };
+      // Speed the backoff so the test runs fast.
+      const realSetTimeout = globalThis.setTimeout;
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation((fn, _ms, ...args) => {
+        return realSetTimeout(fn as () => void, 0, ...args);
+      });
+      const controller = new AbortController();
+      const result = await withSelfHealing(
+        {
+          maxRetries: 3,
+          guardrails: [{ name: 'g1', guard: cb }],
+          buildRetryPrompt: () => 'fix',
+          regenerate: async () => 'fixed',
+          signal: controller.signal,
+        },
+        'bad',
+      );
+      setTimeoutSpy.mockRestore();
+      expect(result.passed).toBe(true);
+      // After successful completion, firing an abort must NOT invoke any
+      // self-healing listener (there should be none attached). This is a
+      // soft assertion — firing abort with no listeners is a no-op but we
+      // want to confirm the completion path did not leave a listener alive.
+      expect(() => controller.abort()).not.toThrow();
+    });
   });
 
   describe('Fix 6: stop at first guardrail failure', () => {

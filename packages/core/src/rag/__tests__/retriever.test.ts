@@ -540,4 +540,56 @@ describe('createInMemoryRetriever', () => {
       }
     });
   });
+
+  // A1-8 (Wave 4b): the query-embedding LRU does `delete + set` across an
+  // `await embed(...)`; without `createLazyAsync`, two concurrent retrieves
+  // for the same uncached query both see a miss and both call the embedder.
+  // With createLazyAsync the second caller joins the in-flight promise.
+  describe('A1-8: concurrent identical retrieves share one embed() call', () => {
+    it('10 parallel retrieves of the same query invoke the embedder exactly once', async () => {
+      // Use a blocking embedder so all 10 retrieves definitely observe the
+      // miss before the first embed() resolves. Without the LazyAsync fix,
+      // each of the 10 would kick its own embed() call.
+      let resolveEmbed!: () => void;
+      const embedGate = new Promise<void>((resolve) => { resolveEmbed = resolve; });
+      const embedFn = vi.fn(async (texts: readonly string[]): Promise<readonly (readonly number[])[]> => {
+        await embedGate;
+        return texts.map(() => [1, 0, 0, 0]);
+      });
+      const slowEmbedding: EmbeddingModel = { dimensions: 4, embed: embedFn };
+      const retriever = createInMemoryRetriever({ embedding: slowEmbedding });
+      await retriever.index([chunk('c1', 'doc', [1, 0, 0, 0])]);
+
+      // Fire 10 identical retrieves concurrently.
+      const retrievals = Array.from({ length: 10 }, () => retriever.retrieve('same-query'));
+      // Let the microtask queue settle so all 10 have entered getQueryEmbedding.
+      await Promise.resolve();
+      // Release the embedder.
+      resolveEmbed();
+      const results = await Promise.all(retrievals);
+
+      // Exactly one embedder invocation across all 10 retrieves.
+      expect(embedFn).toHaveBeenCalledTimes(1);
+      // All retrieves return the same (non-empty) result shape.
+      expect(results.every((r) => Array.isArray(r))).toBe(true);
+    });
+
+    it('embedder rejection clears the lazy slot so the next retrieve retries', async () => {
+      let callCount = 0;
+      const embedFn = vi.fn(async (): Promise<readonly (readonly number[])[]> => {
+        callCount++;
+        if (callCount === 1) throw new Error('transient');
+        return [[1, 0, 0, 0]];
+      });
+      const flakyEmbedding: EmbeddingModel = { dimensions: 4, embed: embedFn };
+      const retriever = createInMemoryRetriever({ embedding: flakyEmbedding });
+      await retriever.index([chunk('c1', 'doc', [1, 0, 0, 0])]);
+
+      await expect(retriever.retrieve('q')).rejects.toThrow('transient');
+      // Second attempt must invoke the embedder again — the lazy slot is
+      // cleared on rejection.
+      await expect(retriever.retrieve('q')).resolves.toBeDefined();
+      expect(embedFn).toHaveBeenCalledTimes(2);
+    });
+  });
 });

@@ -11,6 +11,27 @@
 
 import { randomBytes, randomUUID } from 'node:crypto';
 
+import type { SessionId, SpanId, TraceId } from '../core/types.js';
+
+/**
+ * Brand a string as a {@link TraceId}. Trivial zero-cost cast at runtime;
+ * the brand is phantom. Use at the call site that *creates* a trace id so
+ * the rest of the codebase can reason about the branded type.
+ */
+export function asTraceId(id: string): TraceId {
+  return id as TraceId;
+}
+
+/** Brand a string as a {@link SpanId}. See {@link asTraceId}. */
+export function asSpanId(id: string): SpanId {
+  return id as SpanId;
+}
+
+/** Brand a string as a {@link SessionId}. See {@link asTraceId}. */
+export function asSessionId(id: string): SessionId {
+  return id as SessionId;
+}
+
 /**
  * 128-bit random identifier as a 32-character hex string.
  * Suitable as the core of any externally reachable ID.

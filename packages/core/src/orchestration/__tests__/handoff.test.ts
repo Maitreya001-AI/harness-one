@@ -320,4 +320,36 @@ describe('createHandoff', () => {
       expect(elapsedMs).toBeLessThan(500);
     });
   });
+
+  // A1-4 (Wave 4b): the send() body is "push into queue, then while
+  // queue.length > max pop()". The invariant is that no sequence of send()
+  // calls — concurrent from the caller's perspective — can leave the queue
+  // longer than maxInboxPerAgent. send() is synchronous and contains no
+  // `await`, so the critical section is atomic under JS's single-threaded
+  // event loop. This test stresses the bound by firing 200 sends "in
+  // parallel" (all scheduled in the same microtask via Promise.all) at
+  // maxInboxPerAgent=50 and asserts the final queue length is exactly 50.
+  describe('A1-4: inbox bound holds under concurrent send() storm', () => {
+    it('200 concurrent sends at maxInboxPerAgent=50 leave queue at 50', async () => {
+      const orch = createOrchestrator();
+      orch.register('sender', 'Sender');
+      orch.register('receiver', 'Receiver');
+      const h = createHandoff(orch, { maxInboxPerAgent: 50 });
+
+      // Schedule all sends in the same tick. Because send() is sync, they
+      // run sequentially on the event loop — but the assertion defends the
+      // invariant against any future refactor that introduces async ops
+      // inside send().
+      await Promise.all(
+        Array.from({ length: 200 }, (_, i) =>
+          Promise.resolve().then(() => h.send('sender', 'receiver', { summary: `msg-${i}` })),
+        ),
+      );
+
+      // Drain and count.
+      let count = 0;
+      while (h.receive('receiver') !== undefined) count++;
+      expect(count).toBe(50);
+    });
+  });
 });

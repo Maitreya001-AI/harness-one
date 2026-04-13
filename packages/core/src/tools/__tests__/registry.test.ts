@@ -122,7 +122,7 @@ describe('createRegistry', () => {
         name: 'echo',
         arguments: '{"text":"hello"}',
       });
-      expect(result).toEqual({ success: true, data: 'hello' });
+      expect(result).toEqual({ kind: 'success', success: true, data: 'hello' });
     });
 
     it('returns not_found for unknown tool', async () => {
@@ -572,7 +572,7 @@ describe('createRegistry', () => {
         name: 'fail',
         description: 'Failing tool',
         parameters: { type: 'object' },
-        execute: async () => ({ success: false as const, error: { message: 'boom', category: 'execution' as const } }),
+        execute: async () => ({ kind: 'error' as const, success: false as const, error: { message: 'boom', category: 'execution' as const } }),
       });
       const registry = createRegistry({ maxCallsPerTurn: 1 });
       registry.register(failTool);

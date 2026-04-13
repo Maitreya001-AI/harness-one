@@ -5,6 +5,8 @@
  */
 
 import { HarnessError } from '../core/errors.js';
+import { asSpanId, asTraceId } from '../_internal/ids.js';
+import type { SpanId, TraceId } from '../core/types.js';
 import {
   createRedactor,
   sanitizeAttributes,
@@ -34,9 +36,9 @@ export interface TraceManager {
    * `trace.userMetadata`. System-authored metadata is emitted via
    * `setTraceSystemMetadata()` and kept on `trace.systemMetadata`.
    */
-  startTrace(name: string, metadata?: Record<string, unknown>): string;
+  startTrace(name: string, metadata?: Record<string, unknown>): TraceId;
   /** Start a new span within a trace. Returns the span ID. */
-  startSpan(traceId: string, name: string, parentId?: string): string;
+  startSpan(traceId: string, name: string, parentId?: string): SpanId;
   /** Add an event to a span. */
   addSpanEvent(spanId: string, event: Omit<SpanEvent, 'timestamp'>): void;
   /** Set attributes on a span. */
@@ -202,7 +204,21 @@ export function createTraceManager(config?: {
     // PERF-016: `.finally()` alone can leak when the underlying promise
     // rejects and a handler in finally throws — swallow the rejection first
     // so the delete callback is guaranteed to run.
-    p.catch(() => {}).finally(() => pendingExports.delete(p));
+    //
+    // CQ-036 (Wave 4b): route swallowed rejections to the injected logger
+    // so ops can see tracker-cleanup failures. Falls back to silent swallow
+    // only when no logger is configured — spurious stderr from a library is
+    // worse than a loud but unnoticed warning in a fleet without logging.
+    p.catch((err: unknown) => {
+      if (logger) {
+        try {
+          logger.warn('[harness-one] export cleanup caught rejection', { error: err });
+        } catch {
+          // Logger itself threw — nothing more we can do without recursing.
+        }
+      }
+      // Intentional silent fallback when no logger is injected.
+    }).finally(() => pendingExports.delete(p));
   }
 
   function exportSpanTo(exporter: TraceExporter, span: Span): void {
@@ -213,11 +229,15 @@ export function createTraceManager(config?: {
     trackExport(p);
   }
 
-  function exportTraceTo(exporter: TraceExporter, trace: Trace): void {
+  function exportTraceTo(exporter: TraceExporter, trace: Trace, sampleRate: number): void {
     if (exporter.isHealthy && !exporter.isHealthy()) return;
     if (exporter.shouldExport && !exporter.shouldExport(trace)) return;
-    // Global sampling: when no per-exporter hook, apply defaultSamplingRate.
-    if (!exporter.shouldExport && samplingRate < 1 && Math.random() >= samplingRate) return;
+    // LM-011 (Wave 4b): global sampling decision uses the rate captured at
+    // trace-start, NOT the live `samplingRate` closure variable. Mid-flight
+    // `setSamplingRate()` calls must not change the verdict for traces that
+    // have already begun — otherwise ops can silently drop traces the
+    // application has already decided to keep.
+    if (!exporter.shouldExport && sampleRate < 1 && Math.random() >= sampleRate) return;
     const p = ensureInitialized(exporter)
       .then(() => exporter.exportTrace(trace))
       .catch(reportExportError);
@@ -247,6 +267,14 @@ export function createTraceManager(config?: {
     systemMetadata: Record<string, unknown>;
     spanIds: string[];
     status: 'running' | 'completed' | 'error';
+    /**
+     * LM-011 (Wave 4b): sampling rate captured at trace-start. Read by
+     * `exportTraceTo()` when the trace ends so a runtime `setSamplingRate()`
+     * call does NOT change the sampling verdict for already-in-flight traces.
+     * Gives per-trace sampling determinism — a trace started at rate=1.0 is
+     * guaranteed to export even if sampling was lowered before it ended.
+     */
+    samplingRateSnapshot: number;
   }
 
   const traces = new Map<string, MutableTrace>();
@@ -419,7 +447,7 @@ export function createTraceManager(config?: {
   }
 
   return {
-    startTrace(name: string, metadata?: Record<string, unknown>): string {
+    startTrace(name: string, metadata?: Record<string, unknown>): TraceId {
       // LM-016: If the caller has configured ≥1 exporter AND every exporter
       // declares an `isHealthy()` hook AND every one of those hooks returns
       // false, there is no point admitting this trace to the map — no
@@ -434,7 +462,7 @@ export function createTraceManager(config?: {
       if (allExportersUnhealthy) {
         const deadId = `${DEAD_TRACE_PREFIX}${genId()}`;
         deadTraceIds.add(deadId);
-        return deadId;
+        return asTraceId(deadId);
       }
 
       const id = genId();
@@ -451,20 +479,22 @@ export function createTraceManager(config?: {
         systemMetadata: {},
         spanIds: [],
         status: 'running',
+        // LM-011 (Wave 4b): snapshot current sampling rate at trace-start.
+        samplingRateSnapshot: samplingRate,
       });
       appendTraceOrder(id);
       evictIfNeeded();
-      return id;
+      return asTraceId(id);
     },
 
-    startSpan(traceId: string, name: string, parentId?: string): string {
+    startSpan(traceId: string, name: string, parentId?: string): SpanId {
       // LM-016: Dead trace handle — return a dead span id that every later
       // operation treats as a no-op. Mirrors startTrace's evict-at-birth
       // semantics so callers don't need special-casing.
       if (deadTraceIds.has(traceId)) {
         const deadSpanId = `${DEAD_SPAN_PREFIX}${genId()}`;
         deadSpanIds.add(deadSpanId);
-        return deadSpanId;
+        return asSpanId(deadSpanId);
       }
       const trace = traces.get(traceId);
       if (!trace) {
@@ -499,7 +529,7 @@ export function createTraceManager(config?: {
         status: 'running',
       });
       trace.spanIds.push(id);
-      return id;
+      return asSpanId(id);
     },
 
     addSpanEvent(spanId: string, event: Omit<SpanEvent, 'timestamp'>): void {
@@ -627,9 +657,12 @@ export function createTraceManager(config?: {
       removeTraceOrder(traceId);
 
       // Export — respects isHealthy(), shouldExport(), lazy initialize(), and samplingRate.
+      // LM-011 (Wave 4b): pass the rate captured at trace-start so concurrent
+      // `setSamplingRate()` calls can't flip the decision.
       const readonlyTrace = toReadonlyTrace(trace);
+      const rateAtStart = trace.samplingRateSnapshot;
       for (const exporter of exporters) {
-        exportTraceTo(exporter, readonlyTrace);
+        exportTraceTo(exporter, readonlyTrace, rateAtStart);
       }
     },
 

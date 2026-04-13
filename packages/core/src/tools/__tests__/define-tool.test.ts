@@ -6,7 +6,18 @@ import { HarnessError } from '../../core/errors.js';
 describe('toolSuccess', () => {
   it('returns a success result', () => {
     const result = toolSuccess(42);
-    expect(result).toEqual({ success: true, data: 42 });
+    expect(result).toEqual({ kind: 'success', success: true, data: 42 });
+  });
+
+  it('emits a discriminated union with kind === "success"', () => {
+    const result = toolSuccess('ok');
+    if (result.kind === 'success') {
+      // TypeScript narrows to the success arm based on `kind`.
+      expect(result.data).toBe('ok');
+      expect(result.success).toBe(true);
+    } else {
+      throw new Error('expected kind=success');
+    }
   });
 
   it('works with complex data', () => {
@@ -23,6 +34,7 @@ describe('toolError', () => {
   it('returns a failure result with feedback', () => {
     const result = toolError('not found', 'not_found', 'Check the path');
     expect(result).toEqual({
+      kind: 'error',
       success: false,
       error: {
         message: 'not found',
@@ -31,6 +43,16 @@ describe('toolError', () => {
         retryable: false,
       },
     });
+  });
+
+  it('emits a discriminated union with kind === "error"', () => {
+    const result = toolError('nope', 'validation', 'try again');
+    if (result.kind === 'error') {
+      expect(result.error.category).toBe('validation');
+      expect(result.success).toBe(false);
+    } else {
+      throw new Error('expected kind=error');
+    }
   });
 
   it('supports retryable flag', () => {
@@ -73,7 +95,7 @@ describe('defineTool', () => {
 
   it('executes successfully', async () => {
     const result = await echoTool.execute({ text: 'hello' });
-    expect(result).toEqual({ success: true, data: 'hello' });
+    expect(result).toEqual({ kind: 'success', success: true, data: 'hello' });
   });
 
   it('catches thrown errors and returns toolError', async () => {

@@ -80,25 +80,33 @@ describe('createTiktokenTokenizer', () => {
     expect(result.length).toBe(0);
   });
 
-  it('throws a clear error when encoding_for_model fails (unsupported model)', () => {
+  it('CQ-044: falls back to a heuristic encoder when encoding_for_model fails and warns once', async () => {
+    const warn = vi.fn();
+    // Re-import the currently-loaded module (reset in beforeEach) to grab the
+    // fallback-warner setter without triggering a second reset.
+    const mod = await import('../index.js');
+    mod.setTiktokenFallbackWarner(warn);
     mockEncodingForModel.mockImplementationOnce(() => {
       throw new Error('Unknown model: totally-fake-model');
     });
-    expect(() => createTiktokenTokenizer('totally-fake-model')).toThrow(
-      'Unsupported or failed tiktoken model: "totally-fake-model"'
-    );
+    const tokenizer = mod.createTiktokenTokenizer('totally-fake-model');
+    // Fallback is a heuristic — ~len/4 + 4 framing overhead.
+    expect(tokenizer.encode('hello world').length).toBe(Math.ceil('hello world'.length / 4) + 4);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith('Tokenizer fallback for unknown model', 'totally-fake-model');
   });
 
-  it('includes the model name and original error in the error message', () => {
-    mockEncodingForModel.mockImplementationOnce(() => {
-      throw new Error('no model found');
+  it('CQ-044: warns at most once per fallback model even across repeated calls', async () => {
+    const warn = vi.fn();
+    const mod = await import('../index.js');
+    mod.setTiktokenFallbackWarner(warn);
+    mockEncodingForModel.mockImplementation(() => {
+      throw new Error('unknown');
     });
-    try {
-      createTiktokenTokenizer('claude-3-opus');
-    } catch (err) {
-      expect((err as Error).message).toContain('claude-3-opus');
-      expect((err as Error).message).toContain('no model found');
-    }
+    mod.createTiktokenTokenizer('fake-model');
+    mod.createTiktokenTokenizer('fake-model');
+    mod.createTiktokenTokenizer('fake-model');
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 
   it('delegates model validation to tiktoken instead of using a hardcoded list', () => {

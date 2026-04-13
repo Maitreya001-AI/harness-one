@@ -221,24 +221,41 @@ export function createHarness(config: HarnessConfig): Harness {
   if (!config.adapter && !(config as AnthropicHarnessConfig | OpenAIHarnessConfig).client) {
     throw new HarnessError('Either adapter or client must be provided', 'INVALID_CONFIG', 'Pass a pre-built adapter or a provider client');
   }
-  if (config.maxIterations !== undefined && (config.maxIterations <= 0 || !Number.isFinite(config.maxIterations))) {
-    throw new HarnessError('maxIterations must be a finite positive number', 'INVALID_CONFIG', 'Use a value >= 1');
+  // CQ-039: Require finite positive *integers* for iteration / token caps so
+  // fractional values (25.7), non-finite ones (`NaN`, `Infinity`, `-Infinity`)
+  // and negatives are rejected uniformly. `Number.isFinite` admits `0` and
+  // negatives, and prior `<= 0 || !isFinite` left `NaN` comparisons
+  // (which evaluate to `false` for both) as a silent accept.
+  if (
+    config.maxIterations !== undefined &&
+    (!Number.isInteger(config.maxIterations) || config.maxIterations <= 0)
+  ) {
+    throw new HarnessError('maxIterations must be a positive integer', 'INVALID_CONFIG', 'Use an integer value >= 1');
   }
-  if (config.maxTotalTokens !== undefined && (config.maxTotalTokens <= 0 || !Number.isFinite(config.maxTotalTokens))) {
-    throw new HarnessError('maxTotalTokens must be a finite positive number', 'INVALID_CONFIG', 'Use a value >= 1');
+  if (
+    config.maxTotalTokens !== undefined &&
+    (!Number.isInteger(config.maxTotalTokens) || config.maxTotalTokens <= 0)
+  ) {
+    throw new HarnessError('maxTotalTokens must be a positive integer', 'INVALID_CONFIG', 'Use an integer value >= 1');
   }
-  if (config.budget !== undefined && (config.budget <= 0 || !Number.isFinite(config.budget))) {
+  // Budget is cost in currency units — may be fractional, but must be
+  // finite and strictly positive.
+  if (
+    config.budget !== undefined &&
+    (!Number.isFinite(config.budget) || config.budget <= 0)
+  ) {
     throw new HarnessError('budget must be a finite positive number', 'INVALID_CONFIG', 'Use a value > 0');
   }
 
-  // Validate guardrails sub-config
+  // Validate guardrails sub-config — rate-limit max/windowMs are counts, so
+  // integer-only. Same defence-in-depth against NaN/Infinity as above.
   if (config.guardrails?.rateLimit) {
     const rl = config.guardrails.rateLimit;
-    if (rl.max <= 0 || !Number.isFinite(rl.max)) {
-      throw new HarnessError('guardrails.rateLimit.max must be a finite positive number', 'INVALID_CONFIG', 'Use a value >= 1');
+    if (!Number.isInteger(rl.max) || rl.max <= 0) {
+      throw new HarnessError('guardrails.rateLimit.max must be a positive integer', 'INVALID_CONFIG', 'Use an integer value >= 1');
     }
-    if (rl.windowMs <= 0 || !Number.isFinite(rl.windowMs)) {
-      throw new HarnessError('guardrails.rateLimit.windowMs must be a finite positive number', 'INVALID_CONFIG', 'Use a value >= 1');
+    if (!Number.isInteger(rl.windowMs) || rl.windowMs <= 0) {
+      throw new HarnessError('guardrails.rateLimit.windowMs must be a positive integer', 'INVALID_CONFIG', 'Use an integer value >= 1');
     }
   }
 
@@ -287,6 +304,18 @@ export function createHarness(config: HarnessConfig): Harness {
           ? { encode: (text: string) => ({ length: (customTokenizer as (t: string) => number)(text) }) }
           : customTokenizer;
       registerTokenizer(config.model, tok);
+    } else {
+      // CQ-038: Previously a silent no-op when a function/object tokenizer was
+      // supplied without a model — the tokenizer would be stored on the harness
+      // but never wired to `countTokens()`. Warn loudly so misconfiguration
+      // surfaces instead of hiding behind "why isn't my tokenizer being
+      // called?". Logger is resolved here because `logger` isn't yet
+      // constructed at this point; fall back to `console.warn` until then.
+      (config.logger?.warn ?? console.warn)(
+        'harness-one: custom tokenizer supplied but config.model is not set; ' +
+        'tokenizer will not be auto-registered. Pass config.model or call ' +
+        'registerTokenizer() manually.',
+      );
     }
   }
 

@@ -34,10 +34,12 @@ describe('fs-io corruption detection', () => {
     await expect(io.readIndex()).rejects.toBeInstanceOf(HarnessError);
   });
 
-  it('readIndex: throws STORE_CORRUPTION when keys contains non-string id', async () => {
+  it('readIndex: throws MEMORY_CORRUPT when keys contains non-string id', async () => {
+    // CQ-045: shape-validation path now emits `MEMORY_CORRUPT` to
+    // distinguish persisted-shape corruption from other store-level errors.
     const io = createFileIO({ directory: dir });
     writeFileSync(join(dir, '_index.json'), JSON.stringify({ keys: { a: 42 } }));
-    await expect(io.readIndex()).rejects.toMatchObject({ code: 'STORE_CORRUPTION' });
+    await expect(io.readIndex()).rejects.toMatchObject({ code: 'MEMORY_CORRUPT' });
   });
 
   it('readIndex: returns empty on ENOENT (first run)', async () => {
@@ -51,7 +53,9 @@ describe('fs-io corruption detection', () => {
     await expect(io.readEntry('id1')).rejects.toMatchObject({ code: 'STORE_CORRUPTION' });
   });
 
-  it('readEntry: throws STORE_CORRUPTION on shape mismatch (bad grade)', async () => {
+  it('readEntry: throws MEMORY_CORRUPT on shape mismatch (bad grade)', async () => {
+    // CQ-045: shape mismatches now emit `MEMORY_CORRUPT` from the
+    // `_schemas.ts` validator.
     const io = createFileIO({ directory: dir });
     writeFileSync(
       join(dir, 'id2.json'),
@@ -64,7 +68,7 @@ describe('fs-io corruption detection', () => {
         updatedAt: 1,
       }),
     );
-    await expect(io.readEntry('id2')).rejects.toMatchObject({ code: 'STORE_CORRUPTION' });
+    await expect(io.readEntry('id2')).rejects.toMatchObject({ code: 'MEMORY_CORRUPT' });
   });
 
   it('readEntry: returns null on ENOENT', async () => {

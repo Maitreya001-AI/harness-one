@@ -7,10 +7,12 @@
 import type { Guardrail, GuardrailContext, GuardrailEvent, PipelineResult } from './types.js';
 import { HarnessError } from '../core/errors.js';
 
-/** Unique symbol used as a brand key for pipeline internal data. */
-const PIPELINE_BRAND = Symbol('GuardrailPipeline');
-
-/** Branded pipeline type to prevent direct construction. */
+/**
+ * Branded pipeline type — an opaque token returned by {@link createPipeline}.
+ * The internal state lives in a module-scoped WeakMap keyed by the token,
+ * so consumers cannot reach in and mutate it, and no `as unknown as` dance
+ * is needed to recover it.
+ */
 export interface GuardrailPipeline {
   readonly _brand: unique symbol;
 }
@@ -29,14 +31,19 @@ interface PipelineInternalData {
   maxResults: number;
 }
 
-/** A branded pipeline object that carries internal data via a symbol key. */
-interface BrandedPipeline {
-  [PIPELINE_BRAND]: PipelineInternalData;
-}
+/**
+ * CQ-031: private registry mapping pipeline tokens → internal state. A
+ * `WeakMap` lets us hand out opaque tokens (`GuardrailPipeline`) while keeping
+ * their state out of the object itself — callers cannot observe or mutate it,
+ * and no double-cast is needed to recover it from inside this module.
+ *
+ * The WeakMap holds only weak references to tokens, so once a consumer drops
+ * their pipeline handle the internal state is eligible for garbage collection.
+ */
+const internalRegistry: WeakMap<GuardrailPipeline, PipelineInternalData> = new WeakMap();
 
 function getInternal(pipeline: GuardrailPipeline): PipelineInternalData {
-  const branded = pipeline as unknown as Partial<BrandedPipeline>;
-  const data = branded[PIPELINE_BRAND];
+  const data = internalRegistry.get(pipeline);
   if (!data) {
     throw new HarnessError('Invalid GuardrailPipeline instance', 'INVALID_PIPELINE', 'Use createPipeline() to create pipelines');
   }
@@ -97,8 +104,13 @@ export function createPipeline(config: {
     onEvent: config.onEvent,
     maxResults: config.maxResults ?? 1000,
   };
-  const branded: BrandedPipeline = { [PIPELINE_BRAND]: internalData };
-  return branded as unknown as GuardrailPipeline;
+  // CQ-031: the public `GuardrailPipeline` token is a plain opaque object.
+  // Its internal state lives in the module-scoped `internalRegistry` WeakMap
+  // so consumers cannot reach in and mutate it. `Object.freeze` prevents
+  // tampering via property writes on the token itself.
+  const pipeline = Object.freeze({}) as GuardrailPipeline;
+  internalRegistry.set(pipeline, internalData);
+  return pipeline;
 }
 
 /**

@@ -23,10 +23,60 @@ function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
+/**
+ * CQ-045: Type-guard for {@link MemoryEntry}. Returns `true` iff the value
+ * matches the full shape of a memory entry, so TypeScript can narrow the
+ * callsite without an `as unknown as` escape hatch.
+ *
+ * The guard is deliberately exhaustive — every field is checked at runtime
+ * so an interrupted write or manual edit cannot slip past the boundary.
+ */
+export function isMemoryEntry(v: unknown): v is MemoryEntry {
+  if (!isObject(v)) return false;
+  if (typeof v.id !== 'string' || v.id.length === 0) return false;
+  if (typeof v.key !== 'string') return false;
+  if (typeof v.content !== 'string') return false;
+  if (typeof v.grade !== 'string' || !GRADES.includes(v.grade as MemoryGrade)) return false;
+  if (typeof v.createdAt !== 'number' || !Number.isFinite(v.createdAt)) return false;
+  if (typeof v.updatedAt !== 'number' || !Number.isFinite(v.updatedAt)) return false;
+  if (v.metadata !== undefined && !isObject(v.metadata)) return false;
+  if (v.tags !== undefined) {
+    if (!Array.isArray(v.tags)) return false;
+    for (let i = 0; i < v.tags.length; i++) {
+      if (typeof v.tags[i] !== 'string') return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * CQ-045: Type-guard for versioned {@link RelayState} blobs. See
+ * {@link isMemoryEntry} — same rationale.
+ */
+export function isRelayState(v: unknown): v is RelayState & { _version?: number } {
+  if (!isObject(v)) return false;
+  if (!isObject(v.progress)) return false;
+  if (!Array.isArray(v.artifacts)) return false;
+  for (let i = 0; i < v.artifacts.length; i++) {
+    if (typeof v.artifacts[i] !== 'string') return false;
+  }
+  if (typeof v.checkpoint !== 'string') return false;
+  if (typeof v.timestamp !== 'number' || !Number.isFinite(v.timestamp)) return false;
+  if (v._version !== undefined && (typeof v._version !== 'number' || !Number.isFinite(v._version))) {
+    return false;
+  }
+  return true;
+}
+
 function fail(path: string, reason: string, source: string): never {
+  // CQ-045: Tag these throws with `MEMORY_CORRUPT` so harness wrappers can
+  // distinguish memory-persistence corruption from other
+  // `STORE_CORRUPTION` sources via `.code`. The legacy `STORE_CORRUPTION`
+  // code is still recognised by consumer error handlers — see errors.ts —
+  // but the memory subsystem now emits `MEMORY_CORRUPT` specifically.
   throw new HarnessError(
     `Corrupted ${source}: ${reason} at ${path}`,
-    'STORE_CORRUPTION',
+    'MEMORY_CORRUPT',
     'Inspect the backing store for manual edits, partial writes, or schema drift. ' +
       'If the data is recoverable, re-serialize it; otherwise delete the affected entry.',
   );
@@ -35,38 +85,42 @@ function fail(path: string, reason: string, source: string): never {
 /** Validate shape of a MemoryEntry parsed from disk/network. */
 export function validateMemoryEntry(v: unknown, source = 'memory entry'): MemoryEntry {
   if (!isObject(v)) fail('$', 'expected object', source);
-  const o = v as Record<string, unknown>;
 
-  if (typeof o.id !== 'string' || o.id.length === 0) fail('$.id', 'expected non-empty string', source);
-  if (typeof o.key !== 'string') fail('$.key', 'expected string', source);
-  if (typeof o.content !== 'string') fail('$.content', 'expected string', source);
-  if (typeof o.grade !== 'string' || !GRADES.includes(o.grade as MemoryGrade)) {
+  if (typeof v.id !== 'string' || v.id.length === 0) fail('$.id', 'expected non-empty string', source);
+  if (typeof v.key !== 'string') fail('$.key', 'expected string', source);
+  if (typeof v.content !== 'string') fail('$.content', 'expected string', source);
+  if (typeof v.grade !== 'string' || !GRADES.includes(v.grade as MemoryGrade)) {
     fail('$.grade', `expected one of [${GRADES.join(', ')}]`, source);
   }
-  if (typeof o.createdAt !== 'number' || !Number.isFinite(o.createdAt)) {
+  if (typeof v.createdAt !== 'number' || !Number.isFinite(v.createdAt)) {
     fail('$.createdAt', 'expected finite number', source);
   }
-  if (typeof o.updatedAt !== 'number' || !Number.isFinite(o.updatedAt)) {
+  if (typeof v.updatedAt !== 'number' || !Number.isFinite(v.updatedAt)) {
     fail('$.updatedAt', 'expected finite number', source);
   }
-  if (o.metadata !== undefined && !isObject(o.metadata)) {
+  if (v.metadata !== undefined && !isObject(v.metadata)) {
     fail('$.metadata', 'expected object or undefined', source);
   }
-  if (o.tags !== undefined) {
-    if (!Array.isArray(o.tags)) fail('$.tags', 'expected array or undefined', source);
-    for (let i = 0; i < o.tags.length; i++) {
-      if (typeof o.tags[i] !== 'string') fail(`$.tags[${i}]`, 'expected string', source);
+  if (v.tags !== undefined) {
+    if (!Array.isArray(v.tags)) fail('$.tags', 'expected array or undefined', source);
+    for (let i = 0; i < v.tags.length; i++) {
+      if (typeof v.tags[i] !== 'string') fail(`$.tags[${i}]`, 'expected string', source);
     }
   }
-  return o as unknown as MemoryEntry;
+  // CQ-045: `isMemoryEntry` narrows `v` to `MemoryEntry` via the TS type
+  // guard, replacing the old `as unknown as MemoryEntry` escape hatch. The
+  // per-field checks above fail early with a precise JSON-path for
+  // diagnostics; this final call is a belt-and-braces narrowing that also
+  // guards against schema drift creeping ahead of the individual checks.
+  if (!isMemoryEntry(v)) fail('$', 'failed full-shape guard', source);
+  return v;
 }
 
 /** Validate shape of an Index file. */
 export function validateIndex(v: unknown): Index {
   if (!isObject(v)) fail('$', 'expected object', 'memory index');
-  const o = v as Record<string, unknown>;
-  if (!isObject(o.keys)) fail('$.keys', 'expected object', 'memory index');
-  const keys = o.keys as Record<string, unknown>;
+  if (!isObject(v.keys)) fail('$.keys', 'expected object', 'memory index');
+  const keys = v.keys;
   for (const [k, id] of Object.entries(keys)) {
     if (typeof id !== 'string' || id.length === 0) {
       fail(`$.keys[${JSON.stringify(k)}]`, 'expected non-empty string id', 'memory index');
@@ -78,20 +132,22 @@ export function validateIndex(v: unknown): Index {
 /** Validate shape of a versioned relay state blob parsed from entry.content. */
 export function validateRelayState(v: unknown): RelayState & { _version?: number } {
   if (!isObject(v)) fail('$', 'expected object', 'relay state');
-  const o = v as Record<string, unknown>;
-  if (!isObject(o.progress)) fail('$.progress', 'expected object', 'relay state');
-  if (!Array.isArray(o.artifacts)) fail('$.artifacts', 'expected array', 'relay state');
-  for (let i = 0; i < o.artifacts.length; i++) {
-    if (typeof o.artifacts[i] !== 'string') fail(`$.artifacts[${i}]`, 'expected string', 'relay state');
+  if (!isObject(v.progress)) fail('$.progress', 'expected object', 'relay state');
+  if (!Array.isArray(v.artifacts)) fail('$.artifacts', 'expected array', 'relay state');
+  for (let i = 0; i < v.artifacts.length; i++) {
+    if (typeof v.artifacts[i] !== 'string') fail(`$.artifacts[${i}]`, 'expected string', 'relay state');
   }
-  if (typeof o.checkpoint !== 'string') fail('$.checkpoint', 'expected string', 'relay state');
-  if (typeof o.timestamp !== 'number' || !Number.isFinite(o.timestamp)) {
+  if (typeof v.checkpoint !== 'string') fail('$.checkpoint', 'expected string', 'relay state');
+  if (typeof v.timestamp !== 'number' || !Number.isFinite(v.timestamp)) {
     fail('$.timestamp', 'expected finite number', 'relay state');
   }
-  if (o._version !== undefined && (typeof o._version !== 'number' || !Number.isFinite(o._version))) {
+  if (v._version !== undefined && (typeof v._version !== 'number' || !Number.isFinite(v._version))) {
     fail('$._version', 'expected finite number or undefined', 'relay state');
   }
-  return o as unknown as RelayState & { _version?: number };
+  // CQ-045: `isRelayState` narrows via the TS type guard, replacing the
+  // previous `as unknown as RelayState` cast.
+  if (!isRelayState(v)) fail('$', 'failed full-shape guard', 'relay state');
+  return v;
 }
 
 /** Safe JSON.parse wrapper: returns `{ ok: true, value }` or `{ ok: false, error }`. */

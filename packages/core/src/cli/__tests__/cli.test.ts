@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { parseArgs, getTemplate, auditProject, ALL_MODULES, MODULE_DESCRIPTIONS, FILE_NAMES, c, SUPPORTS_COLOR, writeModuleFiles, runInit, runAudit, showHelp } from '../index.js';
 import { scanFiles, maturityLabel } from '../audit.js';
 import type { ModuleName, ParsedArgs } from '../index.js';
+import { HarnessError } from '../../core/errors.js';
 import { mkdirSync, writeFileSync, rmSync, existsSync, symlinkSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -67,6 +68,16 @@ describe('CLI argument parser', () => {
     expect(() =>
       parseArgs(['node', 'harness-one', 'init', '--all', '--modules', 'core,tools']),
     ).toThrow('Conflicting flags: --all and --modules cannot be used together');
+  });
+
+  it('CQ-040: throws HarnessError with CLI_PARSE_ERROR code on conflicting flags', () => {
+    try {
+      parseArgs(['node', 'harness-one', 'init', '--all', '--modules', 'core,tools']);
+      throw new Error('expected throw');
+    } catch (err) {
+      expect(err).toBeInstanceOf(HarnessError);
+      expect((err as HarnessError).code).toBe('CLI_PARSE_ERROR');
+    }
   });
 
   it('returns empty modules when --modules flag has no value', () => {

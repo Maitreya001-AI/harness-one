@@ -4,9 +4,11 @@
  * @module
  */
 
+import type { SessionId } from '../core/types.js';
+
 /** A managed session. */
 export interface Session {
-  readonly id: string;
+  readonly id: SessionId;
   readonly createdAt: number;
   readonly lastAccessedAt: number;
   readonly metadata: Record<string, unknown>;
@@ -16,7 +18,7 @@ export interface Session {
 /** An event emitted during session lifecycle. */
 export interface SessionEvent {
   readonly type: 'created' | 'accessed' | 'locked' | 'unlocked' | 'expired' | 'destroyed' | 'evicted';
-  readonly sessionId: string;
+  readonly sessionId: SessionId;
   readonly timestamp: number;
   /** Present on 'evicted' events to indicate the reason for eviction. */
   readonly reason?: string;

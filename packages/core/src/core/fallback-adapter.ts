@@ -9,6 +9,7 @@
 
 import type { AgentAdapter, ChatParams, ChatResponse, StreamChunk } from './types.js';
 import { HarnessError } from './errors.js';
+import { createAsyncLock } from '../_internal/async-lock.js';
 
 /** Configuration for the fallback adapter. */
 export interface FallbackAdapterConfig {
@@ -39,39 +40,30 @@ export function createFallbackAdapter(config: FallbackAdapterConfig): AgentAdapt
   const maxFailures = config.maxFailures ?? 3;
   let currentIndex = 0;
   let failureCount = 0;
-  // Mutex for adapter switch: concurrent failures wait for any in-progress
-  // switch to complete before proceeding, preventing race conditions where
-  // two concurrent calls both increment failureCount and both trigger a switch.
-  let pendingSwitch: Promise<void> | null = null;
+  // CQ-037 (Wave 4b): AsyncLock-backed mutex around the failure/switch flow.
+  // The previous `pendingSwitch: Promise<void> | null` flag was racy: two
+  // concurrent failures could both see `pendingSwitch === null`, both
+  // increment `failureCount`, and both trigger a switch. Serialising the
+  // "read counter -> conditionally advance index" critical section via
+  // AsyncLock guarantees that only the first over-threshold caller advances
+  // the index; the rest observe the already-reset counter and take no action.
+  const switchLock = createAsyncLock();
 
-  async function handleFailure(): Promise<void> {
-    // If a switch is already in progress, wait for it to complete and return.
-    // The in-progress switch will have already reset failureCount, so we
-    // avoid double-switching.
-    if (pendingSwitch) {
-      await pendingSwitch;
-      return;
-    }
-    failureCount++;
-    if (failureCount >= maxFailures && currentIndex < adapters.length - 1) {
-      // Use a deferred-resolve pattern:
-      // 1. Set pendingSwitch BEFORE mutations so concurrent callers see it.
-      // 2. Perform synchronous state mutations.
-      // 3. Resolve the promise (so waiters can proceed).
-      // 4. Yield once via `await`, giving concurrent callers a chance to run.
-      // 5. Set pendingSwitch = null AFTER the await, so it's null for the
-      //    next sequential caller but non-null while concurrent callers check.
-      let resolvePending!: () => void;
-      const switchPromise = new Promise<void>((resolve) => {
-        resolvePending = resolve;
-      });
-      pendingSwitch = switchPromise;
-      currentIndex = (currentIndex + 1) % adapters.length;
-      failureCount = 0;
-      resolvePending();
-      await switchPromise;
-      pendingSwitch = null;
-    }
+  async function handleFailure(adapterBefore: number): Promise<void> {
+    await switchLock.withLock(async () => {
+      // CQ-037 (Wave 4b): "stale failure" check. If another concurrent failure
+      // already advanced the current index while we were waiting on the lock,
+      // our failure applies to a past adapter and must not count against the
+      // new one. This preserves the "N concurrent failures trigger one switch"
+      // invariant: only failures attributed to the adapter that was current
+      // when the failure occurred may increment the counter.
+      if (currentIndex !== adapterBefore) return;
+      failureCount++;
+      if (failureCount >= maxFailures && currentIndex < adapters.length - 1) {
+        currentIndex = (currentIndex + 1) % adapters.length;
+        failureCount = 0;
+      }
+    });
   }
 
   function handleSuccess(): void {
@@ -93,7 +85,7 @@ export function createFallbackAdapter(config: FallbackAdapterConfig): AgentAdapt
           return result;
         } catch (err) {
           lastErr = err;
-          await handleFailure();
+          await handleFailure(adapterBefore);
           const switched = currentIndex !== adapterBefore;
           if (switched) {
             // Index advanced — next iteration retries with the NEW adapter.
@@ -134,7 +126,7 @@ export function createFallbackAdapter(config: FallbackAdapterConfig): AgentAdapt
             throw noStreamErr;
           }
           lastErr = noStreamErr;
-          await handleFailure();
+          await handleFailure(adapterBefore);
           const switched = currentIndex !== adapterBefore;
           if (switched) continue;
           if (currentIndex < adapters.length - 1) continue;
@@ -146,7 +138,7 @@ export function createFallbackAdapter(config: FallbackAdapterConfig): AgentAdapt
           return;
         } catch (err) {
           lastErr = err;
-          await handleFailure();
+          await handleFailure(adapterBefore);
           const switched = currentIndex !== adapterBefore;
           if (switched) {
             // Index advanced — next iteration retries with the NEW adapter.

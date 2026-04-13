@@ -5,7 +5,8 @@
  */
 
 import { HarnessError } from '../core/errors.js';
-import { prefixedSecureId } from '../_internal/ids.js';
+import { asSessionId, prefixedSecureId } from '../_internal/ids.js';
+import type { SessionId } from '../core/types.js';
 import type { Session, SessionEvent } from './types.js';
 
 /** Manager for creating and tracking sessions. */
@@ -77,22 +78,22 @@ export function createSessionManager(config?: {
   }
 
   interface MutableSession {
-    id: string;
+    id: SessionId;
     createdAt: number;
     lastAccessedAt: number;
     metadata: Record<string, unknown>;
     status: 'active' | 'locked' | 'expired';
   }
 
-  const sessions = new Map<string, MutableSession>();
+  const sessions = new Map<SessionId, MutableSession>();
   /**
    * Split the LRU order by lock state. `unlockedOrder` contains only
    * evictable sessions — we pop from its head in O(1) instead of linearly
    * scanning past locked sessions. `lockedIds` is a membership set so
    * lock/unlock transitions are constant-time.
    */
-  const unlockedOrder = new Map<string, true>(); // LRU of active (unlocked)
-  const lockedIds = new Set<string>();
+  const unlockedOrder = new Map<SessionId, true>(); // LRU of active (unlocked)
+  const lockedIds = new Set<SessionId>();
   const eventHandlers: ((event: SessionEvent) => void)[] = [];
 
   // Emit reentry protection: queue events if already emitting
@@ -102,11 +103,11 @@ export function createSessionManager(config?: {
   // SEC-002: Use cryptographically secure random IDs instead of a predictable
   // counter + timestamp combination. Predictable session IDs enable
   // session-hijacking and enumeration attacks.
-  function genId(): string {
-    return prefixedSecureId('sess');
+  function genId(): SessionId {
+    return asSessionId(prefixedSecureId('sess'));
   }
 
-  function emit(type: SessionEvent['type'], sessionId: string, reason?: string): void {
+  function emit(type: SessionEvent['type'], sessionId: SessionId, reason?: string): void {
     const event: SessionEvent = { type, sessionId, timestamp: Date.now(), ...(reason !== undefined && { reason }) };
     if (emitting) {
       pendingEvents.push(event);
@@ -135,18 +136,18 @@ export function createSessionManager(config?: {
   // O(1) LRU using Map insertion order: delete + re-set moves entry to end.
   // Only the unlocked order needs LRU positioning; locked sessions are
   // temporarily off the eviction path and rejoin the queue on unlock.
-  function touchAccessOrder(id: string): void {
+  function touchAccessOrder(id: SessionId): void {
     if (lockedIds.has(id)) return; // locked sessions carry no LRU position
     unlockedOrder.delete(id);
     unlockedOrder.set(id, true);
   }
 
-  function markLocked(id: string): void {
+  function markLocked(id: SessionId): void {
     unlockedOrder.delete(id);
     lockedIds.add(id);
   }
 
-  function markUnlocked(id: string): void {
+  function markUnlocked(id: SessionId): void {
     lockedIds.delete(id);
     unlockedOrder.delete(id);
     unlockedOrder.set(id, true);
@@ -170,7 +171,7 @@ export function createSessionManager(config?: {
     // keep steady-state size correct.
     if (sessions.size <= maxSessions + evictThreshold) return;
     while (sessions.size > maxSessions && unlockedOrder.size > 0) {
-      const oldestId = unlockedOrder.keys().next().value as string;
+      const oldestId = unlockedOrder.keys().next().value as SessionId;
       unlockedOrder.delete(oldestId);
       const session = sessions.get(oldestId);
       if (session) {
@@ -232,19 +233,21 @@ export function createSessionManager(config?: {
     },
 
     get(id: string): Session | undefined {
-      const session = sessions.get(id);
+      const key = id as SessionId;
+      const session = sessions.get(key);
       if (!session) return undefined;
       // Check TTL on read — expired sessions are treated as non-existent
       if (session.status === 'active' && isExpired(session)) {
         session.status = 'expired';
-        emit('expired', id);
+        emit('expired', key);
       }
       if (session.status === 'expired') return undefined;
       return toReadonly(session);
     },
 
     access(id: string): Session {
-      const session = sessions.get(id);
+      const key = id as SessionId;
+      const session = sessions.get(key);
       if (!session) {
         throw new HarnessError(
           `Session not found: ${id}`,
@@ -271,13 +274,14 @@ export function createSessionManager(config?: {
       }
 
       session.lastAccessedAt = Date.now();
-      touchAccessOrder(id);
-      emit('accessed', id);
+      touchAccessOrder(key);
+      emit('accessed', key);
       return toReadonly(session);
     },
 
     lock(id: string): { unlock: () => void } {
-      const session = sessions.get(id);
+      const key = id as SessionId;
+      const session = sessions.get(key);
       if (!session) {
         throw new HarnessError(
           `Session not found: ${id}`,
@@ -287,16 +291,16 @@ export function createSessionManager(config?: {
       }
 
       session.status = 'locked';
-      markLocked(id);
-      emit('locked', id);
+      markLocked(key);
+      emit('locked', key);
 
       const lockedSession = session;
 
       return {
         unlock: () => {
-          if (!sessions.has(id)) {
+          if (!sessions.has(key)) {
             throw new HarnessError(
-              `Session was destroyed while locked: ${id}`,
+              `Session was destroyed while locked: ${key}`,
               'SESSION_NOT_FOUND',
               'Do not destroy a session while it is locked',
             );
@@ -304,18 +308,19 @@ export function createSessionManager(config?: {
           if (lockedSession.status === 'locked') {
             lockedSession.status = 'active';
             lockedSession.lastAccessedAt = Date.now();
-            markUnlocked(id);
-            emit('unlocked', id);
+            markUnlocked(key);
+            emit('unlocked', key);
           }
         },
       };
     },
 
     destroy(id: string): void {
-      unlockedOrder.delete(id);
-      lockedIds.delete(id);
-      sessions.delete(id);
-      emit('destroyed', id);
+      const key = id as SessionId;
+      unlockedOrder.delete(key);
+      lockedIds.delete(key);
+      sessions.delete(key);
+      emit('destroyed', key);
     },
 
     list(): Session[] {

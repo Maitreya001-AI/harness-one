@@ -209,5 +209,9 @@ export async function parseWithRetry<T>(
     }
   }
   /* istanbul ignore next -- unreachable after for-loop */
-  throw new Error('Unreachable');
+  throw new HarnessError(
+    'Unreachable state in output-parser',
+    'INTERNAL_ERROR',
+    'This indicates a bug — please file an issue',
+  );
 }

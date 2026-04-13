@@ -439,6 +439,56 @@ describe('createFallbackAdapter', () => {
       expect(successes.length).toBeGreaterThanOrEqual(1);
     });
 
+    // CQ-037 (Wave 4b): `pendingSwitch: Promise<void> | null` was racy: two
+    // concurrent failures could both see `pendingSwitch === null`, both
+    // increment `failureCount`, and both trigger a switch (advancing the
+    // index by 2). The AsyncLock-backed rewrite ensures that under a burst
+    // of N concurrent failures on the same underlying adapter, exactly one
+    // switch happens — the remaining failures see the counter was already
+    // reset by the winning caller and take no action.
+    it('CQ-037: 10 concurrent failing requests trigger exactly one switch', async () => {
+      let primaryAttempts = 0;
+      const primary: AgentAdapter = {
+        async chat() {
+          primaryAttempts++;
+          throw new Error('primary down');
+        },
+      };
+      const secondary: AgentAdapter = {
+        async chat() {
+          return { message: { role: 'assistant', content: 'ok' }, usage: USAGE };
+        },
+      };
+      const tertiary: AgentAdapter = {
+        async chat() {
+          return { message: { role: 'assistant', content: 'ok-tertiary' }, usage: USAGE };
+        },
+      };
+      // maxFailures=1 means one failure against the current adapter should
+      // trigger exactly one switch. With 10 concurrent failures, the lock
+      // must ensure we end up on `secondary` (index 1) — NOT `tertiary`
+      // (index 2) which would be the bug's symptom.
+      const adapter = createFallbackAdapter({
+        adapters: [primary, secondary, tertiary],
+        maxFailures: 1,
+      });
+
+      // Fire 10 concurrent chat() calls. All 10 hit primary, all 10 fail,
+      // and handleFailure() races. Exactly one caller should advance the
+      // index; the rest should see the stale-adapter check and no-op.
+      const results = await Promise.all(
+        Array.from({ length: 10 }, () => adapter.chat(PARAMS)),
+      );
+      // All 10 must have succeeded via the secondary (not tertiary).
+      for (const r of results) {
+        expect(r.message.content).toBe('ok');
+      }
+      // Primary was tried at least once per concurrent caller before the
+      // first switch landed; the exact count is bounded by 10 but not asserted
+      // because it depends on microtask scheduling.
+      expect(primaryAttempts).toBeGreaterThanOrEqual(1);
+    });
+
     it('pendingSwitch resets to null after switch completes', async () => {
       // After a switch, subsequent calls should work normally
       const primary = createFailingAdapter('primary', 'always fails');

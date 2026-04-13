@@ -53,6 +53,39 @@ const DEFAULT_MODELS: string[] = [
 let defaultsRegistered = false;
 
 /**
+ * CQ-044: Track models we've already warned about so the fallback notification
+ * is emitted at most once per model per process. Without this, a misconfigured
+ * model would spam stderr on every `createTiktokenTokenizer()` call.
+ */
+const fallbackWarned = new Set<string>();
+
+/**
+ * Sink used by the fallback path. Defaults to `console.warn`, but can be
+ * swapped via {@link setTiktokenFallbackWarner} so consumers can route
+ * the fallback notification through their own logger.
+ */
+type FallbackWarner = (message: string, model: string) => void;
+
+let fallbackWarner: FallbackWarner = (message, model) => {
+  console.warn(`${message}: ${model}`);
+};
+
+/**
+ * Override the sink used when an unknown model falls back to the heuristic
+ * encoder. Pass `null` to restore the default `console.warn` sink.
+ *
+ * @example
+ * ```ts
+ * setTiktokenFallbackWarner((msg, model) => logger.warn(msg, { model }));
+ * ```
+ */
+export function setTiktokenFallbackWarner(warn: FallbackWarner | null): void {
+  fallbackWarner = warn ?? ((message, model) => {
+    console.warn(`${message}: ${model}`);
+  });
+}
+
+/**
  * Register tiktoken encoders for common models.
  *
  * When called without arguments, registers encoders for:
@@ -93,26 +126,39 @@ export function createTiktokenTokenizer(model: string): Tokenizer {
     return cached.tokenizer;
   }
 
-  let encoder: NativeEncoder;
+  let encoder: NativeEncoder | undefined;
   try {
     encoder = encoding_for_model(model as TiktokenModel) as unknown as NativeEncoder;
-  } catch (err) {
-    throw new Error(
-      `Unsupported or failed tiktoken model: "${model}". ` +
-      `Ensure the model name is valid for tiktoken. ` +
-      `Original error: ${err instanceof Error ? err.message : String(err)}`
-    );
+  } catch {
+    // CQ-044: Unknown model — fall back to a heuristic encoder rather than
+    // throwing. Emit a one-time warn per model so misconfiguration surfaces
+    // without spamming stderr on the hot path.
+    if (!fallbackWarned.has(model)) {
+      fallbackWarned.add(model);
+      fallbackWarner('Tokenizer fallback for unknown model', model);
+    }
   }
 
-  const tokenizer: Tokenizer = {
-    encode(text: string): { length: number } {
-      const tokens = encoder.encode(text);
-      return { length: tokens.length };
-    },
-  };
+  const tokenizer: Tokenizer = (() => {
+    if (encoder) {
+      const bound: NativeEncoder = encoder;
+      return {
+        encode(text: string): { length: number } {
+          const tokens = bound.encode(text);
+          return { length: tokens.length };
+        },
+      };
+    }
+    // Heuristic fallback: ~4 chars/token with +4 for message framing.
+    return {
+      encode(text: string): { length: number } {
+        return { length: Math.ceil(text.length / 4) + 4 };
+      },
+    };
+  })();
 
-  // Cache the encoder for subsequent calls
-  encoderCache.set(model, { tokenizer, encoder });
+  // Cache the encoder (even if undefined) so the warn fires exactly once per model.
+  encoderCache.set(model, { tokenizer, encoder: encoder ?? ({ encode: () => new Uint32Array() } as NativeEncoder) });
 
   registerTokenizer(model, tokenizer);
   return tokenizer;

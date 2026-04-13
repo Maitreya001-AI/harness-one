@@ -6,6 +6,7 @@
 
 import { HarnessError } from '../core/errors.js';
 import { MessageQueue } from './message-queue.js';
+import { createAsyncLock, type AsyncLock } from '../_internal/async-lock.js';
 import type { Logger } from '../observe/logger.js';
 import type {
   AgentMessage,
@@ -130,6 +131,21 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
 
   // Fix 23: Track delegation chains to detect cycles
   const delegationChain = new Map<string, Set<string>>();
+  // A1-1 (Wave 4b): per-source-agent async lock. The delegate() flow does
+  // "check chain -> await strategy.select() -> mutate chain"; without a lock
+  // two concurrent delegations from the same source agent can both pass the
+  // cycle check and then both mutate the chain, admitting a cycle that the
+  // next caller will observe. Serialise by source agent id so unrelated
+  // source agents stay concurrent.
+  const delegationLocks = new Map<string, AsyncLock>();
+  function getDelegationLock(sourceId: string): AsyncLock {
+    let lock = delegationLocks.get(sourceId);
+    if (!lock) {
+      lock = createAsyncLock();
+      delegationLocks.set(sourceId, lock);
+    }
+    return lock;
+  }
 
   function emit(event: OrchestratorEvent): void {
     // Iterate over a snapshot so that handlers can safely unsubscribe
@@ -305,6 +321,11 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
         for (const chain of delegationChain.values()) {
           chain.delete(id);
         }
+        // A1-1 (Wave 4b): drop the delegation lock for this source agent.
+        // Waiters (if any) are implausible since the caller would need to
+        // still hold a reference, and the lock is empty once the final
+        // critical section returns.
+        delegationLocks.delete(id);
       }
       return existed;
     },
@@ -375,50 +396,64 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
 
     async delegate(task: DelegationTask): Promise<string | undefined> {
       if (!strategy) return undefined;
-      const allAgents = Array.from(agents.values()).map(toReadonly);
-      const selectedId = await strategy.select(allAgents, task);
-      if (selectedId !== undefined) {
-        // Fix 23: Check for delegation cycles
-        // If task has metadata with delegatedFrom, check chain
-        const delegatedFrom = task.metadata?.delegatedFrom as string | undefined;
-        if (delegatedFrom && selectedId) {
-          // Check: has selectedId ever (directly or transitively) delegated
-          // to delegatedFrom? If so, delegating from delegatedFrom back to
-          // selectedId would create a cycle.
-          const visited = new Set<string>();
-          const queue = [selectedId];
-          let queueIdx = 0;
-          while (queueIdx < queue.length) {
-            const current = queue[queueIdx++];
-            if (visited.has(current)) continue;
-            visited.add(current);
-            // If selectedId can reach delegatedFrom, it's a cycle
-            if (current === delegatedFrom) {
-              throw new HarnessError(
-                `Delegation cycle detected: ${selectedId} is already in the delegation chain of ${delegatedFrom}`,
-                'DELEGATION_CYCLE',
-                'Avoid delegating tasks back to agents that originated the delegation',
-              );
-            }
-            // Check who 'current' has delegated to
-            const delegates = delegationChain.get(current);
-            if (delegates) {
-              for (const d of delegates) {
-                if (!visited.has(d)) queue.push(d);
+      // A1-1 (Wave 4b): the cycle-detection window ("inspect delegationChain
+      // -> await strategy.select -> mutate delegationChain") is a TOCTOU gap
+      // when two delegations originate from the same source agent. Take a
+      // per-source-agent lock so only one inspection+mutation runs at a time.
+      // When there's no `delegatedFrom`, there is nothing to cycle-check
+      // against, so we fall back to an unlocked path (strategy.select is
+      // stateless w.r.t. delegationChain).
+      const delegatedFromKey = task.metadata?.delegatedFrom as string | undefined;
+      const runDelegation = async (): Promise<string | undefined> => {
+        const allAgents = Array.from(agents.values()).map(toReadonly);
+        const selectedId = await strategy.select(allAgents, task);
+        if (selectedId !== undefined) {
+          // Fix 23: Check for delegation cycles
+          // If task has metadata with delegatedFrom, check chain
+          const delegatedFrom = task.metadata?.delegatedFrom as string | undefined;
+          if (delegatedFrom && selectedId) {
+            // Check: has selectedId ever (directly or transitively) delegated
+            // to delegatedFrom? If so, delegating from delegatedFrom back to
+            // selectedId would create a cycle.
+            const visited = new Set<string>();
+            const queue = [selectedId];
+            let queueIdx = 0;
+            while (queueIdx < queue.length) {
+              const current = queue[queueIdx++];
+              if (visited.has(current)) continue;
+              visited.add(current);
+              // If selectedId can reach delegatedFrom, it's a cycle
+              if (current === delegatedFrom) {
+                throw new HarnessError(
+                  `Delegation cycle detected: ${selectedId} is already in the delegation chain of ${delegatedFrom}`,
+                  'DELEGATION_CYCLE',
+                  'Avoid delegating tasks back to agents that originated the delegation',
+                );
+              }
+              // Check who 'current' has delegated to
+              const delegates = delegationChain.get(current);
+              if (delegates) {
+                for (const d of delegates) {
+                  if (!visited.has(d)) queue.push(d);
+                }
               }
             }
+
+            // Record the delegation: delegatedFrom -> selectedId
+            if (!delegationChain.has(delegatedFrom)) {
+              delegationChain.set(delegatedFrom, new Set());
+            }
+            (delegationChain.get(delegatedFrom) as Set<string>).add(selectedId);
           }
 
-          // Record the delegation: delegatedFrom -> selectedId
-          if (!delegationChain.has(delegatedFrom)) {
-            delegationChain.set(delegatedFrom, new Set());
-          }
-          (delegationChain.get(delegatedFrom) as Set<string>).add(selectedId);
+          emit({ type: 'task_delegated', agentId: selectedId, task });
         }
-
-        emit({ type: 'task_delegated', agentId: selectedId, task });
+        return selectedId;
+      };
+      if (delegatedFromKey) {
+        return getDelegationLock(delegatedFromKey).withLock(runDelegation);
       }
-      return selectedId;
+      return runDelegation();
     },
 
     get context(): SharedContext {
@@ -450,6 +485,7 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
       eventHandlers.clear();
       contextStore.clear();
       delegationChain.clear();
+      delegationLocks.clear();
     },
 
     getMetrics(): OrchestratorMetrics {

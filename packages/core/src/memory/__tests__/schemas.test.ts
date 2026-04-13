@@ -63,16 +63,40 @@ describe('validateMemoryEntry', () => {
     expect(() => validateMemoryEntry(input)).toThrow(re as RegExp);
   });
 
-  it('wraps shape mismatch in HarnessError(STORE_CORRUPTION)', () => {
+  it('CQ-045: wraps shape mismatch in HarnessError(MEMORY_CORRUPT)', () => {
     try {
       validateMemoryEntry({ ...good, grade: 'invalid' });
     } catch (err) {
       expect(err).toBeInstanceOf(HarnessError);
-      expect((err as HarnessError).code).toBe('STORE_CORRUPTION');
+      expect((err as HarnessError).code).toBe('MEMORY_CORRUPT');
       expect((err as HarnessError).suggestion).toContain('backing store');
       return;
     }
     expect.fail('should have thrown');
+  });
+});
+
+describe('isMemoryEntry / isRelayState type guards', () => {
+  it('CQ-045: isMemoryEntry accepts a valid entry', async () => {
+    const { isMemoryEntry } = await import('../_schemas.js');
+    expect(isMemoryEntry({
+      id: 'x', key: 'k', content: 'c', grade: 'useful', createdAt: 1, updatedAt: 2,
+    })).toBe(true);
+  });
+
+  it('CQ-045: isMemoryEntry rejects a non-object and a wrong-shape object', async () => {
+    const { isMemoryEntry } = await import('../_schemas.js');
+    expect(isMemoryEntry(null)).toBe(false);
+    expect(isMemoryEntry({ id: '', key: 'k', content: 'c', grade: 'useful', createdAt: 1, updatedAt: 2 })).toBe(false);
+    expect(isMemoryEntry({ id: 'x', key: 'k', content: 'c', grade: 'wrong', createdAt: 1, updatedAt: 2 })).toBe(false);
+    expect(isMemoryEntry({ id: 'x', key: 'k', content: 'c', grade: 'useful', createdAt: 1, updatedAt: 2, tags: [1] })).toBe(false);
+  });
+
+  it('CQ-045: isRelayState accepts a valid relay state and rejects a broken one', async () => {
+    const { isRelayState } = await import('../_schemas.js');
+    expect(isRelayState({ progress: {}, artifacts: ['a.txt'], checkpoint: 'c', timestamp: 1 })).toBe(true);
+    expect(isRelayState({ progress: {}, artifacts: 'nope', checkpoint: 'c', timestamp: 1 })).toBe(false);
+    expect(isRelayState('not an object')).toBe(false);
   });
 });
 

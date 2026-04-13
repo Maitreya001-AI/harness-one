@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { LRUCache } from '../lru-cache.js';
+import { HarnessError } from '../../core/errors.js';
 
 describe('LRUCache', () => {
   describe('constructor', () => {
@@ -11,6 +12,17 @@ describe('LRUCache', () => {
     it('throws if maxSize is less than 1', () => {
       expect(() => new LRUCache<string, number>(0)).toThrow('maxSize must be >= 1');
       expect(() => new LRUCache<string, number>(-1)).toThrow('maxSize must be >= 1');
+    });
+
+    it('CQ-032: throws HarnessError with INVALID_CONFIG code when maxSize < 1', () => {
+      try {
+        new LRUCache<string, number>(0);
+        throw new Error('expected throw');
+      } catch (err) {
+        expect(err).toBeInstanceOf(HarnessError);
+        expect((err as HarnessError).code).toBe('INVALID_CONFIG');
+        expect((err as HarnessError).suggestion).toBe('Use a value >= 1');
+      }
     });
   });
 

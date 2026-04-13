@@ -4,6 +4,8 @@
  * @module
  */
 
+import { HarnessError } from '../core/errors.js';
+
 // ── Module definitions ────────────────────────────────────────────────────────
 
 export const ALL_MODULES = [
@@ -71,8 +73,12 @@ export function parseArgs(argv: string[]): ParsedArgs {
   }
 
   if (all && modules.length > 0) {
-    throw new Error(
-      'Conflicting flags: --all and --modules cannot be used together. Use --all to select all modules, or --modules to select specific ones.',
+    // CQ-040: Surface via HarnessError so wrappers / test harnesses can
+    // catch by `.code === 'CLI_PARSE_ERROR'` instead of string-matching.
+    throw new HarnessError(
+      'Conflicting flags: --all and --modules cannot be used together.',
+      'CLI_PARSE_ERROR',
+      'Use --all to select all modules, or --modules to select specific ones.',
     );
   }
 

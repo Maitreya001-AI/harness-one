@@ -892,6 +892,47 @@ describe('delegation cycle detection (Fix 23)', () => {
     const result = await orch.delegate({ description: 'task', metadata: { delegatedFrom: 'a2' } });
     expect(result).toBe('a3');
   });
+
+  // A1-1 (Wave 4b): concurrent delegations from the same source agent used to
+  // race between the cycle-detection read and the delegationChain write. The
+  // per-source-agent AsyncLock serialises the inspect+mutate window so that
+  // two concurrent `delegate({ delegatedFrom: 'a1' })` calls against a chain
+  // that would form a cycle cannot both sneak past the cycle check.
+  it('A1-1: concurrent delegations against a pre-existing chain both reject with CYCLE_DETECTED', async () => {
+    // Pre-existing chain a2 -> a1: recorded via a single synchronous
+    // delegation. Then fire two concurrent delegations a1 -> a2 — both must
+    // be rejected because either one committing would create a cycle, and
+    // the lock guarantees the second caller sees the first's (failed)
+    // attempt's pre-state without being able to overlap the check+write.
+    let strategyCall = 0;
+    const strategy: DelegationStrategy = {
+      select: async () => {
+        strategyCall++;
+        if (strategyCall === 1) return 'a1'; // first: a2 -> a1 (seed)
+        // Subsequent calls yield a microtask so the two concurrent callers
+        // interleave across the `await strategy.select()` inside delegate().
+        await Promise.resolve();
+        return 'a2'; // concurrent: a1 -> a2 would cycle
+      },
+    };
+    const orch = createOrchestrator({ strategy });
+    orch.register('a1', 'Worker1');
+    orch.register('a2', 'Worker2');
+
+    // Seed: a2 -> a1
+    await orch.delegate({ description: 'seed', metadata: { delegatedFrom: 'a2' } });
+    // Fire two concurrent a1 -> a2 delegations — both cycle.
+    const results = await Promise.allSettled([
+      orch.delegate({ description: 'c1', metadata: { delegatedFrom: 'a1' } }),
+      orch.delegate({ description: 'c2', metadata: { delegatedFrom: 'a1' } }),
+    ]);
+    const rejections = results.filter((r) => r.status === 'rejected');
+    expect(rejections.length).toBe(2);
+    for (const r of rejections) {
+      expect((r as PromiseRejectedResult).reason).toBeInstanceOf(HarnessError);
+      expect(((r as PromiseRejectedResult).reason as HarnessError).code).toBe('DELEGATION_CYCLE');
+    }
+  });
 });
 
 // Fix 34: Wrap onHandlerError

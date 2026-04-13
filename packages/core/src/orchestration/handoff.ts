@@ -139,6 +139,17 @@ export function createHandoff(transport: MessageTransport, handoffConfig?: Hando
         inbox.set(to, queue);
       }
 
+      // A1-4 (Wave 4b): push + eviction must be one atomic critical section so
+      // that concurrent `send()` invocations never leave the queue longer than
+      // `maxInboxPerAgent`. `send()` is synchronous and this block contains no
+      // `await`, so JS's single-threaded event-loop already guarantees
+      // atomicity — two interleaving senders is not representable without an
+      // explicit yield point. Kept compact and free of awaits on purpose; any
+      // future refactor that introduces `await` between the push and the
+      // eviction MUST wrap this block in a per-agent AsyncLock (see
+      // `createAsyncLock` in core/_internal). The test
+      // "200 concurrent sends never exceed maxInboxPerAgent" enforces the
+      // invariant.
       // Fix 29: Insert by priority
       const priorityPayload = Object.freeze(payload);
       insertByPriority(queue, priorityPayload);
