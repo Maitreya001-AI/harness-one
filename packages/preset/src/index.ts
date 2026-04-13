@@ -372,7 +372,14 @@ export function createHarness(config: HarnessConfig): Harness {
     );
   }
 
-  let isShutdown = false;
+  /**
+   * LM-013: `shutdownPromise` is a latch, not a flag. Concurrent callers
+   * (signal handlers, user code, integration-test teardown) all await the
+   * same promise so the sequence below runs exactly once. A plain `boolean`
+   * flag allowed a second caller through the check before the first await
+   * point had completed.
+   */
+  let shutdownPromise: Promise<void> | null = null;
 
   const harness: Harness = {
     loop,
@@ -541,43 +548,107 @@ export function createHarness(config: HarnessConfig): Harness {
       }
     },
 
-    async shutdown(): Promise<void> {
-      if (isShutdown) return;
-      isShutdown = true;
-      await traces.flush();
-      const EXPORTER_TIMEOUT = 5_000;
-      for (const exporter of exporters) {
-        if (exporter.shutdown) {
-          await Promise.race([
-            Promise.resolve(exporter.shutdown()).catch((err: unknown) => {
-              logger.warn('Exporter shutdown error', { error: err });
-            }),
-            new Promise<void>((resolve) => setTimeout(resolve, EXPORTER_TIMEOUT)),
-          ]);
+    /**
+     * LM-001 / LM-002 / LM-013: Ordered async shutdown DAG.
+     *
+     * Concurrent `shutdown()` calls all await the same cached
+     * `shutdownPromise` so the sequence runs exactly once. The order is:
+     *
+     *   1. `loop.dispose?.()` — stop the agent loop; detaches its external
+     *      abort signal so downstream listeners can't fire after teardown.
+     *   2. `sessions.dispose()` — clears the session GC timer; sync but
+     *      awaited via `Promise.resolve` for future-proofing.
+     *   3. `middleware.clear()` — drop middleware references so closures
+     *      over per-request state can be GC'd.
+     *   4. `traces.dispose()` — awaits `pendingExports` internally
+     *      (LM-001), flushes every exporter, then shuts each exporter down
+     *      with a bounded per-exporter timeout (5s) so a hanging exporter
+     *      cannot stall the whole DAG.
+     *
+     * Timers and in-flight promises are explicitly awaited so no work
+     * remains in flight when this method resolves.
+     */
+    shutdown(): Promise<void> {
+      if (shutdownPromise) return shutdownPromise;
+      shutdownPromise = (async () => {
+        // 1. Stop the loop. AgentLoop.dispose() is sync today; `Promise.resolve`
+        //    keeps the call site safe if it ever returns a promise.
+        try {
+          const result = loop.dispose?.() as unknown;
+          if (result !== undefined) {
+            await Promise.resolve(result as Promise<void>);
+          }
+        } catch (err) {
+          logger.warn('AgentLoop dispose error', { error: err });
         }
-      }
-      // Clean up session manager (stops GC timer)
-      sessions.dispose();
+
+        // 2. Session manager (stops GC timer, clears session store).
+        try {
+          await Promise.resolve(sessions.dispose());
+        } catch (err) {
+          logger.warn('SessionManager dispose error', { error: err });
+        }
+
+        // 3. Middleware chain — drop references so closures can be GC'd.
+        try {
+          middleware.clear();
+        } catch (err) {
+          logger.warn('Middleware clear error', { error: err });
+        }
+
+        // 4. Trace manager — settles pendingExports, flushes, then races
+        //    each exporter's shutdown() against a bounded per-exporter
+        //    timeout (handled inside TraceManager.dispose()). Failures are
+        //    reported via the configured onExportError / logger.warn.
+        try {
+          await traces.dispose();
+        } catch (err) {
+          logger.warn('TraceManager dispose error', { error: err });
+        }
+      })();
+      return shutdownPromise;
     },
 
+    /**
+     * LM-002: Graceful drain — abort the loop, let in-flight work settle for
+     * a brief window, then delegate to `shutdown()` while respecting the
+     * caller's timeoutMs as a hard deadline for the whole operation.
+     */
     async drain(timeoutMs = 30_000): Promise<void> {
-      loop.abort();
-      // Clean up session manager (stops GC timer)
-      sessions.dispose();
-      // Wait for in-flight operations to settle. Use a 100ms tick for polling,
-      // but respect the full timeoutMs deadline for overall drain duration.
       const deadline = Date.now() + timeoutMs;
+      // 1. Tell the loop to stop taking new work.
+      loop.abort();
+      // 2. Brief settle: shortest of 100ms or timeoutMs.
       const settleMs = Math.min(100, timeoutMs);
-      await new Promise((r) => setTimeout(r, settleMs));
-      // Give exporters time to flush before shutdown
-      const remaining = Math.max(0, deadline - Date.now());
-      if (remaining > 0) {
-        await Promise.race([
-          traces.flush(),
-          new Promise((r) => setTimeout(r, remaining)),
-        ]);
+      if (settleMs > 0) {
+        await new Promise<void>((r) => setTimeout(r, settleMs));
       }
-      await this.shutdown();
+      // 3. Delegate to shutdown, respecting the remaining deadline. We
+      //    cannot cancel the shutdown mid-flight, so we attach a watchdog
+      //    that resolves on deadline expiry. Shutdown will continue in the
+      //    background until complete; drain() returns once either side wins.
+      const remaining = Math.max(0, deadline - Date.now());
+      if (remaining === 0) {
+        // Deadline already expired — kick off shutdown but don't wait past
+        // the caller's budget. We still `.catch` any rejection so a
+        // rejected shutdown doesn't become an unhandled rejection.
+        void this.shutdown().catch(() => {});
+        return;
+      }
+      let watchdogHandle: ReturnType<typeof setTimeout> | undefined;
+      const watchdog = new Promise<void>((resolve) => {
+        watchdogHandle = setTimeout(resolve, remaining);
+      });
+      try {
+        await Promise.race([
+          this.shutdown().catch((err: unknown) => {
+            logger.warn('Harness shutdown during drain failed', { error: err });
+          }),
+          watchdog,
+        ]);
+      } finally {
+        if (watchdogHandle) clearTimeout(watchdogHandle);
+      }
     },
   };
 

@@ -11,6 +11,7 @@ import {
   type RedactConfig,
   type Redactor,
 } from '../_internal/redact.js';
+import { createLazyAsync, type LazyAsync } from '../_internal/lazy-async.js';
 import type { Trace, Span, SpanEvent, SpanEventSeverity, TraceExporter } from './types.js';
 
 /** Retry telemetry aggregates exposed via `getRetryMetrics()`. */
@@ -148,23 +149,39 @@ export function createTraceManager(config?: {
    * Lazy initialization — track which exporters have had initialize() called.
    * Exporters are initialized on first export attempt (span or trace) to keep
    * createTraceManager synchronous.
+   *
+   * A1-3 / LM-003: Uses `createLazyAsync` per-exporter so concurrent first
+   * exports share the same in-flight init promise (stored synchronously
+   * before the first await). On rejection the cache is cleared so a later
+   * export retries instead of silently re-using the failed result.
    */
-  const initPromises = new Map<TraceExporter, Promise<void>>();
+  const initLazies = new Map<TraceExporter, LazyAsync<void>>();
+
+  function getInitLazy(exporter: TraceExporter): LazyAsync<void> {
+    let lazy = initLazies.get(exporter);
+    if (!lazy) {
+      lazy = createLazyAsync(async () => {
+        if (!exporter.initialize) return;
+        await exporter.initialize();
+      });
+      initLazies.set(exporter, lazy);
+    }
+    return lazy;
+  }
 
   function ensureInitialized(exporter: TraceExporter): Promise<void> {
     if (!exporter.initialize) return Promise.resolve();
-    let p = initPromises.get(exporter);
-    if (!p) {
-      p = Promise.resolve(exporter.initialize()).catch((err) => {
+    return getInitLazy(exporter)
+      .get()
+      .catch((err) => {
         // Initialization failure is reported but doesn't stop subsequent
         // attempts — the exporter's isHealthy() will gate future exports.
+        // `createLazyAsync` already cleared the cached promise, so the next
+        // call will retry from scratch.
         if (onExportError) onExportError(err);
         else if (logger) logger.warn('[harness-one] exporter initialize failed', { exporter: exporter.name, error: err });
         else console.warn('[harness-one] exporter initialize failed:', err);
       });
-      initPromises.set(exporter, p);
-    }
-    return p;
   }
 
   function reportExportError(err: unknown): void {
@@ -241,6 +258,18 @@ export function createTraceManager(config?: {
   const traceOrderIndex = new Map<string, number>();
   let nextId = 1;
   let isEvicting = false; // Re-entrance guard for eviction (Fix 3)
+  /**
+   * LM-016: Dead trace IDs — returned by `startTrace()` when every configured
+   * exporter reports `isHealthy() === false`. The trace is NEVER admitted to
+   * `traces`, so it cannot turn into a zombie entry that the LRU has to
+   * evict later. `startSpan()`, `addSpanEvent()`, `endSpan()`, `endTrace()`
+   * and friends recognise the prefix and silently no-op, preserving the
+   * caller's contract (no throw, no-op handle).
+   */
+  const deadTraceIds = new Set<string>();
+  const deadSpanIds = new Set<string>();
+  const DEAD_TRACE_PREFIX = 'dead-';
+  const DEAD_SPAN_PREFIX = 'dead-span-';
 
   // OBS-005: retry telemetry aggregated from span events named `adapter_retry`.
   let retryTotalRetries = 0;
@@ -391,6 +420,23 @@ export function createTraceManager(config?: {
 
   return {
     startTrace(name: string, metadata?: Record<string, unknown>): string {
+      // LM-016: If the caller has configured ≥1 exporter AND every exporter
+      // declares an `isHealthy()` hook AND every one of those hooks returns
+      // false, there is no point admitting this trace to the map — no
+      // exporter will consume it and the entry would sit as a zombie until
+      // LRU eviction. Return a dead-trace handle instead (evict-at-birth).
+      // All later operations on this id are silent no-ops.
+      const allExportersUnhealthy =
+        exporters.length > 0 &&
+        exporters.every(
+          (e) => typeof e.isHealthy === 'function' && !e.isHealthy(),
+        );
+      if (allExportersUnhealthy) {
+        const deadId = `${DEAD_TRACE_PREFIX}${genId()}`;
+        deadTraceIds.add(deadId);
+        return deadId;
+      }
+
       const id = genId();
       // SEC-007 + SEC-016: user metadata is scrubbed at ingestion so exporters
       // (console, OTel, Langfuse) never observe secrets.
@@ -412,6 +458,14 @@ export function createTraceManager(config?: {
     },
 
     startSpan(traceId: string, name: string, parentId?: string): string {
+      // LM-016: Dead trace handle — return a dead span id that every later
+      // operation treats as a no-op. Mirrors startTrace's evict-at-birth
+      // semantics so callers don't need special-casing.
+      if (deadTraceIds.has(traceId)) {
+        const deadSpanId = `${DEAD_SPAN_PREFIX}${genId()}`;
+        deadSpanIds.add(deadSpanId);
+        return deadSpanId;
+      }
       const trace = traces.get(traceId);
       if (!trace) {
         throw new HarnessError(
@@ -420,8 +474,10 @@ export function createTraceManager(config?: {
           'Start a trace before creating spans',
         );
       }
-      // Validate parentId exists as a span in this trace
-      if (parentId !== undefined) {
+      // Validate parentId exists as a span in this trace. Dead-span parent
+      // ids are accepted silently — they reflect the same evict-at-birth
+      // semantics as the trace itself.
+      if (parentId !== undefined && !deadSpanIds.has(parentId)) {
         const parentSpan = spans.get(parentId);
         if (!parentSpan || parentSpan.traceId !== traceId) {
           throw new HarnessError(
@@ -447,6 +503,8 @@ export function createTraceManager(config?: {
     },
 
     addSpanEvent(spanId: string, event: Omit<SpanEvent, 'timestamp'>): void {
+      // LM-016: dead span — no-op
+      if (deadSpanIds.has(spanId)) return;
       const span = spans.get(spanId);
       if (!span) {
         throw new HarnessError(
@@ -477,6 +535,8 @@ export function createTraceManager(config?: {
     },
 
     setSpanAttributes(spanId: string, attributes: Record<string, unknown>): void {
+      // LM-016: dead span — no-op
+      if (deadSpanIds.has(spanId)) return;
       const span = spans.get(spanId);
       if (!span) {
         throw new HarnessError(
@@ -492,6 +552,8 @@ export function createTraceManager(config?: {
     },
 
     setTraceSystemMetadata(traceId: string, metadata: Record<string, unknown>): void {
+      // LM-016: dead trace — no-op
+      if (deadTraceIds.has(traceId)) return;
       const trace = traces.get(traceId);
       if (!trace) {
         throw new HarnessError(
@@ -510,6 +572,11 @@ export function createTraceManager(config?: {
     },
 
     endSpan(spanId: string, status?: 'completed' | 'error'): void {
+      // LM-016: dead span — no-op (and forget the id so the set doesn't grow).
+      if (deadSpanIds.has(spanId)) {
+        deadSpanIds.delete(spanId);
+        return;
+      }
       const span = spans.get(spanId);
       if (!span) {
         throw new HarnessError(
@@ -540,6 +607,11 @@ export function createTraceManager(config?: {
     },
 
     endTrace(traceId: string, status?: 'completed' | 'error'): void {
+      // LM-016: dead trace — no-op (and forget the id so the set doesn't grow).
+      if (deadTraceIds.has(traceId)) {
+        deadTraceIds.delete(traceId);
+        return;
+      }
       const trace = traces.get(traceId);
       if (!trace) {
         throw new HarnessError(
@@ -617,7 +689,13 @@ export function createTraceManager(config?: {
     },
 
     async dispose(): Promise<void> {
-      // 1. Flush all pending exports — use allSettled so one failure doesn't block others
+      // LM-001: Settle outstanding in-flight export promises before asking
+      // exporters to flush — otherwise a span fired milliseconds ago may still
+      // be in the exporter's queue when we clear internal state.
+      while (pendingExports.size > 0) {
+        await Promise.allSettled(Array.from(pendingExports));
+      }
+      // Flush every exporter — use allSettled so one failure doesn't block others.
       const flushResults = await Promise.allSettled(exporters.map(e => e.flush()));
       for (const result of flushResults) {
         if (result.status === 'rejected') {
@@ -628,23 +706,47 @@ export function createTraceManager(config?: {
           }
         }
       }
-      // 2. Call shutdown() on all exporters that support it — use allSettled so one failure doesn't block others
-      const shutdownResults = await Promise.allSettled(exporters.map(e => e.shutdown ? e.shutdown() : Promise.resolve()));
-      for (const result of shutdownResults) {
-        if (result.status === 'rejected') {
-          if (onExportError) {
-            onExportError(result.reason);
-          } else {
-            console.warn('[harness-one] trace export error:', result.reason);
+      // LM-001 / LM-015: Call `shutdown()` on each exporter with a bounded
+      // per-exporter timeout. A hanging exporter used to block the whole
+      // dispose sequence; racing against a 5s cap keeps the DAG responsive.
+      const EXPORTER_SHUTDOWN_TIMEOUT_MS = 5_000;
+      for (const e of exporters) {
+        if (!e.shutdown) continue;
+        let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+        const timeoutPromise = new Promise<'timeout'>((resolve) => {
+          timeoutHandle = setTimeout(() => resolve('timeout'), EXPORTER_SHUTDOWN_TIMEOUT_MS);
+        });
+        try {
+          const outcome = await Promise.race([
+            Promise.resolve(e.shutdown())
+              .then(() => 'ok' as const)
+              .catch((err: unknown) => {
+                if (onExportError) onExportError(err);
+                else console.warn('[harness-one] trace export error:', err);
+                return 'error' as const;
+              }),
+            timeoutPromise,
+          ]);
+          if (outcome === 'timeout') {
+            const err = new Error(
+              `exporter "${e.name}" shutdown timed out after ${EXPORTER_SHUTDOWN_TIMEOUT_MS}ms`,
+            );
+            if (onExportError) onExportError(err);
+            else console.warn('[harness-one] trace export error:', err);
           }
+        } finally {
+          if (timeoutHandle) clearTimeout(timeoutHandle);
         }
       }
-      // 3. Clear internal maps
+      // Clear internal maps so the process can exit cleanly.
       traces.clear();
       spans.clear();
       traceOrder.length = 0;
       traceOrderIndex.clear();
       retryingSpanIds.clear();
+      deadTraceIds.clear();
+      deadSpanIds.clear();
+      initLazies.clear();
       retryTotalRetries = 0;
       retrySuccessAfterRetry = 0;
       retryFailedAfterRetries = 0;

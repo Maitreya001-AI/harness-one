@@ -132,8 +132,13 @@ export interface AgentPool {
   drain(timeoutMs?: number): Promise<void>;
   /** Current pool statistics. */
   readonly stats: PoolStats;
-  /** Dispose all agents and clear timers. */
-  dispose(): void;
+  /**
+   * Dispose all agents and clear timers. Idempotent (LM-014): concurrent
+   * callers observe the same completion promise and teardown runs once.
+   * Now awaits each underlying `loop.dispose()` so file/socket handles
+   * close before the pool is considered fully torn down.
+   */
+  dispose(): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------

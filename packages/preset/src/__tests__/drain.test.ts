@@ -136,4 +136,33 @@ describe('Harness.drain', () => {
     // Just verify it completes without explicit timeout
     await expect(harness.drain()).resolves.not.toThrow();
   });
+
+  // LM-013: shutdown latch — concurrent callers share the same promise.
+  describe('LM-013: shutdown is a latched idempotent promise', () => {
+    it('concurrent shutdown() calls only invoke exporter.shutdown once', async () => {
+      const langfuseClient = { trace: vi.fn(), flushAsync: vi.fn() };
+      const harness = createHarness({ ...baseConfig, langfuse: langfuseClient });
+      await Promise.all([
+        harness.shutdown(),
+        harness.shutdown(),
+        harness.shutdown(),
+      ]);
+      expect(mocks.mockLangfuseExporter.shutdown).toHaveBeenCalledTimes(1);
+    });
+
+    it('drain followed by shutdown runs shutdown exactly once', async () => {
+      const langfuseClient = { trace: vi.fn(), flushAsync: vi.fn() };
+      const harness = createHarness({ ...baseConfig, langfuse: langfuseClient });
+      await harness.drain();
+      await harness.shutdown();
+      expect(mocks.mockLangfuseExporter.shutdown).toHaveBeenCalledTimes(1);
+    });
+
+    it('second shutdown resolves immediately and reuses the latch', async () => {
+      const harness = createHarness(baseConfig);
+      await harness.shutdown();
+      // Second call must resolve — latch reuse, no re-entry.
+      await expect(harness.shutdown()).resolves.toBeUndefined();
+    });
+  });
 });

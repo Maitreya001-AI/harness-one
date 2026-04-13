@@ -645,6 +645,106 @@ describe('createLangfuseExporter', () => {
 
     vi.useRealTimers();
   });
+
+  // LM-015: flushAsync must complete (or time out) BEFORE clearing maps
+  describe('LM-015: shutdown awaits flush before clearing state', () => {
+    it('awaits flushAsync before clearing traceMap', async () => {
+      const order: string[] = [];
+      const flushAsync = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            setTimeout(() => {
+              order.push('flush-resolved');
+              resolve();
+            }, 20);
+          }),
+      );
+      const client = {
+        trace: vi.fn().mockReturnValue({
+          generation: vi.fn(),
+          span: vi.fn(),
+          update: vi.fn(),
+          event: vi.fn(),
+        }),
+        flushAsync,
+        getPrompt: vi.fn(),
+      } as unknown as LangfuseExporterConfig['client'];
+
+      const exporter = createLangfuseExporter({ client });
+      // Prime the trace map.
+      await exporter.exportTrace({
+        id: 't1',
+        name: 'x',
+        startTime: Date.now(),
+        metadata: {},
+        spans: [],
+        status: 'completed',
+      });
+      // Kick shutdown; the flush hasn't resolved yet.
+      const shutdownPromise = exporter.shutdown!().then(() => {
+        order.push('shutdown-resolved');
+      });
+      await shutdownPromise;
+      // Flush must have settled before shutdown claimed completion.
+      expect(order).toEqual(['flush-resolved', 'shutdown-resolved']);
+    });
+
+    it('caps flush at 5 seconds and still clears state on timeout', async () => {
+      vi.useFakeTimers();
+      try {
+        // A flushAsync that never resolves.
+        const flushAsync = vi.fn(
+          () => new Promise<void>(() => {}),
+        );
+        const client = {
+          trace: vi.fn().mockReturnValue({
+            generation: vi.fn(),
+            span: vi.fn(),
+            update: vi.fn(),
+            event: vi.fn(),
+          }),
+          flushAsync,
+          getPrompt: vi.fn(),
+        } as unknown as LangfuseExporterConfig['client'];
+
+        const exporter = createLangfuseExporter({ client });
+        const p = exporter.shutdown!();
+        // Advance past the 5s cap.
+        await vi.advanceTimersByTimeAsync(5_001);
+        await expect(p).resolves.toBeUndefined();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('swallows flushAsync rejection but still clears state', async () => {
+      const flushAsync = vi.fn().mockRejectedValue(new Error('network down'));
+      const client = {
+        trace: vi.fn().mockReturnValue({
+          generation: vi.fn(),
+          span: vi.fn(),
+          update: vi.fn(),
+          event: vi.fn(),
+        }),
+        flushAsync,
+        getPrompt: vi.fn(),
+      } as unknown as LangfuseExporterConfig['client'];
+
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const exporter = createLangfuseExporter({ client });
+      await exporter.exportTrace({
+        id: 't1',
+        name: 'x',
+        startTime: Date.now(),
+        metadata: {},
+        spans: [],
+        status: 'completed',
+      });
+      await expect(exporter.shutdown!()).resolves.toBeUndefined();
+      expect(warnSpy).toHaveBeenCalled();
+      warnSpy.mockRestore();
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

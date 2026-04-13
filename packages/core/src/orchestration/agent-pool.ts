@@ -68,6 +68,12 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
 
   const entries = new Map<string, PoolEntry>();
   let disposed = false;
+  /**
+   * LM-014: Idempotent-dispose latch. Serializes concurrent `dispose()` calls
+   * onto the same promise so callers all observe the same completion and
+   * teardown never runs twice.
+   */
+  let disposePromise: Promise<void> | null = null;
   let warmedUp = false;
   let totalCreated = 0;
   let totalRecycled = 0;
@@ -102,9 +108,41 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
     return { agent, state: 'idle', idleTimer: null, monotonicCreatedAt: Date.now() };
   }
 
-  function disposeEntry(entry: PoolEntry): void {
+  /**
+   * LM-014: Await the underlying loop's dispose so pending file/socket
+   * handles close before we walk away. `AgentLoop.dispose()` is
+   * synchronous today; awaiting `Promise.resolve(result)` keeps the call
+   * site future-proof for adapters that may return a promise.
+   */
+  async function disposeEntry(entry: PoolEntry): Promise<void> {
     clearIdleTimer(entry);
-    entry.agent.loop.dispose();
+    try {
+      const result = entry.agent.loop.dispose?.();
+      if (result !== undefined) {
+        await Promise.resolve(result as unknown as Promise<void>);
+      }
+    } catch {
+      // Individual agent dispose errors should not abort the pool teardown —
+      // aggregated logging is the pool consumer's responsibility. Drop here.
+    }
+    entries.delete(entry.agent.id);
+  }
+
+  /**
+   * Fire-and-forget variant for call sites that cannot easily go async
+   * (idle-timer expiry, resize(), release()). Errors are swallowed to
+   * preserve the previous sync contract.
+   */
+  function disposeEntrySync(entry: PoolEntry): void {
+    clearIdleTimer(entry);
+    try {
+      const result = entry.agent.loop.dispose?.() as unknown;
+      if (result && typeof (result as { catch?: unknown }).catch === 'function') {
+        (result as Promise<void>).catch(() => {});
+      }
+    } catch {
+      /* swallow */
+    }
     entries.delete(entry.agent.id);
   }
 
@@ -122,7 +160,7 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
     const timer = setTimeout(() => {
       // Recycle: dispose idle agent if above min
       if (entry.state === 'idle') {
-        disposeEntry(entry);
+        disposeEntrySync(entry);
         totalRecycled++;
       }
     }, idleTimeout + jitter);
@@ -159,7 +197,7 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
       for (const entry of entries.values()) {
         if (entry.state === 'idle') {
           if (isExpired(entry)) {
-            disposeEntry(entry);
+            disposeEntrySync(entry);
             totalRecycled++;
             continue;
           }
@@ -184,7 +222,7 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
     for (const entry of entries.values()) {
       if (entry.state === 'idle') {
         if (isExpired(entry)) {
-          disposeEntry(entry);
+          disposeEntrySync(entry);
           totalRecycled++;
           continue;
         }
@@ -305,7 +343,7 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
       if (!entry || entry.state !== 'active') return; // idempotent
 
       if (isExpired(entry)) {
-        disposeEntry(entry);
+        disposeEntrySync(entry);
         totalRecycled++;
         // Fix 24: Try to fulfill pending requests with a new agent
         fulfillPending();
@@ -338,7 +376,7 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
         for (const entry of entries.values()) {
           if (toRemove <= 0) break;
           if (entry.state === 'idle') {
-            disposeEntry(entry);
+            disposeEntrySync(entry);
             totalRecycled++;
             toRemove--;
           }
@@ -367,32 +405,38 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
         await new Promise((r) => setTimeout(r, 50));
       }
 
-      // Reject all pending acquire requests
-      while (pendingQueue.length > 0) {
-        const pending = pendingQueue.shift() as PendingAcquire;
-        pending.cleanup();
-        pending.reject(new HarnessError('Pool disposed while waiting', 'POOL_DISPOSED'));
-      }
-
-      // Force-dispose all (including any still active after timeout)
-      pool.dispose();
+      // Force-dispose all (including any still active after timeout). The
+      // shared `dispose()` latch handles pending-queue rejection and the
+      // idempotent `disposed` flag, so drain's responsibilities collapse to
+      // awaiting a settle window + delegating.
+      await pool.dispose();
     },
 
     get stats(): PoolStats {
       return getStats();
     },
 
-    dispose(): void {
+    async dispose(): Promise<void> {
+      // LM-014: Cache the latch so concurrent dispose() callers share one
+      // teardown. `disposed` flips synchronously so subsequent sync paths
+      // (acquire/release) see the pool as torn down immediately.
+      if (disposePromise) return disposePromise;
       disposed = true;
-      // Reject all pending acquire requests
-      while (pendingQueue.length > 0) {
-        const pending = pendingQueue.shift() as PendingAcquire;
-        pending.cleanup();
-        pending.reject(new HarnessError('Pool disposed while waiting', 'POOL_DISPOSED'));
-      }
-      for (const entry of [...entries.values()]) {
-        disposeEntry(entry);
-      }
+      disposePromise = (async () => {
+        // Reject all pending acquire requests — do this synchronously before
+        // awaiting any loop.dispose() so queued callers unblock immediately.
+        while (pendingQueue.length > 0) {
+          const pending = pendingQueue.shift() as PendingAcquire;
+          pending.cleanup();
+          pending.reject(new HarnessError('Pool disposed while waiting', 'POOL_DISPOSED'));
+        }
+        // Sequentially await each entry's dispose so file/socket handles on
+        // the underlying loop settle before we claim the pool is torn down.
+        for (const entry of [...entries.values()]) {
+          await disposeEntry(entry);
+        }
+      })();
+      return disposePromise;
     },
   };
 

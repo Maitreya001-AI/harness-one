@@ -89,14 +89,16 @@ describe('AgentPool', () => {
     expect(pool.stats.idle).toBe(1);
   });
 
-  it('dispose() clears all timers and disposes all loops', () => {
+  it('dispose() clears all timers and disposes all loops', async () => {
     pool = makePool({ idleTimeout: 60000 });
     const a1 = pool.acquire();
     const a2 = pool.acquire();
     pool.release(a1);
     pool.release(a2);
 
-    pool.dispose();
+    // LM-014: dispose is now async — await so loop.dispose() settles before
+    // the assertion runs.
+    await pool.dispose();
     expect(a1.loop.status).toBe('disposed');
     expect(a2.loop.status).toBe('disposed');
     expect(pool.stats.total).toBe(0);
@@ -327,6 +329,52 @@ describe('AgentPool', () => {
       expect(acquired).toBeDefined();
       // Aborting after resolution should be a no-op (no unhandled rejection).
       ac.abort();
+    });
+  });
+
+  // LM-014: async idempotent dispose that awaits loop.dispose
+  describe('LM-014: async idempotent dispose', () => {
+    it('awaits every loop.dispose() so all loops report disposed', async () => {
+      pool = makePool({ max: 3 });
+      const a = pool.acquire();
+      const b = pool.acquire();
+      const c = pool.acquire();
+      pool.release(a);
+      pool.release(b);
+      pool.release(c);
+      await pool.dispose();
+      expect(a.loop.status).toBe('disposed');
+      expect(b.loop.status).toBe('disposed');
+      expect(c.loop.status).toBe('disposed');
+    });
+
+    it('concurrent dispose() calls share the same latch', async () => {
+      pool = makePool({ max: 3 });
+      const a = pool.acquire();
+      pool.release(a);
+      const p1 = pool.dispose();
+      const p2 = pool.dispose();
+      const p3 = pool.dispose();
+      // All three resolve to the same underlying teardown.
+      await Promise.all([p1, p2, p3]);
+      expect(a.loop.status).toBe('disposed');
+      expect(pool.stats.total).toBe(0);
+    });
+
+    it('rejects pending queued acquires on dispose with POOL_DISPOSED', async () => {
+      pool = makePool({ max: 1 });
+      pool.acquire(); // exhaust
+      const pending = pool.acquireAsync(10_000);
+      const disposal = pool.dispose();
+      await expect(pending).rejects.toMatchObject({ code: 'POOL_DISPOSED' });
+      await disposal;
+    });
+
+    it('subsequent dispose() calls after completion return a resolved promise', async () => {
+      pool = makePool();
+      await pool.dispose();
+      // Second call must not throw, resolve cleanly, and not revisit teardown.
+      await expect(pool.dispose()).resolves.toBeUndefined();
     });
   });
 });

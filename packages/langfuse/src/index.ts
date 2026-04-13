@@ -150,8 +150,30 @@ export function createLangfuseExporter(config: LangfuseExporterConfig): TraceExp
       await client.flushAsync();
     },
 
+    /**
+     * LM-015: Flush any buffered events **before** tearing down local state.
+     * Without the pre-clear flush, an in-flight `flushAsync()` may still be
+     * referencing `traceMap` entries we just cleared, producing confusing
+     * warnings in production. A 5s Promise.race cap keeps shutdown bounded
+     * even when the Langfuse endpoint is unreachable.
+     */
     async shutdown(): Promise<void> {
-      await client.flushAsync();
+      const SHUTDOWN_FLUSH_TIMEOUT_MS = 5_000;
+      try {
+        await Promise.race([
+          client.flushAsync(),
+          new Promise<void>((resolve) =>
+            setTimeout(resolve, SHUTDOWN_FLUSH_TIMEOUT_MS),
+          ),
+        ]);
+      } catch (err) {
+        if (typeof console !== 'undefined') {
+          console.warn(
+            '[harness-one/langfuse] flushAsync during shutdown failed:',
+            err instanceof Error ? err.message : err,
+          );
+        }
+      }
       traceMap.clear();
       traceTimestamps.clear();
     },
