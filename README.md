@@ -814,7 +814,19 @@ const loop = new AgentLoop({
 });
 ```
 
-**Event bus deprecation**: `harness.eventBus` is deprecated. Each module exposes its own `onEvent()` subscription (sessions, orchestrator, traces). Use per-module subscriptions for new code.
+**Event bus removal**: `harness.eventBus` is a deprecated dead stub as of 0.4.0 — any property access warns once and any method call throws `HarnessError('DEPRECATED_EVENT_BUS')`. The field will be removed in 0.5.0. Each module exposes its own `onEvent()` subscription (sessions, orchestrator, traces); use those for new code.
+
+**AgentLoop class deprecation**: the `new AgentLoop(...)` constructor is `@deprecated` as of 0.4.0 — prefer the `createAgentLoop()` factory. The class still works for backward compatibility and will be removed in 0.5.0.
+
+**Harness.initialize()** (0.4.0) — optional warmup that pre-initialises exporters and tokenizers behind an idempotent latch. `harness.run()` still works without it but may pay a cold-start latency on the first call.
+
+**harness-one/essentials** (0.4.0) — curated entry point with the 12 most-used symbols (`AgentLoop`, `HarnessError`, `defineTool`, `createTraceManager`, `createLogger`, `createSessionManager`, `createMiddlewareChain`, `createPipeline`, …). Import from this module instead of the root if you want a smaller surface and faster bundle:
+
+```ts
+import { createAgentLoop, defineTool, createLogger } from 'harness-one/essentials';
+```
+
+**AgentLoopHook** (0.4.0) — pass an array of hooks in `AgentLoopConfig.hooks` to receive `onIterationStart` / `onToolCall` / `onCost` / `onIterationEnd` callbacks without subscribing to `AgentEvent`. Hook errors are swallowed through the injected logger and never break the loop.
 
 All auto-configured components can be replaced by passing the explicit override field (`adapter`, `exporters`, `memoryStore`, `schemaValidator`).
 

@@ -6,6 +6,178 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.4.0] — 2026-04-13
+
+The **wave-4 new-perspective deep-research audit** release. Five parallel
+research agents audited angles the prior 147 / 50 / 123 issue waves had
+not entered: concurrency correctness, architectural elegance, hot-path
+latency, type safety, and lifecycle / multi-tenant safety. 68 unique
+findings were distilled from 80 raw reports — see
+`docs/RESEARCH-2026-04-13-wave4.md` for the full provenance.
+
+**3,543 → 3,678 tests** (+135); typecheck + lint clean across all 9
+packages. 0 breaking changes under the 0.x minor contract — surface
+changes are gated behind `@deprecated` and scheduled for 0.5.0.
+
+### Added — foundational primitives
+
+- `harness-one/_internal/disposable` — `Disposable` interface,
+  `disposeAll()` helper, and `DisposeAggregateError`. Every stateful
+  factory (SessionManager, TraceManager, AgentPool, Orchestrator,
+  Harness) now composes through this contract.
+- `harness-one/_internal/async-lock` — FIFO single-owner mutex with
+  `AbortSignal` support (`acquire()` + `withLock<T>(fn)`). Used to
+  serialise TOCTOU-prone critical sections across async boundaries.
+- `harness-one/_internal/lazy-async` — `createLazyAsync<T>()` stores
+  the in-flight promise synchronously so concurrent first-callers share
+  one init, and clears the cached promise on rejection so a later call
+  retries.
+
+### Added — extension points
+
+- `AgentLoopHook` interface (`onIterationStart` / `onToolCall` /
+  `onCost` / `onIterationEnd`) for iteration-level instrumentation;
+  hook errors are logged via the injected logger and never break the
+  loop.
+- `InstrumentationPort` (`observe/instrumentation-port.ts`) — minimal
+  tracing surface accepted by RAG and other sub-systems instead of the
+  concrete `TraceManager`. TraceManager satisfies the port
+  structurally, so existing consumers are unchanged.
+- `EvictionStrategy` (`observe/cost-tracker-eviction.ts`) — pluggable
+  overflow-bucket (default, preserves SEC-009) and lru strategies for
+  `CostTracker`. Langfuse wires `lruStrategy`; a conformance suite
+  runs against both.
+- `harness-one/essentials` — curated entry point with the 12
+  most-used symbols: `AgentLoop`, `createAgentLoop`, `HarnessError`,
+  `MaxIterationsError`, `AbortedError`, `defineTool`, `createRegistry`,
+  `createTraceManager`, `createLogger`, `createSessionManager`,
+  `createMiddlewareChain`, `createPipeline`.
+- `Harness.initialize?()` — optional warmup (exporter `initialize()`
+  + tokenizer warm) behind an idempotent latch. Calling `run()` before
+  `initialize()` still works with a documented cold-start penalty.
+
+### Added — type safety
+
+- Opaque branded `TraceId` / `SpanId` / `SessionId` types via
+  `Brand<string, …>` plus `asTraceId` / `asSpanId` / `asSessionId`
+  helpers in `_internal/ids.ts`. Cross-assignment (sessionId → spanId)
+  now fails the typecheck.
+- `ToolResult` gains a `kind: 'success' | 'error'` discriminator
+  alongside the legacy `success: boolean` — exhaustive `switch`
+  blocks are now type-safe.
+- `memory/_schemas` runtime type-guards (`isMemoryEntry`,
+  `isRelayState`); corrupt entries throw
+  `HarnessError('MEMORY_CORRUPT')` instead of silently casting.
+- `HarnessErrorCode` union documents `INVALID_CONFIG` /
+  `INTERNAL_ERROR` / `CLI_PARSE_ERROR` / `MEMORY_CORRUPT` /
+  `DEPRECATED_EVENT_BUS` / `DELEGATION_CYCLE` /
+  `SELF_HEALING_ABORTED`.
+
+### Changed — shutdown & lifecycle
+
+- `Harness.shutdown()` / `drain()` are now a sequential DAG behind a
+  `shutdownPromise` latch: `loop.dispose?.()` → `sessions.dispose()` →
+  `middleware.clear()` → `traces.dispose()` → per-exporter
+  `shutdown()` inside a 5 s `Promise.race`. Concurrent callers share
+  the same pass.
+- `AgentPool.dispose()` is now async, idempotent, and awaits every
+  `loop.dispose?.()`; pending acquires are rejected cleanly.
+- `LangfuseExporter.shutdown()` awaits `client.flushAsync()` (5 s cap)
+  before clearing `traceMap` / `traceTimestamps`.
+- `TraceManager.ensureInitialized` uses `createLazyAsync` per-exporter
+  — concurrent first-exports share one init, and a failed init is
+  re-tried on the next export.
+- `TraceManager.startTrace` returns a dead handle (no admission to the
+  `traces` map) when every exporter reports `isHealthy() === false`,
+  so zombie traces no longer pile up.
+- `TraceManager.startTrace` now actively evicts when `maxTraces` is
+  reached — memory is capped even when exporters are unhealthy and
+  traces never end.
+
+### Changed — concurrency correctness
+
+- `orchestrator.delegate()` wraps cycle-check + `strategy.select` +
+  chain mutation in a per-source `AsyncLock`; concurrent delegations
+  can no longer bypass `DELEGATION_CYCLE` detection.
+- RAG retriever LRU "touch" uses a per-cache-key `createLazyAsync` —
+  10 parallel identical retrieves call the embedder exactly once; the
+  lazy slot clears on rejection so a later call retries.
+- Guardrail self-healing uses a new `sleepWithAbort` helper that
+  clears both the timer and the abort listener on every path; abort
+  during backoff throws `HarnessError('SELF_HEALING_ABORTED')`.
+- Agent-loop's external-signal listener body is gated on
+  `_status === 'disposed'` — a late-firing signal is a no-op.
+- `FallbackAdapter.pendingSwitch` (previously a racy `Promise | null`)
+  replaced with `createAsyncLock` + a stale-adapter guard — 10
+  concurrent failures advance the adapter index exactly once.
+- `TraceManager` captures `samplingRateSnapshot` at `startTrace`;
+  `exportTraceTo` reads the snapshot, so a mid-flight
+  `setSamplingRate(0)` no longer drops in-flight traces.
+
+### Changed — hot-path performance
+
+- Agent-loop streaming loop no longer allocates per chunk: the
+  strategy-options bag is hoisted and frozen at construction; the
+  `accumulatedToolCalls` Map is paired with a `toolCallList` array so
+  delta handling mutates in place; `Promise.allSettled` consumes the
+  `pendingExports` Set directly.
+- Middleware chain and session event handlers switched from array to
+  `Set<fn>` — insertion-order iteration preserved, duplicate
+  registration deduped, unsubscribe is O(1) (was O(n) `indexOf` +
+  `splice`).
+- `MessageQueue.iterateMessages()` — new zero-copy generator with the
+  same `type` / `since` filter semantics; `getMessages()` documented
+  as allocating.
+- `TraceManager` builds one frozen readonly span snapshot (with a
+  frozen `events` array) per export and reuses it across every
+  exporter — no more per-exporter deep clone.
+- `TraceManager` LRU replaced with a per-trace doubly-linked list
+  (`lruPrev` / `lruNext` / `inLru`); append / remove / shift are all
+  O(1) (was O(n) index rebuild per eviction).
+- Logger gates all work behind the level check; replacer is
+  constructed only when actually stringifying; text-mode calls with
+  no metadata skip `JSON.stringify` entirely.
+
+### Changed — module elegance
+
+- `StreamAggregator` extracted from the agent-loop god-module into
+  `core/stream-aggregator.ts` — behaviour-preserving refactor;
+  `handleStream` is now a thin wrapper.
+- `AgentLoopTraceManager` hoisted to `core/trace-interface.ts`.
+- Validation-error paths in `LRUCache`, `output-parser`, `cli/parser`,
+  and `tiktoken` route through `HarnessError` instead of ad-hoc
+  `throw new Error(...)`. Tiktoken emits a one-time warn via the
+  swappable `setTiktokenFallbackWarner` sink.
+- `guardrails/pipeline` replaces `as unknown as` double-casts with a
+  module-scoped `WeakMap<GuardrailPipeline, PipelineInternalData>`.
+- Preset config validation now requires `Number.isInteger && > 0`
+  for `maxIterations` / `maxTotalTokens` / `guardrails.rateLimit.max`
+  / `guardrails.rateLimit.windowMs`; `budget` requires
+  `Number.isFinite && > 0`.
+- Preset emits a `logger.warn` when a custom function / object
+  tokenizer is supplied without `config.model` — previously a silent
+  no-op.
+- `setSpanAttributes()` emits one-warn-per-key when the attribute
+  prefix is outside `{system., error., cost., user.}`; silent when no
+  logger is configured. Reserved prefix convention is documented.
+
+### Deprecated
+
+- `AgentLoop` class export — prefer `createAgentLoop()` factory.
+  Removal planned for 0.5.0.
+- `Harness.eventBus` — now a `Proxy` dead stub that warns once on
+  property read and throws `HarnessError('DEPRECATED_EVENT_BUS')` on
+  any method call. Removal planned for 0.5.0.
+
+### Docs
+
+- `docs/RESEARCH-2026-04-13-wave4.md` — the five-agent synthesis
+  report driving this release. Includes per-cluster severity breakdown
+  (P0 14 / P1 33 / P2 21), raw transcripts, and next-wave
+  recommendations.
+
+---
+
 ## [0.3.0] — 2026-04-13
 
 The 123-issue production-readiness audit release. Based on a fresh
