@@ -201,6 +201,17 @@ describe('analyzeCacheStability', () => {
     });
   });
 
+  /**
+   * Defensive handling when TypeScript types are bypassed.
+   *
+   * `Message.content` is typed as `string`, so these tests intentionally use
+   * `as unknown as string` casts to exercise code paths that run when a
+   * caller (usually via `any` or a non-TS consumer) passes structured
+   * content through our `string`-typed field. The production fix serializes
+   * non-string content so we get meaningful overlap ratios instead of
+   * `[object Object]` collisions. Do NOT drop the cast without also changing
+   * the public `Message.content` type.
+   */
   describe('FIX: messageKey handles non-string content', () => {
     it('computes correct contentOverlapRatio when content is an array (non-string)', () => {
       const v1: Message[] = [

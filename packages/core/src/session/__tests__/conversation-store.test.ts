@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createInMemoryConversationStore } from '../conversation-store.js';
 import type { Message } from '../../core/types.js';
 
@@ -161,6 +161,87 @@ describe('createInMemoryConversationStore', () => {
 
       expect(await store.load('s1')).toEqual([userMsg]);
       expect(await store.load('s2')).toEqual([assistantMsg]);
+    });
+  });
+
+  // CQ-011: Bounded in-memory conversation store
+  describe('CQ-011: bounded store', () => {
+    it('defaults to unlimited (backwards compatible)', async () => {
+      const store = createInMemoryConversationStore();
+      for (let i = 0; i < 50; i++) {
+        await store.save(`s${i}`, [userMsg]);
+      }
+      expect((await store.list()).length).toBe(50);
+    });
+
+    it('LRU-evicts oldest session once maxSessions exceeded', async () => {
+      const store = createInMemoryConversationStore({ maxSessions: 3 });
+      await store.save('a', [userMsg]);
+      await store.save('b', [userMsg]);
+      await store.save('c', [userMsg]);
+      await store.save('d', [userMsg]); // evicts "a"
+      const ids = await store.list();
+      expect(ids).toEqual(expect.arrayContaining(['b', 'c', 'd']));
+      expect(ids).not.toContain('a');
+    });
+
+    it('LRU touch on append resets recency', async () => {
+      const store = createInMemoryConversationStore({ maxSessions: 3 });
+      await store.save('a', [userMsg]);
+      await store.save('b', [userMsg]);
+      await store.save('c', [userMsg]);
+      // Touch "a" so it becomes the newest — "b" should be evicted next.
+      await store.append('a', assistantMsg);
+      await store.save('d', [userMsg]);
+      const ids = await store.list();
+      expect(ids).toContain('a');
+      expect(ids).not.toContain('b');
+    });
+
+    it('truncates oldest messages when maxMessagesPerSession exceeded (save path)', async () => {
+      const store = createInMemoryConversationStore({ maxMessagesPerSession: 2 });
+      const msg = (text: string): Message => ({ role: 'user', content: text });
+      await store.save('s', [msg('1'), msg('2'), msg('3'), msg('4')]);
+      const loaded = await store.load('s');
+      expect(loaded).toHaveLength(2);
+      expect(loaded.map((m) => m.content)).toEqual(['3', '4']);
+    });
+
+    it('truncates oldest messages when maxMessagesPerSession exceeded (append path)', async () => {
+      const store = createInMemoryConversationStore({ maxMessagesPerSession: 2 });
+      const msg = (text: string): Message => ({ role: 'user', content: text });
+      await store.append('s', msg('1'));
+      await store.append('s', msg('2'));
+      await store.append('s', msg('3'));
+      const loaded = await store.load('s');
+      expect(loaded).toHaveLength(2);
+      expect(loaded.map((m) => m.content)).toEqual(['2', '3']);
+    });
+
+    it('warns once when unbounded and threshold crossed', async () => {
+      const onWarning = vi.fn();
+      const store = createInMemoryConversationStore({
+        onWarning,
+        unboundedWarnThreshold: 3,
+      });
+      for (let i = 0; i < 5; i++) {
+        await store.save(`s${i}`, [userMsg]);
+      }
+      // Fired exactly once (one-time warn).
+      expect(onWarning).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not warn when bounds are set explicitly', async () => {
+      const onWarning = vi.fn();
+      const store = createInMemoryConversationStore({
+        onWarning,
+        maxSessions: 2,
+        unboundedWarnThreshold: 1,
+      });
+      await store.save('a', [userMsg]);
+      await store.save('b', [userMsg]);
+      await store.save('c', [userMsg]);
+      expect(onWarning).not.toHaveBeenCalled();
     });
   });
 });

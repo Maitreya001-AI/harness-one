@@ -36,7 +36,7 @@ core 模块定义了 harness-one 的共享类型契约（Message、TokenUsage、
 | `ToolSchema` | 工具的 JSON Schema 描述 |
 | `JsonSchema` | JSON Schema 定义（支持的子集） |
 | `AgentEvent` | 7 种事件的判别联合 |
-| `DoneReason` | 循环终止原因：`'end_turn' \| 'max_iterations' \| 'token_budget' \| 'aborted'` |
+| `DoneReason` | 循环终止原因：`'end_turn' \| 'max_iterations' \| 'token_budget' \| 'aborted' \| 'error'` |
 | `ToolExecutionResult` | 工具批量执行的单条结果：toolCallId + result |
 | `ExecutionStrategy` | 工具执行策略接口：execute(calls, handler, options) |
 | `AgentLoopConfig` | AgentLoop 构造配置（含 parallel、executionStrategy、isSequentialTool） |

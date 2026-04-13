@@ -55,7 +55,22 @@ function packContext(layout: ContextLayout, model?: string):
 
 **compress(messages, options)**
 ```ts
-function compress(messages: readonly Message[], options: CompressOptions): Promise<Message[]>
+function compress(messages: readonly Message[], options: CompressOptions): Promise<CompressResult>
+
+interface CompressResult {
+  readonly messages: Message[];
+  readonly compressed: boolean;       // 是否成功压入 budget
+  readonly originalTokens: number;    // 压缩前估算 token 数
+  readonly finalTokens: number;       // 压缩后估算 token 数
+  readonly truncated?: boolean;       // CQ-013：降级到截断兜底路径时置真
+  readonly fallbackReason?: string;   // CQ-014：降级原因（如 summarizer 失败）
+}
+
+// 典型用法（推荐解构）
+const { messages: packed, compressed, finalTokens } = await compress(history, {
+  strategy: 'truncate',
+  budget: 4000,
+});
 ```
 内置策略名：`'truncate'` | `'sliding-window'` | `'summarize'` | `'preserve-failures'`。
 

@@ -23,7 +23,7 @@ export { createInMemoryStore } from './store.js';
 export { createFileSystemStore } from './fs-store.js';
 
 // File I/O primitives
-export { createFileIO } from './fs-io.js';
+export { createFileIO, validateEntryId } from './fs-io.js';
 export type { FileIO, Index } from './fs-io.js';
 
 // Relay

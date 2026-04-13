@@ -209,28 +209,35 @@ export function createHandoff(transport: MessageTransport, handoffConfig?: Hando
 }
 
 /**
- * Fix 29: Insert a payload into a priority-sorted queue.
- * High priority items go first, then normal, then low.
- * Within the same priority level, items maintain FIFO order.
+ * Fix 29 + PERF-003: Insert a payload into a priority-sorted queue.
+ *
+ * The queue is ordered by rank descending (highest rank first). We binary-
+ * search for the first index whose rank is strictly less than the new
+ * payload's rank — that is the insertion boundary that preserves FIFO order
+ * within the same priority tier (new item goes AFTER existing same-rank
+ * items). Worst case: O(log n) comparisons + O(n) splice. Previous impl was
+ * O(n) comparisons on every insert.
  */
 function extractPriority(payload: HandoffPayload): string {
   return payload.priority ?? 'normal';
 }
 
 function insertByPriority(queue: HandoffPayload[], payload: HandoffPayload): void {
-  const priority = extractPriority(payload);
-  const rank = priorityRank(priority);
+  const rank = priorityRank(extractPriority(payload));
 
-  // Find insertion point: after all items with same or higher priority
-  let insertIdx = queue.length;
-  for (let i = 0; i < queue.length; i++) {
-    const itemPriority = extractPriority(queue[i]);
-    if (priorityRank(itemPriority) < rank) {
-      insertIdx = i;
-      break;
+  // Binary search for the first index `i` where rank(queue[i]) < rank.
+  // Equal-rank items keep FIFO because we target the boundary AFTER them.
+  let lo = 0;
+  let hi = queue.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (priorityRank(extractPriority(queue[mid])) >= rank) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
     }
   }
-  queue.splice(insertIdx, 0, payload);
+  queue.splice(lo, 0, payload);
 }
 
 function priorityRank(priority: string): number {

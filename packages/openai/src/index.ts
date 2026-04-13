@@ -21,6 +21,7 @@ import type {
   ToolSchema,
 } from 'harness-one/core';
 import { HarnessError } from 'harness-one/core';
+import type { Logger } from 'harness-one/observe';
 
 const _providers: Record<string, { baseURL: string }> = {
   openrouter: { baseURL: 'https://openrouter.ai/api/v1' },
@@ -33,6 +34,9 @@ const _providers: Record<string, { baseURL: string }> = {
   ollama: { baseURL: 'http://localhost:11434/v1' },
 };
 
+/** Names reserved for built-in adapters; cannot be overridden without force. */
+const BUILT_IN_PROVIDER_NAMES: ReadonlySet<string> = new Set(['openai', 'anthropic']);
+
 /**
  * Well-known OpenAI-compatible provider base URLs.
  *
@@ -41,9 +45,69 @@ const _providers: Record<string, { baseURL: string }> = {
  */
 export const providers: Readonly<Record<string, { baseURL: string }>> = _providers;
 
-/** Register a custom OpenAI-compatible provider or override an existing one. */
-export function registerProvider(name: string, config: { baseURL: string }): void {
-  _providers[name] = config;
+/**
+ * Register a custom OpenAI-compatible provider or override an existing one.
+ *
+ * SECURITY WARNING: This function mutates a module-scoped registry that
+ * influences which base URL subsequent `createOpenAIAdapter({ ...providers.X })`
+ * calls resolve to. It MUST only be called from trusted initialization code
+ * (e.g. application bootstrap). Do NOT drive it from untrusted input (user
+ * requests, config files fetched at runtime, etc.) — doing so would allow an
+ * attacker to redirect API traffic (and bearer tokens) to an arbitrary host.
+ *
+ * Validation applied:
+ *  - `config.baseURL` MUST parse as a valid URL (WHATWG `new URL`).
+ *  - The scheme MUST be `https:` unless the host is `localhost` or
+ *    `127.0.0.1` (for local-dev-only HTTP providers like Ollama / vLLM /
+ *    LM Studio).
+ *  - Built-in adapter names (`openai`, `anthropic`) are reserved. To
+ *    deliberately override them, pass `{ force: true }` as the third argument.
+ *
+ * @throws {HarnessError} with code `INVALID_CONFIG` on any validation failure.
+ */
+export function registerProvider(
+  name: string,
+  config: { baseURL: string },
+  options?: { readonly force?: boolean },
+): void {
+  if (typeof name !== 'string' || name.length === 0) {
+    throw new HarnessError(
+      'registerProvider: name must be a non-empty string',
+      'INVALID_CONFIG',
+      'Pass a non-empty provider name as the first argument.',
+    );
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(config.baseURL);
+  } catch (err) {
+    throw new HarnessError(
+      `registerProvider: baseURL "${config.baseURL}" is not a valid URL`,
+      'INVALID_CONFIG',
+      'Pass a fully qualified absolute URL (including scheme), e.g. "https://api.example.com/v1".',
+      err instanceof Error ? err : undefined,
+    );
+  }
+
+  const isLocalDev = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
+  if (parsed.protocol !== 'https:' && !isLocalDev) {
+    throw new HarnessError(
+      `registerProvider: refusing non-HTTPS baseURL "${config.baseURL}"`,
+      'INVALID_CONFIG',
+      'Use an https:// URL. Plain http:// is only allowed for localhost / 127.0.0.1 development endpoints.',
+    );
+  }
+
+  if (BUILT_IN_PROVIDER_NAMES.has(name) && !options?.force) {
+    throw new HarnessError(
+      `registerProvider: "${name}" is a reserved built-in provider name`,
+      'INVALID_CONFIG',
+      'Pick a different name, or pass { force: true } as the third argument to explicitly override the built-in.',
+    );
+  }
+
+  _providers[name] = { baseURL: config.baseURL };
 }
 
 /** Configuration for the OpenAI adapter. */
@@ -63,6 +127,13 @@ export interface OpenAIAdapterConfig {
    * Passed to the OpenAI SDK client at creation time. Defaults to 2 (SDK default).
    */
   readonly maxRetries?: number;
+  /**
+   * Optional logger used for non-fatal adapter warnings (e.g. missing token
+   * usage in a stream chunk, malformed tool arguments). Defaults to the
+   * global `console` if not provided. Library code SHOULD NOT write directly
+   * to `console` — accept a logger so hosts can route/silence warnings.
+   */
+  readonly logger?: Pick<Logger, 'warn' | 'error'>;
 }
 
 /** Convert a harness-one Message to OpenAI's chat completion message format. */
@@ -146,14 +217,26 @@ function toOpenAITool(
   };
 }
 
-/** Map OpenAI's usage to harness-one's TokenUsage. */
+/**
+ * Map OpenAI's usage to harness-one's TokenUsage.
+ *
+ * OpenAI exposes prompt-cache hits via the optional
+ * `usage.prompt_tokens_details.cached_tokens` field (the newer Responses /
+ * Chat Completions API shape). When present, we surface it as
+ * `cacheReadTokens` so cost tracking in the core reflects cached-read savings.
+ */
 function toTokenUsage(
   usage: OpenAI.Completions.CompletionUsage | undefined,
 ): TokenUsage {
-  return {
+  const cachedTokens = usage?.prompt_tokens_details?.cached_tokens;
+  const base: { inputTokens: number; outputTokens: number; cacheReadTokens?: number } = {
     inputTokens: usage?.prompt_tokens ?? 0,
     outputTokens: usage?.completion_tokens ?? 0,
   };
+  if (typeof cachedTokens === 'number') {
+    base.cacheReadTokens = cachedTokens;
+  }
+  return base;
 }
 
 /** Parse an OpenAI response choice into a harness-one Message. */
@@ -175,6 +258,13 @@ function toHarnessMessage(
 }
 
 /**
+ * Models for which we've already emitted a zero-token warning in non-stream
+ * chat responses. Module-scoped so we dedupe across all adapter instances in
+ * the process (same policy as stream path).
+ */
+const _zeroUsageWarnedModels: Set<string> = new Set();
+
+/**
  * Create an AgentAdapter backed by the OpenAI SDK.
  *
  * Supports chat(), stream(), and tool_calls handling.
@@ -187,6 +277,23 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
     maxRetries: config.maxRetries,
   });
   const model = config.model ?? 'gpt-4o';
+  const logger: Pick<Logger, 'warn' | 'error'> = config.logger ?? {
+    warn: (msg: string, meta?: Record<string, unknown>): void => {
+      if (meta && Object.keys(meta).length > 0) {
+        console.warn(msg, meta);
+      } else {
+        console.warn(msg);
+      }
+    },
+    error: (msg: string, meta?: Record<string, unknown>): void => {
+      // Fallback logger routes to console.error by design — callers inject a
+      // Logger to redirect library errors into structured logging.
+      // eslint-disable-next-line no-console
+      if (meta && Object.keys(meta).length > 0) console.error(msg, meta);
+      // eslint-disable-next-line no-console
+      else console.error(msg);
+    },
+  };
 
   return {
     name: `openai:${model}`,
@@ -210,6 +317,9 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
             },
           },
         }),
+        // Spec: LLMConfig.extra MUST be forwarded to the provider. Merge LAST
+        // so caller-supplied unknown keys win over base params (per provider-spec.md).
+        ...(params.config?.extra ?? {}),
       }, { signal: params.signal });
 
       const choice = response.choices[0];
@@ -217,9 +327,20 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
         throw new HarnessError('OpenAI returned no choices', 'PROVIDER_ERROR', 'Check if the model and API key are valid');
       }
 
+      // SPEC-015: warn once per model when non-stream usage data is missing.
+      const usage = response.usage;
+      const missingInput = usage?.prompt_tokens === undefined || usage?.prompt_tokens === null;
+      const missingOutput = usage?.completion_tokens === undefined || usage?.completion_tokens === null;
+      if ((missingInput || missingOutput) && !_zeroUsageWarnedModels.has(model)) {
+        _zeroUsageWarnedModels.add(model);
+        logger.warn(
+          `[harness-one/openai] chat() response for model "${model}" had missing prompt/completion token counts — cost tracking will under-report. (This warning is emitted once per model.)`,
+        );
+      }
+
       return {
         message: toHarnessMessage(choice),
-        usage: toTokenUsage(response.usage),
+        usage: toTokenUsage(usage),
       };
     },
 
@@ -245,6 +366,9 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
         }),
         stream: true,
         stream_options: { include_usage: true },
+        // Spec: LLMConfig.extra MUST be forwarded to the provider. Merge LAST
+        // so caller-supplied unknown keys win over base params.
+        ...(params.config?.extra ?? {}),
       }, { signal: params.signal });
 
       const toolCallAccum = new Map<
@@ -319,11 +443,26 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
       }
 
       // Only emit bare done if stream ended without a usage chunk
-      console.warn('[harness-one/openai] Stream ended without usage data — token counts will be zero. This may affect cost tracking.');
+      logger.warn(
+        '[harness-one/openai] Stream ended without usage data — token counts will be zero. This may affect cost tracking.',
+      );
       yield {
         type: 'done' as const,
         usage: { inputTokens: 0, outputTokens: 0 },
       };
     },
   };
+}
+
+/**
+ * Test-only: reset the module-scoped "zero-usage warn once" dedupe set.
+ *
+ * Library consumers should NOT need to call this. It exists so unit tests can
+ * exercise the one-time-warn behaviour across multiple `it()` cases without
+ * leaking state between tests.
+ *
+ * @internal
+ */
+export function _resetOpenAIWarnState(): void {
+  _zeroUsageWarnedModels.clear();
 }

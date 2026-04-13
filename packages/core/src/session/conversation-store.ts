@@ -92,6 +92,25 @@ export interface ConversationStore {
 }
 
 /**
+ * CQ-011: Configuration for the in-memory conversation store. Defaults
+ * remain `Infinity` (backwards compatible), but callers are encouraged to
+ * set explicit bounds in production to avoid unbounded growth.
+ */
+export interface ConversationStoreConfig {
+  /** Maximum number of concurrent sessions to retain. Default: Infinity. LRU evicts oldest when exceeded. */
+  readonly maxSessions?: number;
+  /** Maximum messages retained per session. Default: Infinity. Oldest messages truncated when exceeded. */
+  readonly maxMessagesPerSession?: number;
+  /**
+   * Threshold beyond which a one-time warning is emitted when both limits
+   * are `Infinity`. Default: 10_000 sessions.
+   */
+  readonly unboundedWarnThreshold?: number;
+  /** Custom warn sink. Default: `console.warn`. */
+  readonly onWarning?: (message: string) => void;
+}
+
+/**
  * Create an in-memory ConversationStore.
  *
  * Suitable for development and testing. For production, implement the
@@ -99,13 +118,57 @@ export interface ConversationStore {
  *
  * @example
  * ```ts
- * const store = createInMemoryConversationStore();
+ * const store = createInMemoryConversationStore({ maxSessions: 1000, maxMessagesPerSession: 500 });
  * await store.save('session-1', [{ role: 'user', content: 'Hello' }]);
  * const messages = await store.load('session-1');
  * ```
  */
-export function createInMemoryConversationStore(): ConversationStore {
+export function createInMemoryConversationStore(config?: ConversationStoreConfig): ConversationStore {
+  // Map iteration order is insertion order — re-inserting a touched key
+  // moves it to the end, giving us LRU semantics cheaply.
   const store = new Map<string, Message[]>();
+
+  const maxSessions = config?.maxSessions ?? Infinity;
+  const maxMessagesPerSession = config?.maxMessagesPerSession ?? Infinity;
+  const unboundedWarnThreshold = config?.unboundedWarnThreshold ?? 10_000;
+  const warn = config?.onWarning ?? ((m: string) => console.warn(m));
+
+  let unboundedWarned = false;
+
+  function maybeWarnUnbounded(): void {
+    if (unboundedWarned) return;
+    if (maxSessions === Infinity && maxMessagesPerSession === Infinity && store.size >= unboundedWarnThreshold) {
+      unboundedWarned = true;
+      warn(
+        `[harness-one/conversation-store] In-memory store now holds ${store.size} sessions with no limits configured. ` +
+          `Set maxSessions/maxMessagesPerSession in createInMemoryConversationStore() to bound memory.`,
+      );
+    }
+  }
+
+  function enforceSessionCap(): void {
+    if (maxSessions === Infinity) return;
+    while (store.size > maxSessions) {
+      // LRU: evict the oldest (first-inserted / least-recently-touched) session.
+      const oldestKey = store.keys().next().value;
+      if (oldestKey === undefined) break;
+      store.delete(oldestKey);
+    }
+  }
+
+  function clampMessages(messages: readonly Message[]): Message[] {
+    if (maxMessagesPerSession === Infinity || messages.length <= maxMessagesPerSession) {
+      return [...messages];
+    }
+    // Keep the most recent N messages; truncate oldest.
+    return messages.slice(messages.length - maxMessagesPerSession);
+  }
+
+  function touch(sessionId: string, messages: Message[]): void {
+    // LRU touch: delete+reinsert to move to end-of-iteration.
+    store.delete(sessionId);
+    store.set(sessionId, messages);
+  }
 
   return {
     capabilities: {
@@ -116,7 +179,10 @@ export function createInMemoryConversationStore(): ConversationStore {
     },
 
     async save(sessionId, messages) {
-      store.set(sessionId, [...messages]);
+      const clamped = clampMessages(messages);
+      touch(sessionId, clamped);
+      enforceSessionCap();
+      maybeWarnUnbounded();
     },
     async load(sessionId) {
       const messages = store.get(sessionId);
@@ -134,8 +200,11 @@ export function createInMemoryConversationStore(): ConversationStore {
      */
     async append(sessionId, message) {
       const existing = store.get(sessionId) ?? [];
-      const messages = [...existing, message];
-      store.set(sessionId, messages);
+      const appended = [...existing, message];
+      const clamped = clampMessages(appended);
+      touch(sessionId, clamped);
+      enforceSessionCap();
+      maybeWarnUnbounded();
     },
     async delete(sessionId) {
       return store.delete(sessionId);

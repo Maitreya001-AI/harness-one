@@ -17,6 +17,8 @@ export const ALL_MODULES = [
   'memory',
   'eval',
   'evolve',
+  'orchestration',
+  'rag',
 ] as const;
 
 export type ModuleName = (typeof ALL_MODULES)[number];
@@ -32,6 +34,8 @@ export const MODULE_DESCRIPTIONS: Record<ModuleName, string> = {
   memory: 'Memory & Persistence -- stores, compaction, cross-context relay',
   eval: 'Evaluation -- runners, scorers, generator-evaluator',
   evolve: 'Continuous Evolution -- component registry, drift detection, architecture rules',
+  orchestration: 'Agent Orchestration -- multi-agent coordination, delegation, handoff, boundaries',
+  rag: 'Retrieval-Augmented Generation -- loaders, chunking, embeddings, retrievers, pipeline',
 };
 
 // ── Argument parser ───────────────────────────────────────────────────────────

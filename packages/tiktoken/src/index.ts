@@ -16,10 +16,30 @@ export interface Tokenizer {
 }
 
 /**
- * Module-level encoder cache. Avoids expensive encoder creation on every call.
- * Maps model name -> cached Tokenizer instance.
+ * Internal shape of the tiktoken native encoder we hold on to so we can
+ * `.free()` the underlying WASM memory on disposal.
+ *
+ * `encoding_for_model()` returns a native object with `.encode()` and a
+ * `.free()` method that releases the underlying WASM allocation. TypeScript's
+ * bundled types may not surface `.free()` on every release, so we treat it as
+ * optional.
  */
-const encoderCache = new Map<string, Tokenizer>();
+interface NativeEncoder {
+  encode(text: string): Uint32Array;
+  free?: () => void;
+}
+
+/** Cache entry pairs the public Tokenizer with the native encoder that owns the WASM memory. */
+interface CachedEntry {
+  readonly tokenizer: Tokenizer;
+  readonly encoder: NativeEncoder;
+}
+
+/**
+ * Module-level encoder cache. Avoids expensive encoder creation on every call.
+ * Maps model name -> cached entry.
+ */
+const encoderCache = new Map<string, CachedEntry>();
 
 /** Default models to register when no model list is provided. */
 const DEFAULT_MODELS: string[] = [
@@ -70,12 +90,12 @@ export function createTiktokenTokenizer(model: string): Tokenizer {
   // Check encoder cache first
   const cached = encoderCache.get(model);
   if (cached) {
-    return cached;
+    return cached.tokenizer;
   }
 
-  let encoder;
+  let encoder: NativeEncoder;
   try {
-    encoder = encoding_for_model(model as TiktokenModel);
+    encoder = encoding_for_model(model as TiktokenModel) as unknown as NativeEncoder;
   } catch (err) {
     throw new Error(
       `Unsupported or failed tiktoken model: "${model}". ` +
@@ -92,8 +112,36 @@ export function createTiktokenTokenizer(model: string): Tokenizer {
   };
 
   // Cache the encoder for subsequent calls
-  encoderCache.set(model, tokenizer);
+  encoderCache.set(model, { tokenizer, encoder });
 
   registerTokenizer(model, tokenizer);
   return tokenizer;
+}
+
+/**
+ * Release all cached tiktoken WASM encoders and clear the module-level cache.
+ *
+ * CQ-012 fix: the tiktoken package allocates native WASM memory per encoder
+ * (via `encoding_for_model()`). Because we cache encoders for the lifetime of
+ * the process, long-running or frequently-restarting-in-place harnesses can
+ * accumulate WASM allocations that the JS GC cannot reclaim directly. Hosts
+ * that want a clean shutdown (e.g. between test runs, during graceful
+ * reload, or when dynamically swapping model lists) MUST call this to free
+ * that native memory.
+ *
+ * After disposal, subsequent calls to `createTiktokenTokenizer(model)` will
+ * re-create and re-register encoders on demand, and `registerTiktokenModels()`
+ * (with no args) will re-register the defaults since the internal
+ * "defaults-registered" flag is also reset.
+ *
+ * The function is idempotent — calling it twice in a row is safe.
+ */
+export function disposeTiktoken(): void {
+  for (const { encoder } of encoderCache.values()) {
+    // `.free()` may not be present on every tiktoken build; guard defensively.
+    encoder.free?.();
+  }
+  encoderCache.clear();
+  // Reset so a subsequent registerTiktokenModels() with no args re-registers defaults.
+  defaultsRegistered = false;
 }

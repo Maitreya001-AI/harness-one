@@ -720,4 +720,59 @@ describe('createRelay', () => {
       warnSpy.mockRestore();
     });
   });
+
+  // CQ-005: All three writers (save / checkpoint / addArtifact) must share
+  // the same version-check path so concurrent writers cannot silently clobber.
+  describe('CQ-005: version-checked writes across all mutators', () => {
+    it('checkpoint() detects version conflict like save()', async () => {
+      await relay.checkpoint({ step: 1 });
+
+      // Second relay instance reads + checkpoints, bumping version
+      const relay2 = createRelay({ store });
+      await relay2.load();
+      await relay2.checkpoint({ step: 2 });
+
+      // Original relay has stale cached version — checkpoint must throw
+      await expect(relay.checkpoint({ step: 3 })).rejects.toMatchObject({
+        code: 'RELAY_CONFLICT',
+      });
+    });
+
+    it('addArtifact() detects version conflict like save()', async () => {
+      await relay.addArtifact('a.txt');
+
+      const relay2 = createRelay({ store });
+      await relay2.load();
+      await relay2.addArtifact('b.txt');
+
+      await expect(relay.addArtifact('c.txt')).rejects.toMatchObject({
+        code: 'RELAY_CONFLICT',
+      });
+    });
+
+    it('successful checkpoint advances lastKnownVersion so subsequent save is accepted', async () => {
+      await relay.checkpoint({ step: 1 });
+      // Should not conflict with itself — lastKnownVersion advanced.
+      await expect(
+        relay.save({
+          progress: { step: 2 },
+          artifacts: [],
+          checkpoint: 'cp2',
+          timestamp: 2000,
+        }),
+      ).resolves.toBeUndefined();
+    });
+
+    it('successful addArtifact advances lastKnownVersion so subsequent save is accepted', async () => {
+      await relay.addArtifact('a.txt');
+      await expect(
+        relay.save({
+          progress: { step: 1 },
+          artifacts: ['a.txt'],
+          checkpoint: 'cp1',
+          timestamp: 1000,
+        }),
+      ).resolves.toBeUndefined();
+    });
+  });
 });

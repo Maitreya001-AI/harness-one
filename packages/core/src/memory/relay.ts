@@ -114,36 +114,52 @@ export function createRelay(config: {
     return null;
   }
 
+  /**
+   * CQ-005: Shared optimistic concurrency guard used by all three writers
+   * (`save`, `checkpoint`, `addArtifact`). Captures the version we last knew
+   * about, reloads the current state, compares versions, and either delegates
+   * the full update (update/write) to the caller-provided updater or throws
+   * RELAY_CONFLICT. After a successful write `lastKnownVersion` is advanced
+   * so subsequent calls also benefit from the guard.
+   *
+   * The updater receives the current state (or null on first write) and
+   * returns the new `RelayState` to persist.
+   */
+  async function updateWithGuard(
+    buildNextState: (current: RelayState | null) => RelayState,
+  ): Promise<void> {
+    const expectedVersion = lastKnownVersion;
+    const existing = await findRelay();
+    if (existing) {
+      if (expectedVersion > 0 && existing.version !== expectedVersion) {
+        throw new HarnessError(
+          `Relay state conflict: expected version ${expectedVersion} but found ${existing.version}`,
+          'RELAY_CONFLICT',
+          'Retry the save operation — another write occurred concurrently',
+        );
+      }
+      const newState = buildNextState(existing.state);
+      const newVersion = existing.version + 1;
+      const versioned: VersionedRelayState = { ...newState, _version: newVersion };
+      await store.update(existing.id, { content: JSON.stringify(versioned) });
+      lastKnownVersion = newVersion;
+    } else {
+      const newState = buildNextState(null);
+      const versioned: VersionedRelayState = { ...newState, _version: 1 };
+      const entry = await store.write({
+        key: relayKey,
+        content: JSON.stringify(versioned),
+        grade: 'critical',
+        tags: [relayKey],
+      });
+      currentId = entry.id;
+      lastKnownVersion = 1;
+    }
+  }
+
   return {
     async save(state) {
-      // Capture the version we last knew about before reading fresh data
-      const expectedVersion = lastKnownVersion;
-      const existing = await findRelay();
-      if (existing) {
-        // Optimistic concurrency: if the stored version has changed since our
-        // last read, another writer intervened — throw a conflict error.
-        if (expectedVersion > 0 && existing.version !== expectedVersion) {
-          throw new HarnessError(
-            `Relay state conflict: expected version ${expectedVersion} but found ${existing.version}`,
-            'RELAY_CONFLICT',
-            'Retry the save operation — another write occurred concurrently',
-          );
-        }
-        const newVersion = existing.version + 1;
-        const versioned: VersionedRelayState = { ...state, _version: newVersion };
-        await store.update(existing.id, { content: JSON.stringify(versioned) });
-        lastKnownVersion = newVersion;
-      } else {
-        const versioned: VersionedRelayState = { ...state, _version: 1 };
-        const entry = await store.write({
-          key: relayKey,
-          content: JSON.stringify(versioned),
-          grade: 'critical',
-          tags: [relayKey],
-        });
-        currentId = entry.id;
-        lastKnownVersion = 1;
-      }
+      await updateWithGuard(() => state);
     },
 
     async load() {
@@ -152,62 +168,45 @@ export function createRelay(config: {
     },
 
     async checkpoint(progress) {
-      const existing = await findRelay();
-      if (existing) {
-        const updated: RelayState = {
-          ...existing.state,
-          progress: { ...existing.state.progress, ...progress },
-          checkpoint: `checkpoint_${Date.now()}`,
-          timestamp: Date.now(),
-        };
-        const newVersion = existing.version + 1;
-        const versioned: VersionedRelayState = { ...updated, _version: newVersion };
-        await store.update(existing.id, { content: JSON.stringify(versioned) });
-      } else {
-        const state: RelayState = {
+      // CQ-005: routes through updateWithGuard so version conflicts are
+      // detected the same way as save(). Previously this path skipped the
+      // version check and could silently clobber concurrent writes.
+      await updateWithGuard((current) => {
+        if (current) {
+          return {
+            ...current,
+            progress: { ...current.progress, ...progress },
+            checkpoint: `checkpoint_${Date.now()}`,
+            timestamp: Date.now(),
+          };
+        }
+        return {
           progress,
           artifacts: [],
           checkpoint: `checkpoint_${Date.now()}`,
           timestamp: Date.now(),
         };
-        const versioned: VersionedRelayState = { ...state, _version: 1 };
-        const entry = await store.write({
-          key: relayKey,
-          content: JSON.stringify(versioned),
-          grade: 'critical',
-          tags: [relayKey],
-        });
-        currentId = entry.id;
-      }
+      });
     },
 
     async addArtifact(path) {
-      const existing = await findRelay();
-      if (existing) {
-        const updated: RelayState = {
-          ...existing.state,
-          artifacts: [...existing.state.artifacts, path],
-          timestamp: Date.now(),
-        };
-        const newVersion = existing.version + 1;
-        const versioned: VersionedRelayState = { ...updated, _version: newVersion };
-        await store.update(existing.id, { content: JSON.stringify(versioned) });
-      } else {
-        const state: RelayState = {
+      // CQ-005: same version-checked path as save() — prevents silent
+      // overwrite when multiple writers race on artifact lists.
+      await updateWithGuard((current) => {
+        if (current) {
+          return {
+            ...current,
+            artifacts: [...current.artifacts, path],
+            timestamp: Date.now(),
+          };
+        }
+        return {
           progress: {},
           artifacts: [path],
           checkpoint: `artifact_${Date.now()}`,
           timestamp: Date.now(),
         };
-        const versioned: VersionedRelayState = { ...state, _version: 1 };
-        const entry = await store.write({
-          key: relayKey,
-          content: JSON.stringify(versioned),
-          grade: 'critical',
-          tags: [relayKey],
-        });
-        currentId = entry.id;
-      }
+      });
     },
 
     /**

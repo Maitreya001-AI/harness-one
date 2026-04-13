@@ -16,12 +16,27 @@ interface PoolEntry {
   monotonicCreatedAt: number;
 }
 
-/** Pending async acquire request (Fix 24). */
+/** Pending async acquire request (Fix 24 + CQ-017). */
 interface PendingAcquire {
   resolve: (agent: PooledAgent) => void;
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout> | null;
+  /**
+   * CQ-017: Cleanup function invoked when the request is settled (resolved,
+   * rejected, timed out, or aborted). Used to detach the AbortSignal listener.
+   */
+  cleanup: () => void;
   role?: string;
+}
+
+/**
+ * CQ-017: Options for `acquireAsync`. Accepts a number for backwards
+ * compatibility (previous signature was `acquireAsync(timeoutMs)`).
+ */
+export interface AcquireAsyncOptions {
+  readonly timeoutMs?: number;
+  readonly signal?: AbortSignal;
+  readonly role?: string;
 }
 
 /**
@@ -36,8 +51,14 @@ interface PendingAcquire {
  * ```
  */
 export function createAgentPool(config: PoolConfig): AgentPool & {
-  /** Fix 24: Async acquire with timeout. Queues request when pool is exhausted. */
-  acquireAsync(timeoutMs?: number): Promise<PooledAgent>;
+  /**
+   * Async acquire with optional timeout and AbortSignal. Queues the request
+   * when the pool is exhausted. On abort (CQ-017), the pending entry is
+   * removed from the queue and the promise rejects with `POOL_ABORTED`.
+   *
+   * Backwards compatible: accepts a plain number (legacy `timeoutMs`).
+   */
+  acquireAsync(optsOrTimeout?: number | AcquireAsyncOptions): Promise<PooledAgent>;
 } {
   const factory = config.factory;
   const min = config.min ?? 0;
@@ -145,7 +166,7 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
           clearIdleTimer(entry);
           entry.state = 'active';
           const pending = pendingQueue.shift() as PendingAcquire;
-          if (pending.timer) clearTimeout(pending.timer);
+          pending.cleanup();
           pending.resolve(entry.agent);
           found = true;
           break;
@@ -192,30 +213,45 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
       return acquireSync(role);
     },
 
-    // Fix 24: Async acquire with queuing
-    async acquireAsync(timeoutMs = 30_000): Promise<PooledAgent> {
+    // Fix 24 + CQ-017: Async acquire with queuing, timeout, and abort support
+    async acquireAsync(optsOrTimeout?: number | AcquireAsyncOptions): Promise<PooledAgent> {
       if (disposed) {
         throw new HarnessError('Agent pool is disposed', 'POOL_DISPOSED');
       }
-      warmUp();
+      const opts: AcquireAsyncOptions =
+        typeof optsOrTimeout === 'number'
+          ? { timeoutMs: optsOrTimeout }
+          : (optsOrTimeout ?? {});
+      const timeoutMs = opts.timeoutMs ?? 30_000;
+      const signal = opts.signal;
+      warmUp(opts.role);
+
+      // CQ-017: If the signal is already aborted, fail fast without queuing.
+      if (signal?.aborted) {
+        throw new HarnessError('Acquire aborted', 'POOL_ABORTED', 'The AbortSignal was already aborted when acquireAsync was called');
+      }
 
       // Try synchronous acquire first
       try {
-        return acquireSync();
+        return acquireSync(opts.role);
       } catch (err: unknown) {
         if (err instanceof HarnessError && err.code === 'POOL_EXHAUSTED') {
           // Queue the request
           return new Promise<PooledAgent>((resolve, reject) => {
+            // Declared first so `cleanup` can safely reference it before assignment.
             const pending: PendingAcquire = {
               resolve,
               reject,
               timer: null,
+              cleanup: () => { /* overridden below */ },
+              ...(opts.role !== undefined && { role: opts.role }),
             };
 
             const timer = setTimeout(() => {
               const idx = pendingQueue.indexOf(pending);
               if (idx >= 0) {
                 pendingQueue.splice(idx, 1);
+                pending.cleanup();
                 reject(new HarnessError(
                   `Timed out waiting for agent (${timeoutMs}ms)`,
                   'POOL_TIMEOUT',
@@ -223,11 +259,39 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
                 ));
               }
             }, timeoutMs);
-            // Ensure timeout doesn't keep the process alive
             if (typeof timer === 'object' && 'unref' in timer) {
               (timer as NodeJS.Timeout).unref();
             }
             pending.timer = timer;
+
+            // CQ-017: Abort listener — remove from queue and reject.
+            const onAbort = (): void => {
+              const idx = pendingQueue.indexOf(pending);
+              if (idx >= 0) {
+                pendingQueue.splice(idx, 1);
+                pending.cleanup();
+                reject(new HarnessError(
+                  'Acquire aborted',
+                  'POOL_ABORTED',
+                  'The AbortSignal fired before an agent became available',
+                ));
+              }
+            };
+            if (signal) {
+              signal.addEventListener('abort', onAbort, { once: true });
+            }
+
+            // Single cleanup covers both timer and abort listener — invoked
+            // by resolve/reject/timeout/abort paths, whichever happens first.
+            pending.cleanup = (): void => {
+              if (pending.timer) {
+                clearTimeout(pending.timer);
+                pending.timer = null;
+              }
+              if (signal) {
+                signal.removeEventListener('abort', onAbort);
+              }
+            };
 
             pendingQueue.push(pending);
           });
@@ -255,7 +319,7 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
         clearIdleTimer(entry);
         entry.state = 'active';
         const pending = pendingQueue.shift() as PendingAcquire;
-        if (pending.timer) clearTimeout(pending.timer);
+        pending.cleanup();
         pending.resolve(entry.agent);
         return;
       }
@@ -306,7 +370,7 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
       // Reject all pending acquire requests
       while (pendingQueue.length > 0) {
         const pending = pendingQueue.shift() as PendingAcquire;
-        if (pending.timer) clearTimeout(pending.timer);
+        pending.cleanup();
         pending.reject(new HarnessError('Pool disposed while waiting', 'POOL_DISPOSED'));
       }
 
@@ -323,7 +387,7 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
       // Reject all pending acquire requests
       while (pendingQueue.length > 0) {
         const pending = pendingQueue.shift() as PendingAcquire;
-        if (pending.timer) clearTimeout(pending.timer);
+        pending.cleanup();
         pending.reject(new HarnessError('Pool disposed while waiting', 'POOL_DISPOSED'));
       }
       for (const entry of [...entries.values()]) {

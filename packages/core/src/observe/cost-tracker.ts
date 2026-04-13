@@ -16,7 +16,36 @@ export interface ModelPricing {
   readonly cacheWritePer1kTokens?: number;
 }
 
-/** Tracker for token usage costs with budget alerting. */
+/**
+ * Synthetic key used to bucket cost entries that arrive after the per-model or
+ * per-trace capacity has been reached. See {@link CostTracker} for the
+ * rationale — we never evict existing entries (SEC-009) because evictions can
+ * be abused by a caller to erase legitimate totals by flooding the tracker
+ * with junk keys.
+ */
+export const OVERFLOW_BUCKET_KEY = '__overflow__';
+
+/** Tracker for token usage costs with budget alerting.
+ *
+ * Semantics of getters (CQ-009):
+ *
+ * - `getTotalCost()` reflects the **recent window** of kept records
+ *   (bounded by `maxRecords`). When the record buffer evicts, the running
+ *   sum subtracts the evicted cost, so this value tracks costs that are
+ *   still addressable via `records`.
+ * - `getCostByModel()` / `getCostByTrace()` are **cumulative since start**
+ *   (or since the last `reset()`). They do NOT decrease when the record
+ *   buffer evicts — this lets long-running jobs report end-to-end per-model
+ *   spend regardless of buffer churn.
+ *
+ * Bounded-map semantics (SEC-009):
+ *
+ * - Once `modelTotals` (or `traceTotals`) reaches its cap, **existing**
+ *   entries are never evicted. New, previously-unseen keys are aggregated
+ *   into a synthetic `__overflow__` bucket (accessible as
+ *   `OVERFLOW_BUCKET_KEY` on the returned record). This prevents a caller
+ *   from flooding the tracker with junk keys to erase legitimate totals.
+ */
 export interface CostTracker {
   /** Set pricing for one or more models. */
   setPricing(pricing: ModelPricing[]): void;
@@ -29,11 +58,23 @@ export interface CostTracker {
    * Returns the updated record, or undefined if no record exists for the traceId.
    */
   updateUsage(traceId: string, usage: Partial<Omit<TokenUsageRecord, 'estimatedCost' | 'timestamp' | 'traceId' | 'model'>>): TokenUsageRecord | undefined;
-  /** Get total cost across all usage. */
+  /**
+   * Recent-window total cost. Tracks the running sum of kept records in the
+   * bounded `records` buffer. Not strictly cumulative — evicted records are
+   * subtracted (see CQ-009).
+   */
   getTotalCost(): number;
-  /** Get cost breakdown by model. */
+  /**
+   * Cumulative-since-start cost breakdown by model (see CQ-009). New unknown
+   * models landing after `maxModels` is reached are aggregated under
+   * `OVERFLOW_BUCKET_KEY` rather than evicting existing totals (SEC-009).
+   */
   getCostByModel(): Record<string, number>;
-  /** Get cost for a specific trace. */
+  /**
+   * Cumulative-since-start cost for a specific trace (see CQ-009). Unknown
+   * traces arriving after `maxTraces` is reached bucket into
+   * `OVERFLOW_BUCKET_KEY` rather than evicting (SEC-009).
+   */
   getCostByTrace(traceId: string): number;
   /** Set the budget limit. */
   setBudget(budget: number): void;
@@ -54,10 +95,26 @@ export interface CostTracker {
 }
 
 /**
- * Standalone Kahan summation utility class for accurate floating-point accumulation.
+ * Compensated-summation accumulator (Kahan sum).
  *
- * Uses Kahan compensated summation to minimize floating-point drift when
- * accumulating many small values. Supports both addition and subtraction.
+ * Standard `+=` accumulation loses precision as the running total grows large
+ * relative to each added term — after millions of fractional-dollar LLM cost
+ * records, naive totals can drift by cents. `KahanSum` keeps a running
+ * `_compensation` term that captures the low-order bits lost in each add,
+ * re-injecting them on the next iteration.
+ *
+ * Trade-off: each `add()` does three extra FLOPs versus a naive `+=`. Use it
+ * on hot paths where (a) many small values accumulate into a large total and
+ * (b) the total is itself consumed (budget checks, billing). Do not use when
+ * the total is only displayed or where IEEE-754 drift is already dominated
+ * by input noise.
+ *
+ * @example
+ * ```ts
+ * const sum = new KahanSum();
+ * for (const record of usageRecords) sum.add(record.costUSD);
+ * if (sum.total > budget) stop();
+ * ```
  */
 export class KahanSum {
   private _total = 0;
@@ -120,6 +177,13 @@ export function createCostTracker(config?: {
    * naming the model so operators can update the pricing config. Default: true.
    */
   warnUnpricedModels?: boolean;
+  /**
+   * SEC-009: Invoked at most once per minute (per tracker) when either
+   * `modelTotals` or `traceTotals` is at capacity and a new key is being
+   * folded into the `__overflow__` bucket. Use for operator alerting.
+   * If not provided, a `console.warn` is emitted at the same cadence.
+   */
+  onOverflow?: (info: { kind: 'model' | 'trace'; capacity: number; rejectedKey: string }) => void;
 }): CostTracker {
   const pricing = new Map<string, ModelPricing>();
   const records: TokenUsageRecord[] = [];
@@ -132,11 +196,40 @@ export function createCostTracker(config?: {
   const maxTraces = config?.maxTraces ?? 10_000;
   const strictMode = config?.strictMode ?? false;
   const warnUnpricedModels = config?.warnUnpricedModels ?? true;
+  const onOverflow = config?.onOverflow;
   /**
    * Tracks models we've already warned about so we emit one warning per
    * unpriced model, not one per record.
    */
   const warnedUnpriced = new Set<string>();
+
+  // SEC-009: throttle overflow signals to once per minute (per kind).
+  //
+  // PERF-008 historical note: an earlier proposal deferred eviction with
+  // batch-evict-10% semantics to remove LRU work from the hot path. SEC-009
+  // superseded this — we no longer evict existing entries at all (caller
+  // keys could otherwise wipe legitimate totals), so the hot-path cost is
+  // now a single `Map.size` comparison and (at most) one lookup. The check
+  // cost is O(1) and does not scale with `maxModels`.
+  const OVERFLOW_THROTTLE_MS = 60_000;
+  const lastOverflowSignal = { model: 0, trace: 0 };
+
+  function signalOverflow(kind: 'model' | 'trace', capacity: number, rejectedKey: string): void {
+    const now = Date.now();
+    if (now - lastOverflowSignal[kind] < OVERFLOW_THROTTLE_MS) return;
+    lastOverflowSignal[kind] = now;
+    if (onOverflow) {
+      try {
+        onOverflow({ kind, capacity, rejectedKey });
+      } catch {
+        // Swallow to avoid breaking the record path on a buggy callback.
+      }
+    } else {
+      console.warn(
+        `[harness-one/cost-tracker] ${kind} total map at capacity (${capacity}); aggregating new keys into "${OVERFLOW_BUCKET_KEY}". First rejected key: "${rejectedKey}".`,
+      );
+    }
+  }
 
   // Fix 5: Use KahanSum utility for running total
   const runningSum = new KahanSum();
@@ -291,30 +384,41 @@ export function createCostTracker(config?: {
       // Fix 5: Use KahanSum for running total
       runningSum.add(estimatedCost);
 
-      // Fix 4: Accumulate per-model cost permanently
+      // Fix 4 + SEC-009: Accumulate per-model cost permanently. When at cap,
+      // aggregate new (previously-unseen) model keys under OVERFLOW_BUCKET_KEY
+      // instead of evicting existing totals — evictions would let any caller
+      // wipe legitimate totals by flooding junk keys.
       let modelSum = modelTotals.get(usage.model);
       if (!modelSum) {
-        // RES-01: Evict least-recently-used model entry if at capacity
         if (modelTotals.size >= maxModels) {
-          const firstKey = modelTotals.keys().next().value;
-          if (firstKey !== undefined) modelTotals.delete(firstKey);
+          signalOverflow('model', maxModels, usage.model);
+          modelSum = modelTotals.get(OVERFLOW_BUCKET_KEY);
+          if (!modelSum) {
+            modelSum = new KahanSum();
+            modelTotals.set(OVERFLOW_BUCKET_KEY, modelSum);
+          }
+        } else {
+          modelSum = new KahanSum();
+          modelTotals.set(usage.model, modelSum);
         }
-        modelSum = new KahanSum();
-        modelTotals.set(usage.model, modelSum);
       }
       modelSum.add(estimatedCost);
 
-      // PERF-03: Accumulate per-trace cost for O(1) getCostByTrace
+      // PERF-03 + SEC-009: Same treatment for per-trace totals.
       if (usage.traceId) {
         let traceSum = traceTotals.get(usage.traceId);
         if (!traceSum) {
-          // RES-01: Evict least-recently-used trace entry if at capacity
           if (traceTotals.size >= maxTraces) {
-            const firstKey = traceTotals.keys().next().value;
-            if (firstKey !== undefined) traceTotals.delete(firstKey);
+            signalOverflow('trace', maxTraces, usage.traceId);
+            traceSum = traceTotals.get(OVERFLOW_BUCKET_KEY);
+            if (!traceSum) {
+              traceSum = new KahanSum();
+              traceTotals.set(OVERFLOW_BUCKET_KEY, traceSum);
+            }
+          } else {
+            traceSum = new KahanSum();
+            traceTotals.set(usage.traceId, traceSum);
           }
-          traceSum = new KahanSum();
-          traceTotals.set(usage.traceId, traceSum);
         }
         traceSum.add(estimatedCost);
       }

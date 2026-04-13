@@ -1,11 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // vi.mock factories are hoisted — use vi.hoisted() for shared state
-const { mockEncode, mockEncodingForModel, mockRegisterTokenizer } = vi.hoisted(() => {
+const { mockEncode, mockFree, mockEncodingForModel, mockRegisterTokenizer } = vi.hoisted(() => {
   const mockEncode = vi.fn().mockReturnValue(new Uint32Array([1, 2, 3, 4, 5]));
-  const mockEncodingForModel = vi.fn().mockReturnValue({ encode: mockEncode });
+  const mockFree = vi.fn();
+  // Each call returns a fresh "native encoder" whose free method shares the
+  // single mockFree spy so tests can count total free invocations.
+  const mockEncodingForModel = vi.fn().mockImplementation(() => ({
+    encode: mockEncode,
+    free: mockFree,
+  }));
   const mockRegisterTokenizer = vi.fn();
-  return { mockEncode, mockEncodingForModel, mockRegisterTokenizer };
+  return { mockEncode, mockFree, mockEncodingForModel, mockRegisterTokenizer };
 });
 
 vi.mock('tiktoken', () => ({
@@ -20,15 +26,25 @@ vi.mock('harness-one/context', () => ({
 // Import dynamically to allow cache clearing
 let createTiktokenTokenizer: typeof import('../index.js').createTiktokenTokenizer;
 let registerTiktokenModels: typeof import('../index.js').registerTiktokenModels;
+let disposeTiktoken: typeof import('../index.js').disposeTiktoken;
 
 beforeEach(async () => {
   vi.clearAllMocks();
   mockEncode.mockReturnValue(new Uint32Array([1, 2, 3, 4, 5]));
+  // Restore the default factory for encoding_for_model — individual tests
+  // may override it via `mockImplementationOnce`, and we don't want that
+  // override to leak into later tests when `vi.resetModules()` happens to
+  // re-trigger model creation inside the module init path.
+  mockEncodingForModel.mockImplementation(() => ({
+    encode: mockEncode,
+    free: mockFree,
+  }));
   // Re-import to reset module-level cache
   vi.resetModules();
   const mod = await import('../index.js');
   createTiktokenTokenizer = mod.createTiktokenTokenizer;
   registerTiktokenModels = mod.registerTiktokenModels;
+  disposeTiktoken = mod.disposeTiktoken;
 });
 
 describe('createTiktokenTokenizer', () => {
@@ -141,5 +157,81 @@ describe('registerTiktokenModels', () => {
   it('registers empty list without error', () => {
     registerTiktokenModels([]);
     expect(mockEncodingForModel).not.toHaveBeenCalled();
+  });
+});
+
+describe('disposeTiktoken', () => {
+  it('calls .free() on every cached encoder', () => {
+    createTiktokenTokenizer('gpt-4');
+    createTiktokenTokenizer('gpt-4o');
+    createTiktokenTokenizer('gpt-3.5-turbo');
+
+    expect(mockFree).not.toHaveBeenCalled();
+
+    disposeTiktoken();
+
+    expect(mockFree).toHaveBeenCalledTimes(3);
+  });
+
+  it('clears the cache so subsequent calls re-create encoders', () => {
+    createTiktokenTokenizer('gpt-4');
+    expect(mockEncodingForModel).toHaveBeenCalledTimes(1);
+
+    disposeTiktoken();
+
+    // After dispose, creating the same tokenizer should hit tiktoken again
+    // (not a cached entry).
+    createTiktokenTokenizer('gpt-4');
+    expect(mockEncodingForModel).toHaveBeenCalledTimes(2);
+  });
+
+  it('is idempotent — calling dispose twice does not throw or re-free', () => {
+    createTiktokenTokenizer('gpt-4');
+
+    disposeTiktoken();
+    expect(mockFree).toHaveBeenCalledTimes(1);
+
+    // Second dispose: nothing left to free
+    expect(() => disposeTiktoken()).not.toThrow();
+    expect(mockFree).toHaveBeenCalledTimes(1);
+  });
+
+  it('repeated register/dispose cycles fully free WASM memory (no leak)', () => {
+    for (let i = 0; i < 3; i++) {
+      createTiktokenTokenizer('gpt-4');
+      createTiktokenTokenizer('gpt-4o');
+      disposeTiktoken();
+    }
+
+    // 3 cycles × 2 encoders = 6 free calls
+    expect(mockFree).toHaveBeenCalledTimes(6);
+    // 3 cycles × 2 encoders = 6 creation calls (cache is cleared each cycle)
+    expect(mockEncodingForModel).toHaveBeenCalledTimes(6);
+  });
+
+  it('resets the defaultsRegistered flag so registerTiktokenModels() reruns', () => {
+    registerTiktokenModels();
+    expect(mockEncodingForModel).toHaveBeenCalledTimes(4);
+
+    // Without dispose, a second no-arg call is a no-op
+    registerTiktokenModels();
+    expect(mockEncodingForModel).toHaveBeenCalledTimes(4);
+
+    disposeTiktoken();
+
+    // After dispose, the no-arg call should re-register the defaults
+    registerTiktokenModels();
+    expect(mockEncodingForModel).toHaveBeenCalledTimes(8);
+  });
+
+  it('tolerates encoders without a .free() method (older tiktoken builds)', () => {
+    // Override the mock to return an encoder with NO free method
+    mockEncodingForModel.mockImplementationOnce(() => ({
+      encode: mockEncode,
+      // no free
+    }));
+    createTiktokenTokenizer('weird-model');
+
+    expect(() => disposeTiktoken()).not.toThrow();
   });
 });

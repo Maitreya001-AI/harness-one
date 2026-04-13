@@ -23,6 +23,14 @@ export interface CompressOptions {
   readonly preserve?: (msg: Message) => boolean;
   readonly summarizer?: (messages: Message[]) => Promise<string>;
   readonly windowSize?: number;
+  /**
+   * CQ-014: Optional hook invoked when compression falls back to a degraded
+   * strategy (e.g. the summarizer callback throws). Receives the underlying
+   * error and a human-readable `fallbackReason` describing the fallback path.
+   * Never causes compress() itself to throw — onError failures are swallowed
+   * to preserve the non-throwing contract of compression fallbacks.
+   */
+  readonly onError?: (err: unknown, fallbackReason: string) => void;
 }
 
 /** Result of a compress operation with explicit success/failure signaling. */
@@ -34,6 +42,18 @@ export interface CompressResult {
   readonly originalTokens: number;
   /** Total token count of the returned messages. */
   readonly finalTokens: number;
+  /**
+   * CQ-013: True when the result was produced by a truncate-pass fallback
+   * (e.g. summarize strategy had nothing to summarize but budget was still
+   * exceeded, so messages were truncated to fit).
+   */
+  readonly truncated?: boolean;
+  /**
+   * CQ-014: Present when compression used a degraded fallback path. Examples:
+   * - "summarizer failed, truncating instead"
+   * - "summarize had no candidates, truncating to fit budget"
+   */
+  readonly fallbackReason?: string;
 }
 
 /**
@@ -56,9 +76,16 @@ export async function compress(
   }
   const originalTokens = messages.reduce((sum, m) => sum + msgTokens(m), 0);
 
+  // CQ-013/014: Shared fallback-state object lets the built-in summarize
+  // strategy signal truncation/error fallbacks without reshaping the
+  // CompressionStrategy public contract.
+  const fallbackState: { truncated: boolean; fallbackReason?: string } = {
+    truncated: false,
+  };
+
   const strategy =
     typeof options.strategy === 'string'
-      ? getBuiltinStrategy(options.strategy, options)
+      ? getBuiltinStrategy(options.strategy, options, fallbackState)
       : options.strategy;
 
   const result = await strategy.compress(messages, options.budget, {
@@ -73,12 +100,15 @@ export async function compress(
     compressed,
     originalTokens,
     finalTokens,
+    ...(fallbackState.truncated && { truncated: true }),
+    ...(fallbackState.fallbackReason !== undefined && { fallbackReason: fallbackState.fallbackReason }),
   };
 }
 
 function getBuiltinStrategy(
   name: string,
   options: CompressOptions,
+  fallbackState: { truncated: boolean; fallbackReason?: string },
 ): CompressionStrategy {
   switch (name) {
     case 'truncate':
@@ -86,7 +116,7 @@ function getBuiltinStrategy(
     case 'sliding-window':
       return createSlidingWindowStrategy(options.windowSize ?? 10);
     case 'summarize':
-      return createSummarizeStrategy(options.summarizer);
+      return createSummarizeStrategy(options.summarizer, options.onError, fallbackState);
     case 'preserve-failures':
       return createPreserveFailuresStrategy();
     default:
@@ -180,7 +210,31 @@ function createSlidingWindowStrategy(windowSize: number): CompressionStrategy {
 
 function createSummarizeStrategy(
   summarizer?: (messages: Message[]) => Promise<string>,
+  onError?: (err: unknown, fallbackReason: string) => void,
+  fallbackState?: { truncated: boolean; fallbackReason?: string },
 ): CompressionStrategy {
+  /**
+   * CQ-013 helper: truncate-pass that keeps most recent messages fitting the
+   * budget. Used when summarize has nothing to summarize but total tokens
+   * still exceed the budget, or when the summarizer fails.
+   */
+  function truncateToBudget(messages: readonly Message[], targetTokens: number): Message[] {
+    const result: Message[] = [];
+    let tokenCount = 0;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const tokens = msgTokens(messages[i]);
+      if (tokenCount + tokens <= targetTokens) {
+        result.unshift(messages[i]);
+        tokenCount += tokens;
+      }
+    }
+    // Safety net: if every message exceeds budget, keep the last message.
+    if (result.length === 0 && messages.length > 0) {
+      result.push(messages[messages.length - 1]);
+    }
+    return result;
+  }
+
   return {
     name: 'summarize',
     async compress(messages, targetTokens, options) {
@@ -225,14 +279,31 @@ function createSummarizeStrategy(
       }
 
       if (toSummarize.length === 0) {
-        return [...messages];
+        // CQ-013: Nothing to summarize but total exceeds budget. Apply
+        // truncate-pass over the result (keep most recent fitting budget)
+        // rather than returning all messages and blowing past the budget.
+        if (fallbackState) {
+          fallbackState.truncated = true;
+          fallbackState.fallbackReason =
+            'summarize had no candidates to summarize (all preserved); truncated to fit budget';
+        }
+        return truncateToBudget(messages, targetTokens);
       }
 
       let summary: string;
       try {
         summary = await summarizer(toSummarize);
-      } catch {
-        // Fallback: keep only the most recent messages when summarizer fails
+      } catch (err) {
+        // CQ-014: Report the failure through onError (non-throwing) and
+        // record a fallbackReason on the result. Fallback keeps only the
+        // most recent half of messages, preserving the non-throwing contract.
+        const reason = 'summarizer callback failed; fell back to recent-messages slice';
+        if (fallbackState) {
+          fallbackState.fallbackReason = reason;
+        }
+        if (onError) {
+          try { onError(err, reason); } catch { /* swallow user-handler errors */ }
+        }
         return [...messages.slice(-Math.max(1, Math.ceil(messages.length / 2)))];
       }
       return [
@@ -253,6 +324,8 @@ export interface CompactOptions {
   readonly summarizer?: (messages: Message[]) => Promise<string>;
   /** Custom token counter. Default: built-in heuristic (~20-40% margin). */
   readonly countTokens?: (messages: readonly Message[]) => number;
+  /** CQ-014: Forwarded to compress() — invoked when compression falls back. */
+  readonly onError?: (err: unknown, fallbackReason: string) => void;
 }
 
 /**
@@ -283,6 +356,7 @@ export async function compactIfNeeded(
     options.preserve !== undefined ? { preserve: options.preserve } : {},
     options.summarizer !== undefined ? { summarizer: options.summarizer } : {},
     options.windowSize !== undefined ? { windowSize: options.windowSize } : {},
+    options.onError !== undefined ? { onError: options.onError } : {},
   ) as CompressOptions;
   const result = await compress(messages, compressOpts);
   return result.messages;

@@ -1,0 +1,28 @@
+harness-one
+Copyright (c) 2026 harness-one contributors
+
+This product includes software developed as part of the harness-one project
+(https://github.com/Maitreya001-AI/harness-one).
+
+Licensed under the MIT License. See LICENSE for the full license text.
+
+---
+
+Third-party components (peer/optional dependencies)
+---------------------------------------------------
+
+This project integrates with — but does not redistribute — several third-party
+SDKs and libraries. Users install them directly when consuming the matching
+integration package. Each remains governed by its own license:
+
+  - @anthropic-ai/sdk        MIT (Anthropic, PBC)
+  - openai                   Apache-2.0 (OpenAI)
+  - langfuse                 MIT (Langfuse GmbH)
+  - @opentelemetry/api       Apache-2.0 (OpenTelemetry Authors)
+  - ioredis                  MIT (Zihua Li and contributors)
+  - tiktoken                 MIT (OpenAI)
+  - ajv / ajv-formats        MIT (Evgeny Poberezkin and contributors)
+
+No source code from the above libraries is vendored into this repository.
+Attribution notices from each library apply when the library is installed in
+a downstream project.

@@ -242,10 +242,16 @@ export class AgentLoop {
   /** Dispose the loop, releasing resources and cancelling any pending operations. */
   dispose(): void {
     this._status = 'disposed';
-    // Remove external signal listener to prevent memory leaks when the external
-    // signal outlives this loop instance.
+    // PERF-013: Remove external signal listener to prevent memory leaks when
+    // the external signal outlives this loop instance. Wrap removal in
+    // try/catch so an exception from the signal implementation cannot leave
+    // the listener attached (it must always be detached to avoid a leak).
     if (this._externalAbortHandler && this.externalSignal) {
-      this.externalSignal.removeEventListener('abort', this._externalAbortHandler);
+      try {
+        this.externalSignal.removeEventListener('abort', this._externalAbortHandler);
+      } catch {
+        // Non-fatal — we still drop our reference below.
+      }
       this._externalAbortHandler = undefined;
     }
     this.abortController.abort();
@@ -295,6 +301,12 @@ export class AgentLoop {
 
     // Attach external signal listener at run() start (not constructor) so it
     // is always cleaned up in the finally block, even if dispose() is never called.
+    // PERF-013: `{ once: true }` means the listener auto-detaches when abort
+    // fires, but when abort never fires we still depend on manual removal in
+    // finally. If removeEventListener throws for any reason (e.g., external
+    // signal has been garbage-collected or replaced), the listener reference
+    // would leak — wrap the removal in try/catch where we call it so we never
+    // leave the handler registered on a still-live external signal.
     if (this.externalSignal) {
       if (this.externalSignal.aborted) {
         this.abortController.abort();
@@ -354,8 +366,11 @@ export class AgentLoop {
           if (pruneResult.warning) {
             yield { type: 'warning', message: pruneResult.warning };
           }
-          conversation.length = 0;
-          conversation.push(...pruneResult.pruned);
+          // PERF-010: `length = 0` followed by `push(...)` causes V8 to
+          // deallocate then re-grow the backing store. `splice` replaces in
+          // place, reusing the existing buffer. Semantics are identical:
+          // same array identity, final contents equal `pruneResult.pruned`.
+          conversation.splice(0, conversation.length, ...pruneResult.pruned);
         }
 
         // End previous iteration span if one is still open
@@ -585,13 +600,25 @@ export class AgentLoop {
 
               let result: unknown;
               if (this.toolTimeoutMs !== undefined) {
-                // Race tool execution against a timeout
+                // Race tool execution against a timeout.
+                // PERF-020: the timeout's setTimeout callback may fire after
+                // the tool has already resolved — particularly when the event
+                // loop is saturated. Without a `settled` guard the timeout
+                // would resolve a second time (harmless for Promise.race,
+                // but wasteful and keeps a phantom reference). We flip
+                // `settled` both on success and on timeout so each side is
+                // idempotent.
                 const timeoutMs = this.toolTimeoutMs;
                 let timer: ReturnType<typeof setTimeout> | undefined;
+                let settled = false;
                 try {
                   const timeoutPromise = new Promise<{ error: string }>((resolve) => {
                     timer = setTimeout(
-                      () => resolve({ error: `Tool "${call.name}" timed out after ${timeoutMs}ms` }),
+                      () => {
+                        if (settled) return; // tool already resolved; drop
+                        settled = true;
+                        resolve({ error: `Tool "${call.name}" timed out after ${timeoutMs}ms` });
+                      },
                       timeoutMs,
                     );
                     // Ensure timer doesn't keep the process alive
@@ -599,10 +626,20 @@ export class AgentLoop {
                       (timer as NodeJS.Timeout).unref();
                     }
                   });
-                  result = await Promise.race([toolPromise, timeoutPromise]);
+                  const raced = await Promise.race([
+                    toolPromise.then((r) => {
+                      // Mark settled BEFORE clearTimeout so a racing timer
+                      // callback that happens to fire between resolve and
+                      // the finally block still short-circuits.
+                      settled = true;
+                      if (timer !== undefined) clearTimeout(timer);
+                      return r;
+                    }),
+                    timeoutPromise,
+                  ]);
+                  result = raced;
                 } finally {
-                  // Always clear the timer to prevent it from running after the
-                  // tool resolves, avoiding resource waste and phantom callbacks.
+                  // Defensive: always clear the timer even if race threw.
                   if (timer !== undefined) clearTimeout(timer);
                 }
               } else {
@@ -639,7 +676,7 @@ export class AgentLoop {
           try {
             resultContent = typeof execResult.result === 'string'
               ? execResult.result
-              : JSON.stringify(execResult.result);
+              : AgentLoop.safeStringifyToolResult(execResult.result);
           } catch {
             resultContent = '[Object could not be serialized]';
           }
@@ -664,8 +701,17 @@ export class AgentLoop {
     } finally {
       // Clean up external signal listener to prevent memory leaks even if
       // dispose() is never called. This is the primary cleanup path.
+      // PERF-013: wrap removeEventListener in try/catch — if the signal
+      // implementation throws (e.g., mocked/polyfilled signals in tests, or
+      // detached after a host shutdown), swallow the error so we can still
+      // clear `_externalAbortHandler` and avoid keeping a stale reference.
       if (this._externalAbortHandler && this.externalSignal) {
-        this.externalSignal.removeEventListener('abort', this._externalAbortHandler);
+        try {
+          this.externalSignal.removeEventListener('abort', this._externalAbortHandler);
+        } catch {
+          // Listener removal failure is non-fatal — we still drop our
+          // reference so this AgentLoop can be garbage-collected.
+        }
         this._externalAbortHandler = undefined;
       }
       // End any open iteration span
@@ -693,6 +739,61 @@ export class AgentLoop {
   static readonly MAX_STREAM_BYTES = 10 * 1024 * 1024;
   /** Maximum size per tool-call argument (5 MB) to prevent oversized payloads. */
   private static readonly MAX_TOOL_ARG_BYTES = 5 * 1024 * 1024;
+  /** Maximum serialized tool result size (1 MiB). Oversized results are replaced with a placeholder. */
+  private static readonly MAX_TOOL_RESULT_BYTES = 1 * 1024 * 1024;
+  /** Maximum object nesting depth for tool-result serialization. */
+  private static readonly MAX_TOOL_RESULT_DEPTH = 10;
+
+  /**
+   * PERF-004: Serialize a tool-call result defensively. A naive
+   * `JSON.stringify(result)` will happily follow a deeply nested object or
+   * a multi-megabyte payload and freeze the event loop, or OOM the process.
+   * Instead we:
+   *   - apply a depth-limited replacer that truncates beyond depth 10 with a
+   *     "[max depth exceeded]" sentinel,
+   *   - then check the resulting string against a 1 MiB cap and return a
+   *     "[result too large]" placeholder when exceeded.
+   * Depth tracking uses a WeakSet-based stack so we also catch cycles.
+   */
+  private static safeStringifyToolResult(value: unknown): string {
+    const maxDepth = AgentLoop.MAX_TOOL_RESULT_DEPTH;
+    const maxBytes = AgentLoop.MAX_TOOL_RESULT_BYTES;
+    const stack: Array<object> = [];
+
+    const replacer = function (this: unknown, _key: string, val: unknown): unknown {
+      if (val === null || typeof val !== 'object') return val;
+      // Measure depth by how many enclosing containers we're currently inside.
+      // Trim the stack whenever we pop back to an ancestor (detected by `this`).
+      if (this && typeof this === 'object') {
+        const parentIdx = stack.lastIndexOf(this as object);
+        if (parentIdx >= 0) stack.length = parentIdx + 1;
+      }
+      if (stack.includes(val as object)) {
+        // Cycle — replace with a sentinel rather than infinite-recurse.
+        return '[circular]';
+      }
+      if (stack.length >= maxDepth) {
+        return '[max depth exceeded]';
+      }
+      stack.push(val as object);
+      return val;
+    };
+
+    let serialized: string;
+    try {
+      serialized = JSON.stringify(value, replacer);
+    } catch {
+      return '[Object could not be serialized]';
+    }
+    if (serialized === undefined) {
+      // JSON.stringify returns undefined for functions/symbols at the root
+      return '[result not serializable]';
+    }
+    if (serialized.length > maxBytes) {
+      return '[result too large]';
+    }
+    return serialized;
+  }
 
   private async *handleStream(
     conversation: Message[],

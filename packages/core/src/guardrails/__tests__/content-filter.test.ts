@@ -365,4 +365,76 @@ describe('createContentFilter', () => {
       expect(guard({ content: 'no secrets here' }).action).toBe('allow');
     });
   });
+
+  // ---- SEC-012: expanded ReDoS detection + lastIndex reset + case-sensitivity docs ----
+
+  describe('SEC-012: expanded ReDoS detection', () => {
+    it('rejects (a|a?)+ polynomial-time pattern', () => {
+      expect(() => createContentFilter({ blockedPatterns: [/(a|a?)+/] }))
+        .toThrow(HarnessError);
+    });
+
+    it('rejects (a|b|ab)* with overlapping alternatives and a repeat', () => {
+      expect(() => createContentFilter({ blockedPatterns: [/(a|b|ab)*/] }))
+        .toThrow(HarnessError);
+    });
+
+    it('rejects (foo|foobar)+ with shared literal prefix and a repeat', () => {
+      expect(() => createContentFilter({ blockedPatterns: [/(foo|foobar)+/] }))
+        .toThrow(HarnessError);
+    });
+
+    it('rejects (a|ab)* with overlapping prefix', () => {
+      expect(() => createContentFilter({ blockedPatterns: [/(a|ab)*/] }))
+        .toThrow(HarnessError);
+    });
+
+    it('accepts safe disjoint alternatives with a repeat', () => {
+      // (cat|dog)+ : no shared prefix, different starting char, not a ReDoS
+      expect(() => createContentFilter({ blockedPatterns: [/(cat|dog)+/] }))
+        .not.toThrow();
+    });
+
+    it('accepts alternation without a quantifier', () => {
+      // Alternation alone is fine — only the combination with * or + matters
+      expect(() => createContentFilter({ blockedPatterns: [/(a|ab)/] }))
+        .not.toThrow();
+    });
+  });
+
+  describe('SEC-012: lastIndex reset on each test', () => {
+    it('resets lastIndex between calls for global-flag patterns (keyword regex)', () => {
+      // Keyword regexes are built with the 'gi' flag. Verify repeated calls
+      // still match — the internal regex.lastIndex must be reset each time.
+      const { guard } = createContentFilter({ blocked: ['alpha'] });
+      for (let i = 0; i < 5; i++) {
+        const result = guard({ content: 'this has alpha somewhere' });
+        expect(result.action).toBe('block');
+      }
+    });
+
+    it('resets lastIndex between calls for user-provided global patterns', () => {
+      const pattern = /foo\d+/g;
+      const { guard } = createContentFilter({ blockedPatterns: [pattern] });
+      for (let i = 0; i < 3; i++) {
+        expect(guard({ content: `contains foo${i}123` }).action).toBe('block');
+      }
+    });
+  });
+
+  describe('SEC-012: case-sensitivity documentation', () => {
+    it('uppercase patterns never match (content is lowercased)', () => {
+      // Document the behavior explicitly (JSDoc also covers this).
+      const { guard } = createContentFilter({ blockedPatterns: [/SECRET/] });
+      expect(guard({ content: 'SECRET' }).action).toBe('allow');
+      expect(guard({ content: 'secret' }).action).toBe('allow'); // pattern uses uppercase
+    });
+
+    it('lowercase patterns match both cases', () => {
+      const { guard } = createContentFilter({ blockedPatterns: [/secret/] });
+      expect(guard({ content: 'SECRET' }).action).toBe('block');
+      expect(guard({ content: 'Secret' }).action).toBe('block');
+      expect(guard({ content: 'secret' }).action).toBe('block');
+    });
+  });
 });

@@ -5,6 +5,8 @@
  */
 
 import type { Guardrail, GuardrailContext } from './types.js';
+import { HarnessError } from '../core/errors.js';
+import { isReDoSCandidate } from './content-filter.js';
 
 // Zero-width characters to strip before matching
 const ZERO_WIDTH_RE = /[\u200B\u200C\u200D\uFEFF\u00AD\u2060\u180E]/g;
@@ -96,9 +98,12 @@ const HIGH_PATTERNS: RegExp[] = [
   /override\b.{0,200}\b(?:instruction|rule|system|safety|setting)/i,
 ];
 
-// Base64 detection: looks for base64 encoded strings of reasonable length
+// Base64 detection: looks for base64 encoded strings of reasonable length.
+// SEC-015: upper-bound the quantifier to prevent pathological backtracking on
+// pathological inputs. 1024 groups of 4 = 4096 b64 chars (~3 KiB decoded) —
+// enough to catch any realistic encoded payload.
 const BASE64_PATTERNS: RegExp[] = [
-  /(?:[A-Za-z0-9+/]{4}){8,}(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?/,
+  /(?:[A-Za-z0-9+/]{4}){8,1024}(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?/,
 ];
 
 /**
@@ -115,6 +120,19 @@ export function createInjectionDetector(config?: {
 }): { name: string; guard: Guardrail } {
   const sensitivity = config?.sensitivity ?? 'medium';
   const extraPatterns = config?.extraPatterns ?? [];
+
+  // SEC-015: validate every user-supplied extra pattern at construction time.
+  // Unsafe patterns (nested quantifiers, overlapping alternation with a repeat)
+  // are rejected up front so the guard can't ReDoS at request time.
+  for (const pat of extraPatterns) {
+    if (isReDoSCandidate(pat.source)) {
+      throw new HarnessError(
+        `Injection detector extraPattern /${pat.source}/ is a potential ReDoS candidate (contains nested or adjacent quantifiers)`,
+        'INVALID_CONFIG',
+        'Simplify the pattern to avoid nested quantifiers like (a+)+ or overlapping alternation like (a|ab)*',
+      );
+    }
+  }
 
   let patterns: RegExp[];
   switch (sensitivity) {
@@ -160,6 +178,10 @@ export function createInjectionDetector(config?: {
     //    pre-chunk with their own detector.
     if (normalized.length <= MAX_PATTERN_INPUT_LENGTH) {
       for (const pattern of patterns) {
+        // SEC-015: defensively reset lastIndex in case a user supplied a
+        // global-flag RegExp. `.test()` on a global regex advances lastIndex,
+        // so repeated calls could silently miss matches.
+        pattern.lastIndex = 0;
         if (pattern.test(normalized)) {
           return { action: 'block', reason: 'Potential prompt injection detected: injection pattern detected' };
         }
@@ -168,7 +190,12 @@ export function createInjectionDetector(config?: {
       const prefix = normalized.slice(0, MAX_PATTERN_INPUT_LENGTH);
       const suffix = normalized.slice(-MAX_PATTERN_INPUT_LENGTH);
       for (const pattern of patterns) {
-        if (pattern.test(prefix) || pattern.test(suffix)) {
+        pattern.lastIndex = 0;
+        if (pattern.test(prefix)) {
+          return { action: 'block', reason: 'Potential prompt injection detected: injection pattern detected' };
+        }
+        pattern.lastIndex = 0;
+        if (pattern.test(suffix)) {
           return { action: 'block', reason: 'Potential prompt injection detected: injection pattern detected' };
         }
       }

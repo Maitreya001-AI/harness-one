@@ -6,6 +6,7 @@
 
 import { HarnessError } from '../core/errors.js';
 import { MessageQueue } from './message-queue.js';
+import type { Logger } from '../observe/logger.js';
 import type {
   AgentMessage,
   AgentRegistration,
@@ -16,6 +17,25 @@ import type {
   OrchestratorEvent,
   SharedContext,
 } from './types.js';
+
+/**
+ * SEC-011: Keys that would bypass own-property checks via prototype
+ * pollution if accidentally used as context keys.
+ */
+const FORBIDDEN_CONTEXT_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+/**
+ * SEC-011: Normalize a key (or policy prefix) via NFKC + casefold so that
+ * Unicode visual-variant attacks ("ＡＤＭＩＮ." vs "admin.") cannot bypass
+ * prefix-based policies. Exported via the orchestrator internals; callers
+ * using `BoundaryPolicy.allowRead/allowWrite` prefixes benefit automatically.
+ *
+ * Consumers relying on prefix semantics MUST include the literal separator
+ * (e.g. `'admin.'`) — we do not silently add it.
+ */
+export function normalizeContextKey(key: string): string {
+  return key.normalize('NFKC').toLowerCase();
+}
 
 /** Orchestrator for managing multi-agent coordination. */
 export interface AgentOrchestrator {
@@ -47,6 +67,8 @@ export interface AgentOrchestrator {
   dispose(): void;
   /** Get the orchestration mode. */
   readonly mode: OrchestrationMode;
+  /** OBS-009: Runtime metrics snapshot (includes cumulative message drops). */
+  getMetrics(): OrchestratorMetrics;
 }
 
 /** Configuration for creating an orchestrator. */
@@ -57,8 +79,20 @@ export interface OrchestratorConfig {
   readonly maxQueueSize?: number;
   /** Called when messages are dropped due to queue overflow. */
   readonly onWarning?: (warning: { message: string; droppedCount: number; queueSize: number }) => void;
-  /** Called when an event handler throws an exception. If not provided, falls back to console.warn. */
+  /** Called when an event handler throws an exception. If not provided, routes to `logger.warn` (or silently swallows when logger also absent). */
   readonly onHandlerError?: (error: unknown, event: OrchestratorEvent) => void;
+  /**
+   * CQ-028/OBS-009: Optional logger. When set:
+   * - Event-handler exceptions without an `onHandlerError` callback route to `logger.warn`.
+   * - Queue-overflow message drops always emit `logger.warn` (on top of `onWarning`).
+   */
+  readonly logger?: Logger;
+}
+
+/** OBS-009: Metrics snapshot for an orchestrator instance. */
+export interface OrchestratorMetrics {
+  /** Cumulative number of messages dropped due to queue overflow. */
+  readonly droppedMessages: number;
 }
 
 /**
@@ -86,15 +120,20 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
   }
 
   const agents = new Map<string, MutableAgentRegistration>();
-  const eventHandlers: ((event: OrchestratorEvent) => void)[] = [];
+  // PERF-017: Set-backed handler registry for O(1) unsubscribe.
+  const eventHandlers = new Set<(event: OrchestratorEvent) => void>();
   const contextStore = new Map<string, unknown>();
+  const logger = config?.logger;
+
+  // OBS-009: Cumulative count of dropped messages (queue overflow).
+  let droppedMessages = 0;
 
   // Fix 23: Track delegation chains to detect cycles
   const delegationChain = new Map<string, Set<string>>();
 
   function emit(event: OrchestratorEvent): void {
     // Iterate over a snapshot so that handlers can safely unsubscribe
-    // (or add new handlers) during iteration without mutating the live array.
+    // (or add new handlers) during iteration without mutating the live set.
     const snapshot = [...eventHandlers];
     for (const handler of snapshot) {
       try {
@@ -107,10 +146,20 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
           } catch {
             // Swallow error from error handler to prevent blocking subsequent handlers
           }
-        } else {
-          // No onHandlerError configured — silently swallow to avoid console side effects in library code.
-          // Users should provide onHandlerError in OrchestratorConfig for production monitoring.
+        } else if (logger) {
+          // CQ-028: Route to injected logger instead of silently swallowing.
+          try {
+            logger.warn('Orchestrator event handler threw; continuing', {
+              error: err instanceof Error ? { name: err.name, message: err.message, stack: err.stack } : String(err),
+              eventType: (event as { type?: string }).type,
+            });
+          } catch {
+            // Logger itself threw — nothing more we can do without recursing.
+          }
         }
+        // else: No onHandlerError AND no logger — the orchestrator has no
+        // sanctioned channel to surface the error. We still don't write to
+        // stderr from library code, but the handler is skipped.
       }
     }
   }
@@ -120,7 +169,24 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
     onWarning?: (warning: { message: string; droppedCount: number; queueSize: number }) => void;
     onEvent?: (event: { type: 'message_dropped'; agentId: string; droppedCount: number }) => void;
   } = {
-    onEvent: (event) => emit(event),
+    onEvent: (event) => {
+      // OBS-009: Track cumulative drops and always signal via logger.
+      if (event.type === 'message_dropped') {
+        droppedMessages += event.droppedCount;
+        if (logger) {
+          try {
+            logger.warn('Orchestrator message queue dropped message(s) due to overflow', {
+              agentId: event.agentId,
+              droppedCount: event.droppedCount,
+              cumulativeDropped: droppedMessages,
+            });
+          } catch {
+            // Swallow logger exceptions.
+          }
+        }
+      }
+      emit(event);
+    },
   };
   if (config?.maxQueueSize !== undefined) {
     mqConfig.maxQueueSize = config.maxQueueSize;
@@ -163,7 +229,30 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
     get(key: string): unknown {
       return contextStore.get(key);
     },
+    /**
+     * Set a value on the shared context.
+     *
+     * SEC-011: Keys that would bypass own-property checks via prototype
+     * pollution (`__proto__`, `constructor`, `prototype`) are rejected with
+     * an `INVALID_KEY` HarnessError. Keys are stored verbatim (case/normalization
+     * preserved) — policy matching in `createContextBoundary` applies NFKC +
+     * casefold before comparison (see `normalizeContextKey`).
+     */
     set(key: string, value: unknown): void {
+      if (typeof key !== 'string' || key.length === 0) {
+        throw new HarnessError(
+          `Invalid context key: keys must be non-empty strings`,
+          'INVALID_KEY',
+          'Provide a non-empty string key',
+        );
+      }
+      if (FORBIDDEN_CONTEXT_KEYS.has(key)) {
+        throw new HarnessError(
+          `Invalid context key "${key}": reserved prototype-polluting identifier`,
+          'INVALID_KEY',
+          `Avoid keys in {${Array.from(FORBIDDEN_CONTEXT_KEYS).join(', ')}}`,
+        );
+      }
       contextStore.set(key, value);
       emit({ type: 'context_updated', key });
     },
@@ -336,11 +425,12 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
       return sharedContext;
     },
 
+    // PERF-017: Set-backed eventHandlers; add/delete are O(1) and we iterate
+    // via spread in `emit()` so handlers can subscribe/unsubscribe safely.
     onEvent(handler: (event: OrchestratorEvent) => void): () => void {
-      eventHandlers.push(handler);
+      eventHandlers.add(handler);
       return () => {
-        const idx = eventHandlers.indexOf(handler);
-        if (idx >= 0) eventHandlers.splice(idx, 1);
+        eventHandlers.delete(handler);
       };
     },
 
@@ -357,9 +447,13 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
     dispose(): void {
       agents.clear();
       messageQueue.clear();
-      eventHandlers.length = 0;
+      eventHandlers.clear();
       contextStore.clear();
       delegationChain.clear();
+    },
+
+    getMetrics(): OrchestratorMetrics {
+      return { droppedMessages };
     },
   };
 

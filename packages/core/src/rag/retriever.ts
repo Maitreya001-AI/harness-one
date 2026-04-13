@@ -5,6 +5,7 @@
  */
 
 import type { DocumentChunk, EmbeddingModel, Retriever, RetrievalResult } from './types.js';
+import { HarnessError } from '../core/errors.js';
 
 /** Extended retrieval result that includes skipped chunk tracking (Fix 15). */
 export interface ExtendedRetrievalResult {
@@ -12,6 +13,23 @@ export interface ExtendedRetrievalResult {
   /** Number of chunks skipped due to missing or zero-magnitude embeddings. */
   readonly skippedChunks: number;
 }
+
+/**
+ * SEC-010: Per-call options for retrieve(). Callers that serve multiple
+ * tenants MUST supply `tenantId` or `scope` so the query-embedding cache
+ * never returns an embedding cached under a different tenant/scope.
+ */
+export interface RetrieveOptions {
+  readonly limit?: number;
+  readonly minScore?: number;
+  /** SEC-010: Per-tenant cache partition key. */
+  readonly tenantId?: string;
+  /** SEC-010: Alternative name for partition key (e.g. workspace/org scope). */
+  readonly scope?: string;
+}
+
+/** Default maximum query length (characters) accepted by retrieve(). */
+const DEFAULT_MAX_QUERY_LENGTH = 16_384;
 
 /**
  * Create an in-memory retriever that uses cosine similarity for ranking.
@@ -32,7 +50,13 @@ export function createInMemoryRetriever(config: {
   queryCacheSize?: number;
   /** Fix 16: Optional cache version string. Include in cache key to invalidate stale entries when embedding model changes. */
   cacheVersion?: string;
-}): Retriever & { retrieveExtended(query: string, options?: { limit?: number; minScore?: number }): Promise<ExtendedRetrievalResult> } {
+  /**
+   * SEC-010: Maximum query length (in characters) accepted by retrieve().
+   * Queries longer than this limit are rejected with a HarnessError to
+   * prevent DoS / accidental embedding-cost blow-ups. Default: 16_384.
+   */
+  maxQueryLength?: number;
+}): Retriever & { retrieveExtended(query: string, options?: RetrieveOptions): Promise<ExtendedRetrievalResult> } {
   const chunks: DocumentChunk[] = [];
   /** Pre-computed normalized embeddings, parallel to chunks array. undefined for chunks without embeddings. */
   const normalizedEmbeddings: (readonly number[] | undefined)[] = [];
@@ -42,6 +66,8 @@ export function createInMemoryRetriever(config: {
   const queryEmbeddingCache = new Map<string, readonly number[]>();
   // Fix 16: Cache version for invalidation
   const cacheVersion = config.cacheVersion ?? '';
+  // SEC-010: Maximum query length (reject longer queries)
+  const maxQueryLength = config.maxQueryLength ?? DEFAULT_MAX_QUERY_LENGTH;
 
   function normalizeVector(embedding: readonly number[]): readonly number[] | undefined {
     if (embedding.length === 0) return undefined;
@@ -59,13 +85,30 @@ export function createInMemoryRetriever(config: {
     return dot;
   }
 
-  // Fix 16: Build cache key including version
-  function buildCacheKey(query: string): string {
-    return cacheVersion ? `${cacheVersion}:${query}` : query;
+  // Fix 16 + SEC-010: Build cache key including version and tenant/scope.
+  // Unique escaping ('|' between segments + 't='/'s=' labels) prevents
+  // collisions across distinct (tenant, query) pairs.
+  function buildCacheKey(query: string, tenant?: string, scope?: string): string {
+    const parts: string[] = [];
+    if (cacheVersion) parts.push(`v=${cacheVersion}`);
+    if (tenant !== undefined) parts.push(`t=${tenant}`);
+    if (scope !== undefined) parts.push(`s=${scope}`);
+    parts.push(`q=${query}`);
+    return parts.join('|');
   }
 
-  async function getQueryEmbedding(query: string): Promise<readonly number[]> {
-    const cacheKey = buildCacheKey(query);
+  function enforceQueryLength(query: string): void {
+    if (query.length > maxQueryLength) {
+      throw new HarnessError(
+        `Query length ${query.length} exceeds maxQueryLength ${maxQueryLength}`,
+        'RAG_QUERY_TOO_LONG',
+        `Shorten the query below ${maxQueryLength} characters or raise maxQueryLength`,
+      );
+    }
+  }
+
+  async function getQueryEmbedding(query: string, tenant?: string, scope?: string): Promise<readonly number[]> {
+    const cacheKey = buildCacheKey(query, tenant, scope);
     const cached = queryEmbeddingCache.get(cacheKey);
     if (cached) {
       // LRU touch: move to end
@@ -137,12 +180,16 @@ export function createInMemoryRetriever(config: {
 
     async retrieve(
       query: string,
-      options?: { limit?: number; minScore?: number },
+      options?: RetrieveOptions,
     ): Promise<RetrievalResult[]> {
+      // SEC-010: Reject oversized queries before touching the cache or the
+      // embedding model.
+      enforceQueryLength(query);
+
       const limit = options?.limit ?? 5;
       const minScore = options?.minScore ?? 0;
 
-      const queryEmbedding = await getQueryEmbedding(query);
+      const queryEmbedding = await getQueryEmbedding(query, options?.tenantId, options?.scope);
       const normalizedQuery = normalizeVector(queryEmbedding);
       const { scored } = scoreChunks(normalizedQuery, minScore);
 
@@ -153,12 +200,15 @@ export function createInMemoryRetriever(config: {
     /** Fix 15: Extended retrieve that includes skippedChunks count. */
     async retrieveExtended(
       query: string,
-      options?: { limit?: number; minScore?: number },
+      options?: RetrieveOptions,
     ): Promise<ExtendedRetrievalResult> {
+      // SEC-010: Same length guard as retrieve().
+      enforceQueryLength(query);
+
       const limit = options?.limit ?? 5;
       const minScore = options?.minScore ?? 0;
 
-      const queryEmbedding = await getQueryEmbedding(query);
+      const queryEmbedding = await getQueryEmbedding(query, options?.tenantId, options?.scope);
       const normalizedQuery = normalizeVector(queryEmbedding);
       const { scored, skippedChunks } = scoreChunks(normalizedQuery, minScore);
 

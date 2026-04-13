@@ -22,6 +22,9 @@ export interface FallbackAdapterConfig {
  * Creates an adapter that automatically falls back to the next adapter
  * after a configurable number of consecutive failures.
  *
+ * Traversal is implemented as a bounded loop (never recursive) so the call
+ * stack is O(1) regardless of how many adapters are configured (CQ-004).
+ *
  * @example
  * ```ts
  * const adapter = createFallbackAdapter({
@@ -40,10 +43,6 @@ export function createFallbackAdapter(config: FallbackAdapterConfig): AgentAdapt
   // switch to complete before proceeding, preventing race conditions where
   // two concurrent calls both increment failureCount and both trigger a switch.
   let pendingSwitch: Promise<void> | null = null;
-
-  function getAdapter(): AgentAdapter {
-    return adapters[currentIndex];
-  }
 
   async function handleFailure(): Promise<void> {
     // If a switch is already in progress, wait for it to complete and return.
@@ -81,64 +80,91 @@ export function createFallbackAdapter(config: FallbackAdapterConfig): AgentAdapt
 
   return {
     async chat(params: ChatParams): Promise<ChatResponse> {
-      const adapterBefore = currentIndex;
-      try {
-        const result = await getAdapter().chat(params);
-        handleSuccess();
-        return result;
-      } catch (err) {
-        await handleFailure();
-        const switched = currentIndex !== adapterBefore;
-        if (switched) {
-          // We switched to a new adapter — retry with it
-          return getAdapter().chat(params);
+      // CQ-004: Bounded loop — try each adapter at most once per chat() call.
+      // We walk up to adapters.length attempts; on each failure we call
+      // handleFailure() which may advance currentIndex. If currentIndex
+      // doesn't advance and we're on the last adapter, we rethrow.
+      let lastErr: unknown;
+      for (let i = 0; i < adapters.length; i++) {
+        const adapterBefore = currentIndex;
+        try {
+          const result = await adapters[currentIndex].chat(params);
+          handleSuccess();
+          return result;
+        } catch (err) {
+          lastErr = err;
+          await handleFailure();
+          const switched = currentIndex !== adapterBefore;
+          if (switched) {
+            // Index advanced — next iteration retries with the NEW adapter.
+            continue;
+          }
+          if (currentIndex < adapters.length - 1) {
+            // Still under threshold but more adapters remain — retry same adapter.
+            continue;
+          }
+          // Last adapter and no switch — no more options.
+          throw err;
         }
-        if (currentIndex < adapters.length - 1) {
-          // Still under threshold but more adapters remain — retry same adapter
-          return getAdapter().chat(params);
-        }
-        // Last adapter and didn't switch — no more options
-        throw err;
       }
+      // Defensive: loop exited without returning or throwing (shouldn't happen
+      // because either we return on success or throw on last adapter failure).
+      throw lastErr ?? new HarnessError(
+        'All fallback adapters exhausted',
+        'FALLBACK_EXHAUSTED',
+        'Increase maxFailures or provide additional adapters',
+      );
     },
 
     async *stream(params: ChatParams): AsyncIterable<StreamChunk> {
-      const adapterBefore = currentIndex;
-      try {
-        const adapter = getAdapter();
+      // CQ-004: Bounded loop mirrors chat() — try each adapter at most once.
+      let lastErr: unknown;
+      for (let i = 0; i < adapters.length; i++) {
+        const adapterBefore = currentIndex;
+        const adapter = adapters[currentIndex];
         if (!adapter.stream) {
-          throw new HarnessError(
+          // If adapter doesn't support streaming, treat as a failure so we
+          // can advance to the next adapter (or throw if this is the only one).
+          const noStreamErr = new HarnessError(
             'Current adapter does not support streaming',
             'STREAM_NOT_SUPPORTED',
             'Use an adapter that implements stream()',
           );
+          if (adapters.length === 1) {
+            throw noStreamErr;
+          }
+          lastErr = noStreamErr;
+          await handleFailure();
+          const switched = currentIndex !== adapterBefore;
+          if (switched) continue;
+          if (currentIndex < adapters.length - 1) continue;
+          throw noStreamErr;
         }
-        yield* adapter.stream(params);
-        handleSuccess();
-      } catch (err) {
-        await handleFailure();
-        const switched = currentIndex !== adapterBefore;
-        if (switched) {
-          // Switched to new adapter — retry with it
-          const retryAdapter = getAdapter();
-          if (!retryAdapter.stream) {
-            throw err;
-          }
-          yield* retryAdapter.stream(params);
+        try {
+          yield* adapter.stream(params);
           handleSuccess();
-        } else if (currentIndex < adapters.length - 1) {
-          // Under threshold, more adapters remain — retry same adapter
-          const retryAdapter = getAdapter();
-          if (!retryAdapter.stream) {
-            throw err;
+          return;
+        } catch (err) {
+          lastErr = err;
+          await handleFailure();
+          const switched = currentIndex !== adapterBefore;
+          if (switched) {
+            // Index advanced — next iteration retries with the NEW adapter.
+            continue;
           }
-          yield* retryAdapter.stream(params);
-          handleSuccess();
-        } else {
-          // Last adapter and didn't switch — no more options
+          if (currentIndex < adapters.length - 1) {
+            // Under threshold, more adapters remain — retry same adapter.
+            continue;
+          }
+          // Last adapter and no switch — no more options.
           throw err;
         }
       }
+      throw lastErr ?? new HarnessError(
+        'All fallback adapters exhausted',
+        'FALLBACK_EXHAUSTED',
+        'Increase maxFailures or provide additional adapters',
+      );
     },
   };
 }

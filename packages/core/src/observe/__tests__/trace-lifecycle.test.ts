@@ -155,4 +155,55 @@ describe('TraceExporter lifecycle hooks', () => {
     expect(exportSpan).toHaveBeenCalledTimes(1);
     await tm.dispose();
   });
+
+  it('TEST-011: spans continue to export successfully after a transient init failure', async () => {
+    // Sequence of interest:
+    //   1. initialize() rejects once (transient) → the failure is reported.
+    //   2. Subsequent endSpan() calls must still reach exportSpan and succeed.
+    // This guards against regressions where a rejected init promise permanently
+    // poisons the exporter and silently drops every subsequent span.
+    const onExportError = vi.fn();
+    const initialize = vi
+      .fn<[], Promise<void>>()
+      .mockRejectedValueOnce(new Error('transient init failure'));
+    const exportedSpans: string[] = [];
+    const exportSpan = vi.fn(async (span: { name: string }) => {
+      exportedSpans.push(span.name);
+    });
+    const exporter = makeExporter({ initialize, exportSpan });
+
+    const tm = createTraceManager({ exporters: [exporter], onExportError });
+    const traceId = tm.startTrace('recover-trace');
+
+    // Span 1: init fails, but the manager must still try exportSpan.
+    const s1 = tm.startSpan(traceId, 'span-after-init-fail');
+    tm.endSpan(s1);
+    await new Promise((r) => setImmediate(r));
+
+    // Span 2: init promise is cached (no second init attempt), and the
+    // exporter continues to accept spans.
+    const s2 = tm.startSpan(traceId, 'subsequent-span');
+    tm.endSpan(s2);
+    await new Promise((r) => setImmediate(r));
+
+    // Span 3: one more to prove the exporter remains live indefinitely.
+    const s3 = tm.startSpan(traceId, 'final-span');
+    tm.endSpan(s3);
+    await new Promise((r) => setImmediate(r));
+
+    tm.endTrace(traceId);
+    await tm.dispose();
+
+    // The init failure was reported exactly once (cached promise).
+    expect(onExportError).toHaveBeenCalledTimes(1);
+    expect(initialize).toHaveBeenCalledTimes(1);
+    // All three spans made it through export — the init failure did not
+    // permanently disable the exporter.
+    expect(exportSpan).toHaveBeenCalledTimes(3);
+    expect(exportedSpans).toEqual([
+      'span-after-init-fail',
+      'subsequent-span',
+      'final-span',
+    ]);
+  });
 });

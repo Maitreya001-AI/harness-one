@@ -18,6 +18,7 @@ import type {
   ToolSchema,
 } from 'harness-one/core';
 import { HarnessError } from 'harness-one/core';
+import type { Logger } from 'harness-one/observe';
 
 /** Configuration for the Anthropic adapter. */
 export interface AnthropicAdapterConfig {
@@ -25,10 +26,41 @@ export interface AnthropicAdapterConfig {
   readonly client: Anthropic;
   /** Model name. Defaults to 'claude-sonnet-4-20250514'. */
   readonly model?: string;
+  /**
+   * Optional logger used for non-fatal adapter warnings (e.g. malformed
+   * tool_use JSON from the model). Defaults to the global `console` if not
+   * provided. Library code SHOULD NOT write directly to `console` — accept a
+   * logger so hosts can route/silence warnings.
+   */
+  readonly logger?: Pick<Logger, 'warn' | 'error'>;
+}
+
+/** Default logger used when no custom logger is injected. Routes to the global console. */
+function defaultLogger(): Pick<Logger, 'warn' | 'error'> {
+  return {
+    warn: (msg: string, meta?: Record<string, unknown>): void => {
+      if (meta && Object.keys(meta).length > 0) {
+        console.warn(msg, meta);
+      } else {
+        console.warn(msg);
+      }
+    },
+    error: (msg: string, meta?: Record<string, unknown>): void => {
+      // Fallback logger routes to console.error by design — callers inject a
+      // Logger to redirect library errors into structured logging.
+      // eslint-disable-next-line no-console
+      if (meta && Object.keys(meta).length > 0) console.error(msg, meta);
+      // eslint-disable-next-line no-console
+      else console.error(msg);
+    },
+  };
 }
 
 /** Convert a harness-one Message to the Anthropic message format. */
-function toAnthropicMessage(msg: Message): Anthropic.MessageParam {
+function toAnthropicMessage(
+  msg: Message,
+  logger: Pick<Logger, 'warn' | 'error'>,
+): Anthropic.MessageParam {
   if (msg.role === 'tool' && msg.toolCallId) {
     return {
       role: 'user',
@@ -57,12 +89,12 @@ function toAnthropicMessage(msg: Message): Anthropic.MessageParam {
         if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
           input = parsed as Record<string, unknown>;
         } else {
-          console.warn(
+          logger.warn(
             `[harness-one/anthropic] tool_use input for "${tc.name}" was not a JSON object (got ${typeof parsed}); substituting empty object.`,
           );
         }
       } catch {
-        console.warn(
+        logger.warn(
           `[harness-one/anthropic] tool_use input for "${tc.name}" was not valid JSON; substituting empty object. Raw arguments may be truncated or malformed.`,
         );
       }
@@ -184,6 +216,7 @@ function toHarnessMessage(response: Anthropic.Message): Message {
 export function createAnthropicAdapter(config: AnthropicAdapterConfig): AgentAdapter {
   const { client } = config;
   const model = config.model ?? 'claude-sonnet-4-20250514';
+  const logger: Pick<Logger, 'warn' | 'error'> = config.logger ?? defaultLogger();
 
   return {
     name: `anthropic:${model}`,
@@ -194,11 +227,14 @@ export function createAnthropicAdapter(config: AnthropicAdapterConfig): AgentAda
         model,
         max_tokens: params.config?.maxTokens ?? 4096,
         ...(system !== undefined && { system }),
-        messages: rest.map(toAnthropicMessage),
+        messages: rest.map((m) => toAnthropicMessage(m, logger)),
         ...(params.tools && { tools: params.tools.map(toAnthropicTool) }),
         ...(params.config?.temperature !== undefined && { temperature: params.config.temperature }),
         ...(params.config?.topP !== undefined && { top_p: params.config.topP }),
         ...(params.config?.stopSequences !== undefined && { stop_sequences: params.config.stopSequences as string[] }),
+        // Spec: LLMConfig.extra MUST be forwarded to the provider. Merge LAST
+        // so caller-supplied unknown keys win over base params (per provider-spec.md).
+        ...(params.config?.extra ?? {}),
       }, { signal: params.signal });
 
       if (!response.content || response.content.length === 0) {
@@ -218,11 +254,14 @@ export function createAnthropicAdapter(config: AnthropicAdapterConfig): AgentAda
         model,
         max_tokens: params.config?.maxTokens ?? 4096,
         ...(system !== undefined && { system }),
-        messages: rest.map(toAnthropicMessage),
+        messages: rest.map((m) => toAnthropicMessage(m, logger)),
         ...(params.tools && { tools: params.tools.map(toAnthropicTool) }),
         ...(params.config?.temperature !== undefined && { temperature: params.config.temperature }),
         ...(params.config?.topP !== undefined && { top_p: params.config.topP }),
         ...(params.config?.stopSequences !== undefined && { stop_sequences: params.config.stopSequences as string[] }),
+        // Spec: LLMConfig.extra MUST be forwarded to the provider. Merge LAST
+        // so caller-supplied unknown keys win over base params.
+        ...(params.config?.extra ?? {}),
       }, { signal: params.signal });
 
       let currentToolId: string | undefined;
@@ -259,12 +298,30 @@ export function createAnthropicAdapter(config: AnthropicAdapterConfig): AgentAda
         }
       }
 
-      let finalMsg;
+      let finalMsg: Anthropic.Message;
       try {
         finalMsg = await stream.finalMessage();
-      } catch {
-        // Stream may have been aborted — use accumulated state
-        return;
+      } catch (err) {
+        // CQ-003: Do NOT silently swallow. Two legitimate cases exist:
+        //  1. The caller aborted via an external AbortSignal. In that case,
+        //     emit a terminal zero-usage done chunk so downstream iteration
+        //     terminates cleanly without losing the signal semantics.
+        //  2. Anything else is a real provider-side failure (network blip,
+        //     500, malformed final message, etc.) and MUST propagate up as a
+        //     typed HarnessError with `cause` preserved for observability.
+        if (params.signal?.aborted === true) {
+          yield {
+            type: 'done',
+            usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+          };
+          return;
+        }
+        throw new HarnessError(
+          'Anthropic stream failed before finalMessage() resolved',
+          'PROVIDER_ERROR',
+          'The provider stream ended abnormally. Check network connectivity and provider status; retry if transient.',
+          err instanceof Error ? err : undefined,
+        );
       }
       yield { type: 'done', usage: toTokenUsage(finalMsg.usage) };
     },

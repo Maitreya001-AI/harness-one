@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createFallbackAdapter } from '../fallback-adapter.js';
 import { HarnessError } from '../errors.js';
 import type { AgentAdapter, ChatParams, ChatResponse, StreamChunk } from '../types.js';
@@ -311,11 +311,9 @@ describe('createFallbackAdapter', () => {
 
       const adapter = createFallbackAdapter({ adapters: [a1, a2, a3], maxFailures: 1 });
 
-      // a1 fails -> switch to a2 -> a2 fails (retry) -> switch to a3 -> a3 succeeds
-      // Actually: first call: a1 fails, handleFailure switches to a2, retries a2
-      // a2 fails, throws. Second call: a2 fails, handleFailure switches to a3, retries a3
-      // a3 succeeds
-      try { await adapter.chat(PARAMS); } catch { /* a2 retry fails */ }
+      // CQ-004: With the bounded-loop implementation, a single chat() walks
+      // the entire chain: a1 fails -> switch to a2 -> a2 fails -> switch to a3
+      // -> a3 succeeds.
       const result = await adapter.chat(PARAMS);
       expect(result.message.content).toBe('a3 response');
     });
@@ -458,6 +456,211 @@ describe('createFallbackAdapter', () => {
       // Second call: should still work (pendingSwitch must have been cleared)
       const r2 = await adapter.chat(PARAMS);
       expect(r2.message.content).toBe('fb2');
+    });
+  });
+
+  // =====================================================================
+  // CQ-004: Fallback adapter recursion → bounded loop
+  // =====================================================================
+  describe('CQ-004: bounded loop (no recursion) for chat and stream', () => {
+    it('chat: traverses all adapters in order without recursion, calling each at most once per chat() invocation', async () => {
+      const callOrder: string[] = [];
+      // 5 adapters: first 4 fail, 5th succeeds. With maxFailures=1, the chat
+      // call should walk the chain iteratively and return a1-fail, a2-fail,
+      // a3-fail, a4-fail, a5-success — never calling any adapter twice.
+      const a1: AgentAdapter = { async chat() { callOrder.push('a1'); throw new Error('fail1'); } };
+      const a2: AgentAdapter = { async chat() { callOrder.push('a2'); throw new Error('fail2'); } };
+      const a3: AgentAdapter = { async chat() { callOrder.push('a3'); throw new Error('fail3'); } };
+      const a4: AgentAdapter = { async chat() { callOrder.push('a4'); throw new Error('fail4'); } };
+      const a5: AgentAdapter = {
+        async chat() {
+          callOrder.push('a5');
+          return { message: { role: 'assistant', content: 'final' }, usage: USAGE };
+        },
+      };
+
+      const adapter = createFallbackAdapter({
+        adapters: [a1, a2, a3, a4, a5],
+        maxFailures: 1,
+      });
+      const result = await adapter.chat(PARAMS);
+      expect(result.message.content).toBe('final');
+      // Each adapter called exactly once
+      expect(callOrder).toEqual(['a1', 'a2', 'a3', 'a4', 'a5']);
+    });
+
+    it('stream: traverses all adapters in order without recursion', async () => {
+      const callOrder: string[] = [];
+      const finalChunks: StreamChunk[] = [
+        { type: 'text_delta', text: 'ok' },
+        { type: 'done', usage: USAGE },
+      ];
+
+      const mkFailingStream = (name: string): AgentAdapter => ({
+        async chat() { return { message: { role: 'assistant', content: '' }, usage: USAGE }; },
+        async *stream() {
+          callOrder.push(name);
+          throw new Error(`${name} stream fail`);
+        },
+      });
+      const finalStreamer: AgentAdapter = {
+        async chat() { return { message: { role: 'assistant', content: '' }, usage: USAGE }; },
+        async *stream() {
+          callOrder.push('final');
+          for (const c of finalChunks) yield c;
+        },
+      };
+
+      const adapter = createFallbackAdapter({
+        adapters: [
+          mkFailingStream('s1'),
+          mkFailingStream('s2'),
+          mkFailingStream('s3'),
+          finalStreamer,
+        ],
+        maxFailures: 1,
+      });
+
+      const collected: StreamChunk[] = [];
+      for await (const chunk of adapter.stream!(PARAMS)) {
+        collected.push(chunk);
+      }
+      expect(collected).toEqual(finalChunks);
+      expect(callOrder).toEqual(['s1', 's2', 's3', 'final']);
+    });
+
+    it('chat: does not exceed call stack with many adapters (recursion-free)', async () => {
+      // Build 50 failing adapters + 1 success. The recursive implementation
+      // would hit its one-retry limit and throw. A loop-based implementation
+      // traverses all of them per call.
+      const callCount = { n: 0 };
+      const adapters: AgentAdapter[] = [];
+      for (let i = 0; i < 50; i++) {
+        adapters.push({
+          async chat() { callCount.n++; throw new Error(`a${i} fail`); },
+        });
+      }
+      adapters.push({
+        async chat() {
+          callCount.n++;
+          return { message: { role: 'assistant', content: 'survived' }, usage: USAGE };
+        },
+      });
+
+      const adapter = createFallbackAdapter({ adapters, maxFailures: 1 });
+      const r = await adapter.chat(PARAMS);
+      expect(r.message.content).toBe('survived');
+      // All 51 adapters tried exactly once
+      expect(callCount.n).toBe(51);
+    });
+  });
+
+  // =====================================================================
+  // TEST-014: concurrent failure recovery with varying latencies
+  // =====================================================================
+  describe('TEST-014: concurrent failure recovery with varying latencies', () => {
+    it('routes around a slow+failing primary chain to land on a fast survivor', async () => {
+      // Scenario:
+      //   - adapter A (primary): slow — resolves with a rejection after 50ms
+      //   - adapter B (secondary): fails immediately (rejects synchronously)
+      //   - adapter C (tertiary): succeeds immediately
+      // Using fake timers, we prove the chain walk correctly proceeds from A→B→C
+      // regardless of microtask vs macrotask ordering differences.
+      vi.useFakeTimers();
+      try {
+        const order: string[] = [];
+
+        const slowFailing: AgentAdapter = {
+          async chat() {
+            order.push('A:start');
+            await new Promise((r) => setTimeout(r, 50));
+            order.push('A:fail');
+            throw new Error('slow adapter failure');
+          },
+        };
+        const fastFailing: AgentAdapter = {
+          async chat() {
+            order.push('B:fail');
+            throw new Error('fast adapter failure');
+          },
+        };
+        const fastSuccess: AgentAdapter = {
+          async chat() {
+            order.push('C:ok');
+            return {
+              message: { role: 'assistant', content: 'recovered' },
+              usage: USAGE,
+            };
+          },
+        };
+
+        const adapter = createFallbackAdapter({
+          adapters: [slowFailing, fastFailing, fastSuccess],
+          maxFailures: 1,
+        });
+
+        const promise = adapter.chat(PARAMS);
+        // Advance past the slow adapter's 50ms delay
+        await vi.advanceTimersByTimeAsync(50);
+        const result = await promise;
+
+        expect(result.message.content).toBe('recovered');
+        // Verify the exact traversal: A starts → A fails → B fails → C succeeds.
+        expect(order).toEqual(['A:start', 'A:fail', 'B:fail', 'C:ok']);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('two concurrent callers both recover past a slow failing primary', async () => {
+      // Two callers launched in parallel. The primary is slow+failing, the
+      // fallback is fast-success. Both callers must independently reach the
+      // fallback and succeed — neither should deadlock on a pending switch.
+      vi.useFakeTimers();
+      try {
+        let primaryInvocations = 0;
+        const primary: AgentAdapter = {
+          async chat() {
+            primaryInvocations++;
+            await new Promise((r) => setTimeout(r, 20));
+            throw new Error('primary slow-fail');
+          },
+        };
+
+        let fallbackInvocations = 0;
+        const fallback: AgentAdapter = {
+          async chat() {
+            fallbackInvocations++;
+            return {
+              message: {
+                role: 'assistant',
+                content: `ok-${fallbackInvocations}`,
+              },
+              usage: USAGE,
+            };
+          },
+        };
+
+        const adapter = createFallbackAdapter({
+          adapters: [primary, fallback],
+          maxFailures: 1,
+        });
+
+        const p1 = adapter.chat(PARAMS);
+        const p2 = adapter.chat(PARAMS);
+        await vi.advanceTimersByTimeAsync(20);
+        const [r1, r2] = await Promise.all([p1, p2]);
+
+        // Both calls produced a message from the fallback
+        expect(r1.message.content).toMatch(/^ok-/);
+        expect(r2.message.content).toMatch(/^ok-/);
+        // The primary was hit at least once (exact count depends on mutex
+        // semantics; we only require progress, not a specific number).
+        expect(primaryInvocations).toBeGreaterThanOrEqual(1);
+        expect(fallbackInvocations).toBeGreaterThanOrEqual(1);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });

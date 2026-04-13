@@ -109,23 +109,32 @@ model variant.
 
 ## OPTIONAL: `stream(params)`
 
-Yields `StreamChunk`s as the provider emits them:
+Yields `StreamChunk`s as the provider emits them. The real shape (see
+`packages/core/src/core/types.ts` → `StreamChunk`) is a flat interface
+discriminated by `type`; the three variants adapters actually emit are:
 
 ```ts
+// Shape accepted by the harness — only the fields relevant to `type` are set.
 type StreamChunk =
-  | { type: 'text_delta'; delta: string }
-  | { type: 'tool_call_delta'; index: number; id?: string; name?: string; arguments?: string }
-  | { type: 'done'; message: Message; usage: TokenUsage };
+  | { type: 'text_delta'; text: string }
+  | { type: 'tool_call_delta'; toolCall: Partial<ToolCallRequest> }
+  | { type: 'done'; usage: TokenUsage };
 ```
 
 Rules:
 
-- The **final** chunk MUST be `{ type: 'done', message, usage }` with the
-  same guarantees as `chat()`'s response.
-- `tool_call_delta` accumulates argument fragments — adapters MUST NOT
-  cast partial argument JSON as a parsed object. See the
-  `anthropic/tool_use input` guard in `packages/anthropic/src/index.ts`:
-  on JSON-parse failure, substitute `{}` and log, never `as Record`.
+- The **final** chunk MUST be `{ type: 'done', usage }`. `done` carries
+  usage only — the assistant `Message` (including accumulated `toolCalls`)
+  is reconstructed by the caller from the preceding `text_delta` and
+  `tool_call_delta` chunks. Do NOT attach a `message` field here.
+- `text_delta.text` is the incremental text fragment (not a full running
+  buffer); the caller concatenates.
+- `tool_call_delta.toolCall` is `Partial<ToolCallRequest>` — `id`,
+  `name`, and `arguments` may each be absent or partial across chunks.
+  Adapters MUST NOT cast partial argument JSON as a parsed object. See
+  the `anthropic/tool_use input` guard in
+  `packages/anthropic/src/index.ts`: on JSON-parse failure, substitute
+  `{}` and log, never `as Record`.
 - Adapters MUST propagate `params.signal` to the streaming SDK so that
   `loop.abort()` cancels the in-flight stream promptly.
 
@@ -152,9 +161,10 @@ decisions:
 | Invalid request / 4xx | `ADAPTER_BAD_REQUEST` |
 | Server JSON parse failure | `PROVIDER_ERROR` |
 
-Wrap errors in `HarnessError(code, message, suggestion, cause)` — see
-`packages/core/src/core/errors.ts`. Preserve the original error as
-`cause` so operators can debug.
+Wrap errors in `HarnessError(message, code, suggestion?, cause?)` — see
+`packages/core/src/core/errors.ts`. The human-readable `message` is the
+first argument, followed by the programmatic `code`. Preserve the
+original error as `cause` so operators can debug.
 
 ## Conformance checklist
 

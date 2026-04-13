@@ -316,4 +316,141 @@ describe('createLogger', () => {
       expect(lines[0]).toContain('"component":"auth"');
     });
   });
+
+  // SEC-001: Secret redaction
+  describe('secret redaction (SEC-001)', () => {
+    it('redacts api_key keys in meta when redact config is provided', () => {
+      const { lines, output } = captureOutput();
+      const logger = createLogger({ json: true, output, redact: {} });
+      logger.info('request', { api_key: 'sk-secret-123', user: 'alice' });
+      const parsed = JSON.parse(lines[0]);
+      expect(parsed.api_key).toBe('[REDACTED]');
+      expect(parsed.user).toBe('alice');
+    });
+
+    it('redacts authorization, password, token, cookie by default', () => {
+      const { lines, output } = captureOutput();
+      const logger = createLogger({ json: true, output, redact: {} });
+      logger.info('multi', {
+        authorization: 'Bearer abc',
+        password: 'pw',
+        token: 'tok',
+        cookie: 'session=xyz',
+        safe: 'ok',
+      });
+      const parsed = JSON.parse(lines[0]);
+      expect(parsed.authorization).toBe('[REDACTED]');
+      expect(parsed.password).toBe('[REDACTED]');
+      expect(parsed.token).toBe('[REDACTED]');
+      expect(parsed.cookie).toBe('[REDACTED]');
+      expect(parsed.safe).toBe('ok');
+    });
+
+    it('redacts nested secret keys recursively', () => {
+      const { lines, output } = captureOutput();
+      const logger = createLogger({ json: true, output, redact: {} });
+      logger.info('nested', { headers: { authorization: 'Bearer secret' } });
+      const parsed = JSON.parse(lines[0]);
+      expect(parsed.headers.authorization).toBe('[REDACTED]');
+    });
+
+    it('supports extraKeys for additional custom redaction', () => {
+      const { lines, output } = captureOutput();
+      const logger = createLogger({
+        json: true,
+        output,
+        redact: { extraKeys: ['ssn'] },
+      });
+      logger.info('custom', { ssn: '123-45-6789', ok: 'fine' });
+      const parsed = JSON.parse(lines[0]);
+      expect(parsed.ssn).toBe('[REDACTED]');
+      expect(parsed.ok).toBe('fine');
+    });
+
+    it('does not redact when redact config is absent', () => {
+      const { lines, output } = captureOutput();
+      const logger = createLogger({ json: true, output });
+      logger.info('no-redact', { api_key: 'visible' });
+      const parsed = JSON.parse(lines[0]);
+      expect(parsed.api_key).toBe('visible');
+    });
+
+    it('redacts in text mode as well', () => {
+      const { lines, output } = captureOutput();
+      const logger = createLogger({ output, redact: {} });
+      logger.info('msg', { api_key: 'sk-secret' });
+      expect(lines[0]).not.toContain('sk-secret');
+      expect(lines[0]).toContain('[REDACTED]');
+    });
+
+    it('drops prototype-polluting keys', () => {
+      const { lines, output } = captureOutput();
+      const logger = createLogger({ json: true, output, redact: {} });
+      logger.info('polluting', {
+        __proto__: { attack: true },
+        constructor: 'c',
+        prototype: 'p',
+        safe: 'ok',
+      });
+      const parsed = JSON.parse(lines[0]);
+      expect(parsed.__proto__.attack).not.toBe(true); // polluting key dropped
+      expect(parsed.constructor).not.toBe('c');
+      expect(parsed.prototype).not.toBe('p');
+      expect(parsed.safe).toBe('ok');
+    });
+
+    it('redacts keys added via child logger meta', () => {
+      const { lines, output } = captureOutput();
+      const logger = createLogger({ json: true, output, redact: {} });
+      const child = logger.child({ password: 'hidden', service: 'api' });
+      child.info('req');
+      const parsed = JSON.parse(lines[0]);
+      expect(parsed.password).toBe('[REDACTED]');
+      expect(parsed.service).toBe('api');
+    });
+  });
+
+  // OBS-001: Correlation ID support
+  describe('correlationId (OBS-001)', () => {
+    it('injects correlationId into every log record', () => {
+      const { lines, output } = captureOutput();
+      const logger = createLogger({ json: true, output, correlationId: 'req-abc' });
+      logger.info('hello');
+      const parsed = JSON.parse(lines[0]);
+      expect(parsed.correlationId).toBe('req-abc');
+    });
+
+    it('correlationId appears in JSON and text modes', () => {
+      const { lines, output } = captureOutput();
+      const logger = createLogger({ output, correlationId: 'req-xyz' });
+      logger.info('hello');
+      expect(lines[0]).toContain('"correlationId":"req-xyz"');
+    });
+
+    it('call-site meta can override correlationId if needed', () => {
+      const { lines, output } = captureOutput();
+      const logger = createLogger({ json: true, output, correlationId: 'req-base' });
+      logger.info('override', { correlationId: 'req-overridden' });
+      const parsed = JSON.parse(lines[0]);
+      expect(parsed.correlationId).toBe('req-overridden');
+    });
+
+    it('child logger inherits correlationId from parent', () => {
+      const { lines, output } = captureOutput();
+      const logger = createLogger({ json: true, output, correlationId: 'req-root' });
+      const child = logger.child({ service: 'api' });
+      child.info('hello');
+      const parsed = JSON.parse(lines[0]);
+      expect(parsed.correlationId).toBe('req-root');
+      expect(parsed.service).toBe('api');
+    });
+
+    it('does not emit correlationId field when not configured', () => {
+      const { lines, output } = captureOutput();
+      const logger = createLogger({ json: true, output });
+      logger.info('no-cid');
+      const parsed = JSON.parse(lines[0]);
+      expect(parsed.correlationId).toBeUndefined();
+    });
+  });
 });

@@ -3,6 +3,43 @@ import { createPromptRegistry, createAsyncPromptRegistry } from '../registry.js'
 import { HarnessError } from '../../core/errors.js';
 import type { PromptBackend, PromptTemplate } from '../types.js';
 
+describe('CQ-019: register() warns on silent overwrite', () => {
+  it('warns via injected logger when re-registering the same id+version without force', () => {
+    const warns: Array<{ msg: string; meta?: Record<string, unknown> }> = [];
+    const reg = createPromptRegistry({
+      logger: { warn: (msg, meta) => warns.push({ msg, meta: meta as Record<string, unknown> | undefined }) },
+    });
+
+    reg.register({ id: 'greet', version: '1.0', content: 'Hello v1', variables: [] });
+    expect(warns).toHaveLength(0);
+
+    // Re-register without force flag → should warn
+    reg.register({ id: 'greet', version: '1.0', content: 'Hello v1 OVERWRITE', variables: [] });
+    expect(warns).toHaveLength(1);
+    expect(warns[0].msg).toMatch(/overwr/i);
+    expect(warns[0].msg).toMatch(/greet/);
+    expect(warns[0].msg).toMatch(/1\.0/);
+  });
+
+  it('does NOT warn when force=true is passed', () => {
+    const warns: Array<{ msg: string; meta?: Record<string, unknown> }> = [];
+    const reg = createPromptRegistry({
+      logger: { warn: (msg) => warns.push({ msg }) },
+    });
+    reg.register({ id: 'greet', version: '1.0', content: 'v1', variables: [] });
+    reg.register({ id: 'greet', version: '1.0', content: 'v1-force', variables: [] }, { force: true });
+    expect(warns).toHaveLength(0);
+  });
+
+  it('works without logger (no-op default)', () => {
+    // Default behavior: no logger → no-op warn, no crash
+    const reg = createPromptRegistry();
+    reg.register({ id: 'greet', version: '1.0', content: 'v1', variables: [] });
+    // Must not throw
+    reg.register({ id: 'greet', version: '1.0', content: 'v1-overwrite', variables: [] });
+  });
+});
+
 describe('createPromptRegistry', () => {
   it('registers and retrieves a template', () => {
     const reg = createPromptRegistry();
@@ -187,13 +224,13 @@ describe('createPromptRegistry', () => {
       reg.register({ id: 'boundary', version: '1.0', content: 'Boundary', variables: [], expiresAt: now });
       // isExpired uses Date.now() > expiresAt, so at exact boundary it should NOT be expired
       // (because the time the check runs may equal expiresAt)
-      // We mock Date.now to return exactly the expiresAt value
-      const origNow = Date.now;
-      Date.now = () => now;
+      // We mock Date.now via vi.spyOn so it is automatically restorable and doesn't
+      // leak into other tests even if the assertion throws.
+      const spy = vi.spyOn(Date, 'now').mockReturnValue(now);
       try {
         expect(reg.isExpired('boundary')).toBe(false);
       } finally {
-        Date.now = origNow;
+        spy.mockRestore();
       }
     });
 

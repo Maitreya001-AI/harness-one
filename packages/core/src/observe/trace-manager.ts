@@ -5,11 +5,34 @@
  */
 
 import { HarnessError } from '../core/errors.js';
-import type { Trace, Span, SpanEvent, TraceExporter } from './types.js';
+import {
+  createRedactor,
+  sanitizeAttributes,
+  type RedactConfig,
+  type Redactor,
+} from '../_internal/redact.js';
+import type { Trace, Span, SpanEvent, SpanEventSeverity, TraceExporter } from './types.js';
+
+/** Retry telemetry aggregates exposed via `getRetryMetrics()`. */
+export interface RetryMetrics {
+  /** Total retry attempts observed across all spans. */
+  readonly totalRetries: number;
+  /** Retries that were followed by a successful span completion. */
+  readonly successAfterRetry: number;
+  /** Retries that ultimately failed (span ended with error status). */
+  readonly failedAfterRetries: number;
+}
 
 /** Manager for creating and tracking traces and spans. */
 export interface TraceManager {
-  /** Start a new trace. Returns the trace ID. */
+  /**
+   * Start a new trace. Returns the trace ID.
+   *
+   * SEC-016: The `metadata` argument is treated as USER metadata — it is
+   * redacted (if configured) and surfaced on `trace.metadata` as well as
+   * `trace.userMetadata`. System-authored metadata is emitted via
+   * `setTraceSystemMetadata()` and kept on `trace.systemMetadata`.
+   */
   startTrace(name: string, metadata?: Record<string, unknown>): string;
   /** Start a new span within a trace. Returns the span ID. */
   startSpan(traceId: string, name: string, parentId?: string): string;
@@ -17,6 +40,13 @@ export interface TraceManager {
   addSpanEvent(spanId: string, event: Omit<SpanEvent, 'timestamp'>): void;
   /** Set attributes on a span. */
   setSpanAttributes(spanId: string, attributes: Record<string, unknown>): void;
+  /**
+   * SEC-016: Attach library-controlled metadata to a trace. Keys written here
+   * land on `trace.systemMetadata` and are never redacted. `shouldExport()`
+   * sampling hooks MUST read only `systemMetadata` so users can't manipulate
+   * sampling decisions by injecting metadata keys.
+   */
+  setTraceSystemMetadata(traceId: string, metadata: Record<string, unknown>): void;
   /** End a span. */
   endSpan(spanId: string, status?: 'completed' | 'error'): void;
   /** End a trace. */
@@ -46,6 +76,12 @@ export interface TraceManager {
    * takes precedence over this global rate.
    */
   setSamplingRate(rate: number): void;
+  /**
+   * OBS-005: Observed retry telemetry aggregated from span events. Retries
+   * are detected by events named `adapter_retry` emitted via `addSpanEvent()`
+   * or by attributes on spans indicating retry outcome.
+   */
+  getRetryMetrics(): RetryMetrics;
   /** Dispose: flush all exporters, shut them down, and clear internal state. */
   dispose(): Promise<void>;
 }
@@ -78,12 +114,24 @@ export function createTraceManager(config?: {
    * via the returned manager's `setSamplingRate()` method.
    */
   defaultSamplingRate?: number;
+  /**
+   * SEC-007: Secret redaction applied to all USER-SUPPLIED span attributes,
+   * trace metadata, and span events at the ingestion boundary. Because
+   * exporters (console, OTel, Langfuse) read `span.attributes` and
+   * `trace.metadata` verbatim, scrubbing here guarantees downstream observers
+   * never see unredacted secrets. Set to `{}` to enable default patterns.
+   */
+  redact?: RedactConfig;
 }): TraceManager {
   const exporters = config?.exporters ?? [];
   const maxTraces = config?.maxTraces ?? 1000;
   const onExportError = config?.onExportError;
   const logger = config?.logger;
   let samplingRate = config?.defaultSamplingRate ?? 1;
+  // SEC-007: Build redactor once. `undefined` means pass-through.
+  const redactor: Redactor | undefined = config?.redact
+    ? createRedactor(config.redact)
+    : undefined;
 
   if (maxTraces < 1) {
     throw new HarnessError('maxTraces must be >= 1', 'INVALID_CONFIG', 'Provide a positive maxTraces value');
@@ -134,7 +182,10 @@ export function createTraceManager(config?: {
 
   function trackExport(p: Promise<unknown>): void {
     pendingExports.add(p);
-    p.finally(() => pendingExports.delete(p));
+    // PERF-016: `.finally()` alone can leak when the underlying promise
+    // rejects and a handler in finally throws — swallow the rejection first
+    // so the delete callback is guaranteed to run.
+    p.catch(() => {}).finally(() => pendingExports.delete(p));
   }
 
   function exportSpanTo(exporter: TraceExporter, span: Span): void {
@@ -173,7 +224,10 @@ export function createTraceManager(config?: {
     name: string;
     startTime: number;
     endTime?: number;
-    metadata: Record<string, unknown>;
+    /** SEC-016: user-supplied metadata (redacted when configured). */
+    userMetadata: Record<string, unknown>;
+    /** SEC-016: library-authored metadata used by shouldExport hooks. */
+    systemMetadata: Record<string, unknown>;
     spanIds: string[];
     status: 'running' | 'completed' | 'error';
   }
@@ -181,11 +235,59 @@ export function createTraceManager(config?: {
   const traces = new Map<string, MutableTrace>();
   const spans = new Map<string, MutableSpan>();
   const traceOrder: string[] = []; // For LRU eviction
+  // PERF-006: secondary index for O(1) removal from traceOrder in endTrace.
+  // Keeps mapping traceId -> position in traceOrder. On removal we swap the
+  // last element into the hole, updating the index for the moved entry.
+  const traceOrderIndex = new Map<string, number>();
   let nextId = 1;
   let isEvicting = false; // Re-entrance guard for eviction (Fix 3)
 
+  // OBS-005: retry telemetry aggregated from span events named `adapter_retry`.
+  let retryTotalRetries = 0;
+  let retrySuccessAfterRetry = 0;
+  let retryFailedAfterRetries = 0;
+  // Spans that had at least one adapter_retry event — consulted on endSpan
+  // to count success/failure outcomes.
+  const retryingSpanIds = new Set<string>();
+
   function genId(): string {
     return `id-${nextId++}-${Date.now().toString(36)}`;
+  }
+
+  /**
+   * PERF-006: Append `id` to `traceOrder` and record its index in O(1).
+   */
+  function appendTraceOrder(id: string): void {
+    traceOrderIndex.set(id, traceOrder.length);
+    traceOrder.push(id);
+  }
+
+  /**
+   * PERF-006: Remove `id` from `traceOrder` using a swap-remove so we avoid
+   * the O(n) indexOf + splice that previously dominated endTrace on hot paths.
+   */
+  function removeTraceOrder(id: string): void {
+    const idx = traceOrderIndex.get(id);
+    if (idx === undefined) return;
+    const last = traceOrder.length - 1;
+    if (idx !== last) {
+      const moved = traceOrder[last];
+      traceOrder[idx] = moved;
+      traceOrderIndex.set(moved, idx);
+    }
+    traceOrder.pop();
+    traceOrderIndex.delete(id);
+  }
+
+  function shiftTraceOrder(): string | undefined {
+    const first = traceOrder.shift();
+    if (first === undefined) return undefined;
+    traceOrderIndex.delete(first);
+    // After shift, every remaining entry's index has decreased by one.
+    for (let i = 0; i < traceOrder.length; i++) {
+      traceOrderIndex.set(traceOrder[i], i);
+    }
+    return first;
   }
 
   /**
@@ -225,6 +327,7 @@ export function createTraceManager(config?: {
             allEvictedSpanIds.push(...finalizeSpansForEviction(trace));
             for (const spanId of trace.spanIds) {
               spans.delete(spanId);
+              retryingSpanIds.delete(spanId);
             }
             traces.delete(id);
           }
@@ -232,13 +335,14 @@ export function createTraceManager(config?: {
       }
       // Then, evict oldest running traces from the LRU order if still over capacity.
       while (traces.size > maxTraces && traceOrder.length > 0) {
-        const oldestId = traceOrder.shift() as string;
+        const oldestId = shiftTraceOrder() as string;
         const trace = traces.get(oldestId);
         if (trace) {
           // Finalize any still-running spans before removal (Fix 1)
           allEvictedSpanIds.push(...finalizeSpansForEviction(trace));
           for (const spanId of trace.spanIds) {
             spans.delete(spanId);
+            retryingSpanIds.delete(spanId);
           }
           traces.delete(oldestId);
         }
@@ -257,29 +361,52 @@ export function createTraceManager(config?: {
       return { ...s, events: [...s.events] } as Span;
     }).filter((s): s is Span => s !== null);
 
-    return {
+    // SEC-016: `metadata` is the BACKWARD-COMPATIBLE view — callers that read
+    // `trace.metadata` still see user metadata. New code consults
+    // `userMetadata` / `systemMetadata` directly via the readonly alias.
+    const combinedMetadata = { ...mt.userMetadata };
+    // When system metadata is present, make it available under a well-known
+    // namespaced key so legacy observers that only read `.metadata` still see
+    // it. Namespaced to avoid collisions with user keys.
+    if (Object.keys(mt.systemMetadata).length > 0) {
+      (combinedMetadata as Record<string, unknown>)['__system__'] = { ...mt.systemMetadata };
+    }
+
+    const result: Trace & {
+      readonly userMetadata?: Record<string, unknown>;
+      readonly systemMetadata?: Record<string, unknown>;
+    } = {
       id: mt.id,
       name: mt.name,
       startTime: mt.startTime,
       ...(mt.endTime !== undefined && { endTime: mt.endTime }),
-      metadata: { ...mt.metadata },
+      metadata: combinedMetadata,
+      userMetadata: { ...mt.userMetadata },
+      systemMetadata: { ...mt.systemMetadata },
       spans: traceSpans,
       status: mt.status,
     };
+    return result;
   }
 
   return {
     startTrace(name: string, metadata?: Record<string, unknown>): string {
       const id = genId();
+      // SEC-007 + SEC-016: user metadata is scrubbed at ingestion so exporters
+      // (console, OTel, Langfuse) never observe secrets.
+      const userMeta = metadata
+        ? (redactor ? sanitizeAttributes(metadata, redactor) : { ...metadata })
+        : {};
       traces.set(id, {
         id,
         name,
         startTime: Date.now(),
-        metadata: metadata ? { ...metadata } : {},
+        userMetadata: userMeta,
+        systemMetadata: {},
         spanIds: [],
         status: 'running',
       });
-      traceOrder.push(id);
+      appendTraceOrder(id);
       evictIfNeeded();
       return id;
     },
@@ -328,7 +455,25 @@ export function createTraceManager(config?: {
           'Start a span before adding events',
         );
       }
-      span.events.push({ ...event, timestamp: Date.now() });
+      // SEC-007: scrub event attributes before storing. Event names are plain
+      // strings and are not redacted. Preserves optional severity.
+      const safeAttrs = event.attributes
+        ? (redactor ? sanitizeAttributes(event.attributes, redactor) : event.attributes)
+        : undefined;
+      const severity: SpanEventSeverity | undefined = event.severity;
+      const storedEvent: SpanEvent = {
+        name: event.name,
+        timestamp: Date.now(),
+        ...(safeAttrs !== undefined && { attributes: safeAttrs }),
+        ...(severity !== undefined && { severity }),
+      };
+      span.events.push(storedEvent);
+
+      // OBS-005: track adapter_retry events for aggregate telemetry.
+      if (event.name === 'adapter_retry') {
+        retryTotalRetries++;
+        retryingSpanIds.add(spanId);
+      }
     },
 
     setSpanAttributes(spanId: string, attributes: Record<string, unknown>): void {
@@ -340,7 +485,28 @@ export function createTraceManager(config?: {
           'Start a span before setting attributes',
         );
       }
-      Object.assign(span.attributes, attributes);
+      // SEC-007: scrub attributes at ingestion — downstream exporters read
+      // span.attributes verbatim, so redacting here guarantees no leak.
+      const safeAttrs = redactor ? sanitizeAttributes(attributes, redactor) : attributes;
+      Object.assign(span.attributes, safeAttrs);
+    },
+
+    setTraceSystemMetadata(traceId: string, metadata: Record<string, unknown>): void {
+      const trace = traces.get(traceId);
+      if (!trace) {
+        throw new HarnessError(
+          `Trace not found: ${traceId}`,
+          'TRACE_NOT_FOUND',
+          'Start a trace before setting system metadata',
+        );
+      }
+      // SEC-016: systemMetadata is library-authored and NOT redacted. Caller
+      // owns correctness. Do still drop prototype-polluting keys via redactor
+      // if one is configured (shape-only safety, no secret scrubbing).
+      for (const [k, v] of Object.entries(metadata)) {
+        if (redactor && redactor.isPollutingKey(k)) continue;
+        trace.systemMetadata[k] = v;
+      }
     },
 
     endSpan(spanId: string, status?: 'completed' | 'error'): void {
@@ -353,7 +519,18 @@ export function createTraceManager(config?: {
         );
       }
       span.endTime = Date.now();
-      span.status = status ?? 'completed';
+      const finalStatus = status ?? 'completed';
+      span.status = finalStatus;
+
+      // OBS-005: attribute retry outcome now that the span is complete.
+      if (retryingSpanIds.has(spanId)) {
+        retryingSpanIds.delete(spanId);
+        if (finalStatus === 'completed') {
+          retrySuccessAfterRetry++;
+        } else {
+          retryFailedAfterRetries++;
+        }
+      }
 
       // Export — respects each exporter's isHealthy() hook and lazy initialize().
       const snapshot: Span = { ...span, events: [...span.events] };
@@ -374,12 +551,8 @@ export function createTraceManager(config?: {
       trace.endTime = Date.now();
       trace.status = status ?? 'completed';
 
-      // Remove from traceOrder to prevent memory leak: ended traces that are
-      // not evicted would otherwise leave stale IDs in the array forever.
-      const orderIdx = traceOrder.indexOf(traceId);
-      if (orderIdx >= 0) {
-        traceOrder.splice(orderIdx, 1);
-      }
+      // PERF-006: O(1) removal via swap-remove; previously O(n) indexOf+splice.
+      removeTraceOrder(traceId);
 
       // Export — respects isHealthy(), shouldExport(), lazy initialize(), and samplingRate.
       const readonlyTrace = toReadonlyTrace(trace);
@@ -435,6 +608,14 @@ export function createTraceManager(config?: {
       samplingRate = rate;
     },
 
+    getRetryMetrics(): RetryMetrics {
+      return {
+        totalRetries: retryTotalRetries,
+        successAfterRetry: retrySuccessAfterRetry,
+        failedAfterRetries: retryFailedAfterRetries,
+      };
+    },
+
     async dispose(): Promise<void> {
       // 1. Flush all pending exports — use allSettled so one failure doesn't block others
       const flushResults = await Promise.allSettled(exporters.map(e => e.flush()));
@@ -462,6 +643,11 @@ export function createTraceManager(config?: {
       traces.clear();
       spans.clear();
       traceOrder.length = 0;
+      traceOrderIndex.clear();
+      retryingSpanIds.clear();
+      retryTotalRetries = 0;
+      retrySuccessAfterRetry = 0;
+      retryFailedAfterRetries = 0;
     },
   };
 }

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createAjvValidator } from '../index.js';
 import type { JsonSchema } from 'harness-one/core';
 
@@ -295,4 +295,104 @@ describe('createAjvValidator', () => {
     const resultPromise = validator.validate({ type: 'string' }, 'hello');
     expect(resultPromise).toBeInstanceOf(Promise);
   });
+
+  // ------------------------------------------------------------------------
+  // CQ-020: bounded LRU schema cache
+  // ------------------------------------------------------------------------
+  describe('bounded schema cache (CQ-020)', () => {
+    it('reuses compiled validator for structurally identical schemas', async () => {
+      const validator = createAjvValidator({ formats: false });
+      const schema: JsonSchema = { type: 'object', properties: { x: { type: 'string' } } };
+
+      // First call compiles; subsequent calls with the same schema JSON must reuse.
+      const r1 = await validator.validate(schema, { x: 'hi' });
+      const r2 = await validator.validate({ type: 'object', properties: { x: { type: 'string' } } }, { x: 'hi' });
+      expect(r1.valid).toBe(true);
+      expect(r2.valid).toBe(true);
+    });
+
+    it('caps the cache at maxCacheSize and evicts LRU entries', async () => {
+      const validator = createAjvValidator({ formats: false, maxCacheSize: 3 });
+
+      // Insert 5 distinct schemas — eviction should kick in after the 3rd.
+      for (let i = 0; i < 5; i++) {
+        const schema: JsonSchema = {
+          type: 'object',
+          properties: { [`f${i}`]: { type: 'string' } },
+        };
+        const r = await validator.validate(schema, { [`f${i}`]: 'v' });
+        expect(r.valid).toBe(true);
+      }
+
+      // The early-inserted schemas have been evicted but validation must still succeed
+      // (on eviction we re-compile, not drop the schema permanently).
+      const earliest: JsonSchema = {
+        type: 'object',
+        properties: { f0: { type: 'string' } },
+      };
+      const rAgain = await validator.validate(earliest, { f0: 'x' });
+      expect(rAgain.valid).toBe(true);
+    });
+
+    it('does not leak Ajv-registered schemas past maxCacheSize', async () => {
+      // Indirect check: if we didn't evict, Ajv would accumulate $id entries
+      // and eventually throw "schema with key or id already exists" on
+      // certain replacement paths. We can't easily introspect Ajv internals,
+      // but we CAN drive enough distinct schemas through a small cache to
+      // prove the pipeline stays healthy (no crashes, no duplicate $id errors).
+      const validator = createAjvValidator({ formats: false, maxCacheSize: 4 });
+
+      for (let i = 0; i < 40; i++) {
+        const schema: JsonSchema = {
+          type: 'object',
+          properties: { [`k${i}`]: { type: 'number' } },
+        };
+        const r = await validator.validate(schema, { [`k${i}`]: i });
+        expect(r.valid).toBe(true);
+      }
+    });
+
+    it('defaults to 256-entry cache when maxCacheSize not provided', async () => {
+      // Smoke test: creating a validator without explicit cap must work
+      // and validation must succeed after many distinct schemas.
+      const validator = createAjvValidator({ formats: false });
+      for (let i = 0; i < 10; i++) {
+        const r = await validator.validate(
+          { type: 'object', properties: { [`p${i}`]: { type: 'string' } } } as JsonSchema,
+          { [`p${i}`]: 'v' },
+        );
+        expect(r.valid).toBe(true);
+      }
+    });
+
+    it('honours maxCacheSize of 1 (always-evict case)', async () => {
+      const validator = createAjvValidator({ formats: false, maxCacheSize: 1 });
+      const rA = await validator.validate(
+        { type: 'object', properties: { a: { type: 'string' } } } as JsonSchema,
+        { a: 'x' },
+      );
+      const rB = await validator.validate(
+        { type: 'object', properties: { b: { type: 'string' } } } as JsonSchema,
+        { b: 'y' },
+      );
+      expect(rA.valid).toBe(true);
+      expect(rB.valid).toBe(true);
+    });
+
+    it('routes compile failures through injected logger (CQ-027)', async () => {
+      const fakeLogger = { warn: vi.fn(), error: vi.fn() };
+      const validator = createAjvValidator({
+        formats: false,
+        logger: fakeLogger,
+      });
+      // A schema that references an undefined $ref will fail to compile.
+      const bogus = { $ref: '#/definitions/nope' } as unknown as JsonSchema;
+      await expect(validator.validate(bogus, {})).rejects.toBeDefined();
+      expect(fakeLogger.warn).toHaveBeenCalledWith(
+        expect.stringContaining('compile() failed'),
+        expect.any(Object),
+      );
+    });
+  });
 });
+

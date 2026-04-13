@@ -1,9 +1,11 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createRAGPipeline } from '../pipeline.js';
 import { createTextLoader, createDocumentArrayLoader } from '../loaders.js';
 import { createFixedSizeChunking, createParagraphChunking } from '../chunking.js';
 import { createInMemoryRetriever } from '../retriever.js';
 import { HarnessError } from '../../core/errors.js';
+import { createTraceManager } from '../../observe/trace-manager.js';
+import type { TraceExporter, Span, Trace } from '../../observe/types.js';
 import type { Document, EmbeddingModel } from '../types.js';
 
 // ---------------------------------------------------------------------------
@@ -568,5 +570,236 @@ describe('createRAGPipeline', () => {
 
     expect(chunks1).not.toBe(chunks2);
     expect(chunks1).toEqual(chunks2);
+  });
+
+  // ---- OBS-006: Observability (TraceManager + getIngestMetrics) ----
+
+  describe('OBS-006 ingestion observability', () => {
+    // Collect every exported span so we can verify per-chunk child spans.
+    function createCollectorExporter(): { exporter: TraceExporter; spans: Span[]; traces: Trace[] } {
+      const spans: Span[] = [];
+      const traces: Trace[] = [];
+      const exporter: TraceExporter = {
+        name: 'collector',
+        async exportSpan(s) { spans.push(s); },
+        async exportTrace(t) { traces.push(t); },
+        async flush() {},
+      };
+      return { exporter, spans, traces };
+    }
+
+    it('getIngestMetrics returns zero counters by default', () => {
+      const pipeline = createRAGPipeline({
+        embedding,
+        retriever: createInMemoryRetriever({ embedding }),
+      });
+      expect(pipeline.getIngestMetrics()).toEqual({
+        attempted: 0,
+        succeeded: 0,
+        failed: 0,
+        byFailureReason: {},
+      });
+    });
+
+    it('accrues succeeded counts across ingestDocuments calls', async () => {
+      const pipeline = createRAGPipeline({
+        embedding,
+        retriever: createInMemoryRetriever({ embedding }),
+      });
+
+      await pipeline.ingestDocuments([
+        { id: 'd1', content: 'alpha' },
+        { id: 'd2', content: 'beta' },
+      ]);
+      await pipeline.ingestDocuments([
+        { id: 'd3', content: 'gamma' },
+      ]);
+
+      const metrics = pipeline.getIngestMetrics();
+      expect(metrics.attempted).toBe(3);
+      expect(metrics.succeeded).toBe(3);
+      expect(metrics.failed).toBe(0);
+      expect(metrics.byFailureReason).toEqual({});
+    });
+
+    it('returns a defensive copy of byFailureReason', async () => {
+      const pipeline = createRAGPipeline({
+        embedding,
+        retriever: createInMemoryRetriever({ embedding }),
+      });
+      const a = pipeline.getIngestMetrics().byFailureReason;
+      // Attempt to mutate shouldn't leak into pipeline internals
+      (a as Record<string, number>)['x'] = 99;
+      expect(pipeline.getIngestMetrics().byFailureReason).toEqual({});
+    });
+
+    it('creates a child span per chunk during ingestDocuments', async () => {
+      const { exporter, spans } = createCollectorExporter();
+      const tm = createTraceManager({ exporters: [exporter] });
+
+      const pipeline = createRAGPipeline({
+        embedding,
+        retriever: createInMemoryRetriever({ embedding }),
+        traceManager: tm,
+      });
+
+      await pipeline.ingestDocuments([
+        { id: 'd1', content: 'alpha' },
+        { id: 'd2', content: 'beta' },
+        { id: 'd3', content: 'gamma' },
+      ]);
+      await tm.flush();
+
+      const chunkSpans = spans.filter((s) => s.name === 'rag.ingest_chunk');
+      expect(chunkSpans).toHaveLength(3);
+      for (const span of chunkSpans) {
+        expect(span.status).toBe('completed');
+        expect(span.attributes['chunk.id']).toBeDefined();
+        expect(span.attributes['chunk.document_id']).toBeDefined();
+      }
+    });
+
+    it('marks child spans with error.reason when embedding mismatch occurs', async () => {
+      const { exporter, spans } = createCollectorExporter();
+      const tm = createTraceManager({ exporters: [exporter] });
+
+      const brokenEmbedding: EmbeddingModel = {
+        dimensions: 4,
+        async embed() {
+          return [[1, 0, 0, 0]]; // Always 1 regardless of input count
+        },
+      };
+
+      const pipeline = createRAGPipeline({
+        embedding: brokenEmbedding,
+        retriever: createInMemoryRetriever({ embedding }),
+        traceManager: tm,
+      });
+
+      await expect(
+        pipeline.ingestDocuments([
+          { id: 'd1', content: 'alpha' },
+          { id: 'd2', content: 'beta' },
+        ]),
+      ).rejects.toThrow(HarnessError);
+
+      await tm.flush();
+
+      const chunkSpans = spans.filter((s) => s.name === 'rag.ingest_chunk');
+      expect(chunkSpans.length).toBeGreaterThan(0);
+      for (const span of chunkSpans) {
+        expect(span.status).toBe('error');
+        expect(span.attributes['error.reason']).toBe('embedding_mismatch');
+      }
+
+      // Metrics should record the failure.
+      const metrics = pipeline.getIngestMetrics();
+      expect(metrics.failed).toBe(2);
+      expect(metrics.succeeded).toBe(0);
+      expect(metrics.byFailureReason.embedding_mismatch).toBe(2);
+    });
+
+    it('marks a span with error.reason=embedding_validation when validation fails', async () => {
+      const { exporter, spans } = createCollectorExporter();
+      const tm = createTraceManager({ exporters: [exporter] });
+
+      const brokenEmbedding: EmbeddingModel = {
+        dimensions: 4,
+        async embed() {
+          return []; // Invalid probe result
+        },
+      };
+
+      const pipeline = createRAGPipeline({
+        embedding: brokenEmbedding,
+        retriever: createInMemoryRetriever({ embedding }),
+        traceManager: tm,
+        validateEmbedding: true,
+      });
+
+      await expect(
+        pipeline.ingestDocuments([{ id: 'd1', content: 'alpha' }]),
+      ).rejects.toThrow(/Embedding validation failed/);
+
+      await tm.flush();
+
+      const validationSpans = spans.filter((s) => s.name === 'rag.validate_embedding');
+      expect(validationSpans).toHaveLength(1);
+      expect(validationSpans[0].status).toBe('error');
+      expect(validationSpans[0].attributes['error.reason']).toBe('embedding_validation');
+    });
+
+    it('records index() failure as batch_error with per-chunk error spans', async () => {
+      const { exporter, spans } = createCollectorExporter();
+      const tm = createTraceManager({ exporters: [exporter] });
+
+      const brokenRetriever = {
+        async index(): Promise<void> {
+          throw new Error('index backend offline');
+        },
+        async retrieve() { return []; },
+      };
+
+      const pipeline = createRAGPipeline({
+        embedding,
+        retriever: brokenRetriever,
+        traceManager: tm,
+      });
+
+      await expect(
+        pipeline.ingestDocuments([{ id: 'd1', content: 'alpha' }]),
+      ).rejects.toThrow(/index backend offline/);
+
+      await tm.flush();
+
+      const chunkSpans = spans.filter((s) => s.name === 'rag.ingest_chunk');
+      expect(chunkSpans).toHaveLength(1);
+      expect(chunkSpans[0].status).toBe('error');
+      expect(chunkSpans[0].attributes['error.reason']).toBe('batch_error');
+
+      const metrics = pipeline.getIngestMetrics();
+      expect(metrics.failed).toBe(1);
+      expect(metrics.byFailureReason.batch_error).toBe(1);
+    });
+
+    it('does not require a TraceManager to accrue metrics', async () => {
+      const pipeline = createRAGPipeline({
+        embedding,
+        retriever: createInMemoryRetriever({ embedding }),
+      });
+
+      await pipeline.ingestDocuments([{ id: 'd1', content: 'hello' }]);
+
+      expect(pipeline.getIngestMetrics().succeeded).toBe(1);
+      expect(pipeline.getIngestMetrics().attempted).toBe(1);
+    });
+
+    it('produces a parent rag.ingest trace when using ingest() with a loader', async () => {
+      const { exporter, traces } = createCollectorExporter();
+      const tm = createTraceManager({ exporters: [exporter] });
+      const loaderSpy = vi.fn();
+
+      const pipeline = createRAGPipeline({
+        loader: {
+          async load() {
+            loaderSpy();
+            return [{ id: 'd1', content: 'Hello' }];
+          },
+        },
+        chunking: createFixedSizeChunking({ chunkSize: 100 }),
+        embedding,
+        retriever: createInMemoryRetriever({ embedding }),
+        traceManager: tm,
+      });
+
+      await pipeline.ingest();
+      await tm.flush();
+
+      expect(loaderSpy).toHaveBeenCalled();
+      // One parent trace per ingest() invocation
+      const ingestTraces = traces.filter((t) => t.name === 'rag.ingest');
+      expect(ingestTraces).toHaveLength(1);
+      expect(ingestTraces[0].status).toBe('completed');
+    });
   });
 });

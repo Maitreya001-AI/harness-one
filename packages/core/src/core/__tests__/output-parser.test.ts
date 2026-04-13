@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
-import { createJsonOutputParser, parseWithRetry } from '../output-parser.js';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { createJsonOutputParser, parseWithRetry, __resetSchemaStringCache } from '../output-parser.js';
 import type { OutputParser } from '../output-parser.js';
 import type { JsonSchema } from '../types.js';
 import { HarnessError } from '../errors.js';
@@ -218,5 +218,88 @@ describe('parseWithRetry', () => {
     expect(result).toBe(42);
     expect(attempts).toBe(2);
     expect(regenerate.mock.calls[0][0]).toContain('Respond with a single number');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PERF-18: schema stringify cache
+// ---------------------------------------------------------------------------
+
+describe('PERF-18 schema stringify cache', () => {
+  afterEach(() => {
+    __resetSchemaStringCache();
+    vi.restoreAllMocks();
+  });
+
+  it('calls JSON.stringify exactly once per schema object across repeated getFormatInstructions calls', () => {
+    const schema: JsonSchema = {
+      type: 'object',
+      properties: { name: { type: 'string' } },
+      required: ['name'],
+    };
+    const spy = vi.spyOn(JSON, 'stringify');
+
+    const parser = createJsonOutputParser(schema);
+
+    const a = parser.getFormatInstructions();
+    const b = parser.getFormatInstructions();
+    const c = parser.getFormatInstructions();
+
+    // All three strings must be identical
+    expect(a).toBe(b);
+    expect(b).toBe(c);
+    expect(a).toContain('"name"');
+
+    // The cache should have prevented additional stringify calls after the first
+    const callsOnSchema = spy.mock.calls.filter((args) => args[0] === schema);
+    expect(callsOnSchema.length).toBe(1);
+  });
+
+  it('shares the cache across parser instances for the same schema object', () => {
+    const schema: JsonSchema = {
+      type: 'object',
+      properties: { id: { type: 'number' } },
+    };
+    const spy = vi.spyOn(JSON, 'stringify');
+
+    const p1 = createJsonOutputParser(schema);
+    const p2 = createJsonOutputParser(schema);
+
+    p1.getFormatInstructions();
+    p2.getFormatInstructions();
+    p1.getFormatInstructions();
+
+    const callsOnSchema = spy.mock.calls.filter((args) => args[0] === schema);
+    expect(callsOnSchema.length).toBe(1);
+  });
+
+  it('uses separate cache entries for distinct schema objects with different content', () => {
+    const schemaA: JsonSchema = { type: 'object', properties: { a: { type: 'string' } } };
+    const schemaB: JsonSchema = { type: 'object', properties: { b: { type: 'number' } } };
+
+    const pa = createJsonOutputParser(schemaA);
+    const pb = createJsonOutputParser(schemaB);
+
+    expect(pa.getFormatInstructions()).toContain('"a"');
+    expect(pb.getFormatInstructions()).toContain('"b"');
+    expect(pa.getFormatInstructions()).not.toEqual(pb.getFormatInstructions());
+  });
+
+  it('parseWithRetry still produces correct feedback when stringify is cached', async () => {
+    const schema: JsonSchema = { type: 'object', properties: { name: { type: 'string' } } };
+    const parser = createJsonOutputParser<{ name: string }>(schema);
+    const regenerate = vi.fn().mockResolvedValue('{"name":"Alice"}');
+
+    // First parse populates the cache; second invocation reuses it.
+    const first = await parseWithRetry(parser, 'bad', regenerate);
+    const second = await parseWithRetry(parser, 'bad', regenerate);
+
+    expect(first.result).toEqual({ name: 'Alice' });
+    expect(second.result).toEqual({ name: 'Alice' });
+    // Every feedback message should contain the schema JSON
+    for (const call of regenerate.mock.calls) {
+      expect(call[0]).toContain('JSON object matching this schema');
+      expect(call[0]).toContain('"name"');
+    }
   });
 });

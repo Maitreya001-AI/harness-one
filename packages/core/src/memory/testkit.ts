@@ -97,6 +97,58 @@ export function runMemoryStoreConformance(
       expect(results[0].content).toBe('1');
     });
 
+    it('query by multiple tags uses OR semantics (union, not intersection)', async () => {
+      // Contract: filter.tags returns entries that carry AT LEAST ONE of the
+      // requested tags (OR). This locks CQ-006 — Redis previously used AND
+      // semantics and silently diverged from the in-memory/fs-store backends.
+      const store = await createStore();
+      await store.write({ key: 'a', content: 'both', grade: 'useful', tags: ['x', 'y'] });
+      await store.write({ key: 'b', content: 'only-x', grade: 'useful', tags: ['x'] });
+      await store.write({ key: 'c', content: 'only-y', grade: 'useful', tags: ['y'] });
+      await store.write({ key: 'd', content: 'neither', grade: 'useful', tags: ['z'] });
+
+      const results = await store.query({ tags: ['x', 'y'] });
+      expect(results.length).toBe(3);
+      const contents = results.map((r) => r.content).sort();
+      expect(contents).toEqual(['both', 'only-x', 'only-y']);
+    });
+
+    it('query with limit caps the result count', async () => {
+      const store = await createStore();
+      for (let i = 0; i < 5; i++) {
+        await store.write({ key: `k${i}`, content: `c${i}`, grade: 'useful' });
+      }
+      const results = await store.query({ limit: 2 });
+      expect(results.length).toBe(2);
+    });
+
+    it('query with offset skips the leading results', async () => {
+      const store = await createStore();
+      for (let i = 0; i < 5; i++) {
+        await store.write({ key: `k${i}`, content: `c${i}`, grade: 'useful' });
+      }
+      const results = await store.query({ offset: 2 });
+      expect(results.length).toBe(3);
+    });
+
+    it('query with offset + limit paginates deterministically', async () => {
+      const store = await createStore();
+      for (let i = 0; i < 5; i++) {
+        await store.write({ key: `k${i}`, content: `c${i}`, grade: 'useful' });
+      }
+      const page = await store.query({ offset: 1, limit: 2 });
+      expect(page.length).toBe(2);
+    });
+
+    it('delete returns false for an unknown id (contract)', async () => {
+      // Already covered above for a deleted id, but this case — deleting an
+      // id that was NEVER written — exercises a second code path (no eviction
+      // from the index, no STRING to remove) and is often where early adapter
+      // bugs hide.
+      const store = await createStore();
+      expect(await store.delete('never-existed')).toBe(false);
+    });
+
     it('count reflects writes and deletes', async () => {
       const store = await createStore();
       expect(await store.count()).toBe(0);

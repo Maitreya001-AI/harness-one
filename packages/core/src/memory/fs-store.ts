@@ -8,6 +8,7 @@
 
 import { HarnessError } from '../core/errors.js';
 import { createFileIO } from './fs-io.js';
+import { secureId } from '../_internal/ids.js';
 import type { MemoryEntry } from './types.js';
 import type { MemoryStore } from './store.js';
 
@@ -32,7 +33,6 @@ export function createFileSystemStore(config: {
   indexFile?: string;
 }): MemoryStore {
   const io = createFileIO(config);
-  let idCounter = 0;
 
   // Simple in-process mutex for index operations.
   // Prevents concurrent read-modify-write corruption of the index file.
@@ -47,7 +47,10 @@ export function createFileSystemStore(config: {
   }
 
   function generateId(): string {
-    return `mem_${Date.now()}_${++idCounter}_${Math.random().toString(36).slice(2, 8)}`;
+    // SEC-002: Use cryptographically secure randomness. On-disk entry IDs
+    // appear in file paths, so predictable IDs allow enumeration of other
+    // tenants' memory files.
+    return `mem_${Date.now()}_${secureId()}`;
   }
 
   async function allEntries(): Promise<MemoryEntry[]> {

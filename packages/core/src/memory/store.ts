@@ -5,6 +5,7 @@
  */
 
 import { HarnessError } from '../core/errors.js';
+import { secureId } from '../_internal/ids.js';
 import type {
   MemoryEntry,
   MemoryFilter,
@@ -94,10 +95,11 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
   const tagIndex = new Map<string, Set<string>>();
   /** Secondary index: grade -> set of entry IDs with that grade. */
   const gradeIndex = new Map<string, Set<string>>();
-  let idCounter = 0;
-
   function generateId(): string {
-    return `mem_${Date.now()}_${++idCounter}_${Math.random().toString(36).slice(2, 8)}`;
+    // SEC-002: Use cryptographically secure randomness instead of
+    // Math.random(), which is predictable and enables enumeration attacks
+    // on reachable memory entry IDs.
+    return `mem_${Date.now()}_${secureId()}`;
   }
 
   /**
@@ -322,16 +324,21 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
         }
       }
 
-      // Resolve candidates to entries, or fall back to full scan
-      let results: MemoryEntry[];
+      // Resolve candidates to entries, or fall back to full scan.
+      // PERF-007: In the full-scan path we intentionally iterate directly over
+      // `entries.values()` without copying via Array.from. The earlier copy was
+      // wasted work — we still need to allocate a results array anyway to
+      // apply filters + sort.
+      let results: MemoryEntry[] = [];
       if (candidateIds !== null) {
-        results = [];
         for (const id of candidateIds) {
           const entry = entries.get(id);
           if (entry) results.push(entry);
         }
       } else {
-        results = Array.from(entries.values());
+        for (const entry of entries.values()) {
+          results.push(entry);
+        }
       }
 
       // Apply remaining filters that are not indexed
@@ -412,20 +419,22 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
         }
       }
 
-      // Trim to maxEntries by removing lowest-weighted entries first
+      // Trim to maxEntries by removing lowest-weighted entries first.
+      // PERF-002: Previously `shift()` was called in a while-loop, giving
+      // O(n²) behavior on large stores. Sort once, iterate by index instead.
       if (policy.maxEntries !== undefined && entries.size > policy.maxEntries) {
         const sorted = Array.from(entries.values()).sort(
           (a, b) => weights[a.grade] - weights[b.grade] || a.updatedAt - b.updatedAt,
         );
-        while (entries.size > policy.maxEntries && sorted.length > 0) {
-          const victim = sorted.shift() as MemoryEntry;
-          if (weights[victim.grade] < 1.0) {
-            removeFromIndexes(victim);
-            entries.delete(victim.id);
-            freed.push(victim.id);
-          } else {
+        for (let i = 0; i < sorted.length && entries.size > policy.maxEntries; i++) {
+          const victim = sorted[i];
+          if (weights[victim.grade] >= 1.0) {
+            // Remaining entries are all protected (weight >= 1.0) — stop.
             break;
           }
+          removeFromIndexes(victim);
+          entries.delete(victim.id);
+          freed.push(victim.id);
         }
       }
 

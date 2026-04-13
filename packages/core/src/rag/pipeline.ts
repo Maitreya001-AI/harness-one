@@ -4,7 +4,7 @@
  * @module
  */
 
-import type { Document, DocumentChunk, RAGPipeline, RAGPipelineConfig } from './types.js';
+import type { Document, DocumentChunk, IngestMetrics, RAGPipeline, RAGPipelineConfig } from './types.js';
 import { HarnessError } from '../core/errors.js';
 
 /** Fix 18: Result of an ingest operation with capacity signaling. */
@@ -37,6 +37,18 @@ export interface IngestResult {
 export function createRAGPipeline(config: RAGPipelineConfig): RAGPipeline {
   const allChunks: DocumentChunk[] = [];
   const contentHashes = new Set<string>();
+
+  // OBS-006: aggregate ingestion metrics. Counts accrue across all
+  // ingest() / ingestDocuments() calls; consumers read via getIngestMetrics().
+  let attemptedCount = 0;
+  let succeededCount = 0;
+  let failedCount = 0;
+  const failureReasons: Record<string, number> = {};
+
+  function recordFailure(chunkCount: number, reason: string): void {
+    failedCount += chunkCount;
+    failureReasons[reason] = (failureReasons[reason] ?? 0) + chunkCount;
+  }
 
   /**
    * Fix 22: Optionally validate the embedding function with a probe text
@@ -80,9 +92,23 @@ export function createRAGPipeline(config: RAGPipelineConfig): RAGPipeline {
     }
   }
 
-  async function chunkAndIndex(documents: Document[]): Promise<number> {
+  async function chunkAndIndex(documents: Document[], parentTraceId?: string): Promise<number> {
+    const tm = config.traceManager;
+
     // Fix 22: Validate embedding before indexing if enabled
-    await validateEmbeddingIfEnabled();
+    try {
+      await validateEmbeddingIfEnabled();
+    } catch (err) {
+      if (tm && parentTraceId) {
+        const vSpan = tm.startSpan(parentTraceId, 'rag.validate_embedding');
+        tm.setSpanAttributes(vSpan, {
+          'error.reason': 'embedding_validation',
+          'error.message': err instanceof Error ? err.message : String(err),
+        });
+        tm.endSpan(vSpan, 'error');
+      }
+      throw err;
+    }
 
     // Chunk each document (or treat as single chunks if no chunking strategy)
     let chunks: DocumentChunk[];
@@ -155,17 +181,47 @@ export function createRAGPipeline(config: RAGPipelineConfig): RAGPipeline {
       const batchEnd = Math.min(batchStart + BATCH_SIZE, chunks.length);
       const batch = chunks.slice(batchStart, batchEnd);
 
+      // OBS-006: start one child span per chunk in the batch. These share the
+      // batch outcome — on batch failure every chunk span is marked error with
+      // the same reason attribute so consumers see per-chunk granularity.
+      const chunkSpanIds: string[] = [];
+      if (tm && parentTraceId) {
+        for (const chunk of batch) {
+          const sid = tm.startSpan(parentTraceId, 'rag.ingest_chunk');
+          tm.setSpanAttributes(sid, {
+            'chunk.id': chunk.id,
+            'chunk.document_id': chunk.documentId,
+            'chunk.content_length': chunk.content.length,
+          });
+          chunkSpanIds.push(sid);
+        }
+      }
+
+      attemptedCount += batch.length;
+
       try {
         // Embed batch
         const texts = batch.map((c) => c.content);
         const embeddings = await config.embedding.embed(texts);
 
         if (embeddings.length !== batch.length) {
-          throw new HarnessError(
+          const mismatchErr = new HarnessError(
             `Embedding model returned ${embeddings.length} embeddings for ${batch.length} chunks`,
             'RAG_EMBEDDING_MISMATCH',
             'Ensure the embedding model returns one embedding per input text',
           );
+          // Mark each chunk span errored before throwing
+          if (tm) {
+            for (const sid of chunkSpanIds) {
+              tm.setSpanAttributes(sid, {
+                'error.reason': 'embedding_mismatch',
+                'error.message': mismatchErr.message,
+              });
+              tm.endSpan(sid, 'error');
+            }
+          }
+          recordFailure(batch.length, 'embedding_mismatch');
+          throw mismatchErr;
         }
 
         // Attach embeddings to chunks
@@ -183,11 +239,37 @@ export function createRAGPipeline(config: RAGPipelineConfig): RAGPipeline {
         }
         allChunks.push(...embeddedChunks);
         totalIngested += embeddedChunks.length;
+        succeededCount += embeddedChunks.length;
+
+        if (tm) {
+          for (const sid of chunkSpanIds) {
+            tm.endSpan(sid, 'completed');
+          }
+        }
       } catch (err: unknown) {
         // Fix 19: Record which chunks failed but keep successfully indexed ones
         for (const chunk of batch) {
           failedChunks.push(chunk.id);
         }
+
+        // Choose a reason: if we already recorded embedding_mismatch above,
+        // don't double-count. Detect via HarnessError code.
+        const code = err instanceof HarnessError ? err.code : undefined;
+        const alreadyCounted = code === 'RAG_EMBEDDING_MISMATCH';
+        if (!alreadyCounted) {
+          const reason = code ?? 'batch_error';
+          recordFailure(batch.length, reason);
+          if (tm) {
+            for (const sid of chunkSpanIds) {
+              tm.setSpanAttributes(sid, {
+                'error.reason': reason,
+                'error.message': err instanceof Error ? err.message : String(err),
+              });
+              tm.endSpan(sid, 'error');
+            }
+          }
+        }
+
         // If it's the first batch and it fails, throw
         if (totalIngested === 0 && batchStart === 0) {
           throw err;
@@ -209,17 +291,31 @@ export function createRAGPipeline(config: RAGPipelineConfig): RAGPipeline {
         );
       }
 
-      // 1. Load documents
-      const documents = await config.loader.load();
+      // OBS-006: root trace for the full ingest() invocation.
+      const tm = config.traceManager;
+      const traceId = tm ? tm.startTrace('rag.ingest') : undefined;
 
-      // 2-5. Chunk, embed, index
-      const chunkCount = await chunkAndIndex(documents);
+      try {
+        // 1. Load documents
+        const documents = await config.loader.load();
 
-      return { documents: documents.length, chunks: chunkCount };
+        // 2-5. Chunk, embed, index
+        const chunkCount = await chunkAndIndex(documents, traceId);
+
+        return { documents: documents.length, chunks: chunkCount };
+      } finally {
+        if (tm && traceId) tm.endTrace(traceId);
+      }
     },
 
     async ingestDocuments(documents: Document[]): Promise<number> {
-      return chunkAndIndex(documents);
+      const tm = config.traceManager;
+      const traceId = tm ? tm.startTrace('rag.ingest_documents') : undefined;
+      try {
+        return await chunkAndIndex(documents, traceId);
+      } finally {
+        if (tm && traceId) tm.endTrace(traceId);
+      }
     },
 
     async query(text: string, options?: { limit?: number; minScore?: number }) {
@@ -238,6 +334,15 @@ export function createRAGPipeline(config: RAGPipelineConfig): RAGPipeline {
     clear() {
       allChunks.length = 0;
       contentHashes.clear();
+    },
+
+    getIngestMetrics(): IngestMetrics {
+      return {
+        attempted: attemptedCount,
+        succeeded: succeededCount,
+        failed: failedCount,
+        byFailureReason: { ...failureReasons },
+      };
     },
   });
 }

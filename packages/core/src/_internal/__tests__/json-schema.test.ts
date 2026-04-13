@@ -566,6 +566,90 @@ describe('validateJsonSchema', () => {
     });
   });
 
+  // ─── SEC-004: Prototype pollution protection ──────────────
+
+  describe('SEC-004: prototype pollution protection', () => {
+    it('required: does not treat inherited Object.prototype keys as present', () => {
+      // `'toString' in {}` is true (inherited), but hasOwn({}, 'toString') is false.
+      // A schema requiring 'toString' on an empty object must fail validation.
+      const schema = {
+        type: 'object',
+        properties: { toString: { type: 'string' } },
+        required: ['toString'],
+      };
+      const result = validateJsonSchema(schema, {});
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].path).toBe('.toString');
+      expect(result.errors[0].message).toContain('required');
+    });
+
+    it('properties: does not traverse prototype chain for values', () => {
+      // Same principle for properties: an inherited value must not be validated
+      // as if it were an own property.
+      const schema = {
+        type: 'object',
+        properties: { toString: { type: 'number' } },
+      };
+      // {} has inherited toString (a function). Validator must skip it.
+      const result = validateJsonSchema(schema, {});
+      expect(result.valid).toBe(true);
+    });
+
+    it('skips __proto__ as a required property name (dangerous)', () => {
+      const schema = {
+        type: 'object',
+        required: ['__proto__'],
+      };
+      // __proto__ should be silently skipped — no error, but a warning is emitted.
+      const result = validateJsonSchema(schema, {});
+      expect(result.valid).toBe(true);
+    });
+
+    it('skips constructor/prototype as property schema keys', () => {
+      const schema = {
+        type: 'object',
+        properties: {
+          constructor: { type: 'string' },
+          prototype: { type: 'string' },
+        },
+      };
+      // These dangerous keys must not trigger validation against the inherited
+      // `constructor` function on a plain object.
+      const result = validateJsonSchema(schema, {});
+      expect(result.valid).toBe(true);
+    });
+
+    it('emits unsafe-property warning for __proto__ in schema tree', () => {
+      const schema = {
+        type: 'object',
+        __proto__: { polluted: true },
+      } as unknown as object;
+      const result = validateJsonSchema(schema, {});
+      // The walker should flag it rather than silently traversing into it
+      // (note: Object literal __proto__ is a special setter, so in practice
+      //  it's only reachable through Object.defineProperty. Ensure no crash.)
+      expect(result).toBeDefined();
+    });
+
+    it('does not pollute Object.prototype via schema with __proto__ key', () => {
+      // Build a raw schema object with a hostile __proto__ own-property
+      const schema = Object.create(null);
+      schema.type = 'object';
+      schema.properties = Object.create(null);
+      schema.properties.__proto__ = { type: 'string' };
+      schema.required = ['__proto__'];
+
+      // Before running validate, snapshot a reference prop that must not
+      // become "polluted"
+      const snapshot = Object.getOwnPropertyNames(Object.prototype);
+      validateJsonSchema(schema, {});
+      // No new keys should appear on Object.prototype
+      expect(Object.getOwnPropertyNames(Object.prototype)).toEqual(snapshot);
+      // And sanity: a fresh object does not carry a "polluted" prop
+      expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    });
+  });
+
   // ─── Edge cases ───────────────────────────────────────────
 
   describe('edge cases', () => {
@@ -615,6 +699,81 @@ describe('validateJsonSchema', () => {
       const schema = { type: 'string', enum: ['YES', 'NO'], pattern: '^[A-Z]+$' };
       expect(validateJsonSchema(schema, 'YES')).toEqual({ valid: true, errors: [], warnings: [] });
       expect(validateJsonSchema(schema, 'MAYBE').valid).toBe(false);
+    });
+  });
+
+  // =====================================================================
+  // CQ-018: Regex pattern LRU cache — avoid recompiling the same pattern
+  // =====================================================================
+  describe('CQ-018: regex pattern LRU cache', () => {
+    it('caches compiled RegExp across calls with the same pattern', () => {
+      // We can't observe RegExp construction directly, but we can spy on the
+      // RegExp constructor to count calls. With a cache in place, validating
+      // 100 values against the same schema should construct the RegExp only
+      // once (or a small constant number of times).
+      // Use a pattern unique to this test so it's guaranteed not in the
+      // module-level cache from earlier tests.
+      const uniquePattern = `^CQ018_${Math.random().toString(36).slice(2)}$`;
+      const uniqueValue = uniquePattern.slice(1, -1); // strip anchors for test data
+      const OriginalRegExp = RegExp;
+      let constructionCount = 0;
+      const spy = function (this: unknown, pattern: string, flags?: string) {
+        if (pattern === uniquePattern) constructionCount++;
+        // Delegate to original
+        return new OriginalRegExp(pattern, flags);
+      } as unknown as RegExpConstructor;
+      // Only override for the duration of the test
+      (globalThis as unknown as { RegExp: RegExpConstructor }).RegExp = spy;
+      try {
+        const schema = { type: 'string', pattern: uniquePattern };
+        for (let i = 0; i < 100; i++) {
+          validateJsonSchema(schema, uniqueValue);
+        }
+      } finally {
+        (globalThis as unknown as { RegExp: RegExpConstructor }).RegExp = OriginalRegExp;
+      }
+      // Before fix: 100 constructions. After fix: exactly 1 (LRU hit for subsequent calls).
+      expect(constructionCount).toBe(1);
+    });
+
+    it('still validates correctly when the same pattern is reused', () => {
+      // Sanity: caching must not change behavior
+      const schema = { type: 'string', pattern: '^\\d+$' };
+      expect(validateJsonSchema(schema, '123').valid).toBe(true);
+      expect(validateJsonSchema(schema, 'abc').valid).toBe(false);
+      expect(validateJsonSchema(schema, '456').valid).toBe(true);
+      expect(validateJsonSchema(schema, '789').valid).toBe(true);
+    });
+
+    it('evicts old entries when cache exceeds its maxSize', () => {
+      // Drive >256 unique patterns through the cache — cache must not grow
+      // unbounded. We check by memory-like behavior: after many inserts, the
+      // original entry is evicted so its RegExp is rebuilt on re-use.
+      const OriginalRegExp = RegExp;
+      const rebuilds = new Map<string, number>();
+      const spy = function (this: unknown, pattern: string, flags?: string) {
+        rebuilds.set(pattern, (rebuilds.get(pattern) ?? 0) + 1);
+        return new OriginalRegExp(pattern, flags);
+      } as unknown as RegExpConstructor;
+      (globalThis as unknown as { RegExp: RegExpConstructor }).RegExp = spy;
+      try {
+        const firstPattern = '^a$';
+        // Prime cache with firstPattern
+        validateJsonSchema({ type: 'string', pattern: firstPattern }, 'a');
+        expect(rebuilds.get(firstPattern)).toBe(1);
+
+        // Now fill cache with many unique patterns — 300 > 256 max size,
+        // so firstPattern MUST be evicted.
+        for (let i = 0; i < 300; i++) {
+          validateJsonSchema({ type: 'string', pattern: `^p${i}$` }, `p${i}`);
+        }
+
+        // Re-use firstPattern — must be rebuilt because it was evicted.
+        validateJsonSchema({ type: 'string', pattern: firstPattern }, 'a');
+        expect(rebuilds.get(firstPattern)).toBe(2);
+      } finally {
+        (globalThis as unknown as { RegExp: RegExpConstructor }).RegExp = OriginalRegExp;
+      }
     });
   });
 });

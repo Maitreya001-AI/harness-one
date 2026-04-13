@@ -27,6 +27,22 @@ function createMockRedis() {
     }
     return added;
   });
+  const delFn = vi.fn((...keys: string[]) => {
+    let count = 0;
+    for (const key of keys) {
+      if (store.delete(key)) count++;
+      sets.delete(key);
+    }
+    return count;
+  });
+  const sremFn = vi.fn((key: string, ...members: string[]) => {
+    const s = getSet(key);
+    let removed = 0;
+    for (const m of members) {
+      if (s.delete(m)) removed++;
+    }
+    return removed;
+  });
 
   const multi = vi.fn(() => {
     const queue: (() => unknown)[] = [];
@@ -37,6 +53,14 @@ function createMockRedis() {
       }),
       sadd: vi.fn((...args: unknown[]) => {
         queue.push(() => saddFn(args[0] as string, ...(args.slice(1) as string[])));
+        return pipeline;
+      }),
+      del: vi.fn((...keys: unknown[]) => {
+        queue.push(() => delFn(...(keys as string[])));
+        return pipeline;
+      }),
+      srem: vi.fn((...args: unknown[]) => {
+        queue.push(() => sremFn(args[0] as string, ...(args.slice(1) as string[])));
         return pipeline;
       }),
       exec: vi.fn(async () => {
@@ -53,23 +77,9 @@ function createMockRedis() {
   return {
     get: vi.fn(async (key: string) => store.get(key) ?? null),
     set: setFn,
-    del: vi.fn(async (...keys: string[]) => {
-      let count = 0;
-      for (const key of keys) {
-        if (store.delete(key)) count++;
-        sets.delete(key);
-      }
-      return count;
-    }),
+    del: vi.fn(async (...keys: string[]) => delFn(...keys)),
     sadd: saddFn,
-    srem: vi.fn(async (key: string, ...members: string[]) => {
-      const s = getSet(key);
-      let removed = 0;
-      for (const m of members) {
-        if (s.delete(m)) removed++;
-      }
-      return removed;
-    }),
+    srem: vi.fn(async (key: string, ...members: string[]) => sremFn(key, ...members)),
     smembers: vi.fn(async (key: string) => Array.from(getSet(key))),
     scard: vi.fn(async (key: string) => getSet(key).size),
     mget: vi.fn(async (...keys: string[]) => keys.map((k) => store.get(k) ?? null)),
@@ -220,7 +230,7 @@ describe('createRedisStore', () => {
     expect(results[0].content).toBe('tagged');
   });
 
-  it('queries with multiple tags using AND semantics (every tag must match)', async () => {
+  it('queries with multiple tags using OR semantics (any tag may match) — CQ-006', async () => {
     const store = createRedisStore({ client: redis, prefix: 'test' });
 
     await store.write({ key: 'a', content: 'both-tags', grade: 'useful', tags: ['urgent', 'critical'] });
@@ -228,10 +238,13 @@ describe('createRedisStore', () => {
     await store.write({ key: 'c', content: 'only-critical', grade: 'useful', tags: ['critical'] });
     await store.write({ key: 'd', content: 'no-tags', grade: 'useful' });
 
-    // Filtering with ['urgent', 'critical'] should return only entries with BOTH tags
+    // Filtering with ['urgent', 'critical'] must return every entry carrying
+    // AT LEAST ONE of the tags — OR semantics aligned with the in-memory and
+    // fs-store backends (CQ-006: semantic divergence between providers).
     const results = await store.query({ tags: ['urgent', 'critical'] });
-    expect(results).toHaveLength(1);
-    expect(results[0].content).toBe('both-tags');
+    expect(results).toHaveLength(3);
+    const contents = results.map((r) => r.content).sort();
+    expect(contents).toEqual(['both-tags', 'only-critical', 'only-urgent']);
   });
 
   it('ignores non-string search values in query filter', async () => {
@@ -364,7 +377,7 @@ describe('createRedisStore', () => {
     expect(setCall[0]).toMatch(/^harness:memory:/);
   });
 
-  it('cleans up corrupted JSON entry during read and emits a structured warning', async () => {
+  it('returns null and warns for corrupted JSON — but does NOT auto-delete (SEC-014)', async () => {
     const store = createRedisStore({ client: redis, prefix: 'test' });
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
@@ -374,23 +387,34 @@ describe('createRedisStore', () => {
     const key = `test:${entry.id}`;
     mockRedis._store.set(key, '{corrupted json!!!');
 
-    // Reading should return null AND log a diagnostic warning — silent corruption
-    // handling was removed in the 2026-04-12 audit because operators need visibility
-    // when bytes on the wire don't match the schema.
+    // Reset mock call counts from the write pathway
+    mockRedis.del.mockClear();
+    mockRedis.srem.mockClear();
+
+    // Reading should return null AND log a diagnostic warning
     const result = await store.read(entry.id);
     expect(result).toBeNull();
+    // Default logger shim forwards only the message to console.warn so the
+    // existing operator tooling keeps working. Structured context travels on
+    // the injected-logger path — see the custom-logger test below.
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining('corrupted entry'),
     );
 
-    // The corrupted entry is still evicted from the store and index.
-    expect(mockRedis.del).toHaveBeenCalledWith(`test:${entry.id}`);
-    expect(mockRedis.srem).toHaveBeenCalledWith('test:__keys__', entry.id);
+    // SEC-014: read must be read-only. Silent auto-delete on corrupt payload
+    // was a DoS gadget — one malformed write could erase arbitrary entries on
+    // the next read. The fix requires callers to opt in to destructive cleanup
+    // via `repair()`, so DEL/SREM must NOT be invoked here.
+    expect(mockRedis.del).not.toHaveBeenCalled();
+    expect(mockRedis.srem).not.toHaveBeenCalled();
+
+    // The corrupted payload stays on disk, still findable by index iteration:
+    expect(mockRedis._store.get(key)).toBe('{corrupted json!!!');
 
     warnSpy.mockRestore();
   });
 
-  it('cleans up only the corrupted entry, not valid ones (with warning on the bad one)', async () => {
+  it('warns for each corrupt read but leaves valid entries untouched (SEC-014)', async () => {
     const store = createRedisStore({ client: redis, prefix: 'test' });
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
@@ -415,6 +439,67 @@ describe('createRedisStore', () => {
     warnSpy.mockRestore();
   });
 
+  it('repair() removes corrupted entries and returns the count (SEC-014)', async () => {
+    const store = createRedisStore({ client: redis, prefix: 'test' });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    // Two valid entries, one corrupt payload, one dangling index (string gone).
+    const good = await store.write({ key: 'a', content: 'good', grade: 'useful' });
+    const badJson = await store.write({ key: 'b', content: 'bad', grade: 'useful' });
+    const danglingId = 'mem_dangling';
+    const mockRedis = redis as unknown as {
+      _store: Map<string, string>;
+      _sets: Map<string, Set<string>>;
+    };
+    mockRedis._store.set(`test:${badJson.id}`, 'not valid json');
+    // simulate dangling index entry: id exists in set but no STRING
+    mockRedis._sets.get('test:__keys__')!.add(danglingId);
+
+    // repair() is the ONLY supported way to evict corrupt payloads.
+    const result = await store.repair();
+    expect(result.repaired).toBe(2); // corrupt + dangling
+
+    // The good entry must survive untouched.
+    const stillThere = await store.read(good.id);
+    expect(stillThere).not.toBeNull();
+    expect(stillThere!.content).toBe('good');
+
+    // The corrupted entry is gone from the STRING bucket and the index.
+    expect(mockRedis._store.get(`test:${badJson.id}`)).toBeUndefined();
+    expect(mockRedis._sets.get('test:__keys__')!.has(badJson.id)).toBe(false);
+    expect(mockRedis._sets.get('test:__keys__')!.has(danglingId)).toBe(false);
+
+    warnSpy.mockRestore();
+  });
+
+  it('repair() is a no-op when the store has no corruption', async () => {
+    const store = createRedisStore({ client: redis, prefix: 'test' });
+    await store.write({ key: 'a', content: 'good1', grade: 'useful' });
+    await store.write({ key: 'b', content: 'good2', grade: 'critical' });
+
+    const result = await store.repair();
+    expect(result.repaired).toBe(0);
+    expect(await store.count()).toBe(2);
+  });
+
+  it('accepts a custom logger and forwards corruption warnings to it (SEC-014)', async () => {
+    const warnFn = vi.fn();
+    const customLogger = { warn: warnFn };
+    const store = createRedisStore({ client: redis, prefix: 'test', logger: customLogger });
+
+    const entry = await store.write({ key: 'k', content: 'original', grade: 'useful' });
+    const mockRedis = redis as unknown as { _store: Map<string, string> };
+    mockRedis._store.set(`test:${entry.id}`, '{corrupted!!!');
+
+    const result = await store.read(entry.id);
+    expect(result).toBeNull();
+    // Custom logger received the structured warning, console.warn was not touched.
+    expect(warnFn).toHaveBeenCalledWith(
+      expect.stringContaining('corrupted entry'),
+      expect.objectContaining({ entryId: entry.id, reason: 'invalid_json' }),
+    );
+  });
+
   it('compact uses batched mget instead of sequential getEntry calls', async () => {
     const store = createRedisStore({ client: redis, prefix: 'test' });
 
@@ -433,6 +518,63 @@ describe('createRedisStore', () => {
     expect(mockRedis.mget).toHaveBeenCalled();
     // No individual get calls should be made during compact
     expect(mockRedis.get).not.toHaveBeenCalled();
+  });
+
+  it('compact batches DEL + SREM through a single multi() pipeline (CQ-023)', async () => {
+    const store = createRedisStore({ client: redis, prefix: 'test' });
+
+    // Ten ephemeral entries — all evictable under maxEntries: 0.
+    for (let i = 0; i < 10; i++) {
+      await store.write({ key: `k${i}`, content: `v${i}`, grade: 'ephemeral' });
+    }
+
+    const mockRedis = redis as unknown as {
+      multi: ReturnType<typeof vi.fn>;
+      srem: ReturnType<typeof vi.fn>;
+      del: ReturnType<typeof vi.fn>;
+    };
+
+    // Clear counters from the writes (each write fires one multi()).
+    mockRedis.multi.mockClear();
+    mockRedis.srem.mockClear();
+    mockRedis.del.mockClear();
+
+    const result = await store.compact({ maxEntries: 0 });
+    expect(result.removed).toBe(10);
+
+    // CQ-023: one pipeline for the whole eviction (up to chunkSize=1000). The
+    // pipeline's inner `srem` must be invoked exactly once with every id as a
+    // vararg — witness that the fix collapses N sequential round-trips into a
+    // single MULTI/EXEC.
+    expect(mockRedis.multi).toHaveBeenCalledTimes(1);
+    const pipeline = mockRedis.multi.mock.results[0].value as {
+      del: ReturnType<typeof vi.fn>;
+      srem: ReturnType<typeof vi.fn>;
+      exec: ReturnType<typeof vi.fn>;
+    };
+    expect(pipeline.srem).toHaveBeenCalledTimes(1);
+    const sremCall = pipeline.srem.mock.calls[0];
+    expect(sremCall[0]).toBe('test:__keys__');
+    expect(sremCall.slice(1)).toHaveLength(10);
+    // One DEL per victim is fine — they all travel on the same pipeline.
+    expect(pipeline.del).toHaveBeenCalledTimes(10);
+    expect(pipeline.exec).toHaveBeenCalledTimes(1);
+    // Top-level (non-pipelined) del/srem are NOT used for the eviction itself.
+    expect(mockRedis.del).not.toHaveBeenCalled();
+    expect(mockRedis.srem).not.toHaveBeenCalled();
+  });
+
+  it('compact does not open a pipeline when there is nothing to evict', async () => {
+    const store = createRedisStore({ client: redis, prefix: 'test' });
+
+    await store.write({ key: 'a', content: 'v', grade: 'critical' });
+    const mockRedis = redis as unknown as { multi: ReturnType<typeof vi.fn> };
+    mockRedis.multi.mockClear();
+
+    const result = await store.compact({ maxEntries: 10 });
+    expect(result.removed).toBe(0);
+    // No victims → no maintenance pipeline opened.
+    expect(mockRedis.multi).not.toHaveBeenCalled();
   });
 
   // ── sessionId filtering ────────────────────────────────────────────────
@@ -636,3 +778,20 @@ describe('createRedisStore', () => {
     expect(result.removed).toBe(100);
   });
 });
+
+// ---------------------------------------------------------------------------
+// MemoryStore conformance suite — run the core contract tests against the
+// Redis-backed implementation so semantic divergence (CQ-006: tag semantics,
+// pagination, delete semantics) can never silently regress.
+// ---------------------------------------------------------------------------
+import { runMemoryStoreConformance } from 'harness-one/memory';
+
+runMemoryStoreConformance(
+  {
+    describe,
+    it,
+    expect: expect as unknown as Parameters<typeof runMemoryStoreConformance>[0]['expect'],
+    beforeEach,
+  },
+  () => createRedisStore({ client: createMockRedis(), prefix: 'conf' }),
+);

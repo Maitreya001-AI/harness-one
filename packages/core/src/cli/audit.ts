@@ -52,17 +52,26 @@ export function auditProject(cwd: string): {
   fileCount: number;
 } {
   const files = scanFiles(cwd);
-  const importPattern = /from\s+['"]harness-one\/(\w+)['"]/g;
+  // SPEC-010: accept both the legacy `harness-one/<mod>` subpath imports and
+  // the scoped `@harness-one/core/<mod>` subpath (used by orchestration / rag
+  // consumers after the preset rename).  Both produce the same ModuleName.
+  const importPatterns: RegExp[] = [
+    /from\s+['"]harness-one\/(\w+)['"]/g,
+    /from\s+['"]@harness-one\/core\/(\w+)['"]/g,
+  ];
   const found = new Set<ModuleName>();
 
   for (const file of files) {
     try {
       const content = readFileSync(file, 'utf-8');
-      let match: RegExpExecArray | null;
-      while ((match = importPattern.exec(content)) !== null) {
-        const mod = match[1] as ModuleName;
-        if (ALL_MODULES.includes(mod)) {
-          found.add(mod);
+      for (const pattern of importPatterns) {
+        pattern.lastIndex = 0;
+        let match: RegExpExecArray | null;
+        while ((match = pattern.exec(content)) !== null) {
+          const mod = match[1] as ModuleName;
+          if (ALL_MODULES.includes(mod)) {
+            found.add(mod);
+          }
         }
       }
     } catch {

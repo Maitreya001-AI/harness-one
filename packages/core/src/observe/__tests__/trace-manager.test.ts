@@ -1011,3 +1011,295 @@ describe('dispose error isolation', () => {
     warnSpy.mockRestore();
   });
 });
+
+// SEC-007: Secret redaction at ingestion
+describe('SEC-007 secret redaction', () => {
+  it('redacts secret keys from span attributes before export', async () => {
+    const exported: Record<string, unknown>[] = [];
+    const exporter: TraceExporter = {
+      name: 'capture',
+      async exportTrace() {},
+      async exportSpan(span) { exported.push({ ...span.attributes }); },
+      async flush() {},
+    };
+    const tm = createTraceManager({ exporters: [exporter], redact: {} });
+    const traceId = tm.startTrace('t');
+    const spanId = tm.startSpan(traceId, 's');
+    tm.setSpanAttributes(spanId, { api_key: 'sk-xxx', safe: 'ok' });
+    tm.endSpan(spanId);
+    await new Promise(r => setTimeout(r, 10));
+
+    expect(exported[0].api_key).toBe('[REDACTED]');
+    expect(exported[0].safe).toBe('ok');
+  });
+
+  it('redacts secret keys from trace metadata before export', async () => {
+    const exportedTraces: Record<string, unknown>[] = [];
+    const exporter: TraceExporter = {
+      name: 'capture',
+      async exportTrace(trace) { exportedTraces.push({ ...trace.metadata }); },
+      async exportSpan() {},
+      async flush() {},
+    };
+    const tm = createTraceManager({ exporters: [exporter], redact: {} });
+    const traceId = tm.startTrace('t', { authorization: 'Bearer xxx', ok: 'fine' });
+    tm.endTrace(traceId);
+    await new Promise(r => setTimeout(r, 10));
+
+    expect(exportedTraces[0].authorization).toBe('[REDACTED]');
+    expect(exportedTraces[0].ok).toBe('fine');
+  });
+
+  it('redacts nested secret keys recursively', async () => {
+    const exported: Record<string, unknown>[] = [];
+    const exporter: TraceExporter = {
+      name: 'capture',
+      async exportTrace() {},
+      async exportSpan(span) { exported.push({ ...span.attributes }); },
+      async flush() {},
+    };
+    const tm = createTraceManager({ exporters: [exporter], redact: {} });
+    const tid = tm.startTrace('t');
+    const sid = tm.startSpan(tid, 's');
+    tm.setSpanAttributes(sid, { request: { headers: { authorization: 'Bearer abc' } } });
+    tm.endSpan(sid);
+    await new Promise(r => setTimeout(r, 10));
+
+    const req = exported[0].request as { headers: { authorization: string } };
+    expect(req.headers.authorization).toBe('[REDACTED]');
+  });
+
+  it('redacts secret keys from span event attributes', async () => {
+    const tm = createTraceManager({ redact: {} });
+    const tid = tm.startTrace('t');
+    const sid = tm.startSpan(tid, 's');
+    tm.addSpanEvent(sid, { name: 'probe', attributes: { password: 'p', ok: 'yes' } });
+    const trace = tm.getTrace(tid);
+    expect(trace!.spans[0].events[0].attributes!.password).toBe('[REDACTED]');
+    expect(trace!.spans[0].events[0].attributes!.ok).toBe('yes');
+  });
+
+  it('extra keys configured via redact config are scrubbed too', async () => {
+    const tm = createTraceManager({ redact: { extraKeys: ['ssn'] } });
+    const tid = tm.startTrace('t', { ssn: 'xxx-xx-xxxx' });
+    const trace = tm.getTrace(tid);
+    expect(trace!.metadata.ssn).toBe('[REDACTED]');
+  });
+
+  it('does not redact when no redact config is provided (back-compat)', async () => {
+    const tm = createTraceManager();
+    const tid = tm.startTrace('t', { api_key: 'visible' });
+    const trace = tm.getTrace(tid);
+    expect(trace!.metadata.api_key).toBe('visible');
+  });
+});
+
+// SEC-016: metadata namespace split
+describe('SEC-016 metadata namespace split', () => {
+  it('exposes userMetadata and systemMetadata separately', () => {
+    const tm = createTraceManager();
+    const tid = tm.startTrace('t', { caller: 'user' });
+    tm.setTraceSystemMetadata(tid, { samplingTag: 'premium' });
+
+    const trace = tm.getTrace(tid)!;
+    expect(trace.userMetadata).toEqual({ caller: 'user' });
+    expect(trace.systemMetadata).toEqual({ samplingTag: 'premium' });
+  });
+
+  it('legacy metadata field still exposes user data for backward compat', () => {
+    const tm = createTraceManager();
+    const tid = tm.startTrace('t', { env: 'prod' });
+    const trace = tm.getTrace(tid)!;
+    expect(trace.metadata.env).toBe('prod');
+  });
+
+  it('systemMetadata bypasses redaction', async () => {
+    const tm = createTraceManager({ redact: {} });
+    const tid = tm.startTrace('t');
+    tm.setTraceSystemMetadata(tid, { authorization: 'internal-token' });
+    const trace = tm.getTrace(tid)!;
+    // Even though the key matches a secret pattern, system metadata is
+    // library-authored and must not be scrubbed.
+    expect(trace.systemMetadata!.authorization).toBe('internal-token');
+  });
+
+  it('shouldExport hook can consult systemMetadata for sampling decisions', async () => {
+    const visited: string[] = [];
+    const exporter: TraceExporter = {
+      name: 'sampler',
+      async exportTrace() { visited.push('trace'); },
+      async exportSpan() {},
+      async flush() {},
+      shouldExport(trace) {
+        // Hook only consults systemMetadata (SEC-016 contract).
+        return (trace.systemMetadata?.keep as boolean) === true;
+      },
+    };
+    const tm = createTraceManager({ exporters: [exporter] });
+    const keep = tm.startTrace('k');
+    tm.setTraceSystemMetadata(keep, { keep: true });
+    tm.endTrace(keep);
+
+    const drop = tm.startTrace('d');
+    tm.setTraceSystemMetadata(drop, { keep: false });
+    tm.endTrace(drop);
+
+    await new Promise(r => setTimeout(r, 10));
+    expect(visited).toHaveLength(1);
+  });
+
+  it('setTraceSystemMetadata throws on unknown trace', () => {
+    const tm = createTraceManager();
+    expect(() => tm.setTraceSystemMetadata('nope', { a: 1 })).toThrow(HarnessError);
+  });
+});
+
+// OBS-002: Span event severity
+describe('OBS-002 span event severity', () => {
+  it('stores severity when provided on an event', () => {
+    const tm = createTraceManager();
+    const tid = tm.startTrace('t');
+    const sid = tm.startSpan(tid, 's');
+    tm.addSpanEvent(sid, { name: 'problem', severity: 'error' });
+    const trace = tm.getTrace(tid)!;
+    expect(trace.spans[0].events[0].severity).toBe('error');
+  });
+
+  it('omits severity when not provided (backward compat)', () => {
+    const tm = createTraceManager();
+    const tid = tm.startTrace('t');
+    const sid = tm.startSpan(tid, 's');
+    tm.addSpanEvent(sid, { name: 'normal' });
+    const trace = tm.getTrace(tid)!;
+    expect(trace.spans[0].events[0].severity).toBeUndefined();
+  });
+});
+
+// OBS-005: Adapter retry telemetry
+describe('OBS-005 retry metrics', () => {
+  it('starts with zero metrics', () => {
+    const tm = createTraceManager();
+    expect(tm.getRetryMetrics()).toEqual({
+      totalRetries: 0,
+      successAfterRetry: 0,
+      failedAfterRetries: 0,
+    });
+  });
+
+  it('counts adapter_retry events as totalRetries', () => {
+    const tm = createTraceManager();
+    const tid = tm.startTrace('t');
+    const sid = tm.startSpan(tid, 's');
+    tm.addSpanEvent(sid, { name: 'adapter_retry', attributes: { attempt: 1 } });
+    tm.addSpanEvent(sid, { name: 'adapter_retry', attributes: { attempt: 2 } });
+    expect(tm.getRetryMetrics().totalRetries).toBe(2);
+  });
+
+  it('counts successAfterRetry when span with retries ends completed', () => {
+    const tm = createTraceManager();
+    const tid = tm.startTrace('t');
+    const sid = tm.startSpan(tid, 's');
+    tm.addSpanEvent(sid, { name: 'adapter_retry' });
+    tm.endSpan(sid, 'completed');
+    expect(tm.getRetryMetrics().successAfterRetry).toBe(1);
+    expect(tm.getRetryMetrics().failedAfterRetries).toBe(0);
+  });
+
+  it('counts failedAfterRetries when span with retries ends with error', () => {
+    const tm = createTraceManager();
+    const tid = tm.startTrace('t');
+    const sid = tm.startSpan(tid, 's');
+    tm.addSpanEvent(sid, { name: 'adapter_retry' });
+    tm.endSpan(sid, 'error');
+    expect(tm.getRetryMetrics().failedAfterRetries).toBe(1);
+    expect(tm.getRetryMetrics().successAfterRetry).toBe(0);
+  });
+
+  it('does not count non-retry events', () => {
+    const tm = createTraceManager();
+    const tid = tm.startTrace('t');
+    const sid = tm.startSpan(tid, 's');
+    tm.addSpanEvent(sid, { name: 'other' });
+    tm.endSpan(sid);
+    expect(tm.getRetryMetrics().totalRetries).toBe(0);
+  });
+});
+
+// PERF-006: O(1) endTrace for large workloads
+describe('PERF-006 endTrace O(1) behavior', () => {
+  it('endTrace is fast for many concurrently-running traces', () => {
+    // Functional test only: we don't benchmark; we verify correctness at scale.
+    const tm = createTraceManager({ maxTraces: 10_000 });
+    const ids: string[] = [];
+    for (let i = 0; i < 1000; i++) {
+      ids.push(tm.startTrace(`t-${i}`));
+    }
+    // End them in reverse order to stress swap-remove
+    for (let i = ids.length - 1; i >= 0; i--) {
+      tm.endTrace(ids[i]);
+    }
+    // All should be marked completed
+    for (const id of ids) {
+      expect(tm.getTrace(id)!.status).toBe('completed');
+    }
+  });
+
+  it('endTrace correctness with arbitrary order removal', () => {
+    const tm = createTraceManager({ maxTraces: 100 });
+    const a = tm.startTrace('a');
+    const b = tm.startTrace('b');
+    const c = tm.startTrace('c');
+    const d = tm.startTrace('d');
+
+    // End middle ones first to exercise swap-remove
+    tm.endTrace(b);
+    tm.endTrace(c);
+    tm.endTrace(a);
+    tm.endTrace(d);
+
+    expect(tm.getTrace(a)!.status).toBe('completed');
+    expect(tm.getTrace(b)!.status).toBe('completed');
+    expect(tm.getTrace(c)!.status).toBe('completed');
+    expect(tm.getTrace(d)!.status).toBe('completed');
+  });
+});
+
+// PERF-016: pendingExports leak on rejection
+describe('PERF-016 pendingExports leak fix', () => {
+  it('flush does not hang when an exporter span rejects', async () => {
+    const failingExporter: TraceExporter = {
+      name: 'fail',
+      async exportTrace() {},
+      async exportSpan() { throw new Error('boom'); },
+      async flush() {},
+    };
+    const tm = createTraceManager({
+      exporters: [failingExporter],
+      onExportError: () => {},
+    });
+    const tid = tm.startTrace('t');
+    const sid = tm.startSpan(tid, 's');
+    tm.endSpan(sid);
+
+    // flush must settle — if pendingExports leaked on rejection, this would
+    // wait forever for the dangling promise.
+    await expect(tm.flush()).resolves.toBeUndefined();
+  });
+
+  it('flush settles even when exporter throws synchronously', async () => {
+    const failingExporter: TraceExporter = {
+      name: 'fail',
+      async exportTrace() { throw new Error('boom'); },
+      async exportSpan() {},
+      async flush() {},
+    };
+    const tm = createTraceManager({
+      exporters: [failingExporter],
+      onExportError: () => {},
+    });
+    const tid = tm.startTrace('t');
+    tm.endTrace(tid);
+
+    await expect(tm.flush()).resolves.toBeUndefined();
+  });
+});

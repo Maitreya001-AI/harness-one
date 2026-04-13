@@ -188,15 +188,82 @@ describe('compress', () => {
     });
   });
 
-  describe('summarize strategy: toSummarize is empty returns original messages', () => {
-    it('returns original messages when all non-kept messages are preserved', async () => {
+  describe('CQ-013: summarize truncates when toSummarize is empty but total exceeds budget', () => {
+    it('applies truncate fallback instead of overshooting budget when all preserved', async () => {
+      // All non-kept messages are preserved → toSummarize is empty.
+      // Previously the strategy returned [...messages], blowing past budget.
+      // Fix: apply truncate-pass keeping most recent messages fitting budget.
+      const msgs: Message[] = [
+        msg('user', 'A'.repeat(200)),       // ~54 tokens
+        msg('user', 'B'.repeat(200)),       // ~54 tokens
+        msg('assistant', 'Last'),            // small, fits
+      ];
+
+      const result = await compress(msgs, {
+        strategy: 'summarize',
+        budget: 10,
+        preserve: () => true,
+        summarizer: async () => 'summary',
+      });
+
+      // CQ-013: result should be truncated (not all 3 messages) and fit budget
+      expect(result.compressed).toBe(true);
+      // Still preserves most recent content
+      const contents = result.messages.map((m) => m.content);
+      expect(contents).toContain('Last');
+      // finalTokens ≤ budget
+      expect(result.finalTokens).toBeLessThanOrEqual(10);
+      // Flags truncation in result
+      expect((result as unknown as { truncated?: boolean }).truncated).toBe(true);
+    });
+  });
+
+  describe('CQ-014: onError callback + fallbackReason in result', () => {
+    it('invokes onError when summarizer throws and reports fallbackReason', async () => {
+      const msgs: Message[] = [
+        msg('user', 'First long A'.repeat(50)),
+        msg('assistant', 'Second long B'.repeat(50)),
+        msg('user', 'Third'),
+      ];
+
+      const seen: { err: unknown; reason: string }[] = [];
+      const result = await compress(msgs, {
+        strategy: 'summarize',
+        budget: 14,
+        summarizer: async () => { throw new Error('LLM API 500'); },
+        onError: (err, reason) => { seen.push({ err, reason }); },
+      } as unknown as import('../compress.js').CompressOptions);
+
+      expect(seen).toHaveLength(1);
+      expect((seen[0].err as Error).message).toBe('LLM API 500');
+      expect(seen[0].reason).toMatch(/summari[sz]er.*fail/i);
+      // fallbackReason is surfaced on the result
+      expect((result as unknown as { fallbackReason?: string }).fallbackReason).toBeDefined();
+      expect((result as unknown as { fallbackReason?: string }).fallbackReason).toMatch(/summari[sz]er.*fail/i);
+    });
+
+    it('works without onError (no throw) and still exposes fallbackReason', async () => {
+      const msgs: Message[] = [
+        msg('user', 'A'.repeat(200)),
+        msg('assistant', 'B'.repeat(200)),
+        msg('user', 'Third'),
+      ];
+      const result = await compress(msgs, {
+        strategy: 'summarize',
+        budget: 14,
+        summarizer: async () => { throw new Error('boom'); },
+      });
+      expect((result as unknown as { fallbackReason?: string }).fallbackReason).toMatch(/summari[sz]er/i);
+    });
+  });
+
+  describe('summarize strategy: toSummarize is empty applies truncate fallback (CQ-013)', () => {
+    it('truncates to fit budget when all non-kept messages are preserved', async () => {
       // The summarize strategy works backwards from the end keeping messages
-      // that fit in the budget. Messages that don't fit are either preserved
-      // (if preserve returns true) or summarized. If ALL non-kept messages
-      // are preserved, toSummarize is empty, and it returns [...messages].
-      //
-      // We need: total tokens > budget (so summarization is attempted),
-      // but all messages not kept by the backward pass are preserved.
+      // that fit in the budget. When preserve returns true for EVERYTHING,
+      // toSummarize is empty. Before CQ-013, the strategy returned
+      // [...messages] (overshooting budget). After CQ-013, it applies a
+      // truncate-pass keeping most recent messages fitting budget.
       const msgs: Message[] = [
         msg('user', 'A'.repeat(200)),       // ~54 tokens, won't fit in budget
         msg('user', 'B'.repeat(200)),       // ~54 tokens, won't fit in budget
@@ -211,12 +278,8 @@ describe('compress', () => {
         summarizer: summarizerFn,
       });
 
-      // The backward pass keeps 'C' (fits in 10 tokens).
-      // 'A' and 'B' don't fit, but preserve returns true for both,
-      // so they go to toKeep.unshift(), NOT toSummarize.
-      // toSummarize is empty => returns [...messages]
-      // Note: compressed=false because all original messages are returned and exceed budget
-      expect(result.messages).toHaveLength(3);
+      // CQ-013: result fits budget via truncate fallback
+      expect(result.finalTokens).toBeLessThanOrEqual(10);
       // Summarizer should NOT have been called since toSummarize is empty
       expect(summarizerFn).not.toHaveBeenCalled();
     });

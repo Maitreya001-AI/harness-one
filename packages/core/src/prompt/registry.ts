@@ -11,6 +11,38 @@ import type { PromptTemplate, PromptBackend } from './types.js';
 const SEMVER_RE = /^\d+(\.\d+)+$/;
 
 /**
+ * CQ-022: Shared helper that resolves `{{variable}}` placeholders inside a
+ * template's content. Previously this logic was duplicated between
+ * PromptRegistry.resolve and AsyncPromptRegistry.resolve. Keeping the two
+ * callers delegating to a single implementation prevents drift between them.
+ *
+ * @param template - The fully-populated PromptTemplate to render.
+ * @param variables - Map from variable name to replacement value.
+ * @param sanitize - When true (default), strip `{{...}}` patterns from
+ *   injected values to prevent recursive expansion.
+ */
+function resolveTemplateVariables(
+  template: PromptTemplate,
+  variables: Record<string, string>,
+  sanitize: boolean,
+): string {
+  let content = template.content;
+  for (const varName of template.variables) {
+    if (!(varName in variables)) {
+      throw new HarnessError(
+        `Missing required variable: ${varName} for template ${template.id}`,
+        'MISSING_VARIABLE',
+        `Provide a value for "{{${varName}}}"`,
+      );
+    }
+    const rawValue = variables[varName];
+    const safeValue = sanitize ? rawValue.replace(/\{\{(\w+)\}\}/g, '$1') : rawValue;
+    content = content.replaceAll(`{{${varName}}}`, safeValue);
+  }
+  return content;
+}
+
+/**
  * Validate that a version string contains only numeric dot-separated segments.
  * Rejects non-numeric identifiers like "1.a.3", "latest", "1.2.x".
  * Throws a HarnessError if invalid.
@@ -46,6 +78,25 @@ export interface RegisterOptions {
   readonly force?: boolean;
 }
 
+/**
+ * CQ-019: Minimal logger shape accepted by the registry. Structural-typed
+ * so callers can inject any existing logger (console, pino, winston, etc.)
+ * without coupling to harness-one's observe package.
+ */
+export interface PromptRegistryLogger {
+  warn(message: string, meta?: Record<string, unknown>): void;
+}
+
+/** Configuration for createPromptRegistry. */
+export interface PromptRegistryConfig {
+  /**
+   * CQ-019: Optional logger used to warn when register() silently overwrites
+   * an existing template version. Defaults to a no-op so that callers that
+   * didn't previously inject a logger keep the same silent-overwrite behavior.
+   */
+  readonly logger?: PromptRegistryLogger;
+}
+
 /** Registry for storing and resolving versioned prompt templates. */
 export interface PromptRegistry {
   /** Register a prompt template (immutable after registration). */
@@ -78,12 +129,18 @@ export interface PromptRegistry {
  * const result = registry.resolve('greeting', { name: 'Alice' });
  * // result === 'Hello Alice!'
  * ```
+ *
+ * @param config - CQ-019: Optional config — pass a `logger` to surface
+ *   silent-overwrite warnings. When no logger is provided, a no-op is used
+ *   (preserves prior behavior).
  */
-export function createPromptRegistry(): PromptRegistry {
+export function createPromptRegistry(config?: PromptRegistryConfig): PromptRegistry {
   // Map<id, Map<version, PromptTemplate>>
   const store = new Map<string, Map<string, PromptTemplate>>();
   // Explicit latest version tracking: id -> latest version string
   const latestVersions = new Map<string, string>();
+  // CQ-019: Default to a no-op logger when none was supplied.
+  const logger: PromptRegistryLogger = config?.logger ?? { warn: () => { /* no-op */ } };
 
   function getLatestVersion(id: string): PromptTemplate | undefined {
     const latestVer = latestVersions.get(id);
@@ -102,8 +159,12 @@ export function createPromptRegistry(): PromptRegistry {
       }
 
       if (versions.has(template.version) && !(options?.force)) {
-        // Overwriting existing version without force — proceed silently.
-        // Callers can detect overwrites by checking has() before register().
+        // CQ-019: Match the documented JSDoc behavior — warn through the
+        // injected logger when a version is overwritten without `force: true`.
+        logger.warn(
+          `Prompt template overwritten: "${template.id}@${template.version}" (pass { force: true } to suppress this warning)`,
+          { id: template.id, version: template.version },
+        );
       }
 
       versions.set(template.version, frozen);
@@ -130,22 +191,8 @@ export function createPromptRegistry(): PromptRegistry {
           'Register the template before resolving',
         );
       }
-
-      let content = template.content;
-      for (const varName of template.variables) {
-        if (!(varName in variables)) {
-          throw new HarnessError(
-            `Missing required variable: ${varName} for template ${id}`,
-            'MISSING_VARIABLE',
-            `Provide a value for "{{${varName}}}"`,
-          );
-        }
-        const rawValue = variables[varName];
-        // Strip any {{...}} patterns from injected values to prevent recursive expansion
-        const safeValue = sanitize ? rawValue.replace(/\{\{(\w+)\}\}/g, '$1') : rawValue;
-        content = content.replaceAll(`{{${varName}}}`, safeValue);
-      }
-      return content;
+      // CQ-022: Delegate placeholder substitution to the shared helper.
+      return resolveTemplateVariables(template, variables, sanitize);
     },
 
     list(): PromptTemplate[] {
@@ -275,22 +322,8 @@ export function createAsyncPromptRegistry(backend: PromptBackend): AsyncPromptRe
           'Register the template or ensure the backend can provide it',
         );
       }
-
-      let content = template.content;
-      for (const varName of template.variables) {
-        if (!(varName in variables)) {
-          throw new HarnessError(
-            `Missing required variable: ${varName} for template ${id}`,
-            'MISSING_VARIABLE',
-            `Provide a value for "{{${varName}}}"`,
-          );
-        }
-        const rawValue = variables[varName];
-        // Strip any {{...}} patterns from injected values to prevent recursive expansion
-        const safeValue = sanitize ? rawValue.replace(/\{\{(\w+)\}\}/g, '$1') : rawValue;
-        content = content.replaceAll(`{{${varName}}}`, safeValue);
-      }
-      return content;
+      // CQ-022: Delegate placeholder substitution to the shared helper.
+      return resolveTemplateVariables(template, variables, sanitize);
     },
 
     async list(): Promise<PromptTemplate[]> {

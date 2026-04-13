@@ -295,4 +295,143 @@ describe('createRateLimiter', () => {
 
     expect(elapsed).toBeLessThan(1000);
   });
+
+  // ---- SEC-013: onEviction callback for active-key flood signaling ----
+
+  describe('SEC-013: onEviction callback on active-key eviction', () => {
+    it('fires onEviction when evicted key had recent activity (within window)', () => {
+      const evictions: Array<{ key: string; lastSeen: number }> = [];
+      const { guard } = createRateLimiter({
+        max: 10,
+        windowMs: 60_000,
+        keyFn: (ctx) => ctx.content,
+        maxKeys: 2,
+        onEviction: (e) => evictions.push(e),
+      });
+
+      // All within the same window — keys 1 and 2 will get evicted by 3 and 4
+      guard({ content: 'key1' });
+      guard({ content: 'key2' });
+      guard({ content: 'key3' }); // evicts key1 (active)
+      guard({ content: 'key4' }); // evicts key2 (active)
+
+      expect(evictions.length).toBe(2);
+      expect(evictions.map((e) => e.key).sort()).toEqual(['key1', 'key2']);
+      for (const e of evictions) {
+        expect(typeof e.lastSeen).toBe('number');
+        expect(e.lastSeen).toBeGreaterThan(0);
+      }
+    });
+
+    it('does NOT fire onEviction for expired keys', () => {
+      const evictions: Array<{ key: string; lastSeen: number }> = [];
+      const { guard } = createRateLimiter({
+        max: 10,
+        windowMs: 1_000,
+        keyFn: (ctx) => ctx.content,
+        maxKeys: 2,
+        onEviction: (e) => evictions.push(e),
+      });
+
+      guard({ content: 'old_key1' });
+      guard({ content: 'old_key2' });
+
+      // Advance past window so these keys are "expired" (not active)
+      vi.advanceTimersByTime(2_000);
+
+      // Fill with 2 new keys; old_key1 and old_key2 evict but are expired.
+      guard({ content: 'new_key1' }); // evicts old_key1 (expired, no signal)
+      guard({ content: 'new_key2' }); // evicts old_key2 (expired, no signal)
+
+      expect(evictions.length).toBe(0);
+    });
+
+    it('does not throw if user onEviction callback throws', () => {
+      const { guard } = createRateLimiter({
+        max: 10,
+        windowMs: 60_000,
+        keyFn: (ctx) => ctx.content,
+        maxKeys: 1,
+        onEviction: () => {
+          throw new Error('user callback bug');
+        },
+      });
+
+      guard({ content: 'a' });
+      // This eviction triggers the throwing callback; guard must survive.
+      expect(() => guard({ content: 'b' })).not.toThrow();
+    });
+
+    it('no onEviction callback: guard works as before (backward compat)', () => {
+      const { guard } = createRateLimiter({
+        max: 10,
+        windowMs: 60_000,
+        keyFn: (ctx) => ctx.content,
+        maxKeys: 1,
+      });
+      guard({ content: 'a' });
+      expect(() => guard({ content: 'b' })).not.toThrow();
+    });
+  });
+
+  // ---- PERF-012: bucketed counting mode ----
+
+  describe('PERF-012: time-bucketed counting (bucketMs)', () => {
+    it('blocks after max in bucketed mode', () => {
+      const { guard } = createRateLimiter({
+        max: 3,
+        windowMs: 1_000,
+        bucketMs: 100,
+      });
+      expect(guard({ content: 'a' }).action).toBe('allow');
+      expect(guard({ content: 'b' }).action).toBe('allow');
+      expect(guard({ content: 'c' }).action).toBe('allow');
+      expect(guard({ content: 'd' }).action).toBe('block');
+    });
+
+    it('allows again after bucket age-off in bucketed mode', () => {
+      const { guard } = createRateLimiter({
+        max: 2,
+        windowMs: 1_000,
+        bucketMs: 100,
+      });
+      guard({ content: 'a' });
+      guard({ content: 'b' });
+      expect(guard({ content: 'c' }).action).toBe('block');
+
+      // Advance past the window; all buckets drop out
+      vi.advanceTimersByTime(1_100);
+      expect(guard({ content: 'd' }).action).toBe('allow');
+    });
+
+    it('bucketed mode respects per-key isolation', () => {
+      const { guard } = createRateLimiter({
+        max: 1,
+        windowMs: 1_000,
+        bucketMs: 100,
+        keyFn: (ctx) => ctx.content,
+      });
+      expect(guard({ content: 'u1' }).action).toBe('allow');
+      expect(guard({ content: 'u2' }).action).toBe('allow');
+      expect(guard({ content: 'u1' }).action).toBe('block');
+      expect(guard({ content: 'u2' }).action).toBe('block');
+    });
+
+    it('bucketed mode with onEviction still signals active evictions', () => {
+      const evictions: Array<{ key: string }> = [];
+      const { guard } = createRateLimiter({
+        max: 10,
+        windowMs: 5_000,
+        bucketMs: 500,
+        keyFn: (ctx) => ctx.content,
+        maxKeys: 2,
+        onEviction: (e) => evictions.push(e),
+      });
+      guard({ content: 'a' });
+      guard({ content: 'b' });
+      guard({ content: 'c' }); // evicts a (still active)
+      expect(evictions.length).toBe(1);
+      expect(evictions[0].key).toBe('a');
+    });
+  });
 });

@@ -108,11 +108,27 @@ describe('CLI argument parser', () => {
     expect(result.modules).toEqual(['core']);
   });
 
-  it('handles all 10 module names in --modules', () => {
+  it('handles all module names in --modules', () => {
     const allNames = ALL_MODULES.join(',');
     const result = parseArgs(['node', 'harness-one', 'init', '--modules', allNames]);
     expect(result.modules).toEqual([...ALL_MODULES]);
     expect(result.all).toBe(false);
+  });
+
+  // SPEC-010: new modules exposed via the CLI
+  it('accepts "orchestration" as a --modules value', () => {
+    const result = parseArgs(['node', 'harness-one', 'init', '--modules', 'orchestration']);
+    expect(result.modules).toEqual(['orchestration']);
+  });
+
+  it('accepts "rag" as a --modules value', () => {
+    const result = parseArgs(['node', 'harness-one', 'init', '--modules', 'rag']);
+    expect(result.modules).toEqual(['rag']);
+  });
+
+  it('accepts both "orchestration" and "rag" together', () => {
+    const result = parseArgs(['node', 'harness-one', 'init', '--modules', 'orchestration,rag']);
+    expect(result.modules).toEqual(['orchestration', 'rag']);
   });
 });
 
@@ -170,6 +186,8 @@ describe('Template generation', () => {
     memory: ['createInMemoryStore', 'createRelay'],
     eval: ['createEvalRunner', 'createRelevanceScorer', 'createLengthScorer', 'createCustomScorer'],
     evolve: ['createComponentRegistry', 'createDriftDetector', 'createArchitectureChecker'],
+    orchestration: ['createOrchestrator', 'createAgentPool', 'createHandoff', 'createContextBoundary'],
+    rag: ['createRAGPipeline', 'createTextLoader', 'createInMemoryRetriever'],
   };
 
   for (const mod of ALL_MODULES) {
@@ -417,8 +435,14 @@ describe('MODULE_DESCRIPTIONS', () => {
     }
   });
 
-  it('has exactly 10 entries matching ALL_MODULES', () => {
+  it('has entries matching ALL_MODULES length', () => {
     expect(Object.keys(MODULE_DESCRIPTIONS)).toHaveLength(ALL_MODULES.length);
+  });
+
+  // SPEC-010: orchestration + rag descriptions present
+  it('has descriptions for orchestration and rag', () => {
+    expect(MODULE_DESCRIPTIONS.orchestration).toMatch(/orchestration|multi-agent/i);
+    expect(MODULE_DESCRIPTIONS.rag).toMatch(/retrieval/i);
   });
 });
 
@@ -431,7 +455,7 @@ describe('FILE_NAMES', () => {
     }
   });
 
-  it('has exactly 10 entries matching ALL_MODULES', () => {
+  it('has entries matching ALL_MODULES length', () => {
     expect(Object.keys(FILE_NAMES)).toHaveLength(ALL_MODULES.length);
   });
 
@@ -443,6 +467,12 @@ describe('FILE_NAMES', () => {
     const names = Object.values(FILE_NAMES);
     const unique = new Set(names);
     expect(unique.size).toBe(names.length);
+  });
+
+  // SPEC-010: orchestration + rag FILE_NAMES present
+  it('maps orchestration and rag modules to .ts files', () => {
+    expect(FILE_NAMES.orchestration).toBe('orchestration.ts');
+    expect(FILE_NAMES.rag).toBe('rag.ts');
   });
 });
 

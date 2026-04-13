@@ -46,6 +46,7 @@ describe('createResilientLoop', () => {
 
       // Should have iteration_start, message, done -- no warning about retries
       const warningEvents = events.filter(e => e.type === 'warning');
+      expect(warningEvents).toBeDefined();
       const retryWarnings = warningEvents.filter(
         e => e.type === 'warning' && (e as Extract<AgentEvent, { type: 'warning' }>).message.includes('Resilient loop retry'),
       );
@@ -509,6 +510,93 @@ describe('createResilientLoop', () => {
           ]),
         }),
       );
+    });
+  });
+
+  // =====================================================================
+  // CQ-015: ResilientLoop must dispose inner AgentLoop to release resources
+  // =====================================================================
+  describe('CQ-015: inner AgentLoop is disposed after each attempt', () => {
+    it('calls dispose() on every inner loop created during retries', async () => {
+      // Instrument AgentLoop.prototype.dispose so we can count calls.
+      const { AgentLoop } = await import('../agent-loop.js');
+      const disposeSpy = vi.spyOn(AgentLoop.prototype, 'dispose');
+
+      try {
+        const toolCall: ToolCallRequest = { id: 'call_1', name: 'loop', arguments: '{}' };
+        let callCount = 0;
+
+        const adapter: AgentAdapter = {
+          async chat() {
+            callCount++;
+            // First inner loop exhausts max_iterations, second succeeds
+            if (callCount <= 1) {
+              return { message: { role: 'assistant', content: '', toolCalls: [toolCall] }, usage: USAGE };
+            }
+            return { message: { role: 'assistant', content: 'done' }, usage: USAGE };
+          },
+        };
+
+        const onRetry = vi.fn().mockResolvedValue({ summary: 'retry' });
+        const resilient = createResilientLoop({
+          loopConfig: { adapter, maxIterations: 1, onToolCall: async () => 'ok' },
+          maxOuterRetries: 1,
+          onRetry,
+        });
+
+        await collectEvents(resilient.run([{ role: 'user', content: 'Go' }]));
+
+        // Two inner loops were created (first + retry) — both must have been disposed.
+        expect(disposeSpy).toHaveBeenCalledTimes(2);
+      } finally {
+        disposeSpy.mockRestore();
+      }
+    });
+
+    it('disposes inner loop even when iterator throws', async () => {
+      const { AgentLoop } = await import('../agent-loop.js');
+      const disposeSpy = vi.spyOn(AgentLoop.prototype, 'dispose');
+
+      try {
+        const adapter: AgentAdapter = {
+          async chat() {
+            throw new Error('persistent adapter failure');
+          },
+        };
+
+        const resilient = createResilientLoop({
+          loopConfig: { adapter },
+          maxOuterRetries: 0, // No retries — single attempt that will error
+        });
+
+        await collectEvents(resilient.run([{ role: 'user', content: 'Go' }]));
+
+        // Single inner loop must still have been disposed.
+        expect(disposeSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        disposeSpy.mockRestore();
+      }
+    });
+
+    it('disposes inner loop on successful first-try completion', async () => {
+      const { AgentLoop } = await import('../agent-loop.js');
+      const disposeSpy = vi.spyOn(AgentLoop.prototype, 'dispose');
+
+      try {
+        const adapter = createMockAdapter([
+          { message: { role: 'assistant', content: 'Hello' }, usage: USAGE },
+        ]);
+
+        const resilient = createResilientLoop({
+          loopConfig: { adapter },
+        });
+
+        await collectEvents(resilient.run([{ role: 'user', content: 'Hi' }]));
+
+        expect(disposeSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        disposeSpy.mockRestore();
+      }
     });
   });
 });

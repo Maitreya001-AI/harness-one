@@ -67,11 +67,19 @@ describe('createOTelExporter', () => {
 
     await exporter.exportTrace(trace);
 
-    expect(mock.mocks.startActiveSpan).toHaveBeenCalledWith('agent-run', expect.any(Function));
+    // CQ-001: startActiveSpan now passes a startTime option derived from
+    // the harness trace's real startTime rather than defaulting to wall-clock.
+    expect(mock.mocks.startActiveSpan).toHaveBeenCalledWith(
+      'agent-run',
+      expect.objectContaining({ startTime: expect.any(Date) }),
+      expect.any(Function),
+    );
     expect(mock.mocks.setAttribute).toHaveBeenCalledWith('harness.trace.id', 'trace-1');
     expect(mock.mocks.setAttribute).toHaveBeenCalledWith('harness.trace.status', 'completed');
     expect(mock.mocks.setStatus).toHaveBeenCalledWith({ code: 1 }); // SpanStatusCode.OK = 1
     expect(mock.mocks.end).toHaveBeenCalled();
+    // CQ-001: end() is called with the real endTime (as Date), not undefined.
+    expect(mock.mocks.end).toHaveBeenCalledWith(new Date(2000));
   });
 
   it('exports an error trace with ERROR status', async () => {
@@ -253,11 +261,14 @@ describe('createOTelExporter', () => {
     };
     await exporter.exportSpan(childSpan);
 
-    // Child should have been started with 4 args (name, options, context, callback)
-    const childCall = mock.mocks.startActiveSpan.mock.calls[1];
-    expect(childCall[0]).toBe('child-op');
-    // When parent context is available, it should pass options and context before callback
-    expect(childCall.length).toBe(4);
+    // CQ-002: a trace-level root span is lazily created for the trace; find
+    // the specific child-op call by name rather than by index.
+    const childCall = mock.mocks.startActiveSpan.mock.calls.find(
+      (c: unknown[]) => c[0] === 'child-op',
+    );
+    expect(childCall).toBeDefined();
+    // With parent context, call signature is (name, options, context, callback) = 4 args.
+    expect(childCall!.length).toBe(4);
   });
 
   it('creates root span when parentId has no matching known span and logs warning', async () => {
@@ -276,17 +287,21 @@ describe('createOTelExporter', () => {
     };
     await exporter.exportSpan(span);
 
-    // Should fall back to 2-arg form (no parent context)
-    const call = mock.mocks.startActiveSpan.mock.calls[0];
-    expect(call[0]).toBe('orphan-op');
-    expect(call.length).toBe(2);
+    // CQ-002: orphan spans are re-parented under the per-trace OTel root span
+    // so they remain part of the trace hierarchy instead of becoming unlinked
+    // roots. The call arity therefore includes parent context (4 args).
+    const call = mock.mocks.startActiveSpan.mock.calls.find(
+      (c: unknown[]) => c[0] === 'orphan-op',
+    );
+    expect(call).toBeDefined();
+    expect(call!.length).toBe(4);
 
     // A warning should be logged about the evicted/missing parent
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining("Parent span 'unknown-parent' not found"),
     );
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Creating span 'span-1' as a root span"),
+      expect.stringContaining("Falling back to the trace-root context for span 'span-1'"),
     );
     warnSpy.mockRestore();
   });
@@ -548,8 +563,9 @@ describe('createOTelExporter', () => {
       const calls = localMock.mocks.startActiveSpan.mock.calls;
       const childCall = calls[calls.length - 1];
       expect(childCall[0]).toBe('child-after-ttl');
-      // Expired parent should not provide context -> 2 args (root span)
-      expect(childCall.length).toBe(2);
+      // Expired parent -> fall back to trace-root context (4 args: name, options, context, cb).
+      // CQ-002: spans stay linked under the trace root even when their direct parent is lost.
+      expect(childCall.length).toBe(4);
 
       // Warning should be logged about the missing parent
       expect(warnSpy).toHaveBeenCalledWith(
@@ -649,8 +665,8 @@ describe('createOTelExporter', () => {
       const calls = localMock.mocks.startActiveSpan.mock.calls;
       const childCall = calls[calls.length - 1];
       expect(childCall[0]).toBe('child-after-short-ttl');
-      // Expired parent -> root span (2 args)
-      expect(childCall.length).toBe(2);
+      // Expired parent -> falls back to trace-root context (4 args).
+      expect(childCall.length).toBe(4);
 
       expect(warnSpy).toHaveBeenCalledWith(
         expect.stringContaining("Parent span 'short-ttl-parent' not found"),
@@ -845,8 +861,8 @@ describe('createOTelExporter', () => {
       const calls = localMock.mocks.startActiveSpan.mock.calls;
       const childCall = calls[calls.length - 1];
       expect(childCall[0]).toBe('orphan-child');
-      // Parent lost from both maps -> root span (2 args)
-      expect(childCall.length).toBe(2);
+      // Parent lost from both maps -> falls back to trace-root context (4 args).
+      expect(childCall.length).toBe(4);
 
       expect(warnSpy).toHaveBeenCalledWith(
         expect.stringContaining("Parent span 'overflow-a' not found"),
@@ -934,8 +950,8 @@ describe('createOTelExporter', () => {
       const calls = localMock.mocks.startActiveSpan.mock.calls;
       const lateCall = calls[calls.length - 1];
       expect(lateCall[0]).toBe('late-linking');
-      // trace-child-1 was deleted by exportTrace cleanup -> root span (2 args)
-      expect(lateCall.length).toBe(2);
+      // trace-child-1 was deleted by exportTrace cleanup -> falls back to trace-root context (4 args).
+      expect(lateCall.length).toBe(4);
 
       expect(warnSpy).toHaveBeenCalledWith(
         expect.stringContaining("Parent span 'trace-child-1' not found"),
@@ -1288,8 +1304,8 @@ describe('createOTelExporter', () => {
       const calls = localMock.mocks.startActiveSpan.mock.calls;
       const pcCall = calls[calls.length - 1];
       expect(pcCall[0]).toBe('pc');
-      // Lazy TTL expiry should make the parent unavailable -> root span (2 args)
-      expect(pcCall.length).toBe(2);
+      // Lazy TTL expiry should make the parent unavailable -> falls back to trace-root context (4 args).
+      expect(pcCall.length).toBe(4);
 
       vi.useRealTimers();
       warnSpy.mockRestore();

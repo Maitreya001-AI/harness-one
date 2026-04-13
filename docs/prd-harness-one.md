@@ -89,7 +89,7 @@ Harness-One is a generic, framework-agnostic TypeScript/Node.js library that pro
 **So that** my agent maintains high-quality responses without exceeding token limits or wasting KV-cache
 
 **Acceptance Criteria**:
-- [ ] `createContextManager(config)` manages a structured context window
+- [ ] Composable context primitives: `createBudget(config)` allocates per-segment token budgets; `packContext(layout)` assembles messages in HEAD/MID/TAIL order; `compactIfNeeded(messages, options)` triggers compression when the budget is near exhaustion
 - [ ] Supports HEAD (stable prefix, system prompt), MID (compressible history), TAIL (recent turns + high-attention zone) layout
 - [ ] Configurable token budget per zone
 - [ ] Multiple compression strategies: truncation, summarization (pluggable), failure-trace preservation
@@ -113,7 +113,7 @@ Harness-One is a generic, framework-agnostic TypeScript/Node.js library that pro
 **So that** my agent doesn't process malicious input or produce harmful/invalid output
 
 **Acceptance Criteria**:
-- [ ] `createGuardrailPipeline(config)` accepts ordered list of guardrail functions
+- [ ] `createPipeline(config)` (from `harness-one/guardrails`) accepts ordered lists of guardrail entries (`{name, guard}`) for input/output
 - [ ] Input guardrails: injection detection, PII detection, toxicity, rate limiting (all pluggable)
 - [ ] Output guardrails: safety check, schema validation, hallucination detection (all pluggable)
 - [ ] Output self-heal retry mechanism (configurable max retries)
@@ -126,7 +126,7 @@ Harness-One is a generic, framework-agnostic TypeScript/Node.js library that pro
 **So that** my agent remembers important context without bloating its context window
 
 **Acceptance Criteria**:
-- [ ] `createMemoryStore(config)` with pluggable backends (filesystem, KV store, database)
+- [ ] Pluggable backends via `createInMemoryStore(config)` (default), `createFileSystemStore(config)` (filesystem), and third-party adapters for KV stores / databases
 - [ ] Memory entries have type, relevance score, and TTL
 - [ ] Write-side: value assessment before storage (don't save what can be derived)
 - [ ] Read-side: relevance-ranked retrieval with token budget
@@ -149,7 +149,7 @@ Harness-One is a generic, framework-agnostic TypeScript/Node.js library that pro
 **So that** I can measure quality, set CI gates, and catch regressions before production
 
 **Acceptance Criteria**:
-- [ ] `createEvaluator(config)` supports multiple scoring dimensions
+- [ ] `createEvalRunner(config)` (from `harness-one/eval`) supports multiple scoring dimensions via pluggable `Scorer`s
 - [ ] Generator-evaluator separation: evaluator runs as independent process/prompt
 - [ ] Sprint contract pattern: define acceptance criteria before generation
 - [ ] Eval results exportable as dataset for regression testing
@@ -198,7 +198,7 @@ Harness-One is a generic, framework-agnostic TypeScript/Node.js library that pro
 | REQ-014 | **Build-to-Delete Tracking** — Component retirement conditions, model capability assertions, deprecation alerts | Prevent harness over-engineering | Alert when model improves past component's assumption |
 | REQ-015 | **Ralph Wiggum Loop** — Outer retry loop with fresh context, file/git state persistence | Resilience for complex multi-step tasks | Failed task retried with clean context; progress preserved |
 | REQ-016 | **Multi-Agent Coordination** — Sub-agent spawning, context firewall isolation, parallel execution | Complex workflows with specialized agents | Sub-agents run in isolated contexts; results merged |
-| REQ-017 | **Maturity Audit CLI** — Automated audit against the 9-layer checklist, maturity level scoring | Self-assessment and improvement planning | CLI outputs current maturity level with gap analysis |
+| REQ-017 | **Maturity Audit CLI** — Partially implemented: scans a project for harness-one imports and lists used/unused modules; maturity scoring (L0–L4) across the 9-layer checklist is deferred to a future release | Self-assessment and improvement planning | CLI enumerates module coverage today; gap analysis with maturity levels is on the roadmap |
 | REQ-018 | **Harness-as-Dataset Export** — Execution trace export for model fine-tuning | Long-term competitive moat via data flywheel | Traces exported in fine-tuning-compatible format |
 
 ## 7. Non-Functional Requirements
@@ -213,7 +213,7 @@ Harness-One is a generic, framework-agnostic TypeScript/Node.js library that pro
 - No credentials stored in library state; all LLM API keys passed via client injection
 - Guardrail pipeline is fail-closed by default — cannot be accidentally misconfigured to fail-open
 - Input sanitization helpers provided but not mandated (composable, not prescriptive)
-- No `eval()`, no dynamic code execution, no network calls from core library
+- No `eval()`, no dynamic code execution. No network calls from the core execution primitives; adapter and RAG submodules delegate all I/O to user-injected clients (LLM SDKs, vector stores, retrievers).
 
 ### Reliability
 - All async operations have configurable timeouts
@@ -228,7 +228,7 @@ Harness-One is a generic, framework-agnostic TypeScript/Node.js library that pro
 - Tree-shakeable: unused modules don't increase bundle size
 
 ### Compatibility
-- Node.js 20+ (LTS)
+- Node.js 18+ (LTS)
 - ESM and CJS dual-publish
 - Zero hard runtime dependencies (LLM SDKs, databases, etc. are peer/optional)
 - Works in edge runtimes (Cloudflare Workers, Vercel Edge) for core modules
@@ -298,9 +298,9 @@ How harness-one modules map to the 5-level maturity model:
 
 | Level | What You Get | harness-one Modules |
 |-------|-------------|---------------------|
-| **L0 → L1** | Basic agent loop + tools | `agent-loop`, `tool-system` |
-| **L1 → L2** | Context engineering + guardrails + memory + observability | `context-manager`, `guardrails`, `memory`, `observability` |
-| **L2 → L3** | Evaluation + cost optimization + progressive disclosure | `evaluator`, `cost-aware`, `progressive-disclosure` |
-| **L3 → L4** | Entropy recovery + build-to-delete + data flywheel | `entropy-recovery`, `build-to-delete`, `harness-as-dataset` |
+| **L0 → L1** | Basic agent loop + tools | `core` (AgentLoop), `tools` |
+| **L1 → L2** | Context engineering + guardrails + memory + observability | `context` (`createBudget`, `packContext`, `compactIfNeeded`), `guardrails` (`createPipeline`), `memory` (`createInMemoryStore` / `createFileSystemStore`), `observe` |
+| **L2 → L3** | Evaluation + cost optimization + progressive disclosure | `eval` (`createEvalRunner`), `observe` (cost tracker / budget alerts), `prompt` (progressive disclosure) |
+| **L3 → L4** | Evolution + entropy recovery + data flywheel | `evolve`, `eval` (flywheel extraction) |
 
 Each level is independently adoptable. No level requires all modules from the previous level.

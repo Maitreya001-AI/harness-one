@@ -198,6 +198,13 @@ export function createRegistry(config?: {
 
     // Execute with optional timeout using a simple timer promise pattern
     // that avoids listener leaks by not attaching abort signal listeners.
+    //
+    // CQ-008: The timeout branch mirrors the non-timeout branch's try/catch
+    // so a throwing tool.execute() is converted into a `toolError` reply
+    // instead of propagating. Rate-limit counters (turnCalls / sessionCalls)
+    // are pre-claimed; we keep them claimed whether the tool succeeds, errors,
+    // or times out AFTER starting — the counters are refunded only for
+    // pre-execution errors (lookup/validation/permission) above.
     if (timeoutMs !== undefined) {
       const ac = new AbortController();
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -217,8 +224,16 @@ export function createRegistry(config?: {
         });
 
         const chain = buildChain(ac.signal);
-        const result = await Promise.race([chain(), timeoutPromise]);
-        return result;
+        try {
+          return await Promise.race([chain(), timeoutPromise]);
+        } catch (err) {
+          // CQ-008: Same error-to-toolError conversion as the non-timeout path.
+          return toolError(
+            err instanceof Error ? err.message : String(err),
+            'internal',
+            'Tool execution failed unexpectedly',
+          );
+        }
       } finally {
         if (timer !== undefined) clearTimeout(timer);
         // Abort the controller to cancel any in-flight tool work

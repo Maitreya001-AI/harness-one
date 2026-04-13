@@ -102,21 +102,55 @@ export function createPipeline(config: {
 }
 
 /**
- * Push an event into results, evicting the oldest non-error event if the cap is reached.
- * Error events (block from errors) are never evicted to preserve audit trail.
+ * PERF-005: bounded event buffer with O(1) amortized eviction of the oldest
+ * non-block event. Block events are never evicted (they are part of the audit
+ * trail of reasons a pipeline rejected content).
+ *
+ * The previous implementation used `Array.findIndex` on every eviction, which
+ * was O(n) in `maxResults`. For high-throughput pipelines with maxResults in
+ * the thousands this dominated push latency. We now maintain an explicit
+ * pointer to the oldest non-block index; it only advances forward, and is
+ * re-scanned lazily the first time the pointer falls behind the head of the
+ * array (rare: happens only after shift() on an all-block prefix).
  */
-function pushEvent(results: GuardrailEvent[], event: GuardrailEvent, maxResults: number): void {
-  if (results.length >= maxResults) {
-    // Evict the oldest non-block event to keep the array bounded
-    const evictIdx = results.findIndex((e) => e.verdict.action !== 'block');
-    if (evictIdx !== -1) {
-      results.splice(evictIdx, 1);
-    } else {
-      // All events are block events — evict the oldest one
-      results.shift();
+class BoundedEventBuffer {
+  readonly results: GuardrailEvent[] = [];
+  /** Index of the oldest event with verdict.action !== 'block'; -1 if none. */
+  private oldestNonBlockIdx: number = -1;
+
+  constructor(private readonly maxResults: number) {}
+
+  push(event: GuardrailEvent): void {
+    if (this.results.length >= this.maxResults) {
+      if (this.oldestNonBlockIdx >= 0 && this.oldestNonBlockIdx < this.results.length) {
+        // Evict at the tracked pointer (O(n) splice into the middle is
+        // unavoidable for a plain array, but finding the target is O(1)).
+        this.results.splice(this.oldestNonBlockIdx, 1);
+        // The pointer now references the NEXT element — recompute from that
+        // position forward (usually 0 or 1 step).
+        this.oldestNonBlockIdx = this.findNextNonBlock(this.oldestNonBlockIdx);
+      } else {
+        // All events in the buffer are block events — evict the oldest one.
+        this.results.shift();
+        // Any existing pointer shifts left by 1.
+        if (this.oldestNonBlockIdx > 0) this.oldestNonBlockIdx--;
+      }
+    }
+    const newIdx = this.results.push(event) - 1;
+    if (
+      event.verdict.action !== 'block' &&
+      (this.oldestNonBlockIdx === -1 || this.oldestNonBlockIdx >= this.results.length)
+    ) {
+      this.oldestNonBlockIdx = newIdx;
     }
   }
-  results.push(event);
+
+  private findNextNonBlock(fromIdx: number): number {
+    for (let i = fromIdx; i < this.results.length; i++) {
+      if (this.results[i].verdict.action !== 'block') return i;
+    }
+    return -1;
+  }
 }
 
 async function runGuardrails(
@@ -125,7 +159,8 @@ async function runGuardrails(
   direction: 'input' | 'output',
   ctx: GuardrailContext,
 ): Promise<PipelineResult> {
-  const results: GuardrailEvent[] = [];
+  const buffer = new BoundedEventBuffer(pipeline.maxResults);
+  const results = buffer.results;
   let currentCtx: GuardrailContext = ctx.meta ? { ...ctx, meta: { ...ctx.meta } } : { ...ctx };
   let lastModifyVerdict: GuardrailEvent['verdict'] | undefined;
   let hasModified = false;
@@ -167,7 +202,7 @@ async function runGuardrails(
           verdict,
           latencyMs: performance.now() - start,
         };
-        pushEvent(results, event, pipeline.maxResults);
+        buffer.push(event);
         pipeline.onEvent?.(event);
         return { passed: false, verdict, results };
       }
@@ -179,7 +214,7 @@ async function runGuardrails(
         verdict: errorVerdict,
         latencyMs: performance.now() - start,
       };
-      pushEvent(results, errorEvent, pipeline.maxResults);
+      buffer.push(errorEvent);
       pipeline.onEvent?.(errorEvent);
       continue;
     }
@@ -190,7 +225,7 @@ async function runGuardrails(
       verdict,
       latencyMs: performance.now() - start,
     };
-    pushEvent(results, event, pipeline.maxResults);
+    buffer.push(event);
     pipeline.onEvent?.(event);
 
     if (verdict.action === 'block') {

@@ -9,7 +9,7 @@
  */
 
 import { readFile, writeFile, mkdir, readdir, unlink, rename } from 'node:fs/promises';
-import { join, basename } from 'node:path';
+import { join, basename, resolve, sep } from 'node:path';
 import type { MemoryEntry } from './types.js';
 import { validateIndex, validateMemoryEntry, parseJsonSafe } from './_schemas.js';
 import { HarnessError } from '../core/errors.js';
@@ -17,6 +17,35 @@ import { HarnessError } from '../core/errors.js';
 /** Index mapping keys to entry IDs. */
 export interface Index {
   keys: Record<string, string>; // key -> id
+}
+
+/**
+ * Allowed characters for memory entry IDs. Limits to ASCII alphanumerics,
+ * underscore, and hyphen; length 1-128. Deliberately excludes path separators
+ * (`/`, `\`), `.`, `..`, NUL, and any filesystem-significant punctuation to
+ * prevent path-traversal attacks (SEC-003) before any `path.join` / `readFile`
+ * call touches disk.
+ */
+const ENTRY_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+
+/**
+ * Validate an entry ID against {@link ENTRY_ID_PATTERN}.
+ *
+ * Throws `HarnessError('INVALID_ID')` when the id contains anything that could
+ * escape the store directory (e.g., `../etc/passwd`, `foo/bar`, backslashes,
+ * nuls, or just an over-long string). The helper is invoked at the top of
+ * every function that turns an id into a filesystem path, so the invariant is
+ * enforced at the API boundary — defence in depth against any caller (user
+ * input, orchestration layer, legacy data) that might carry a tainted id.
+ */
+export function validateEntryId(id: string): void {
+  if (typeof id !== 'string' || !ENTRY_ID_PATTERN.test(id)) {
+    throw new HarnessError(
+      'memory entry id format',
+      'INVALID_ID',
+      'Entry ids must match /^[A-Za-z0-9_-]{1,128}$/ — no path separators or dots allowed.',
+    );
+  }
 }
 
 /** Result of a batch unlink operation. */
@@ -43,15 +72,38 @@ export function createFileIO(config: { directory: string; indexFile?: string }):
   const dir = config.directory;
   const indexFileName = config.indexFile ?? '_index.json';
   const indexPath = join(dir, indexFileName);
+  // Pre-compute the resolved directory + separator so the containment check
+  // below is a cheap string prefix test instead of an allocation per call.
+  const resolvedDirPrefix = resolve(dir) + sep;
+
+  /**
+   * Post-join containment check. Even though `validateEntryId` already rejects
+   * anything suspicious, we still verify the *resolved* path stays inside the
+   * configured directory — a belt-and-braces guard in case the regex or
+   * normalisation rules ever drift (e.g., future Unicode support).
+   */
+  function assertWithinDir(candidate: string): void {
+    const absolute = resolve(candidate);
+    if (!absolute.startsWith(resolvedDirPrefix)) {
+      throw new HarnessError(
+        'memory entry path escapes store directory',
+        'INVALID_ID',
+        'Refusing to operate on a path outside the configured directory — refuse and report.',
+      );
+    }
+  }
 
   /** Ensure the storage directory exists. */
   async function ensureDir(): Promise<void> {
     await mkdir(dir, { recursive: true });
   }
 
-  /** Get the file path for an entry by ID. */
+  /** Get the file path for an entry by ID. Throws on invalid or escaping ids. */
   function entryPath(id: string): string {
-    return join(dir, `${id}.json`);
+    validateEntryId(id);
+    const path = join(dir, `${id}.json`);
+    assertWithinDir(path);
+    return path;
   }
 
   /** Read the index file. Returns empty index for ENOENT (first run). */
@@ -86,6 +138,8 @@ export function createFileIO(config: { directory: string; indexFile?: string }):
 
   /** Read a single entry by ID. Returns null for ENOENT (missing file). */
   async function readEntry(id: string): Promise<MemoryEntry | null> {
+    // Validate upstream of the join so invalid ids never reach the filesystem.
+    validateEntryId(id);
     try {
       const raw = await readFile(entryPath(id), 'utf-8');
       const parsed = parseJsonSafe(raw);
@@ -109,19 +163,37 @@ export function createFileIO(config: { directory: string; indexFile?: string }):
 
   /** Write a single entry atomically (write-then-rename). */
   async function writeEntry(entry: MemoryEntry): Promise<void> {
+    // Validate before touching disk so tmp files are never created for bad ids.
+    validateEntryId(entry.id);
     const path = entryPath(entry.id);
     const tmpPath = path + '.tmp';
     await writeFile(tmpPath, JSON.stringify(entry, null, 2), 'utf-8');
     await rename(tmpPath, path);
   }
 
-  /** Read entry files in parallel batches to avoid fd exhaustion. */
+  /**
+   * Read entry files in parallel batches to avoid fd exhaustion.
+   *
+   * Filenames that fail {@link validateEntryId} after stripping the `.json`
+   * suffix are silently skipped — the directory could contain stray files
+   * dropped out of band, and throwing would poison the whole batch for a
+   * single bad filename. Legitimate entries always pass because `writeEntry`
+   * rejects bad ids at write time.
+   */
   async function batchRead(files: string[], batchSize = 50): Promise<MemoryEntry[]> {
     const results: MemoryEntry[] = [];
     for (let i = 0; i < files.length; i += batchSize) {
       const batch = files.slice(i, i + batchSize);
       const entries = await Promise.all(
-        batch.map(file => readEntry(basename(file, '.json')))
+        batch.map(async (file) => {
+          const id = basename(file, '.json');
+          try {
+            validateEntryId(id);
+          } catch {
+            return null;
+          }
+          return readEntry(id);
+        }),
       );
       results.push(...entries.filter((e): e is MemoryEntry => e !== null));
     }

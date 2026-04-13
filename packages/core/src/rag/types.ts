@@ -4,6 +4,8 @@
  * @module
  */
 
+import type { TraceManager } from '../observe/trace-manager.js';
+
 /** A document to be processed by the RAG pipeline. */
 export interface Document {
   readonly id: string;
@@ -71,6 +73,27 @@ export interface RAGPipelineConfig {
    * This catches misconfigured embedding models early before processing the full batch.
    */
   readonly validateEmbedding?: boolean;
+  /**
+   * OBS-006: Optional TraceManager. When provided, ingest() / ingestDocuments()
+   * produce a parent span per ingest invocation and a child span per chunk.
+   * Failures (validation / embedding / indexing) set `status='error'` on the
+   * child span and record an `error.reason` attribute. Omit to disable tracing.
+   */
+  readonly traceManager?: TraceManager;
+}
+
+/**
+ * OBS-006: Aggregate ingestion metrics returned by `getIngestMetrics()`.
+ *
+ * Tracked by the pipeline as chunks attempt embedding + indexing. The
+ * `byFailureReason` map counts per-cause failure buckets (e.g.
+ * `embedding_mismatch`, `batch_error`, `embedding_validation`).
+ */
+export interface IngestMetrics {
+  readonly attempted: number;
+  readonly succeeded: number;
+  readonly failed: number;
+  readonly byFailureReason: Record<string, number>;
 }
 
 /** A fully-wired RAG pipeline. */
@@ -85,4 +108,10 @@ export interface RAGPipeline {
   getChunks(): DocumentChunk[];
   /** Clear all indexed chunks. */
   clear(): void;
+  /**
+   * OBS-006: Returns a snapshot of ingestion metrics. Always available;
+   * when no TraceManager is wired, the counts still accrue across
+   * `ingest()` / `ingestDocuments()` calls so consumers can alert on them.
+   */
+  getIngestMetrics(): IngestMetrics;
 }

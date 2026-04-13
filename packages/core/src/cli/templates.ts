@@ -427,6 +427,143 @@ const result = await runGeneratorEvaluator({
 console.log('Generator-Evaluator:', result.passed, 'attempts:', result.attempts);
 `,
 
+  orchestration: `import {
+  createOrchestrator,
+  createAgentPool,
+  createHandoff,
+  createContextBoundary,
+  createRoundRobinStrategy,
+  spawnSubAgent,
+} from 'harness-one/orchestration';
+
+// 1. Create an orchestrator with a round-robin delegation strategy
+const orchestrator = createOrchestrator({
+  strategy: createRoundRobinStrategy(),
+  mode: 'cooperative',
+});
+
+// 2. Register agents
+orchestrator.register('agent-a', 'Researcher', { metadata: { role: 'research' } });
+orchestrator.register('agent-b', 'Writer', { metadata: { role: 'writing' } });
+
+// 3. Delegate work: strategy picks one of the registered agents
+const selected = await orchestrator.delegate({
+  id: 'task-1',
+  description: 'Summarize the latest findings',
+  requiredCapabilities: ['research'],
+});
+console.log('Delegated to:', selected);
+
+// 4. Pool short-lived sub-agents for bounded concurrency
+const pool = createAgentPool({
+  maxSize: 4,
+  factory: async (id) => ({
+    id,
+    async run(input: string) {
+      return \`Processed: \${input}\`;
+    },
+  }),
+});
+
+const agent = await pool.acquire();
+try {
+  const result = await agent.run('demo input');
+  console.log(result);
+} finally {
+  await pool.release(agent);
+}
+
+// 5. Handoff payload between agents with verification receipts
+const handoff = createHandoff();
+const receipt = handoff.prepare({
+  from: 'agent-a',
+  to: 'agent-b',
+  artifacts: [{ id: 'doc-1', type: 'document', content: 'Draft' }],
+});
+console.log('Handoff receipt:', receipt.id);
+
+// 6. Enforce context boundary policies between agents
+const boundary = createContextBoundary({
+  policies: [
+    { agentId: 'agent-b', allowRead: ['draft.'], allowWrite: ['final.'] },
+  ],
+});
+const ctx = boundary.wrap('agent-b', {});
+ctx.set('final.result', 'ok');
+
+// 7. Spawn a short-lived subagent with its own boundary
+const sub = await spawnSubAgent({
+  id: 'sub-1',
+  parentId: 'agent-a',
+  async run() { return 'done'; },
+});
+console.log('Sub result:', sub.result);
+`,
+
+  rag: `import {
+  createRAGPipeline,
+  createTextLoader,
+  createDocumentArrayLoader,
+  createFixedSizeChunking,
+  createParagraphChunking,
+  createInMemoryRetriever,
+} from 'harness-one/rag';
+import type { EmbeddingModel } from 'harness-one/rag';
+
+// 1. Bring your own embedding model (wrap any provider SDK)
+const embedding: EmbeddingModel = {
+  dimensions: 1536,
+  async embed(texts) {
+    // Replace with your real embedding call (OpenAI, Cohere, etc.)
+    return texts.map(() => new Array(1536).fill(0).map(() => Math.random()));
+  },
+};
+
+// 2. Assemble the pipeline: loader -> chunking -> embedding -> retriever
+const pipeline = createRAGPipeline({
+  loader: createTextLoader([
+    'Retrieval-Augmented Generation combines retrieval with generation.',
+    'It grounds LLM answers in your documents.',
+  ]),
+  chunking: createFixedSizeChunking({ chunkSize: 200, overlap: 20 }),
+  embedding,
+  retriever: createInMemoryRetriever({ embedding }),
+  maxChunks: 10_000,
+  validateEmbedding: true,
+  onWarning: (w) => console.warn('[rag]', w.type, w.message),
+});
+
+// 3. Ingest documents (load -> chunk -> embed -> index)
+const { documents, chunks } = await pipeline.ingest();
+console.log(\`Ingested \${chunks} chunks from \${documents} documents\`);
+
+// 4. Query and surface relevant chunks with scores
+const results = await pipeline.query('what is RAG?', { limit: 3, minScore: 0.2 });
+for (const r of results) {
+  console.log(\`[score=\${r.score.toFixed(3)}] \${r.chunk.content.slice(0, 80)}...\`);
+}
+
+// 5. Observability: per-chunk ingestion metrics
+const metrics = pipeline.getIngestMetrics();
+console.log('Ingest metrics:', metrics);
+
+// 6. Ingest pre-loaded documents bypassing the loader
+await pipeline.ingestDocuments([
+  { id: 'doc-custom', content: 'Additional knowledge.', metadata: { source: 'api' } },
+]);
+
+// 7. Alternate chunking + custom loader
+const paragraphPipeline = createRAGPipeline({
+  loader: createDocumentArrayLoader([
+    { id: 'multi', content: 'Paragraph one.\\n\\nParagraph two.' },
+  ]),
+  chunking: createParagraphChunking(),
+  embedding,
+  retriever: createInMemoryRetriever({ embedding }),
+});
+await paragraphPipeline.ingest();
+`,
+
   evolve: `import {
   createComponentRegistry,
   createDriftDetector,
@@ -509,4 +646,6 @@ export const FILE_NAMES: Record<ModuleName, string> = {
   memory: 'memory.ts',
   eval: 'eval.ts',
   evolve: 'evolve.ts',
+  orchestration: 'orchestration.ts',
+  rag: 'rag.ts',
 };

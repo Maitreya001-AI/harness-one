@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   createRoundRobinStrategy,
   createRandomStrategy,
@@ -15,6 +15,12 @@ function agent(id: string, status: 'idle' | 'running' | 'completed' | 'failed' =
 }
 
 const task: DelegationTask = { description: 'test task' };
+
+// Safety net: restore any spies even if a test throws before its explicit
+// mockRestore() call (e.g., via vi.spyOn(Math, 'random')).
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 // ===========================================================================
 // createRoundRobinStrategy

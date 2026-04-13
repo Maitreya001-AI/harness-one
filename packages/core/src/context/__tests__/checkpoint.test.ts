@@ -59,6 +59,21 @@ describe('createCheckpointManager', () => {
     expect(() => mgr.restore(cp1.id)).toThrow(HarnessError);
   });
 
+  it('TEST-006: maxCheckpoints: 1 keeps only the most recent checkpoint', () => {
+    // Boundary: the smallest legal cap. Saving two checkpoints must leave
+    // exactly one entry — the newest.
+    const mgr = createCheckpointManager({ maxCheckpoints: 1 });
+    const cp1 = mgr.save(messages, 'first');
+    const cp2 = mgr.save(messages, 'second');
+
+    const list = mgr.list();
+    expect(list).toHaveLength(1);
+    expect(list[0].label).toBe('second');
+    expect(list[0].id).toBe(cp2.id);
+    // First checkpoint was evicted.
+    expect(() => mgr.restore(cp1.id)).toThrow(HarnessError);
+  });
+
   it('list() returns checkpoints in insertion order', () => {
     const mgr = createCheckpointManager();
     mgr.save(messages, 'a');

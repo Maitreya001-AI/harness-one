@@ -205,6 +205,79 @@ const messages = mq.getMessages('agent-a', { type: 'request' });
 
 **背压策略**：队列满时采用 drop-oldest（淘汰最旧消息），同时通过 `onWarning` 和 `onEvent` 两路回调发出信号，调用方可据此限流或告警。`push()` 的返回值 `boolean` 表示消息是否进入队列（`false` 意味着有旧消息被丢弃）。`maxQueueSize` 必须 >= 1，否则构造时抛出错误。
 
+## Delegation Cycle Detection
+
+`orchestrator.delegate(task)` 内部维护一个 **delegation chain**（`Map<string, Set<string>>`），记录每个 Agent 把任务委派给了哪些下游 Agent。当 `task.metadata.delegatedFrom` 字段存在时，orchestrator 在选择下游 Agent 后、记录委派之前，执行一次 BFS 检查，防止 A → B → C → A 这种环路把 Agent 无限吞入任务栈。
+
+### 触发条件
+
+调用 `delegate(task)` 时 **同时满足以下两点**：
+
+1. `task.metadata.delegatedFrom` 提供了发起该委派的上游 Agent ID。
+2. `strategy.select()` 返回的 `selectedId` 对应的 Agent 在自己的委派链上（直接或传递）已经委派给过 `delegatedFrom`。
+
+命中时抛出：
+
+```ts
+throw new HarnessError(
+  `Delegation cycle detected: ${selectedId} is already in the delegation chain of ${delegatedFrom}`,
+  'DELEGATION_CYCLE',
+  'Avoid delegating tasks back to agents that originated the delegation',
+);
+```
+
+错误码 `DELEGATION_CYCLE` 是稳定契约；调用方 catch 时可据此与其他 `HarnessError` 区分处理。
+
+### 调用方如何处理
+
+```ts
+import { HarnessError } from 'harness-one';
+
+try {
+  const target = await orch.delegate({
+    description: 'refine the plan',
+    metadata: { delegatedFrom: 'worker' }, // 必须标注源头
+  });
+  // target 可能为 undefined——strategy 没有选出任何 Agent
+} catch (err) {
+  if (err instanceof HarnessError && err.code === 'DELEGATION_CYCLE') {
+    // 降级策略：改写任务、交给 supervisor、或短路终结
+    logger.warn('cycle detected, falling back to supervisor', { err });
+    await orch.sendMessage({ /* ... */ });
+  } else {
+    throw err;
+  }
+}
+```
+
+建议的处理选项：**(a)** 重写 strategy 挑选规则（跳过已在链上的 Agent）；**(b)** 把任务升级到 supervisor / orchestrator 层直接回答；**(c)** 拒绝任务并沿原路回传错误结果。**不要** 吞掉 `DELEGATION_CYCLE` 后再次调用 `delegate()`——会再次命中同一环。
+
+### 安全委派图示例
+
+```
+planner ──> worker ──> specialist
+   │            │
+   └──> reviewer <──┘
+```
+
+上面的 DAG 不会触发检测：`planner` 委派给 `worker` 和 `reviewer`，`worker` 再委派给 `specialist` 和 `reviewer`。即使 `reviewer` 有两个入边，委派链只向下流动，没有任何下游会再指回 `planner` 或 `worker`。
+
+**反例（会抛 `DELEGATION_CYCLE`）**：`worker` 在处理中尝试 `delegate({ metadata: { delegatedFrom: 'worker' } })` 并被 strategy 选回 `planner`——因为 `planner` → `worker` 已登记在链上，从 `worker` 出发的 BFS 会发现 `planner` 可达。
+
+### 链的清理时机
+
+Agent 通过 `unregister(id)` 离开 orchestrator 时：
+
+- `delegationChain.delete(id)` 删除该 Agent 作为源头的条目。
+- 遍历所有 chain value 的 `Set<string>`，从中移除该 Agent 的下游引用。
+
+`dispose()` 调用 `delegationChain.clear()`。
+
+### 局限
+
+- 检测只覆盖 **同一 orchestrator 实例** 内的委派。跨 orchestrator / 跨进程的分布式委派需要调用方自行维护去重标记。
+- `delegatedFrom` 是 metadata 约定，而非类型系统强制。忘记标注的委派不会被检测到——这是"opt-in cycle detection"。
+
 ## 与 Orchestrator 的组合
 
 三个原语与已有 Orchestrator 的典型组合方式：

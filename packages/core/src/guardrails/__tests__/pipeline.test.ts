@@ -805,4 +805,72 @@ describe('Issue 2: maxResults cap — results array stays bounded', () => {
     expect(result.results.length).toBe(1);
     expect(result.results[0].guardrail).toBe('g3');
   });
+
+  // ---- PERF-005: O(1) amortized eviction via maintained pointer ----
+
+  describe('PERF-005: bounded event buffer with tracked non-block pointer', () => {
+    it('evicts oldest non-block first, preserving block events in FIFO order', async () => {
+      // Interleave allow + block guards. When maxResults is reached, allow
+      // events should be evicted while block events remain. A block terminates
+      // the pipeline, so we need to build up the buffer via fail-open path.
+      const events: GuardrailEvent[] = [];
+      const pipeline = createPipeline({
+        input: [
+          { name: 'a1', guard: allowGuard },
+          { name: 'a2', guard: allowGuard },
+          { name: 'a3', guard: allowGuard },
+          { name: 'thrower', guard: throwGuard }, // fail-closed -> block
+        ],
+        maxResults: 2,
+        failClosed: true,
+        defaultTimeoutMs: 0,
+        onEvent: (e) => events.push(e),
+      });
+      const result = await runInput(pipeline, { content: 'hello' });
+
+      // Pipeline stopped on block; results.length <= maxResults
+      expect(result.results.length).toBeLessThanOrEqual(2);
+      // The block event MUST survive eviction
+      expect(result.results.some((e) => e.verdict.action === 'block')).toBe(true);
+      // onEvent was called for every event, independent of buffer size
+      expect(events.length).toBe(4);
+    });
+
+    it('stays under maxResults even with many allow events', async () => {
+      const guards = Array.from({ length: 200 }, (_, i) => ({
+        name: `g${i}`,
+        guard: allowGuard,
+      }));
+      const pipeline = createPipeline({
+        input: guards,
+        maxResults: 10,
+        defaultTimeoutMs: 0,
+      });
+      const result = await runInput(pipeline, { content: 'x' });
+      expect(result.results.length).toBeLessThanOrEqual(10);
+    });
+
+    it('handles buffer eviction quickly even at high maxResults (O(1) amortized pointer)', async () => {
+      // 10,000 allow guards with maxResults=1000 means ~9,000 evictions.
+      // The old findIndex-based pushEvent was O(maxResults) per eviction,
+      // i.e. ~9M comparisons. The new pointer is O(1) amortized and should
+      // complete in well under 1s even on slow CI.
+      const guards = Array.from({ length: 10_000 }, (_, i) => ({
+        name: `g${i}`,
+        guard: allowGuard,
+      }));
+      const pipeline = createPipeline({
+        input: guards,
+        maxResults: 1_000,
+        defaultTimeoutMs: 0,
+      });
+
+      const start = performance.now();
+      const result = await runInput(pipeline, { content: 'bench' });
+      const elapsed = performance.now() - start;
+
+      expect(result.results.length).toBe(1_000);
+      expect(elapsed).toBeLessThan(2_000);
+    });
+  });
 });

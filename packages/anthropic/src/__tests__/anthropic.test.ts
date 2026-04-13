@@ -680,28 +680,68 @@ describe('createAnthropicAdapter', () => {
       );
     });
 
-    it('handles finalMessage() throwing by breaking gracefully without crashing', async () => {
+    it('rethrows finalMessage() error as HarnessError with cause when no abort signal aborted (CQ-003)', async () => {
       const mockStream = createMockStream([
         { type: 'content_block_start', content_block: { type: 'text' } },
         { type: 'content_block_delta', delta: { type: 'text_delta', text: 'Hello' } },
       ]);
-      mockStream.finalMessage.mockRejectedValue(new Error('Stream aborted'));
+      const rootCause = new Error('Network broke');
+      mockStream.finalMessage.mockRejectedValue(rootCause);
       mock.mocks.stream.mockReturnValue(mockStream);
+
+      const adapter = createAnthropicAdapter({ client: mock.client });
+
+      async function drain(): Promise<unknown[]> {
+        const chunks: unknown[] = [];
+        for await (const chunk of adapter.stream!({
+          messages: [{ role: 'user', content: 'Hi' }],
+        })) {
+          chunks.push(chunk);
+        }
+        return chunks;
+      }
+
+      await expect(drain()).rejects.toBeInstanceOf(HarnessError);
+      try {
+        await drain();
+      } catch (err) {
+        expect(err).toBeInstanceOf(HarnessError);
+        expect((err as HarnessError).code).toBe('PROVIDER_ERROR');
+        // cause must be preserved so operators can trace the real failure
+        expect((err as HarnessError).cause).toBe(rootCause);
+      }
+    });
+
+    it('yields terminal zero-usage done chunk when signal was aborted (CQ-003)', async () => {
+      const mockStream = createMockStream([
+        { type: 'content_block_start', content_block: { type: 'text' } },
+        { type: 'content_block_delta', delta: { type: 'text_delta', text: 'Partial' } },
+      ]);
+      mockStream.finalMessage.mockRejectedValue(new Error('aborted by caller'));
+      mock.mocks.stream.mockReturnValue(mockStream);
+
+      const controller = new AbortController();
+      // Abort BEFORE we start consuming so the post-iteration check sees aborted=true.
+      controller.abort();
 
       const adapter = createAnthropicAdapter({ client: mock.client });
       const chunks: unknown[] = [];
       for await (const chunk of adapter.stream!({
         messages: [{ role: 'user', content: 'Hi' }],
+        signal: controller.signal,
       })) {
         chunks.push(chunk);
       }
 
-      // Should still have the text chunk but no done chunk (stream broke before done)
-      const textChunks = chunks.filter((c: unknown) => (c as StreamChunk).type === 'text_delta');
-      expect(textChunks).toHaveLength(1);
-      // No done event should be emitted since finalMessage threw and we break
       const doneChunks = chunks.filter((c: unknown) => (c as StreamChunk).type === 'done');
-      expect(doneChunks).toHaveLength(0);
+      expect(doneChunks).toHaveLength(1);
+      const done = doneChunks[0] as StreamChunk;
+      expect(done.usage).toEqual({
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      });
     });
 
     it('yields done chunk with usage from finalMessage', async () => {
@@ -728,6 +768,110 @@ describe('createAnthropicAdapter', () => {
       expect(doneChunk!.usage!.outputTokens).toBe(8);
       expect(doneChunk!.usage!.cacheReadTokens).toBe(5);
       expect(doneChunk!.usage!.cacheWriteTokens).toBe(2);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // SPEC-005 / SPEC-014: LLMConfig.extra must be forwarded to provider
+  // -------------------------------------------------------------------------
+  describe('LLMConfig.extra forwarding (SPEC-005)', () => {
+    it('forwards config.extra keys into chat() request body', async () => {
+      mock.mocks.create.mockResolvedValue({
+        content: [{ type: 'text', text: 'OK' }],
+        usage: { input_tokens: 5, output_tokens: 2 },
+      });
+
+      const adapter = createAnthropicAdapter({ client: mock.client });
+      await adapter.chat({
+        messages: [{ role: 'user', content: 'Hi' }],
+        config: { extra: { anthropicSpecific: 'v', metadata: { userId: 'u' } } },
+      });
+
+      const body = mock.mocks.create.mock.calls[0][0] as Record<string, unknown>;
+      expect(body.anthropicSpecific).toBe('v');
+      expect(body.metadata).toEqual({ userId: 'u' });
+    });
+
+    it('forwards config.extra keys into stream() request body', async () => {
+      function createMockStream(events: unknown[]) {
+        const asyncIter = {
+          async *[Symbol.asyncIterator]() {
+            for (const event of events) yield event;
+          },
+          finalMessage: vi.fn(),
+        };
+        return asyncIter;
+      }
+      const mockStream = createMockStream([]);
+      mockStream.finalMessage.mockResolvedValue({
+        usage: { input_tokens: 1, output_tokens: 1 },
+      });
+      mock.mocks.stream.mockReturnValue(mockStream);
+
+      const adapter = createAnthropicAdapter({ client: mock.client });
+      for await (const _c of adapter.stream!({
+        messages: [{ role: 'user', content: 'Hi' }],
+        config: { extra: { betaFeature: true } },
+      })) { /* consume */ }
+
+      const body = mock.mocks.stream.mock.calls[0][0] as Record<string, unknown>;
+      expect(body.betaFeature).toBe(true);
+    });
+
+    it('extra overrides conflicting base params (extra merged last)', async () => {
+      mock.mocks.create.mockResolvedValue({
+        content: [{ type: 'text', text: 'OK' }],
+        usage: { input_tokens: 5, output_tokens: 2 },
+      });
+
+      const adapter = createAnthropicAdapter({ client: mock.client });
+      await adapter.chat({
+        messages: [{ role: 'user', content: 'Hi' }],
+        config: {
+          temperature: 0.2,
+          extra: { temperature: 0.99 },
+        },
+      });
+
+      const body = mock.mocks.create.mock.calls[0][0] as Record<string, unknown>;
+      expect(body.temperature).toBe(0.99);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // CQ-027: logger injection routes warnings away from console.warn
+  // -------------------------------------------------------------------------
+  describe('logger config (CQ-027)', () => {
+    it('routes tool_use malformed JSON warning through custom logger', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const fakeLogger = { warn: vi.fn(), error: vi.fn() };
+
+      mock.mocks.create.mockResolvedValue({
+        content: [{ type: 'text', text: 'OK' }],
+        usage: { input_tokens: 1, output_tokens: 1 },
+      });
+
+      const adapter = createAnthropicAdapter({ client: mock.client, logger: fakeLogger });
+      await adapter.chat({
+        messages: [
+          { role: 'user', content: 'hi' },
+          {
+            role: 'assistant',
+            content: '',
+            toolCalls: [{ id: 'tc-1', name: 'search', arguments: 'not json' }],
+          },
+        ],
+      });
+
+      expect(fakeLogger.warn).toHaveBeenCalledWith(
+        expect.stringContaining('not valid JSON'),
+      );
+      // console.warn should NOT be called when logger is injected
+      const consoleMatches = warnSpy.mock.calls.filter((args) =>
+        typeof args[0] === 'string' && args[0].includes('not valid JSON'),
+      );
+      expect(consoleMatches.length).toBe(0);
+      warnSpy.mockRestore();
     });
   });
 });

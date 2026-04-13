@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
-import { createCostTracker, KahanSum } from '../cost-tracker.js';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { createCostTracker, KahanSum, OVERFLOW_BUCKET_KEY } from '../cost-tracker.js';
 import type { CostAlert } from '../types.js';
 
 describe('createCostTracker', () => {
@@ -949,13 +949,23 @@ describe('createCostTracker', () => {
     });
   });
 
-  // RES-01: modelTotals and traceTotals bounded by maxModels/maxTraces
-  describe('bounded maps (maxModels / maxTraces)', () => {
-    it('evicts oldest model when modelTotals exceeds maxModels', () => {
+  // SEC-009: modelTotals and traceTotals never evict — overflow bucket keeps
+  // late-arriving unknown keys without letting junk keys wipe legitimate totals.
+  describe('bounded maps (overflow bucket, SEC-009)', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    afterEach(() => {
+      warnSpy.mockClear();
+    });
+
+    it('aggregates new models under OVERFLOW_BUCKET_KEY without evicting existing entries', () => {
       const models = Array.from({ length: 5 }, (_, i) => ({
         model: `m${i}`, inputPer1kTokens: 1.0, outputPer1kTokens: 0,
       }));
-      const tracker = createCostTracker({ pricing: models, maxModels: 3 });
+      const tracker = createCostTracker({
+        pricing: models,
+        maxModels: 3,
+        warnUnpricedModels: false,
+      });
 
       // Record usage for 5 different models -- maxModels is 3
       for (let i = 0; i < 5; i++) {
@@ -963,26 +973,111 @@ describe('createCostTracker', () => {
       }
 
       const byModel = tracker.getCostByModel();
-      // Only 3 models should be tracked (m2, m3, m4 after LRU eviction)
-      expect(Object.keys(byModel).length).toBeLessThanOrEqual(3);
+      // The first three models must still be present — SEC-009 forbids eviction
+      // by caller keys.
+      expect(byModel['m0']).toBeCloseTo(1.0, 6);
+      expect(byModel['m1']).toBeCloseTo(1.0, 6);
+      expect(byModel['m2']).toBeCloseTo(1.0, 6);
+      // Later models aggregate into the overflow bucket.
+      expect(byModel[OVERFLOW_BUCKET_KEY]).toBeCloseTo(2.0, 6);
+      // Overflowed keys are NOT queryable individually.
+      expect(byModel['m3']).toBeUndefined();
+      expect(byModel['m4']).toBeUndefined();
     });
 
-    it('evicts oldest trace when traceTotals exceeds maxTraces', () => {
+    it('aggregates new traces under OVERFLOW_BUCKET_KEY without evicting existing entries', () => {
       const tracker = createCostTracker({
         pricing: [{ model: 'a', inputPer1kTokens: 1.0, outputPer1kTokens: 0 }],
         maxTraces: 3,
       });
 
-      // Record usage for 5 different traces -- maxTraces is 3
       for (let i = 0; i < 5; i++) {
         tracker.recordUsage({ traceId: `t${i}`, model: 'a', inputTokens: 1000, outputTokens: 0 });
       }
 
-      // Earliest traces should have been evicted
-      expect(tracker.getCostByTrace('t0')).toBe(0);
-      expect(tracker.getCostByTrace('t1')).toBe(0);
-      // Recent traces should still be tracked
-      expect(tracker.getCostByTrace('t4')).toBeCloseTo(1.0, 2);
+      // Early traces must remain — they are NOT evictable.
+      expect(tracker.getCostByTrace('t0')).toBeCloseTo(1.0, 6);
+      expect(tracker.getCostByTrace('t1')).toBeCloseTo(1.0, 6);
+      expect(tracker.getCostByTrace('t2')).toBeCloseTo(1.0, 6);
+      // t3, t4 are bucketed under __overflow__ and not individually retrievable.
+      expect(tracker.getCostByTrace('t3')).toBe(0);
+      expect(tracker.getCostByTrace('t4')).toBe(0);
+      expect(tracker.getCostByTrace(OVERFLOW_BUCKET_KEY)).toBeCloseTo(2.0, 6);
+    });
+
+    it('invokes onOverflow callback when overflow activates', () => {
+      const onOverflow = vi.fn();
+      const tracker = createCostTracker({
+        pricing: [{ model: 'base', inputPer1kTokens: 1.0, outputPer1kTokens: 0 }],
+        maxModels: 1,
+        maxTraces: 1,
+        warnUnpricedModels: false,
+        onOverflow,
+      });
+
+      tracker.recordUsage({ traceId: 't-a', model: 'base', inputTokens: 1000, outputTokens: 0 });
+      // Second model triggers model overflow, but traceId reuses 't-a' so no trace overflow yet.
+      tracker.recordUsage({ traceId: 't-a', model: 'second', inputTokens: 1000, outputTokens: 0 });
+      // Second trace triggers trace overflow.
+      tracker.recordUsage({ traceId: 't-b', model: 'base', inputTokens: 1000, outputTokens: 0 });
+
+      expect(onOverflow).toHaveBeenCalled();
+      const kinds = onOverflow.mock.calls.map((c) => c[0].kind);
+      expect(kinds).toContain('model');
+      expect(kinds).toContain('trace');
+    });
+
+    it('throttles overflow warnings to at most once per minute per kind', () => {
+      const onOverflow = vi.fn();
+      const tracker = createCostTracker({
+        pricing: [{ model: 'base', inputPer1kTokens: 1.0, outputPer1kTokens: 0 }],
+        maxModels: 1,
+        warnUnpricedModels: false,
+        onOverflow,
+      });
+      tracker.recordUsage({ traceId: 't', model: 'base', inputTokens: 1000, outputTokens: 0 });
+
+      // Hammer the overflow path many times with distinct new model keys.
+      for (let i = 0; i < 100; i++) {
+        tracker.recordUsage({ traceId: 't', model: `flood-${i}`, inputTokens: 1000, outputTokens: 0 });
+      }
+
+      const modelOverflows = onOverflow.mock.calls.filter((c) => c[0].kind === 'model');
+      expect(modelOverflows.length).toBe(1); // throttled to once
+    });
+
+    it('falls back to console.warn when onOverflow is not provided', () => {
+      const tracker = createCostTracker({
+        pricing: [{ model: 'base', inputPer1kTokens: 1.0, outputPer1kTokens: 0 }],
+        maxModels: 1,
+        warnUnpricedModels: false,
+      });
+      tracker.recordUsage({ traceId: 't', model: 'base', inputTokens: 1000, outputTokens: 0 });
+      tracker.recordUsage({ traceId: 't', model: 'second', inputTokens: 1000, outputTokens: 0 });
+
+      expect(warnSpy).toHaveBeenCalled();
+      expect(
+        warnSpy.mock.calls.some((c) => typeof c[0] === 'string' && c[0].includes('__overflow__')),
+      ).toBe(true);
+    });
+  });
+
+  // CQ-009: getCostByModel/getCostByTrace cumulative, getTotalCost recent-window
+  describe('getter semantics (CQ-009)', () => {
+    it('getCostByModel stays cumulative even after records buffer eviction', () => {
+      const tracker = createCostTracker({
+        pricing: [{ model: 'c3', inputPer1kTokens: 1.0, outputPer1kTokens: 0 }],
+        maxRecords: 2,
+        warnUnpricedModels: false,
+      });
+      tracker.recordUsage({ traceId: 't1', model: 'c3', inputTokens: 1000, outputTokens: 0 });
+      tracker.recordUsage({ traceId: 't2', model: 'c3', inputTokens: 1000, outputTokens: 0 });
+      tracker.recordUsage({ traceId: 't3', model: 'c3', inputTokens: 1000, outputTokens: 0 });
+
+      // 3 records * 1.0 = 3.0 cumulative, even though buffer evicted the oldest.
+      expect(tracker.getCostByModel()['c3']).toBeCloseTo(3.0, 6);
+      // Recent window dropped the oldest record.
+      expect(tracker.getTotalCost()).toBeCloseTo(2.0, 6);
     });
   });
 });

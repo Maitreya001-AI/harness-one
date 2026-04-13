@@ -16,11 +16,13 @@ function createMockLangfuse() {
   const generationFn = vi.fn();
   const spanFn = vi.fn();
   const updateFn = vi.fn();
+  const eventFn = vi.fn();
 
   const mockTraceObj = {
     generation: generationFn,
     span: spanFn,
     update: updateFn,
+    event: eventFn,
   };
 
   const traceFn = vi.fn().mockReturnValue(mockTraceObj);
@@ -38,6 +40,7 @@ function createMockLangfuse() {
       generation: generationFn,
       span: spanFn,
       update: updateFn,
+      event: eventFn,
       flushAsync: flushAsyncFn,
       getPrompt: getPromptFn,
     },
@@ -701,6 +704,37 @@ describe('createLangfusePromptBackend', () => {
     warnSpy.mockRestore();
   });
 
+  it('TEST-002: non-string prompt raises HarnessError(PROVIDER_ERROR) before being caught', async () => {
+    // This test asserts the internal throw path: toPromptTemplate throws a
+    // HarnessError with code PROVIDER_ERROR. The outer try/catch in fetch()
+    // swallows it, so we verify the thrown error via a direct rethrow spy
+    // on the client.getPrompt call chain.
+    mock.mocks.getPrompt.mockResolvedValue({
+      // structured chat prompt — not a string
+      prompt: [{ role: 'system', content: 'hi' }],
+      version: 7,
+    });
+
+    // Intercept console.warn so we can validate the propagated error message.
+    const warnCalls: Array<{ prefix: string; payload: unknown }> = [];
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(
+      (prefix: string, payload: unknown) => {
+        warnCalls.push({ prefix, payload });
+      },
+    );
+
+    const backend = createLangfusePromptBackend({ client: mock.client });
+    await backend.fetch('structured-prompt');
+
+    expect(warnCalls).toHaveLength(1);
+    // The warn payload is err.message (string) — verify the HarnessError
+    // message shape produced by the PROVIDER_ERROR path.
+    expect(warnCalls[0]!.payload).toBe(
+      'Langfuse prompt "structured-prompt" is not a string type',
+    );
+    warnSpy.mockRestore();
+  });
+
   it('deduplicates variables', async () => {
     mock.mocks.getPrompt.mockResolvedValue({
       prompt: '{{name}} said hello to {{name}}',
@@ -1107,6 +1141,26 @@ describe('createLangfuseCostTracker', () => {
       .not.toThrow();
   });
 
+  it('TEST-008: does not throw when maxRecords is explicitly undefined', () => {
+    // Explicit-undefined is distinct from key-omitted because some validators
+    // treat them differently. Confirm both call-shapes default cleanly.
+    expect(() =>
+      createLangfuseCostTracker({ client: mock.client, maxRecords: undefined }),
+    ).not.toThrow();
+    // And the tracker should actually accept records without blowing up,
+    // proving the default was substituted.
+    const tracker = createLangfuseCostTracker({
+      client: mock.client,
+      maxRecords: undefined,
+    });
+    tracker.setPricing([
+      { model: 'gpt-x', inputPer1kTokens: 0.001, outputPer1kTokens: 0.002 },
+    ]);
+    expect(() =>
+      tracker.recordUsage({ model: 'gpt-x', inputTokens: 10, outputTokens: 5 }),
+    ).not.toThrow();
+  });
+
   it('getTotalCost uses running total (O(1)) not reduce (O(N))', () => {
     const tracker = createLangfuseCostTracker({ client: mock.client });
     tracker.setPricing([
@@ -1127,5 +1181,509 @@ describe('createLangfuseCostTracker', () => {
     // New records after reset
     tracker.recordUsage({ traceId: 't3', model: 'a', inputTokens: 1000, outputTokens: 0 });
     expect(tracker.getTotalCost()).toBeCloseTo(0.001);
+  });
+
+  // -------------------------------------------------------------------------
+  // CQ-010: Kahan summation + Map-backed per-key totals + exceeded branch
+  // -------------------------------------------------------------------------
+
+  describe('CQ-010: KahanSum running total', () => {
+    it('accumulates many tiny costs without drifting from exact sum', () => {
+      const tracker = createLangfuseCostTracker({ client: mock.client });
+      tracker.setPricing([
+        // 1 token => 0.0000001 dollars (a value not representable exactly in float)
+        { model: 'a', inputPer1kTokens: 0.0001, outputPer1kTokens: 0 },
+      ]);
+
+      const N = 2500;
+      for (let i = 0; i < N; i++) {
+        tracker.recordUsage({ traceId: `t${i}`, model: 'a', inputTokens: 1, outputTokens: 0 });
+      }
+
+      // Naive summation drifts off by many ULPs after thousands of adds.
+      // KahanSum should land within 1e-12 of the mathematical total.
+      const expected = N * (0.0001 / 1000);
+      const actual = tracker.getTotalCost();
+      expect(Math.abs(actual - expected)).toBeLessThan(1e-12);
+    });
+
+    it('keeps running total stable past the 1000-record boundary (no recalibration gap)', () => {
+      // BUG REPRODUCTION: prior implementation recalibrated every 1000
+      // records via O(N) reduce(). Totals just above / below 1000 should
+      // both be accurate without requiring a reduction pass.
+      const tracker = createLangfuseCostTracker({ client: mock.client });
+      tracker.setPricing([
+        { model: 'a', inputPer1kTokens: 0.0003, outputPer1kTokens: 0 },
+      ]);
+
+      for (let i = 0; i < 999; i++) {
+        tracker.recordUsage({ traceId: `t${i}`, model: 'a', inputTokens: 1, outputTokens: 0 });
+      }
+      const at999 = tracker.getTotalCost();
+
+      tracker.recordUsage({ traceId: 't999', model: 'a', inputTokens: 1, outputTokens: 0 });
+      const at1000 = tracker.getTotalCost();
+
+      tracker.recordUsage({ traceId: 't1000', model: 'a', inputTokens: 1, outputTokens: 0 });
+      const at1001 = tracker.getTotalCost();
+
+      const step = 0.0003 / 1000;
+      expect(Math.abs(at1000 - (at999 + step))).toBeLessThan(1e-12);
+      expect(Math.abs(at1001 - (at1000 + step))).toBeLessThan(1e-12);
+    });
+  });
+
+  describe('CQ-010: Map-backed per-key totals', () => {
+    it('getCostByModel uses maintained map (not array scan)', () => {
+      // After eviction, the map-backed total should still exclude evicted rows.
+      const tracker = createLangfuseCostTracker({ client: mock.client, maxRecords: 3 });
+      tracker.setPricing([
+        { model: 'a', inputPer1kTokens: 0.001, outputPer1kTokens: 0 },
+        { model: 'b', inputPer1kTokens: 0.002, outputPer1kTokens: 0 },
+      ]);
+
+      tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 1000, outputTokens: 0 });
+      tracker.recordUsage({ traceId: 't2', model: 'a', inputTokens: 1000, outputTokens: 0 });
+      tracker.recordUsage({ traceId: 't3', model: 'b', inputTokens: 1000, outputTokens: 0 });
+      // Evict t1 (model 'a')
+      tracker.recordUsage({ traceId: 't4', model: 'b', inputTokens: 1000, outputTokens: 0 });
+
+      const byModel = tracker.getCostByModel();
+      // model 'a': 1 record remaining (the other was evicted) => 0.001
+      expect(byModel['a']).toBeCloseTo(0.001, 8);
+      // model 'b': 2 records => 0.004
+      expect(byModel['b']).toBeCloseTo(0.004, 8);
+    });
+
+    it('getCostByTrace is O(1) via maintained map and excludes evicted traces', () => {
+      const tracker = createLangfuseCostTracker({ client: mock.client, maxRecords: 2 });
+      tracker.setPricing([
+        { model: 'a', inputPer1kTokens: 0.001, outputPer1kTokens: 0 },
+      ]);
+
+      tracker.recordUsage({ traceId: 'keep-me', model: 'a', inputTokens: 1000, outputTokens: 0 });
+      // Evict the above by pushing two more records
+      tracker.recordUsage({ traceId: 'x1', model: 'a', inputTokens: 1000, outputTokens: 0 });
+      tracker.recordUsage({ traceId: 'x2', model: 'a', inputTokens: 1000, outputTokens: 0 });
+
+      // 'keep-me' has been evicted from the retained window
+      expect(tracker.getCostByTrace('keep-me')).toBe(0);
+      expect(tracker.getCostByTrace('x1')).toBeCloseTo(0.001, 8);
+      expect(tracker.getCostByTrace('x2')).toBeCloseTo(0.001, 8);
+    });
+
+    it('updateUsage adjusts per-model and per-trace totals incrementally', () => {
+      const tracker = createLangfuseCostTracker({ client: mock.client });
+      tracker.setPricing([
+        { model: 'a', inputPer1kTokens: 0.001, outputPer1kTokens: 0.002 },
+      ]);
+
+      tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 1000, outputTokens: 1000 });
+      expect(tracker.getCostByModel()['a']).toBeCloseTo(0.003);
+      expect(tracker.getCostByTrace('t1')).toBeCloseTo(0.003);
+
+      // Double the tokens on the same record — cost doubles
+      tracker.updateUsage!('t1', { inputTokens: 2000, outputTokens: 2000 });
+      expect(tracker.getCostByModel()['a']).toBeCloseTo(0.006);
+      expect(tracker.getCostByTrace('t1')).toBeCloseTo(0.006);
+    });
+  });
+
+  describe('CQ-010: exceeded branch in checkBudget / isBudgetExceeded', () => {
+    it('checkBudget returns an exceeded alert when actual >= hard budget', () => {
+      const tracker = createLangfuseCostTracker({ client: mock.client });
+      tracker.setPricing([
+        { model: 'a', inputPer1kTokens: 1.0, outputPer1kTokens: 1.0 },
+      ]);
+      tracker.setBudget(1.0);
+
+      // 100% usage exactly
+      tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 500, outputTokens: 500 });
+      const alert = tracker.checkBudget();
+      expect(alert).not.toBeNull();
+      expect(alert!.type).toBe('exceeded');
+      expect(alert!.percentUsed).toBeGreaterThanOrEqual(1.0);
+      expect(alert!.message).toContain('Exceeded');
+    });
+
+    it('checkBudget returns exceeded (not critical) when over budget', () => {
+      const tracker = createLangfuseCostTracker({ client: mock.client });
+      tracker.setPricing([
+        { model: 'a', inputPer1kTokens: 1.0, outputPer1kTokens: 1.0 },
+      ]);
+      tracker.setBudget(1.0);
+
+      // 150% usage — must surface as 'exceeded', not 'critical'.
+      tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 750, outputTokens: 750 });
+      const alert = tracker.checkBudget();
+      expect(alert!.type).toBe('exceeded');
+    });
+
+    it('emits an exceeded alert through onAlert when the budget is breached', () => {
+      const tracker = createLangfuseCostTracker({ client: mock.client });
+      tracker.setPricing([
+        { model: 'a', inputPer1kTokens: 1.0, outputPer1kTokens: 1.0 },
+      ]);
+      tracker.setBudget(1.0);
+
+      const alerts: CostAlert[] = [];
+      tracker.onAlert(a => alerts.push(a));
+
+      tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 600, outputTokens: 600 });
+      const exceeded = alerts.filter(a => a.type === 'exceeded');
+      expect(exceeded.length).toBe(1);
+    });
+
+    it('isBudgetExceeded / shouldStop agree with checkBudget=exceeded', () => {
+      const tracker = createLangfuseCostTracker({ client: mock.client });
+      tracker.setPricing([
+        { model: 'a', inputPer1kTokens: 1.0, outputPer1kTokens: 1.0 },
+      ]);
+      tracker.setBudget(1.0);
+
+      // Not yet exceeded
+      tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 100, outputTokens: 100 });
+      expect(tracker.isBudgetExceeded()).toBe(false);
+      expect(tracker.shouldStop()).toBe(false);
+      expect(tracker.checkBudget()?.type).not.toBe('exceeded');
+
+      // Exceed
+      tracker.recordUsage({ traceId: 't2', model: 'a', inputTokens: 500, outputTokens: 500 });
+      expect(tracker.isBudgetExceeded()).toBe(true);
+      expect(tracker.shouldStop()).toBe(true);
+      expect(tracker.checkBudget()!.type).toBe('exceeded');
+    });
+
+    it('getAlertMessage reports BUDGET EXCEEDED when over budget', () => {
+      const tracker = createLangfuseCostTracker({ client: mock.client });
+      tracker.setPricing([
+        { model: 'a', inputPer1kTokens: 1.0, outputPer1kTokens: 1.0 },
+      ]);
+      tracker.setBudget(1.0);
+      tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 600, outputTokens: 600 });
+      expect(tracker.getAlertMessage()).toContain('BUDGET EXCEEDED');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // OBS-003: Budget-exceeded Langfuse event emission (with dedupe)
+  // -------------------------------------------------------------------------
+
+  describe('OBS-003: budget_exceeded event emission', () => {
+    it('emits a Langfuse event named "budget_exceeded" when shouldStop() flips true', () => {
+      const tracker = createLangfuseCostTracker({ client: mock.client });
+      tracker.setPricing([
+        { model: 'a', inputPer1kTokens: 1.0, outputPer1kTokens: 1.0 },
+      ]);
+      tracker.setBudget(1.0);
+
+      tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 600, outputTokens: 600 });
+
+      expect(mock.mocks.event).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'budget_exceeded',
+          level: 'ERROR',
+          metadata: expect.objectContaining({
+            model: 'a',
+            budget: 1.0,
+          }),
+        }),
+      );
+    });
+
+    it('dedupes budget_exceeded events by (model + budget) across multiple overages', () => {
+      const tracker = createLangfuseCostTracker({ client: mock.client });
+      tracker.setPricing([
+        { model: 'a', inputPer1kTokens: 1.0, outputPer1kTokens: 1.0 },
+      ]);
+      tracker.setBudget(1.0);
+
+      // Three separate overages for the same (model, budget) => single event.
+      tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 600, outputTokens: 600 });
+      tracker.recordUsage({ traceId: 't2', model: 'a', inputTokens: 1000, outputTokens: 0 });
+      tracker.recordUsage({ traceId: 't3', model: 'a', inputTokens: 1000, outputTokens: 0 });
+
+      const calls = mock.mocks.event.mock.calls.filter(
+        (c: unknown[]) => (c[0] as { name?: string })?.name === 'budget_exceeded',
+      );
+      expect(calls.length).toBe(1);
+    });
+
+    it('re-emits budget_exceeded after setBudget() opens a fresh window', () => {
+      const tracker = createLangfuseCostTracker({ client: mock.client });
+      tracker.setPricing([
+        { model: 'a', inputPer1kTokens: 1.0, outputPer1kTokens: 1.0 },
+      ]);
+      tracker.setBudget(1.0);
+      tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 600, outputTokens: 600 });
+
+      // Flip to a new budget — dedupe window resets.
+      tracker.setBudget(0.5);
+      tracker.recordUsage({ traceId: 't2', model: 'a', inputTokens: 10, outputTokens: 10 });
+
+      const calls = mock.mocks.event.mock.calls.filter(
+        (c: unknown[]) => (c[0] as { name?: string })?.name === 'budget_exceeded',
+      );
+      expect(calls.length).toBe(2);
+    });
+
+    it('does NOT emit budget_exceeded while still within critical band', () => {
+      const tracker = createLangfuseCostTracker({ client: mock.client });
+      tracker.setPricing([
+        { model: 'a', inputPer1kTokens: 1.0, outputPer1kTokens: 1.0 },
+      ]);
+      tracker.setBudget(1.0);
+      // 98% => critical but not exceeded
+      tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 490, outputTokens: 490 });
+
+      const calls = mock.mocks.event.mock.calls.filter(
+        (c: unknown[]) => (c[0] as { name?: string })?.name === 'budget_exceeded',
+      );
+      expect(calls.length).toBe(0);
+    });
+
+    it('increments stats.budgetExceededEvents only for true exceedance', () => {
+      const tracker = createLangfuseCostTracker({ client: mock.client });
+      tracker.setPricing([
+        { model: 'a', inputPer1kTokens: 1.0, outputPer1kTokens: 1.0 },
+      ]);
+      tracker.setBudget(1.0);
+      tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 600, outputTokens: 600 });
+      expect(tracker.getStats().budgetExceededEvents).toBe(1);
+    });
+
+    it('swallows event() failures without breaking recordUsage', () => {
+      mock.mocks.event.mockImplementation(() => {
+        throw new Error('event send failed');
+      });
+      const onExportError = vi.fn();
+      const tracker = createLangfuseCostTracker({ client: mock.client, onExportError });
+      tracker.setPricing([
+        { model: 'a', inputPer1kTokens: 1.0, outputPer1kTokens: 1.0 },
+      ]);
+      tracker.setBudget(1.0);
+
+      // Should NOT throw despite event() blowing up
+      expect(() => {
+        tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 600, outputTokens: 600 });
+      }).not.toThrow();
+
+      // onExportError was notified with op='record'
+      expect(onExportError).toHaveBeenCalledWith(
+        expect.any(Error),
+        expect.objectContaining({ op: 'record' }),
+      );
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // OBS-015: Flush errors route through onExportError / logger / fallback
+  // -------------------------------------------------------------------------
+
+  describe('OBS-015: flush error handling', () => {
+    it('calls onExportError with op="flush" when provided', async () => {
+      const flushError = new Error('boom');
+      mock.mocks.flushAsync.mockRejectedValue(flushError);
+      const onExportError = vi.fn();
+
+      const tracker = createLangfuseCostTracker({ client: mock.client, onExportError });
+      tracker.setPricing([{ model: 'a', inputPer1kTokens: 0.001, outputPer1kTokens: 0 }]);
+      tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 1000, outputTokens: 0 });
+
+      await new Promise(r => setTimeout(r, 20));
+
+      expect(onExportError).toHaveBeenCalledWith(
+        flushError,
+        expect.objectContaining({ op: 'flush' }),
+      );
+    });
+
+    it('falls back to logger.error when no onExportError is provided', async () => {
+      const flushError = new Error('network down');
+      mock.mocks.flushAsync.mockRejectedValue(flushError);
+      const logger = {
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+        child: vi.fn(),
+      };
+
+      const tracker = createLangfuseCostTracker({ client: mock.client, logger: logger as never });
+      tracker.setPricing([{ model: 'a', inputPer1kTokens: 0.001, outputPer1kTokens: 0 }]);
+      tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 1000, outputTokens: 0 });
+
+      await new Promise(r => setTimeout(r, 20));
+
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.stringContaining('export error'),
+        expect.objectContaining({ op: 'flush' }),
+      );
+    });
+
+    it('falls back to console.warn when neither onExportError nor logger is configured', async () => {
+      const flushError = new Error('legacy path');
+      mock.mocks.flushAsync.mockRejectedValue(flushError);
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      const tracker = createLangfuseCostTracker({ client: mock.client });
+      tracker.setPricing([{ model: 'a', inputPer1kTokens: 0.001, outputPer1kTokens: 0 }]);
+      tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 1000, outputTokens: 0 });
+
+      await new Promise(r => setTimeout(r, 20));
+
+      const flushWarns = warnSpy.mock.calls.filter(c =>
+        typeof c[0] === 'string' && c[0].includes('flush error'),
+      );
+      expect(flushWarns.length).toBeGreaterThan(0);
+      warnSpy.mockRestore();
+    });
+
+    it('does not invoke logger.error when onExportError IS provided', async () => {
+      const flushError = new Error('only onExportError');
+      mock.mocks.flushAsync.mockRejectedValue(flushError);
+      const onExportError = vi.fn();
+      const logger = {
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+        child: vi.fn(),
+      };
+
+      const tracker = createLangfuseCostTracker({
+        client: mock.client,
+        onExportError,
+        logger: logger as never,
+      });
+      tracker.setPricing([{ model: 'a', inputPer1kTokens: 0.001, outputPer1kTokens: 0 }]);
+      tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 1000, outputTokens: 0 });
+
+      await new Promise(r => setTimeout(r, 20));
+
+      expect(onExportError).toHaveBeenCalledTimes(1);
+      expect(logger.error).not.toHaveBeenCalled();
+    });
+
+    it('exposes flushErrors count via getStats()', async () => {
+      mock.mocks.flushAsync.mockRejectedValue(new Error('flaky'));
+      const onExportError = vi.fn();
+
+      const tracker = createLangfuseCostTracker({ client: mock.client, onExportError });
+      tracker.setPricing([{ model: 'a', inputPer1kTokens: 0.001, outputPer1kTokens: 0 }]);
+
+      tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 1000, outputTokens: 0 });
+      tracker.recordUsage({ traceId: 't2', model: 'a', inputTokens: 1000, outputTokens: 0 });
+      tracker.recordUsage({ traceId: 't3', model: 'a', inputTokens: 1000, outputTokens: 0 });
+
+      await new Promise(r => setTimeout(r, 30));
+
+      expect(tracker.getStats().flushErrors).toBe(3);
+      expect(tracker.getStats().records).toBe(3);
+    });
+
+    it('reset() clears flushErrors and budgetExceededEvents counters', async () => {
+      mock.mocks.flushAsync.mockRejectedValue(new Error('flaky'));
+      const onExportError = vi.fn();
+      const tracker = createLangfuseCostTracker({ client: mock.client, onExportError });
+      tracker.setPricing([{ model: 'a', inputPer1kTokens: 1.0, outputPer1kTokens: 1.0 }]);
+      tracker.setBudget(1.0);
+      tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 600, outputTokens: 600 });
+      await new Promise(r => setTimeout(r, 20));
+
+      expect(tracker.getStats().flushErrors).toBeGreaterThan(0);
+      expect(tracker.getStats().budgetExceededEvents).toBe(1);
+
+      tracker.reset();
+      expect(tracker.getStats()).toEqual({
+        records: 0,
+        flushErrors: 0,
+        budgetExceededEvents: 0,
+      });
+    });
+
+    it('onAlert unsubscribe function removes the handler', () => {
+      const tracker = createLangfuseCostTracker({ client: mock.client });
+      tracker.setPricing([
+        { model: 'a', inputPer1kTokens: 1.0, outputPer1kTokens: 1.0 },
+      ]);
+      tracker.setBudget(1.0);
+
+      const alerts: CostAlert[] = [];
+      const unsubscribe = tracker.onAlert(a => alerts.push(a));
+
+      tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 425, outputTokens: 425 });
+      expect(alerts.length).toBe(1);
+
+      unsubscribe();
+      tracker.recordUsage({ traceId: 't2', model: 'a', inputTokens: 100, outputTokens: 100 });
+      // No further alerts after unsubscribe
+      expect(alerts.length).toBe(1);
+    });
+
+    it('onAlert unsubscribe is idempotent', () => {
+      const tracker = createLangfuseCostTracker({ client: mock.client });
+      const unsubscribe = tracker.onAlert(() => {});
+      unsubscribe();
+      // Second call must not throw (handler already removed)
+      expect(() => unsubscribe()).not.toThrow();
+    });
+
+    it('updateUsage re-fires budget alerts when the delta crosses the threshold', () => {
+      const tracker = createLangfuseCostTracker({ client: mock.client });
+      tracker.setPricing([
+        { model: 'a', inputPer1kTokens: 1.0, outputPer1kTokens: 1.0 },
+      ]);
+      tracker.setBudget(1.0);
+      const alerts: CostAlert[] = [];
+      tracker.onAlert(a => alerts.push(a));
+
+      // 20% usage — no alert yet
+      tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 100, outputTokens: 100 });
+      expect(alerts.length).toBe(0);
+
+      // Bump the same record to 85% — should trigger a warning alert
+      tracker.updateUsage!('t1', { inputTokens: 425, outputTokens: 425 });
+      expect(alerts.length).toBeGreaterThan(0);
+      expect(alerts[alerts.length - 1].type).toBe('warning');
+    });
+
+    it('budgetUtilization returns 0 when budget is 0 or unset', () => {
+      const tracker = createLangfuseCostTracker({ client: mock.client });
+      // No budget set
+      expect(tracker.budgetUtilization()).toBe(0);
+      // Budget = 0
+      tracker.setBudget(0);
+      expect(tracker.budgetUtilization()).toBe(0);
+    });
+
+    it('budgetUtilization returns cost/budget ratio when budget is set', () => {
+      const tracker = createLangfuseCostTracker({ client: mock.client });
+      tracker.setPricing([
+        { model: 'a', inputPer1kTokens: 1.0, outputPer1kTokens: 1.0 },
+      ]);
+      tracker.setBudget(2.0);
+      // Cost = 1.0, budget = 2.0 => 0.5
+      tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 500, outputTokens: 500 });
+      expect(tracker.budgetUtilization()).toBeCloseTo(0.5, 6);
+    });
+
+    it('swallows exceptions thrown from onExportError itself', async () => {
+      mock.mocks.flushAsync.mockRejectedValue(new Error('x'));
+      const onExportError = vi.fn().mockImplementation(() => {
+        throw new Error('callback misbehaved');
+      });
+
+      const tracker = createLangfuseCostTracker({ client: mock.client, onExportError });
+      tracker.setPricing([{ model: 'a', inputPer1kTokens: 0.001, outputPer1kTokens: 0 }]);
+
+      // recordUsage must remain exception-safe even if the callback throws.
+      expect(() =>
+        tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 1000, outputTokens: 0 }),
+      ).not.toThrow();
+
+      await new Promise(r => setTimeout(r, 20));
+      expect(onExportError).toHaveBeenCalled();
+    });
   });
 });

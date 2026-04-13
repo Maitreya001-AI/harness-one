@@ -9,8 +9,9 @@
 import type { Langfuse } from 'langfuse';
 import type { TraceExporter, Trace, Span } from 'harness-one/observe';
 import type { PromptBackend, PromptTemplate } from 'harness-one/prompt';
-import type { CostTracker, ModelPricing } from 'harness-one/observe';
+import type { CostTracker, ModelPricing, Logger } from 'harness-one/observe';
 import type { TokenUsageRecord, CostAlert } from 'harness-one/observe';
+import { KahanSum } from 'harness-one/observe';
 import { HarnessError } from 'harness-one/core';
 
 // ---------------------------------------------------------------------------
@@ -260,6 +261,43 @@ export interface LangfuseCostTrackerConfig {
   readonly criticalThreshold?: number;
   /** Maximum number of usage records to retain. Defaults to 10000. */
   readonly maxRecords?: number;
+  /**
+   * OBS-015: Optional hook invoked when the Langfuse client fails to export
+   * (e.g., flushAsync rejects). When omitted, errors are routed to
+   * `logger.error` (if provided) or `console.warn` as a last resort.
+   */
+  readonly onExportError?: (
+    err: unknown,
+    context: { op: 'flush' | 'record'; details?: unknown },
+  ) => void;
+  /**
+   * OBS-015: Optional structured logger. When `onExportError` is not set,
+   * export errors are reported via `logger.error`. Falls back to
+   * `console.warn` when neither is configured.
+   */
+  readonly logger?: Logger;
+}
+
+/**
+ * Runtime statistics for the Langfuse cost tracker. Exposed via
+ * `getStats()` so operators can monitor export health.
+ */
+export interface LangfuseCostTrackerStats {
+  /** Number of usage records currently retained (after eviction). */
+  readonly records: number;
+  /** Count of flush errors observed since tracker creation / last reset. */
+  readonly flushErrors: number;
+  /** Count of `budget_exceeded` Langfuse events emitted. */
+  readonly budgetExceededEvents: number;
+}
+
+/**
+ * Cost tracker shape returned by `createLangfuseCostTracker`. Extends the
+ * core `CostTracker` contract with Langfuse-specific instrumentation.
+ */
+export interface LangfuseCostTracker extends CostTracker {
+  /** Export-health counters. */
+  getStats(): LangfuseCostTrackerStats;
 }
 
 /**
@@ -268,8 +306,8 @@ export interface LangfuseCostTrackerConfig {
  * Each usage record is exported as a Langfuse generation with cost metadata,
  * while also tracking totals locally for budget alerts.
  */
-export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): CostTracker {
-  const { client } = config;
+export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): LangfuseCostTracker {
+  const { client, onExportError, logger } = config;
   const maxRecords = config.maxRecords ?? 10_000;
   if (config.maxRecords !== undefined && config.maxRecords < 1) {
     throw new HarnessError('maxRecords must be >= 1', 'INVALID_CONFIG', 'Provide a positive maxRecords value');
@@ -278,13 +316,56 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): Co
   const records: TokenUsageRecord[] = [];
   const alertHandlers: ((alert: CostAlert) => void)[] = [];
   let budget: number | undefined;
-  let runningTotal = 0;
-  const RECALIBRATE_INTERVAL = 1000;
-  let recordsSinceRecalibrate = 0;
+
+  // CQ-010(a): Compensated floating-point accumulation replaces the naive
+  // running total plus the 1000-record recalibration workaround. KahanSum
+  // keeps drift bounded without periodic O(N) reduce passes.
+  const runningSum = new KahanSum();
+
+  // CQ-010(b): Maintain per-model and per-trace totals incrementally. This
+  // turns `getCostByModel` / `getCostByTrace` from O(N) array scans into
+  // O(1) / O(k) lookups that scale with distinct keys, not total records.
+  const modelTotals = new Map<string, KahanSum>();
+  const traceTotals = new Map<string, KahanSum>();
+
   const warningThreshold = config.warningThreshold ?? 0.8;
   const criticalThreshold = config.criticalThreshold ?? 0.95;
 
   const warnedModels = new Set<string>();
+
+  // OBS-003: Dedupe `budget_exceeded` event emission per (model + budget).
+  // Keys are re-seeded on `setBudget` so a new budget produces a fresh
+  // window of events, and fully cleared on `reset()`.
+  const emittedBudgetExceeded = new Set<string>();
+
+  // OBS-015: Export-health counters.
+  let flushErrors = 0;
+  let budgetExceededEvents = 0;
+
+  function handleExportError(err: unknown, op: 'flush' | 'record', details?: unknown): void {
+    if (op === 'flush') {
+      flushErrors++;
+    }
+    if (onExportError) {
+      try {
+        onExportError(err, { op, details });
+      } catch {
+        // Never let a user callback break the record path.
+      }
+      return;
+    }
+    if (logger) {
+      logger.error('[harness-one/langfuse] export error', {
+        op,
+        err: err instanceof Error ? { name: err.name, message: err.message, stack: err.stack } : err,
+        ...(details !== undefined ? { details } : {}),
+      });
+      return;
+    }
+    // Fallback preserves legacy behavior so callers that depend on the
+    // console.warn contract keep observing errors.
+    console.warn(`[harness-one/langfuse] ${op} error:`, err);
+  }
 
   function computeCost(usage: Omit<TokenUsageRecord, 'estimatedCost' | 'timestamp'>): number {
     const p = pricing.get(usage.model);
@@ -307,13 +388,61 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): Co
     return cost;
   }
 
+  function addToKeyedMap(map: Map<string, KahanSum>, key: string, delta: number): void {
+    let sum = map.get(key);
+    if (!sum) {
+      sum = new KahanSum();
+      map.set(key, sum);
+    }
+    sum.add(delta);
+  }
+
   function emitAlert(alert: CostAlert): void {
     for (const handler of alertHandlers) {
       handler(alert);
     }
+    // OBS-003: When the budget is actually exceeded, emit a Langfuse event
+    // (deduped by model + budget) so downstream dashboards can alert. The
+    // warning/critical thresholds are intentionally excluded — only true
+    // exceedance triggers the stop signal.
+    if (alert.type === 'exceeded') {
+      tryEmitBudgetExceededEvent(alert);
+    }
   }
 
-  const tracker: CostTracker = {
+  function tryEmitBudgetExceededEvent(alert: CostAlert): void {
+    // The `reset()` path clears this set, and `setBudget()` clears it too,
+    // so a fresh budget window re-emits once per affected model.
+    const last = records[records.length - 1];
+    const model = last?.model ?? 'unknown';
+    const dedupeKey = `${model}::${alert.budget}`;
+    if (emittedBudgetExceeded.has(dedupeKey)) return;
+    emittedBudgetExceeded.add(dedupeKey);
+
+    try {
+      // Attach to the most recent trace id when available so the event is
+      // visible in context. Otherwise create a synthetic tracking trace.
+      const traceId = last?.traceId ?? 'budget-exceeded';
+      const lfTrace = client.trace({ id: traceId, name: 'budget-exceeded' });
+      lfTrace.event({
+        name: 'budget_exceeded',
+        level: 'ERROR',
+        metadata: {
+          model,
+          budget: alert.budget,
+          currentCost: alert.currentCost,
+          percentUsed: alert.percentUsed,
+          message: alert.message,
+        },
+      });
+      budgetExceededEvents++;
+    } catch (err) {
+      // Emitting the signal must never crash the record path.
+      handleExportError(err, 'record', { reason: 'budget_exceeded_event_failed' });
+    }
+  }
+
+  const tracker: LangfuseCostTracker = {
     setPricing(newPricing: ModelPricing[]): void {
       for (const p of newPricing) {
         pricing.set(p.model, p);
@@ -328,17 +457,25 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): Co
         timestamp: Date.now(),
       };
       records.push(record);
-      runningTotal += estimatedCost;
-      if (records.length > maxRecords) {
-        const evicted = records.shift()!;
-        runningTotal -= evicted.estimatedCost;
-      }
 
-      // Periodic recalibration to correct floating point drift
-      recordsSinceRecalibrate++;
-      if (recordsSinceRecalibrate >= RECALIBRATE_INTERVAL) {
-        runningTotal = records.reduce((sum, r) => sum + r.estimatedCost, 0);
-        recordsSinceRecalibrate = 0;
+      // CQ-010(a): KahanSum handles drift; no recalibration pass needed.
+      runningSum.add(estimatedCost);
+      // CQ-010(b): Maintain per-model / per-trace totals incrementally.
+      addToKeyedMap(modelTotals, usage.model, estimatedCost);
+      addToKeyedMap(traceTotals, usage.traceId, estimatedCost);
+
+      if (records.length > maxRecords) {
+        // records.length > maxRecords guarantees at least one element, so
+        // shift() cannot return undefined — but we narrow defensively for TS.
+        const evicted = records.shift();
+        if (evicted) {
+          runningSum.subtract(evicted.estimatedCost);
+          // Keep per-key totals coherent with the retained window.
+          const m = modelTotals.get(evicted.model);
+          if (m) m.subtract(evicted.estimatedCost);
+          const t = traceTotals.get(evicted.traceId);
+          if (t) t.subtract(evicted.estimatedCost);
+        }
       }
 
       // Export to Langfuse as a generation with cost metadata
@@ -357,9 +494,11 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): Co
         },
       });
 
-      // Flush to ensure the generation record is persisted to Langfuse
+      // OBS-015: Flush errors surface through the configured hook / logger
+      // instead of being swallowed with a bare console.warn. The error is
+      // also counted so operators can observe degraded export health.
       client.flushAsync().catch((err: unknown) => {
-        console.warn('[harness-one/langfuse] flush error:', err);
+        handleExportError(err, 'flush');
       });
 
       if (budget !== undefined) {
@@ -373,25 +512,27 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): Co
     },
 
     getTotalCost(): number {
-      return runningTotal;
+      return runningSum.total;
     },
 
     getCostByModel(): Record<string, number> {
+      // CQ-010(b): O(k) over distinct models — no per-record scan.
       const result: Record<string, number> = {};
-      for (const r of records) {
-        result[r.model] = (result[r.model] ?? 0) + r.estimatedCost;
+      for (const [model, sum] of modelTotals) {
+        result[model] = sum.total;
       }
       return result;
     },
 
     getCostByTrace(traceId: string): number {
-      return records
-        .filter((r) => r.traceId === traceId)
-        .reduce((sum, r) => sum + r.estimatedCost, 0);
+      // CQ-010(b): O(1) lookup — no per-record filter/reduce.
+      return traceTotals.get(traceId)?.total ?? 0;
     },
 
     setBudget(newBudget: number): void {
       budget = newBudget;
+      // OBS-003: New budget => new dedupe window.
+      emittedBudgetExceeded.clear();
     },
 
     checkBudget(): CostAlert | null {
@@ -399,6 +540,17 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): Co
       const currentCost = tracker.getTotalCost();
       const percentUsed = currentCost / budget;
 
+      // CQ-010(c): actual >= hard budget is a distinct, stronger state than
+      // `critical`. Surface it so callers can trigger shouldStop semantics.
+      if (percentUsed >= 1.0) {
+        return {
+          type: 'exceeded',
+          currentCost,
+          budget,
+          percentUsed,
+          message: `Exceeded: ${(percentUsed * 100).toFixed(1)}% of budget used ($${currentCost.toFixed(4)} / $${budget.toFixed(2)})`,
+        };
+      }
       if (percentUsed >= criticalThreshold) {
         return {
           type: 'critical',
@@ -454,7 +606,10 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): Co
       merged.estimatedCost = newCost;
 
       records[lastIdx] = merged;
-      runningTotal += newCost - oldCost;
+      const delta = newCost - oldCost;
+      runningSum.add(delta);
+      addToKeyedMap(modelTotals, merged.model, delta);
+      addToKeyedMap(traceTotals, merged.traceId, delta);
 
       if (budget !== undefined) {
         const alert = tracker.checkBudget();
@@ -466,8 +621,12 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): Co
 
     reset(): void {
       records.length = 0;
-      runningTotal = 0;
-      recordsSinceRecalibrate = 0;
+      runningSum.reset();
+      modelTotals.clear();
+      traceTotals.clear();
+      emittedBudgetExceeded.clear();
+      flushErrors = 0;
+      budgetExceededEvents = 0;
     },
 
     getAlertMessage(): string | null {
@@ -475,6 +634,9 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): Co
       const currentCost = tracker.getTotalCost();
       const percentUsed = currentCost / budget;
 
+      if (percentUsed >= 1.0) {
+        return `[BUDGET EXCEEDED] You have used ${(percentUsed * 100).toFixed(0)}% of your token budget. Stop all non-essential operations.`;
+      }
       if (percentUsed >= criticalThreshold) {
         return `[BUDGET CRITICAL] You have used ${(percentUsed * 100).toFixed(0)}% of your token budget. Be extremely concise.`;
       }
@@ -486,6 +648,8 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): Co
 
     isBudgetExceeded(): boolean {
       if (budget === undefined) return false;
+      // CQ-010(c): Keep isBudgetExceeded / shouldStop / checkBudget=exceeded
+      // on the same criterion so callers see consistent signals.
       return tracker.getTotalCost() >= budget;
     },
 
@@ -496,6 +660,14 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): Co
 
     shouldStop(): boolean {
       return tracker.isBudgetExceeded();
+    },
+
+    getStats(): LangfuseCostTrackerStats {
+      return {
+        records: records.length,
+        flushErrors,
+        budgetExceededEvents,
+      };
     },
   };
 

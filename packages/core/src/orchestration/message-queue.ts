@@ -141,6 +141,10 @@ export class MessageQueue {
    *
    * Messages are returned in FIFO order (oldest first). Filtering by type
    * or timestamp preserves this ordering.
+   *
+   * CQ-026: `since` uses **strict** greater-than semantics (`timestamp > since`)
+   * so callers implementing tail-style broadcast loops can pass the last-seen
+   * timestamp without receiving the boundary message twice.
    */
   getMessages(agentId: string, options?: { type?: AgentMessage['type']; since?: number }): AgentMessage[] {
     const queue = this.queues.get(agentId);
@@ -150,7 +154,7 @@ export class MessageQueue {
       messages = messages.filter((m) => m.type === options.type);
     }
     if (options?.since !== undefined) {
-      messages = messages.filter((m) => m.timestamp >= (options.since as number));
+      messages = messages.filter((m) => m.timestamp > (options.since as number));
     }
     return messages;
   }

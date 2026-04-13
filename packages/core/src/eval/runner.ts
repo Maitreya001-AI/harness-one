@@ -125,27 +125,12 @@ export function createEvalRunner(config: EvalConfig): EvalRunner {
       // Pre-compute batch results for scorers that support it
       const batchResults = new Map<string, Array<{ score: number; explanation: string }>>();
 
-      // Fix 3: Batch scorer mismatch pre-check
+      // CQ-021: Removed the single-item probe that doubled the cost of the
+      // first case. The post-batch length check below is sufficient to catch
+      // scorers that return the wrong number of results.
       const batchScorers = scorers.filter(s => s.scoreBatch);
       for (const scorer of batchScorers) {
         try {
-          // Pre-check: run on a single-item slice to verify correct result count
-          if (casesWithOutputs.length > 0) {
-            const probeInput = [{
-              input: casesWithOutputs[0].evalCase.input,
-              output: casesWithOutputs[0].output,
-              ...(casesWithOutputs[0].evalCase.context !== undefined && { context: casesWithOutputs[0].evalCase.context }),
-            }];
-            const probeResult = await (scorer.scoreBatch as NonNullable<typeof scorer.scoreBatch>)(probeInput);
-            if (probeResult.length !== 1) {
-              throw new HarnessError(
-                `Scorer "${scorer.name}" scoreBatch() pre-check failed: returned ${probeResult.length} results for 1 input`,
-                'SCORER_MISMATCH',
-                'Ensure scoreBatch() returns exactly one result per case',
-              );
-            }
-          }
-
           const batchInput = casesWithOutputs.map(({ evalCase, output }) => ({
             input: evalCase.input,
             output,
@@ -153,7 +138,7 @@ export function createEvalRunner(config: EvalConfig): EvalRunner {
           }));
           const batchScoreResults = await (scorer.scoreBatch as NonNullable<typeof scorer.scoreBatch>)(batchInput);
 
-          // Validate batch results
+          // Validate batch results (single post-batch check; trusted from CQ-021)
           if (batchScoreResults.length !== cases.length) {
             throw new HarnessError(
               `Scorer "${scorer.name}" scoreBatch() returned ${batchScoreResults.length} results but expected ${cases.length}`,

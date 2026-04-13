@@ -94,16 +94,24 @@ export function createResilientLoop(config: ResilientLoopConfig): ResilientLoop 
         let doneReason: DoneReason | undefined;
         let doneError: HarnessError | undefined;
 
-        for await (const event of currentLoop.run(currentMessages)) {
-          if (event.type === 'done') {
-            doneEvent = event;
-            doneReason = event.reason;
-          } else if (event.type === 'error') {
-            doneError = event.error as HarnessError;
-            yield event;
-          } else {
-            yield event;
+        // CQ-015: Ensure the inner AgentLoop's dispose() is called after the
+        // iterator completes (success, thrown, or normal exit), before we
+        // decide whether to retry. This releases abort listeners and marks
+        // the loop as disposed, preventing resource leaks across retries.
+        try {
+          for await (const event of currentLoop.run(currentMessages)) {
+            if (event.type === 'done') {
+              doneEvent = event;
+              doneReason = event.reason;
+            } else if (event.type === 'error') {
+              doneError = event.error as HarnessError;
+              yield event;
+            } else {
+              yield event;
+            }
           }
+        } finally {
+          currentLoop.dispose?.();
         }
 
         // Non-retryable reason or retries exhausted: pass through the done event

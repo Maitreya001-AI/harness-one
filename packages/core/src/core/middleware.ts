@@ -20,8 +20,23 @@ export type MiddlewareFn<TExtra extends Record<string, unknown> = Record<string,
 
 /** A composable middleware chain. */
 export interface MiddlewareChain<TExtra extends Record<string, unknown> = Record<string, unknown>> {
-  /** Register a middleware function. Middlewares execute in registration order. */
-  use(fn: MiddlewareFn<TExtra>): void;
+  /**
+   * Register a middleware function. Middlewares execute in registration order.
+   *
+   * NOTE: `use()` is intended for startup/configuration — register middlewares
+   * before the chain is put under load. Registering while execute() is in
+   * flight is supported but the new middleware only participates in subsequent
+   * executions, not the currently-running one.
+   *
+   * @returns CQ-016: An `unsubscribe()` function that removes this specific
+   *   middleware from the chain. Calling it more than once is a no-op.
+   */
+  use(fn: MiddlewareFn<TExtra>): () => void;
+  /**
+   * CQ-016: Remove every registered middleware. Intended for teardown or for
+   * swapping an entire middleware set in tests.
+   */
+  clear(): void;
   /** Execute the chain with the given context and terminal handler. */
   execute(ctx: MiddlewareContext<TExtra>, handler: () => Promise<unknown>): Promise<unknown>;
 }
@@ -49,8 +64,24 @@ export function createMiddlewareChain<TExtra extends Record<string, unknown> = R
   const onError = options?.onError;
 
   return {
-    use(fn: MiddlewareFn<TExtra>): void {
+    use(fn: MiddlewareFn<TExtra>): () => void {
       middlewares.push(fn);
+      // CQ-016: Return an idempotent unsubscribe. We look up by reference at
+      // call time (instead of capturing an index) so re-registrations and
+      // other remove-ops don't corrupt the unsubscribe handle.
+      let unsubscribed = false;
+      return () => {
+        if (unsubscribed) return;
+        unsubscribed = true;
+        const idx = middlewares.indexOf(fn);
+        if (idx !== -1) {
+          middlewares.splice(idx, 1);
+        }
+      };
+    },
+
+    clear(): void {
+      middlewares.length = 0;
     },
 
     async execute(ctx: MiddlewareContext<TExtra>, handler: () => Promise<unknown>): Promise<unknown> {

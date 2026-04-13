@@ -71,7 +71,9 @@ const calculator = defineTool<{ a: number; b: number }>({
 const registry = createRegistry();
 registry.register(calculator);
 
-// Set up guardrails
+// Set up guardrails — pipeline entries are {name, guard} objects.
+// Built-in factories (createInjectionDetector / createContentFilter / ...) already
+// return that shape, so you can pass the factory call directly.
 const pipeline = createPipeline({
   input: [createInjectionDetector({ sensitivity: 'medium' })],
   failClosed: true,
@@ -268,11 +270,17 @@ import {
   withSelfHealing,
 } from 'harness-one/guardrails';
 
+// Pipeline entries are {name, guard, timeoutMs?} objects. Built-in factories
+// already return {name, guard}, so they can be passed directly. For a custom
+// Guardrail function, wrap it with an explicit name:
+const customGuard = async (ctx) => ({ action: 'allow' });
+
 const pipeline = createPipeline({
   input: [
     createInjectionDetector({ sensitivity: 'medium' }), // includes base64 detection
     createContentFilter({ blocked: ['password'] }),      // regex validated against ReDoS
     createRateLimiter({ max: 10, windowMs: 60_000 }),
+    { name: 'custom', guard: customGuard },              // custom guard: wrap in {name, guard}
   ],
   failClosed: true,
   maxResults: 1000,  // default; caps retained events
@@ -325,7 +333,7 @@ for await (const event of harness.run(messages)) {
 
 Structured tracing with spans and exporters, plus token cost tracking with budget alerts. Trace eviction uses a try-finally guard so the `isEvicting` flag is always released even if an exporter throws.
 
-`costTracker.updateUsage()` applies incremental token deltas for streaming responses — call it on each chunk and `recordUsage()` at the end for the final snapshot.
+`costTracker.updateUsage(traceId, partialUsage)` updates the most recent record for a given `traceId` with new token totals for streaming responses — call `recordUsage()` once at the start of the stream, then `updateUsage()` as larger token counts arrive; cost is recomputed from the merged totals.
 
 ```typescript
 import {
@@ -351,9 +359,13 @@ const costTracker = createCostTracker({
 
 costTracker.onAlert((alert) => console.warn(alert.message));
 
-// Streaming: accumulate deltas, then record final usage
-costTracker.updateUsage({ traceId, model: 'claude-3', outputTokensDelta: 12 }); // per chunk
-costTracker.recordUsage({ traceId, model: 'claude-3', inputTokens: 1000, outputTokens: 500 });
+// Streaming: record the initial usage for a traceId, then apply incremental
+// updates as more tokens arrive. updateUsage(traceId, partialUsage) locates
+// the most recent record for that traceId and merges new token counts in,
+// recomputing cost from the merged totals (not a delta).
+costTracker.recordUsage({ traceId, model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+costTracker.updateUsage(traceId, { outputTokens: 12 });  // per chunk / incremental
+costTracker.updateUsage(traceId, { outputTokens: 500 }); // final total for the stream
 ```
 
 ### harness-one/session -- Session Management
@@ -824,31 +836,30 @@ The `init` command creates working starter files in a `harness/` directory. The 
 ### Module Dependency Graph
 
 ```
-               +------------+
-               |  _internal |  (JSON Schema, token estimator, LRU cache)
-               +-----+------+
-                     |
-               +-----+------+
-               |    core    |  (types, errors, AgentLoop + traceManager opt.)
-               +-----+------+
-                     |
-     +---------------+---------------+---------------+
-     |          |         |          |               |
-+----+----+ +---+---+ +---+---+ +----+----+    +-----+------+
-| context | | tools | |prompt | |guardrails|   | orchestration|
-+---------+ +-------+ +-------+ +-----------+  +----- -------+
-                                     |           (AgentPool,
-+----------+  +--------+  +-------+  |            Handoff,
-|  observe |  | session|  | memory|  |            ContextBoundary,
-+----------+  +--------+  +-------+  |            MessageQueue)
-                               |
-                           +---+---+
-                           | fs-io |  (extracted I/O layer)
-                           +-------+
-+------+    +-------+    +-----+
-|  rag |    |  eval |    |evolve|
-+------+    +-------+    +------+
+                    +-----------+
+                    | _internal |  <- JSON Schema validator + token estimator + LRU
+                    +-----+-----+
+                          |
+                    +-----+-----+
+                    |   core    |  <- shared types + AgentLoop + HarnessError
+                    +-----+-----+
+                          |
+  +--------+--------+-----+-----+--------+--------+--------+--------+--------+---------------+
+  |        |        |     |     |        |        |        |        |        |               |
+  v        v        v     v     v        v        v        v        v        v               v
+context  prompt   tools   guardrails  observe  session  memory    eval    evolve    rag    orchestration
+                                                  |
+                                                  v
+                                                fs-io  <- extracted I/O layer (memory only)
 ```
+
+Dependency rules (enforced):
+
+1. `_internal/` -> no dependencies (leaf module)
+2. `core/` -> only `_internal/`
+3. Every feature module -> only `core/` + `_internal/` (mostly type-only imports)
+4. Feature modules never import each other (`context`, `tools`, `guardrails`, `prompt`, etc. are siblings)
+5. `cli/` -> only Node.js built-ins (`fs`, `path`, `readline`)
 
 ### Key Design Decisions
 
@@ -875,6 +886,17 @@ The `init` command creates working starter files in a `harness/` directory. The 
 | 10. Evolution | `evolve` | Component registry, drift detection, architecture rules |
 | 11. Multi-Agent Orchestration | `orchestration` | AgentPool, Handoff, MessageTransport, ContextBoundary, MessageQueue |
 | 12. RAG Pipeline | `rag` | Document loading, chunking, embedding, retrieval, token estimates |
+
+## Troubleshooting
+
+- **Fallback adapter never recovers to primary** — by design. The breaker advances one-way. See [`docs/guides/fallback.md`](./docs/guides/fallback.md) for periodic-reset and active-health-check patterns.
+- **Fallback switched but I have no logs** — there is no `adapter_switched` event on `AgentLoop`. Wrap each inner adapter to log via `categorizeAdapterError()`; see `examples/observe/error-handling.ts`.
+- **All adapter errors classified as `ADAPTER_ERROR`** — `categorizeAdapterError()` inspects `err.message`, not `.code`. Ensure your provider SDK surfaces readable messages, or classify upstream.
+- **Guardrails don't block in tests** — `createPipeline({ failClosed: true })` blocks *on error*; explicit `block` verdicts still require the guard to match. Use `sensitivity: 'high'` on `createInjectionDetector` to widen coverage.
+- **Costs reported as 0** — the model has no registered pricing. Enable `warnUnpricedModels: true` (default) on `createCostTracker` and watch for the one-time warning.
+- **Cache-hit metrics always 0** — the adapter isn't forwarding `cacheReadTokens` / `cacheWriteTokens`. Check the adapter's `toTokenUsage()` mapping.
+
+More runbooks in [`docs/guides/`](./docs/guides/).
 
 ## Contributing
 

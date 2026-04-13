@@ -17,7 +17,7 @@ vi.mock('openai', () => ({
   default: mockOpenAIConstructor,
 }));
 
-import { createOpenAIAdapter, providers, registerProvider } from '../index.js';
+import { createOpenAIAdapter, providers, registerProvider, _resetOpenAIWarnState } from '../index.js';
 import type { OpenAIAdapterConfig } from '../index.js';
 import type { Message, StreamChunk } from 'harness-one/core';
 import { HarnessError } from 'harness-one/core';
@@ -1202,14 +1202,81 @@ describe('createOpenAIAdapter', () => {
       expect(providers['custom-provider']).toEqual({ baseURL: 'https://custom.example.com/v1' });
     });
 
-    it('registerProvider overwrites an existing provider', () => {
-      registerProvider('ollama', { baseURL: 'http://remote-host:11434/v1' });
-      expect(providers.ollama).toEqual({ baseURL: 'http://remote-host:11434/v1' });
+    it('registerProvider overwrites an existing non-built-in provider', () => {
+      // ollama is a convenience entry, not a reserved built-in
+      registerProvider('ollama', { baseURL: 'http://127.0.0.1:11434/v1' });
+      expect(providers.ollama).toEqual({ baseURL: 'http://127.0.0.1:11434/v1' });
       // Restore for other tests
       registerProvider('ollama', { baseURL: 'http://localhost:11434/v1' });
     });
 
-    it('can be spread into adapter config', async () => {
+    it('registerProvider rejects malformed baseURL', () => {
+      expect(() =>
+        registerProvider('broken', { baseURL: 'not a url' }),
+      ).toThrow(HarnessError);
+      expect(() =>
+        registerProvider('broken', { baseURL: 'not a url' }),
+      ).toThrow(/not a valid URL/);
+    });
+
+    it('registerProvider rejects plain http:// for non-localhost hosts', () => {
+      expect(() =>
+        registerProvider('insecure', { baseURL: 'http://evil.example.com/v1' }),
+      ).toThrow(HarnessError);
+      expect(() =>
+        registerProvider('insecure', { baseURL: 'http://evil.example.com/v1' }),
+      ).toThrow(/non-HTTPS/);
+    });
+
+    it('registerProvider allows http:// for localhost and 127.0.0.1', () => {
+      expect(() =>
+        registerProvider('local-dev-a', { baseURL: 'http://localhost:8080/v1' }),
+      ).not.toThrow();
+      expect(() =>
+        registerProvider('local-dev-b', { baseURL: 'http://127.0.0.1:9090/v1' }),
+      ).not.toThrow();
+    });
+
+    it('registerProvider rejects re-registering built-in name "openai" without force', () => {
+      expect(() =>
+        registerProvider('openai', { baseURL: 'https://attacker.example.com/v1' }),
+      ).toThrow(HarnessError);
+      expect(() =>
+        registerProvider('openai', { baseURL: 'https://attacker.example.com/v1' }),
+      ).toThrow(/reserved built-in/);
+    });
+
+    it('registerProvider rejects re-registering built-in name "anthropic" without force', () => {
+      expect(() =>
+        registerProvider('anthropic', { baseURL: 'https://attacker.example.com/v1' }),
+      ).toThrow(/reserved built-in/);
+    });
+
+    it('registerProvider allows overriding built-in name when { force: true }', () => {
+      // Side-effect: this mutates the shared registry. We restore in the next line.
+      registerProvider(
+        'openai',
+        { baseURL: 'https://proxy.example.com/v1' },
+        { force: true },
+      );
+      expect(providers.openai).toEqual({ baseURL: 'https://proxy.example.com/v1' });
+      // Clean up: remove the override so later tests don't see it
+      // (no removeProvider API; just overwrite back to undefined via delete-like by
+      // re-registering a benign HTTPS value that callers would only use intentionally)
+      registerProvider(
+        'openai',
+        { baseURL: 'https://api.openai.com/v1' },
+        { force: true },
+      );
+    });
+
+    it('registerProvider rejects empty name', () => {
+      expect(() =>
+        registerProvider('', { baseURL: 'https://example.com' }),
+      ).toThrow(/non-empty string/);
+    });
+
+    it('can be spread into adapter config (localhost allowed)', async () => {
       mock.mocks.create.mockResolvedValue({
         choices: [{ message: { role: 'assistant', content: 'OK' } }],
         usage: { prompt_tokens: 5, completion_tokens: 2 },
@@ -1226,6 +1293,265 @@ describe('createOpenAIAdapter', () => {
       expect(mock.mocks.create).toHaveBeenCalledWith(
         expect.objectContaining({ model: 'llama-3.3-70b-versatile' }),
         expect.any(Object),
+      );
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // SPEC-004: cacheReadTokens population from OpenAI prompt_tokens_details
+  // -------------------------------------------------------------------------
+  describe('toTokenUsage cache tokens', () => {
+    it('populates cacheReadTokens from usage.prompt_tokens_details.cached_tokens (chat)', async () => {
+      mock.mocks.create.mockResolvedValue({
+        choices: [{ message: { role: 'assistant', content: 'OK' } }],
+        usage: {
+          prompt_tokens: 100,
+          completion_tokens: 50,
+          prompt_tokens_details: { cached_tokens: 40 },
+        },
+      });
+
+      const adapter = createOpenAIAdapter({ client: mock.client });
+      const result = await adapter.chat({ messages: [{ role: 'user', content: 'Hi' }] });
+
+      expect(result.usage.inputTokens).toBe(100);
+      expect(result.usage.outputTokens).toBe(50);
+      expect(result.usage.cacheReadTokens).toBe(40);
+    });
+
+    it('omits cacheReadTokens when prompt_tokens_details is absent (chat)', async () => {
+      mock.mocks.create.mockResolvedValue({
+        choices: [{ message: { role: 'assistant', content: 'OK' } }],
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+      });
+
+      const adapter = createOpenAIAdapter({ client: mock.client });
+      const result = await adapter.chat({ messages: [{ role: 'user', content: 'Hi' }] });
+
+      expect(result.usage.cacheReadTokens).toBeUndefined();
+    });
+
+    it('populates cacheReadTokens from stream usage chunk', async () => {
+      const asyncIter = {
+        async *[Symbol.asyncIterator]() {
+          yield { choices: [{ delta: { content: 'hi' } }] };
+          yield {
+            choices: [{ delta: {} }],
+            usage: {
+              prompt_tokens: 200,
+              completion_tokens: 30,
+              prompt_tokens_details: { cached_tokens: 150 },
+            },
+          };
+        },
+      };
+      mock.mocks.create.mockResolvedValue(asyncIter);
+
+      const adapter = createOpenAIAdapter({ client: mock.client });
+      const chunks: unknown[] = [];
+      for await (const chunk of adapter.stream!({
+        messages: [{ role: 'user', content: 'Hi' }],
+      })) {
+        chunks.push(chunk);
+      }
+
+      const doneChunk = chunks.find((c: unknown) => (c as StreamChunk).type === 'done') as StreamChunk | undefined;
+      expect(doneChunk).toBeDefined();
+      expect(doneChunk!.usage!.cacheReadTokens).toBe(150);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // SPEC-005 / SPEC-014: LLMConfig.extra must be forwarded to provider
+  // -------------------------------------------------------------------------
+  describe('LLMConfig.extra forwarding (SPEC-005)', () => {
+    it('forwards config.extra keys into chat() request body', async () => {
+      mock.mocks.create.mockResolvedValue({
+        choices: [{ message: { role: 'assistant', content: 'OK' } }],
+        usage: { prompt_tokens: 5, completion_tokens: 2 },
+      });
+
+      const adapter = createOpenAIAdapter({ client: mock.client });
+      await adapter.chat({
+        messages: [{ role: 'user', content: 'Hi' }],
+        config: { extra: { customKey: 'v', another: 42 } },
+      });
+
+      const body = mock.mocks.create.mock.calls[0][0] as Record<string, unknown>;
+      expect(body.customKey).toBe('v');
+      expect(body.another).toBe(42);
+    });
+
+    it('forwards config.extra keys into stream() request body', async () => {
+      const asyncIter = {
+        async *[Symbol.asyncIterator]() {
+          yield { choices: [{ delta: { content: 'ok' } }] };
+          yield { choices: [{ delta: {} }], usage: { prompt_tokens: 1, completion_tokens: 1 } };
+        },
+      };
+      mock.mocks.create.mockResolvedValue(asyncIter);
+
+      const adapter = createOpenAIAdapter({ client: mock.client });
+      for await (const _c of adapter.stream!({
+        messages: [{ role: 'user', content: 'Hi' }],
+        config: { extra: { providerSpecificFlag: true } },
+      })) { /* consume */ }
+
+      const body = mock.mocks.create.mock.calls[0][0] as Record<string, unknown>;
+      expect(body.providerSpecificFlag).toBe(true);
+    });
+
+    it('extra overrides conflicting base params (extra merged last)', async () => {
+      mock.mocks.create.mockResolvedValue({
+        choices: [{ message: { role: 'assistant', content: 'OK' } }],
+        usage: { prompt_tokens: 5, completion_tokens: 2 },
+      });
+
+      const adapter = createOpenAIAdapter({ client: mock.client });
+      await adapter.chat({
+        messages: [{ role: 'user', content: 'Hi' }],
+        config: {
+          temperature: 0.2,
+          extra: { temperature: 0.99 }, // caller explicitly asked for this
+        },
+      });
+
+      const body = mock.mocks.create.mock.calls[0][0] as Record<string, unknown>;
+      expect(body.temperature).toBe(0.99);
+    });
+
+    it('no-op when config.extra is not provided', async () => {
+      mock.mocks.create.mockResolvedValue({
+        choices: [{ message: { role: 'assistant', content: 'OK' } }],
+        usage: { prompt_tokens: 5, completion_tokens: 2 },
+      });
+
+      const adapter = createOpenAIAdapter({ client: mock.client });
+      await adapter.chat({ messages: [{ role: 'user', content: 'Hi' }] });
+
+      const body = mock.mocks.create.mock.calls[0][0] as Record<string, unknown>;
+      // Ensure no surprise keys leaked in
+      expect(body).not.toHaveProperty('customKey');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // SPEC-015: zero-token warn (chat/non-stream path)
+  // -------------------------------------------------------------------------
+  describe('zero-token non-stream warn (SPEC-015)', () => {
+    beforeEach(() => {
+      _resetOpenAIWarnState();
+    });
+
+    it('warns once per model when chat response lacks prompt/completion tokens', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      mock.mocks.create.mockResolvedValue({
+        choices: [{ message: { role: 'assistant', content: 'OK' } }],
+        usage: undefined,
+      });
+
+      const adapter = createOpenAIAdapter({ client: mock.client, model: 'gpt-spec-015' });
+      await adapter.chat({ messages: [{ role: 'user', content: 'a' }] });
+      await adapter.chat({ messages: [{ role: 'user', content: 'b' }] });
+      await adapter.chat({ messages: [{ role: 'user', content: 'c' }] });
+
+      const matching = warnSpy.mock.calls.filter((args) =>
+        typeof args[0] === 'string' && args[0].includes('missing prompt/completion token counts'),
+      );
+      expect(matching.length).toBe(1);
+      warnSpy.mockRestore();
+    });
+
+    it('warns separately for each distinct model', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      mock.mocks.create.mockResolvedValue({
+        choices: [{ message: { role: 'assistant', content: 'OK' } }],
+        usage: { prompt_tokens: null, completion_tokens: null },
+      });
+
+      const a = createOpenAIAdapter({ client: mock.client, model: 'model-A' });
+      const b = createOpenAIAdapter({ client: mock.client, model: 'model-B' });
+      await a.chat({ messages: [{ role: 'user', content: 'x' }] });
+      await b.chat({ messages: [{ role: 'user', content: 'y' }] });
+      await a.chat({ messages: [{ role: 'user', content: 'z' }] });
+
+      const matching = warnSpy.mock.calls.filter((args) =>
+        typeof args[0] === 'string' && args[0].includes('missing prompt/completion token counts'),
+      );
+      expect(matching.length).toBe(2);
+      warnSpy.mockRestore();
+    });
+
+    it('does NOT warn when usage fully populated', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      mock.mocks.create.mockResolvedValue({
+        choices: [{ message: { role: 'assistant', content: 'OK' } }],
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+      });
+
+      const adapter = createOpenAIAdapter({ client: mock.client, model: 'model-ok' });
+      await adapter.chat({ messages: [{ role: 'user', content: 'Hi' }] });
+
+      const matching = warnSpy.mock.calls.filter((args) =>
+        typeof args[0] === 'string' && args[0].includes('missing prompt/completion token counts'),
+      );
+      expect(matching.length).toBe(0);
+      warnSpy.mockRestore();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // CQ-027: logger injection routes warnings away from console.warn
+  // -------------------------------------------------------------------------
+  describe('logger config (CQ-027)', () => {
+    beforeEach(() => {
+      _resetOpenAIWarnState();
+    });
+
+    it('routes stream-missing-usage warning through custom logger, not console', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const fakeLogger = { warn: vi.fn(), error: vi.fn() };
+
+      const asyncIter = {
+        async *[Symbol.asyncIterator]() {
+          yield { choices: [{ delta: { content: 'hi' } }] };
+          // no usage chunk
+        },
+      };
+      mock.mocks.create.mockResolvedValue(asyncIter);
+
+      const adapter = createOpenAIAdapter({ client: mock.client, logger: fakeLogger });
+      for await (const _c of adapter.stream!({
+        messages: [{ role: 'user', content: 'Hi' }],
+      })) { /* consume */ }
+
+      expect(fakeLogger.warn).toHaveBeenCalledWith(
+        expect.stringContaining('Stream ended without usage data'),
+      );
+      // console.warn must NOT receive the adapter warning when a logger is injected
+      const consoleMatches = warnSpy.mock.calls.filter((args) =>
+        typeof args[0] === 'string' && args[0].includes('Stream ended without usage data'),
+      );
+      expect(consoleMatches.length).toBe(0);
+      warnSpy.mockRestore();
+    });
+
+    it('routes chat zero-usage warning through custom logger', async () => {
+      const fakeLogger = { warn: vi.fn(), error: vi.fn() };
+      mock.mocks.create.mockResolvedValue({
+        choices: [{ message: { role: 'assistant', content: 'OK' } }],
+        usage: undefined,
+      });
+
+      const adapter = createOpenAIAdapter({
+        client: mock.client,
+        model: 'model-logger',
+        logger: fakeLogger,
+      });
+      await adapter.chat({ messages: [{ role: 'user', content: 'Hi' }] });
+
+      expect(fakeLogger.warn).toHaveBeenCalledWith(
+        expect.stringContaining('missing prompt/completion token counts'),
       );
     });
   });

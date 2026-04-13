@@ -87,12 +87,39 @@ export interface SchemaValidator {
   validate(schema: JsonSchema, params: unknown): { valid: boolean; errors: ValidationError[] } | Promise<{ valid: boolean; errors: ValidationError[] }>;
 }
 
-/** Create a successful tool result. */
+/**
+ * Create a successful tool result.
+ *
+ * Prefer this helper over constructing `{ success: true, data }` by hand so
+ * the return shape stays consistent with `toolError()` and is easy to grep.
+ *
+ * @example
+ * ```ts
+ * async function handler({ args }) {
+ *   const user = await fetchUser(args.id);
+ *   return toolSuccess(user);
+ * }
+ * ```
+ */
 export function toolSuccess<T>(data: T): ToolResult<T> {
   return { success: true, data };
 }
 
-/** Create a failed tool result with feedback. */
+/**
+ * Create a failed tool result with feedback the agent can act on.
+ *
+ * `category` hints the agent toward the right recovery strategy:
+ * `validation` for input fixable by the agent, `permission` for capability
+ * limits, `upstream` for external-dependency failures, `internal` for bugs.
+ * `retryable` controls whether the loop will offer another attempt.
+ *
+ * @example
+ * ```ts
+ * if (!args.id) {
+ *   return toolError('id is required', 'validation', 'supply a non-empty id', false);
+ * }
+ * ```
+ */
 export function toolError(
   message: string,
   category: ToolFeedback['category'],

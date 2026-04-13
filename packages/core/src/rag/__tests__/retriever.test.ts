@@ -457,4 +457,87 @@ describe('createInMemoryRetriever', () => {
       }
     });
   });
+
+  // =====================================================================
+  // SEC-010: Cross-tenant cache isolation & query-length enforcement
+  // =====================================================================
+  describe('SEC-010: tenantId/scope segregation in query cache', () => {
+    it('does NOT return a cached embedding from another tenant for the same query text', async () => {
+      const retriever = createInMemoryRetriever({ embedding });
+      await retriever.index([chunk('c1', 'test', [1, 0, 0, 0])]);
+
+      // First call: tenant A embeds "hello"
+      await retriever.retrieve('hello', { tenantId: 'tenantA' });
+      const callsAfterA = embedding.embed.mock.calls.length;
+
+      // Second call: tenant B with SAME query text — must NOT hit tenant A's cache
+      await retriever.retrieve('hello', { tenantId: 'tenantB' });
+      const callsAfterB = embedding.embed.mock.calls.length;
+
+      // Tenant B must have embedded independently
+      expect(callsAfterB).toBe(callsAfterA + 1);
+    });
+
+    it('same tenant + same query hits the cache', async () => {
+      const retriever = createInMemoryRetriever({ embedding });
+      await retriever.index([chunk('c1', 'test', [1, 0, 0, 0])]);
+
+      await retriever.retrieve('hello', { tenantId: 'tenantA' });
+      const callsAfterFirst = embedding.embed.mock.calls.length;
+
+      await retriever.retrieve('hello', { tenantId: 'tenantA' });
+      const callsAfterSecond = embedding.embed.mock.calls.length;
+
+      expect(callsAfterSecond).toBe(callsAfterFirst); // cache hit
+    });
+
+    it('supports scope option as an alternative to tenantId', async () => {
+      const retriever = createInMemoryRetriever({ embedding });
+      await retriever.index([chunk('c1', 'test', [1, 0, 0, 0])]);
+
+      await retriever.retrieve('hello', { scope: 'scope1' });
+      const callsAfterFirst = embedding.embed.mock.calls.length;
+      await retriever.retrieve('hello', { scope: 'scope2' });
+      const callsAfterSecond = embedding.embed.mock.calls.length;
+
+      expect(callsAfterSecond).toBe(callsAfterFirst + 1);
+    });
+  });
+
+  describe('SEC-010: maxQueryLength enforcement', () => {
+    it('rejects queries exceeding default maxQueryLength (16_384)', async () => {
+      const retriever = createInMemoryRetriever({ embedding });
+      await retriever.index([chunk('c1', 'test', [1, 0, 0, 0])]);
+
+      const tooLong = 'a'.repeat(16_385);
+      await expect(retriever.retrieve(tooLong)).rejects.toThrow(/query.*length|maxQueryLength/i);
+    });
+
+    it('accepts queries at maxQueryLength boundary', async () => {
+      const retriever = createInMemoryRetriever({ embedding });
+      await retriever.index([chunk('c1', 'test', [1, 0, 0, 0])]);
+      const atLimit = 'a'.repeat(16_384);
+      await expect(retriever.retrieve(atLimit)).resolves.toBeDefined();
+    });
+
+    it('honors a custom maxQueryLength', async () => {
+      const retriever = createInMemoryRetriever({ embedding, maxQueryLength: 10 });
+      await retriever.index([chunk('c1', 'test', [1, 0, 0, 0])]);
+
+      await expect(retriever.retrieve('a'.repeat(11))).rejects.toThrow(/maxQueryLength|length/i);
+      await expect(retriever.retrieve('a'.repeat(10))).resolves.toBeDefined();
+    });
+
+    it('rejected queries throw HarnessError (not a plain Error)', async () => {
+      const retriever = createInMemoryRetriever({ embedding, maxQueryLength: 5 });
+      await retriever.index([chunk('c1', 'test', [1, 0, 0, 0])]);
+      try {
+        await retriever.retrieve('too-long-query');
+        expect.unreachable('should have thrown');
+      } catch (e: unknown) {
+        expect((e as { name?: string }).name).toBe('HarnessError');
+        expect((e as { code?: string }).code).toBeDefined();
+      }
+    });
+  });
 });

@@ -829,4 +829,75 @@ describe('createRegistry', () => {
       expect(echoSchema!.responseFormat).toBeUndefined();
     });
   });
+
+  // CQ-008: timeout branch must convert a throwing tool.execute() into a
+  // toolError reply (same as the non-timeout path), not propagate.
+  describe('CQ-008: timeout branch error conversion', () => {
+    it('converts a thrown Error into a toolError with internal category', async () => {
+      const registry = createRegistry({ timeoutMs: 5000 });
+      registry.register({
+        name: 'throws',
+        description: 'always throws synchronously',
+        parameters: { type: 'object' },
+        execute: async () => { throw new Error('boom from tool'); },
+      });
+      const result = await registry.execute({ id: '1', name: 'throws', arguments: '{}' });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.category).toBe('internal');
+        expect(result.error.message).toContain('boom');
+      }
+    });
+
+    it('converts a rejected Promise into a toolError with internal category', async () => {
+      const registry = createRegistry({ timeoutMs: 5000 });
+      registry.register({
+        name: 'rejects',
+        description: 'always rejects',
+        parameters: { type: 'object' },
+        execute: async () => Promise.reject(new Error('async boom')),
+      });
+      const result = await registry.execute({ id: '1', name: 'rejects', arguments: '{}' });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.category).toBe('internal');
+        expect(result.error.message).toContain('async boom');
+      }
+    });
+
+    it('keeps counters claimed after timeout-after-start (not refunded)', async () => {
+      vi.useFakeTimers();
+      const registry = createRegistry({ timeoutMs: 10, maxCallsPerSession: 2 });
+      registry.register({
+        name: 'slow',
+        description: 'takes longer than timeout',
+        parameters: { type: 'object' },
+        execute: async (_p, signal) => new Promise((resolve) => {
+          const t = setTimeout(() => resolve(toolSuccess('done')), 1000);
+          signal?.addEventListener('abort', () => clearTimeout(t));
+        }),
+      });
+      registry.register({
+        name: 'fast',
+        description: 'fast',
+        parameters: { type: 'object' },
+        execute: async () => toolSuccess('ok'),
+      });
+
+      const first = registry.execute({ id: '1', name: 'slow', arguments: '{}' });
+      await vi.advanceTimersByTimeAsync(50);
+      const firstResult = await first;
+      expect(firstResult.success).toBe(false); // timed out
+
+      vi.useRealTimers();
+      // Session limit is 2. The timeout consumed one slot and did NOT refund.
+      // So we still have room for one more call.
+      const second = await registry.execute({ id: '2', name: 'fast', arguments: '{}' });
+      expect(second.success).toBe(true);
+      // Third should be rate-limited (session cap = 2).
+      const third = await registry.execute({ id: '3', name: 'fast', arguments: '{}' });
+      expect(third.success).toBe(false);
+      if (!third.success) expect(third.error.category).toBe('validation');
+    });
+  });
 });

@@ -283,4 +283,50 @@ describe('AgentPool', () => {
       await expect(pool.acquireAsync()).rejects.toThrow(HarnessError);
     });
   });
+
+  // CQ-017: AbortSignal support for acquireAsync
+  describe('CQ-017: acquireAsync AbortSignal', () => {
+    it('rejects synchronously when signal is already aborted', async () => {
+      pool = makePool();
+      const ac = new AbortController();
+      ac.abort();
+      await expect(pool.acquireAsync({ signal: ac.signal })).rejects.toMatchObject({ code: 'POOL_ABORTED' });
+    });
+
+    it('rejects with POOL_ABORTED when signal aborts while pending, and removes from queue', async () => {
+      pool = makePool({ max: 1 });
+      pool.acquire(); // exhaust pool
+
+      const ac = new AbortController();
+      const promise = pool.acquireAsync({ timeoutMs: 10_000, signal: ac.signal });
+
+      // Abort shortly after queueing.
+      setTimeout(() => ac.abort(), 20);
+
+      await expect(promise).rejects.toMatchObject({ code: 'POOL_ABORTED' });
+
+      // Subsequent acquireAsync can still be queued (entry was removed cleanly).
+      const ac2 = new AbortController();
+      setTimeout(() => ac2.abort(), 10);
+      await expect(pool.acquireAsync({ timeoutMs: 5000, signal: ac2.signal })).rejects.toMatchObject({ code: 'POOL_ABORTED' });
+    });
+
+    it('accepts legacy numeric timeoutMs argument', async () => {
+      pool = makePool({ max: 1 });
+      pool.acquire();
+      await expect(pool.acquireAsync(50)).rejects.toMatchObject({ code: 'POOL_TIMEOUT' });
+    });
+
+    it('does not invoke abort listener after successful resolution', async () => {
+      pool = makePool({ max: 1 });
+      const first = pool.acquire();
+      const ac = new AbortController();
+      const promise = pool.acquireAsync({ timeoutMs: 5000, signal: ac.signal });
+      setTimeout(() => pool.release(first), 20);
+      const acquired = await promise;
+      expect(acquired).toBeDefined();
+      // Aborting after resolution should be a no-op (no unhandled rejection).
+      ac.abort();
+    });
+  });
 });

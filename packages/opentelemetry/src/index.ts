@@ -11,6 +11,26 @@ import type { Tracer, Span as OTelSpan } from '@opentelemetry/api';
 import { trace as otelTrace, SpanStatusCode, context as otelContext } from '@opentelemetry/api';
 import type { TraceExporter, Trace, Span } from 'harness-one/observe';
 
+/**
+ * OBS-011: Mapping from harness-one cache-monitor metric names to
+ * OpenTelemetry semantic-convention-friendly names. Documented here so both
+ * the adapter and downstream dashboards share a single source of truth.
+ *
+ * | harness-one key | OTel semconv key  |
+ * |-----------------|-------------------|
+ * | hitRate         | cache.hit_ratio   |
+ * | missRate        | cache.miss_ratio  |
+ * | avgLatency      | cache.latency_ms  |
+ *
+ * Applied in `setSpanAttributes` when the span attribute name matches one of
+ * the legacy keys. Primitive-valued only.
+ */
+const CACHE_ATTR_RENAME: Record<string, string> = {
+  hitRate: 'cache.hit_ratio',
+  missRate: 'cache.miss_ratio',
+  avgLatency: 'cache.latency_ms',
+};
+
 /** Configuration for the OpenTelemetry exporter. */
 export interface OTelExporterConfig {
   /** Optional OTel Tracer instance. If not provided, uses the global tracer. */
@@ -32,6 +52,19 @@ export interface OTelExporterConfig {
   readonly evictedParentsTtlMs?: number;
   /** Maximum number of active spans to retain before LRU eviction. Defaults to 10000. */
   readonly maxSpans?: number;
+  /**
+   * OBS-004: Callback invoked when a non-primitive attribute is dropped
+   * during export. Receives the offending key and type. When unset, falls back
+   * to `console.debug` for compatibility. Lets ops route dropped-attribute
+   * signals into their metrics pipeline.
+   */
+  readonly onDroppedAttribute?: (info: { key: string; type: string; where: 'attribute' | 'event' }) => void;
+}
+
+/** OBS-004: Runtime counter exposed by the exporter for dropped attributes. */
+export interface OTelDroppedAttributeMetrics {
+  readonly droppedAttributes: number;
+  readonly droppedEventAttributes: number;
 }
 
 /**
@@ -40,11 +73,19 @@ export interface OTelExporterConfig {
  * Requires an OTel SDK to be configured (e.g., @opentelemetry/sdk-trace-node).
  * This adapter bridges harness-one spans into the OTel API.
  */
-export function createOTelExporter(config?: OTelExporterConfig): TraceExporter {
+export function createOTelExporter(config?: OTelExporterConfig): TraceExporter & {
+  /** OBS-004: inspect dropped-attribute counters. */
+  readonly getDroppedAttributeMetrics: () => OTelDroppedAttributeMetrics;
+} {
   const serviceName = config?.serviceName ?? 'harness-one';
   const tracer = config?.tracer ?? otelTrace.getTracer(serviceName);
   const maxEvictedParents = config?.maxEvictedParents ?? 1000;
   const evictedParentsTtlMs = config?.evictedParentsTtlMs ?? 300_000; // 5 minutes
+  const onDroppedAttribute = config?.onDroppedAttribute;
+
+  // OBS-004: Track dropped-attribute counts for operator visibility.
+  let droppedAttributes = 0;
+  let droppedEventAttributes = 0;
 
   // Track created OTel spans so children can reference parents
   const spanMap = new Map<string, OTelSpan>();
@@ -134,62 +175,117 @@ export function createOTelExporter(config?: OTelExporterConfig): TraceExporter {
   }
 
   function setSpanAttributes(otelSpan: OTelSpan, attrs: Record<string, unknown>): void {
-    for (const [key, value] of Object.entries(attrs)) {
+    for (const [rawKey, value] of Object.entries(attrs)) {
+      // OBS-011: translate legacy cache-monitor names to OTel semconv keys.
+      const key = CACHE_ATTR_RENAME[rawKey] ?? rawKey;
       if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
         otelSpan.setAttribute(key, value);
       } else if (value !== undefined && value !== null) {
-        // Log a debug-level warning for dropped non-primitive attributes
-        if (typeof console !== 'undefined') {
+        // OBS-004: track and surface dropped non-primitive attributes rather
+        // than silently discarding them. Fall back to console.debug so
+        // existing tests / deployments still see the signal.
+        droppedAttributes++;
+        if (onDroppedAttribute) {
+          onDroppedAttribute({ key, type: typeof value, where: 'attribute' });
+        } else if (typeof console !== 'undefined') {
           console.debug(`Dropping non-primitive attribute '${key}' of type '${typeof value}'`);
         }
       }
     }
   }
 
+  // CQ-002: Per-trace OTel root span, lazily created on first span of a
+  // harness trace. `exportSpan` links root-less harness spans to this root
+  // so OTel visualization shows a single hierarchy. `exportTrace` upgrades
+  // the root (attrs + end with real endTime) instead of creating a new one.
+  const traceRootMap = new Map<string, OTelSpan>();
+  const traceRootCreated = new Set<string>();
+
+  /**
+   * Lazily start the OTel root span for a harness trace. Idempotent — returns
+   * the existing root if one is already registered.
+   *
+   * CQ-001: Passes `startTime: new Date(startTime)` so the OTel span reflects
+   * harness-one's actual start timestamp rather than the export time.
+   */
+  function ensureTraceRoot(traceId: string, name: string, startTime: number): OTelSpan {
+    const existing = traceRootMap.get(traceId);
+    if (existing) return existing;
+    let root!: OTelSpan;
+    tracer.startActiveSpan(
+      name,
+      { startTime: new Date(startTime) },
+      (otelSpan) => { root = otelSpan; },
+    );
+    traceRootMap.set(traceId, root);
+    traceRootCreated.add(traceId);
+    return root;
+  }
+
   return {
     name: 'opentelemetry',
 
     async exportTrace(harnessTrace: Trace): Promise<void> {
-      tracer.startActiveSpan(harnessTrace.name, (otelSpan) => {
-        otelSpan.setAttribute('harness.trace.id', harnessTrace.id);
-        otelSpan.setAttribute('harness.trace.status', harnessTrace.status);
-        otelSpan.setAttribute('harness.span.count', harnessTrace.spans.length);
+      // CQ-002: upgrade the existing root (if any) with trace attributes and
+      // end it at the real endTime; only create a fresh root when no span of
+      // this trace has arrived yet (e.g., empty trace).
+      const root = traceRootMap.get(harnessTrace.id)
+        ?? ensureTraceRoot(harnessTrace.id, harnessTrace.name, harnessTrace.startTime);
 
-        setSpanAttributes(otelSpan, Object.fromEntries(
-          Object.entries(harnessTrace.metadata).map(([k, v]) => [`harness.meta.${k}`, v]),
-        ));
+      root.setAttribute('harness.trace.id', harnessTrace.id);
+      root.setAttribute('harness.trace.status', harnessTrace.status);
+      root.setAttribute('harness.span.count', harnessTrace.spans.length);
 
-        if (harnessTrace.status === 'error') {
-          otelSpan.setStatus({ code: SpanStatusCode.ERROR });
-        } else if (harnessTrace.status === 'completed') {
-          otelSpan.setStatus({ code: SpanStatusCode.OK });
-        }
+      setSpanAttributes(root, Object.fromEntries(
+        Object.entries(harnessTrace.metadata).map(([k, v]) => [`harness.meta.${k}`, v]),
+      ));
 
-        otelSpan.end(harnessTrace.endTime ? new Date(harnessTrace.endTime) : undefined);
+      if (harnessTrace.status === 'error') {
+        root.setStatus({ code: SpanStatusCode.ERROR });
+      } else if (harnessTrace.status === 'completed') {
+        root.setStatus({ code: SpanStatusCode.OK });
+      }
 
-        // Clean up child spans for this trace
-        for (const s of harnessTrace.spans) {
-          spanMap.delete(s.id);
-          spanParentMap.delete(s.id);
-          spanAccessTime.delete(s.id);
-        }
-      });
+      // CQ-001: end the OTel trace span at the real harness endTime.
+      root.end(harnessTrace.endTime ? new Date(harnessTrace.endTime) : undefined);
+      traceRootMap.delete(harnessTrace.id);
+      traceRootCreated.delete(harnessTrace.id);
+
+      // Clean up child spans for this trace
+      for (const s of harnessTrace.spans) {
+        spanMap.delete(s.id);
+        spanParentMap.delete(s.id);
+        spanAccessTime.delete(s.id);
+      }
     },
 
     async exportSpan(harnessSpan: Span): Promise<void> {
       // Check spanMap first, then fall back to evictedParents for already-evicted spans
-      const parentOTelSpan = harnessSpan.parentId
+      let parentOTelSpan = harnessSpan.parentId
         ? (spanMap.get(harnessSpan.parentId) ?? getEvictedParent(harnessSpan.parentId))
         : undefined;
 
-      // If parentId was specified but neither map has it, log a warning and create root span
+      // If parentId was specified but neither map has it, log a warning.
+      // The span still gets linked under the trace root below (CQ-002) so the
+      // hierarchy stays connected — we just couldn't resolve the direct parent.
       if (harnessSpan.parentId && !parentOTelSpan) {
         if (typeof console !== 'undefined') {
           console.warn(
             `[harness-one/opentelemetry] Parent span '${harnessSpan.parentId}' not found (evicted or never exported). ` +
-            `Creating span '${harnessSpan.id}' as a root span.`,
+            `Falling back to the trace-root context for span '${harnessSpan.id}'.`,
           );
         }
+      }
+
+      // CQ-002: when no parent context is available (either the span has no
+      // parentId OR its parentId was not found), root this span under the
+      // per-trace OTel root so the resulting hierarchy is a single tree.
+      if (!parentOTelSpan) {
+        parentOTelSpan = ensureTraceRoot(
+          harnessSpan.traceId,
+          harnessSpan.traceId, // placeholder name — upgraded on exportTrace
+          harnessSpan.startTime,
+        );
       }
 
       // Update evictedParents access time when the parent was found there
@@ -203,7 +299,7 @@ export function createOTelExporter(config?: OTelExporterConfig): TraceExporter {
         ? otelTrace.setSpan(otelContext.active(), parentOTelSpan)
         : undefined;
 
-      const spanCallback = (otelSpan: OTelSpan) => {
+      const spanCallback = (otelSpan: OTelSpan): void => {
         spanMap.set(harnessSpan.id, otelSpan);
         touchSpan(harnessSpan.id);
         if (harnessSpan.parentId) {
@@ -233,6 +329,12 @@ export function createOTelExporter(config?: OTelExporterConfig): TraceExporter {
             for (const [k, v] of Object.entries(event.attributes)) {
               if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
                 attrs[k] = v;
+              } else {
+                // OBS-004: track dropped event attributes too.
+                droppedEventAttributes++;
+                if (onDroppedAttribute) {
+                  onDroppedAttribute({ key: k, type: typeof v, where: 'event' });
+                }
               }
             }
           }
@@ -245,13 +347,19 @@ export function createOTelExporter(config?: OTelExporterConfig): TraceExporter {
           otelSpan.setStatus({ code: SpanStatusCode.OK });
         }
 
+        // CQ-001: end with real harness endTime rather than the current wall
+        // clock, so downstream observability shows the correct duration.
         otelSpan.end(harnessSpan.endTime ? new Date(harnessSpan.endTime) : undefined);
       };
 
+      // CQ-001: pass startTime so the OTel span reflects harness.startTime
+      // rather than the moment export happens. When a parent context exists,
+      // we must still pass options and context in order.
+      const options = { startTime: new Date(harnessSpan.startTime) };
       if (parentContext) {
-        tracer.startActiveSpan(harnessSpan.name, {}, parentContext, spanCallback);
+        tracer.startActiveSpan(harnessSpan.name, options, parentContext, spanCallback);
       } else {
-        tracer.startActiveSpan(harnessSpan.name, spanCallback);
+        tracer.startActiveSpan(harnessSpan.name, options, spanCallback);
       }
     },
 
@@ -285,6 +393,11 @@ export function createOTelExporter(config?: OTelExporterConfig): TraceExporter {
           removed++;
         }
       }
+    },
+
+    /** OBS-004: inspect dropped-attribute counters. */
+    getDroppedAttributeMetrics(): OTelDroppedAttributeMetrics {
+      return { droppedAttributes, droppedEventAttributes };
     },
   };
 }

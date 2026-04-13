@@ -10,6 +10,34 @@
  * @module
  */
 
+import { LRUCache } from './lru-cache.js';
+
+/**
+ * CQ-018: Module-level bounded LRU cache for compiled RegExp instances,
+ * keyed by the pattern string. Prevents repeatedly recompiling the same
+ * pattern across validate() calls. Size is bounded to avoid unbounded
+ * growth when many unique patterns are encountered.
+ *
+ * A cached value of `null` means the pattern was previously rejected
+ * (invalid regex) — we remember that so repeated attempts don't re-throw.
+ */
+const REGEX_CACHE_MAX = 256;
+const regexCache = new LRUCache<string, RegExp | null>(REGEX_CACHE_MAX);
+
+function getCompiledPattern(pattern: string): RegExp | null {
+  if (regexCache.has(pattern)) {
+    return regexCache.get(pattern) ?? null;
+  }
+  try {
+    const re = new RegExp(pattern);
+    regexCache.set(pattern, re);
+    return re;
+  } catch {
+    regexCache.set(pattern, null);
+    return null;
+  }
+}
+
 interface SchemaObject {
   type?: string;
   properties?: Record<string, SchemaObject>;
@@ -56,20 +84,45 @@ const UNSUPPORTED_KEYWORDS = [
 ] as const;
 
 /**
+ * Property names that must never be used as schema property keys because they
+ * can pollute `Object.prototype` when accessed via unchecked `key in obj` or
+ * `obj[key]` lookups. We reject these defensively (SEC-004).
+ */
+const DANGEROUS_PROP_NAMES = new Set(['__proto__', 'constructor', 'prototype']);
+
+/**
+ * Safe property lookup that avoids traversing the prototype chain.
+ * Returns `true` only when `key` is defined as an own, enumerable property.
+ */
+function hasOwn(obj: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
+/**
  * Recursively walk a schema object and collect any unsupported keyword names.
  * Each unique keyword is reported at most once regardless of how many times it
  * appears in the schema tree.
+ *
+ * Skips keys that are not own-properties (protects against prototype pollution)
+ * and emits a warning for dangerous property names (`__proto__`, `constructor`,
+ * `prototype`).
  */
 function detectUnsupportedKeywords(schema: Record<string, unknown>): string[] {
   const found = new Set<string>();
 
   function walk(obj: Record<string, unknown>): void {
     for (const key of Object.keys(obj)) {
+      if (!hasOwn(obj, key)) continue;
+      if (DANGEROUS_PROP_NAMES.has(key)) {
+        found.add(`unsafe-property:${key}`);
+        continue;
+      }
       if ((UNSUPPORTED_KEYWORDS as readonly string[]).includes(key)) {
         found.add(key);
       }
-      if (typeof obj[key] === 'object' && obj[key] !== null && !Array.isArray(obj[key])) {
-        walk(obj[key] as Record<string, unknown>);
+      const value = obj[key];
+      if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+        walk(value as Record<string, unknown>);
       }
     }
   }
@@ -168,13 +221,12 @@ function validate(
       } else if (!isSafePattern(schema.pattern)) {
         errors.push({ path, message: 'Pattern rejected: potential ReDoS' });
       } else {
-        try {
-          const re = new RegExp(schema.pattern);
-          if (!re.test(data)) {
-            errors.push({ path, message: `String does not match pattern "${schema.pattern}"` });
-          }
-        } catch {
+        // CQ-018: use the module-level LRU cache instead of compiling each call.
+        const re = getCompiledPattern(schema.pattern);
+        if (re === null) {
           errors.push({ path, message: `Pattern rejected: invalid regular expression "${schema.pattern}"` });
+        } else if (!re.test(data)) {
+          errors.push({ path, message: `String does not match pattern "${schema.pattern}"` });
         }
       }
     }
@@ -198,19 +250,26 @@ function validate(
 
   // Object constraints
   if (isPlainObject(data)) {
-    // Required fields
+    const obj = data as Record<string, unknown>;
+    // Required fields — use hasOwn to avoid prototype-chain lookups (SEC-004)
     if (schema.required) {
       for (const key of schema.required) {
-        if (!(key in data) || (data as Record<string, unknown>)[key] === undefined) {
+        if (DANGEROUS_PROP_NAMES.has(key)) {
+          // Dangerous key names are never enforced; silently skip
+          continue;
+        }
+        if (!hasOwn(obj, key) || obj[key] === undefined) {
           errors.push({ path: `${path}.${key}`, message: `Property "${key}" is required` });
         }
       }
     }
-    // Property schemas
+    // Property schemas — iterate schema's own keys only, skipping dangerous names
     if (schema.properties) {
-      const obj = data as Record<string, unknown>;
-      for (const [key, propSchema] of Object.entries(schema.properties)) {
-        if (key in obj && obj[key] !== undefined) {
+      for (const key of Object.keys(schema.properties)) {
+        if (!hasOwn(schema.properties, key)) continue;
+        if (DANGEROUS_PROP_NAMES.has(key)) continue;
+        const propSchema = schema.properties[key];
+        if (hasOwn(obj, key) && obj[key] !== undefined) {
           validate(propSchema, obj[key], `${path}.${key}`, errors);
         }
       }

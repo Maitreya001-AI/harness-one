@@ -5,6 +5,7 @@
  */
 
 import { HarnessError } from '../core/errors.js';
+import { prefixedSecureId } from '../_internal/ids.js';
 import type { Session, SessionEvent } from './types.js';
 
 /** Manager for creating and tracking sessions. */
@@ -93,14 +94,16 @@ export function createSessionManager(config?: {
   const unlockedOrder = new Map<string, true>(); // LRU of active (unlocked)
   const lockedIds = new Set<string>();
   const eventHandlers: ((event: SessionEvent) => void)[] = [];
-  let nextId = 1;
 
   // Emit reentry protection: queue events if already emitting
   let emitting = false;
   const pendingEvents: SessionEvent[] = [];
 
+  // SEC-002: Use cryptographically secure random IDs instead of a predictable
+  // counter + timestamp combination. Predictable session IDs enable
+  // session-hijacking and enumeration attacks.
   function genId(): string {
-    return `sess-${nextId++}-${Date.now().toString(36)}`;
+    return prefixedSecureId('sess');
   }
 
   function emit(type: SessionEvent['type'], sessionId: string, reason?: string): void {
@@ -149,12 +152,23 @@ export function createSessionManager(config?: {
     unlockedOrder.set(id, true);
   }
 
+  // PERF-019: Amortize eviction by only triggering once we exceed
+  // `maxSessions + evictThreshold`. Without this amortization, each create()
+  // at capacity scans unlockedOrder even when eviction is unnecessary.
+  // Threshold = 5% of maxSessions (min 1).
+  const evictThreshold = Math.max(1, Math.floor(maxSessions * 0.05));
+
   function evictLRU(): void {
     // O(1) per eviction: pop from the head of unlockedOrder until sessions
     // fit the cap or no unlocked session remains. Locked sessions are never
     // scanned. If every session is locked at capacity, create() raises
     // SESSION_LIMIT — that's the correct behavior rather than silently
     // exceeding the cap.
+    //
+    // Only begin evicting when we've grown past `maxSessions + evictThreshold`.
+    // Once we pass the threshold, evict all the way down to `maxSessions` to
+    // keep steady-state size correct.
+    if (sessions.size <= maxSessions + evictThreshold) return;
     while (sessions.size > maxSessions && unlockedOrder.size > 0) {
       const oldestId = unlockedOrder.keys().next().value as string;
       unlockedOrder.delete(oldestId);
@@ -359,14 +373,21 @@ export function createSessionManager(config?: {
     },
 
     dispose(): void {
-      if (gcTimer) clearInterval(gcTimer);
-      // Clear all sessions to release memory and prevent stale references.
-      sessions.clear();
-      unlockedOrder.clear();
-      lockedIds.clear();
-      // Clear event handlers to prevent memory leaks when handlers close over
-      // external state that would otherwise be retained by the disposed manager.
-      eventHandlers.length = 0;
+      // PERF-001: Guard clearInterval with try/finally so that, even if one of
+      // the cleanup steps throws (e.g., a custom Map subclass overriding
+      // clear), the GC timer is always released. Leaking the interval keeps
+      // the entire manager closure alive and defeats memory reclamation.
+      try {
+        // Clear all sessions to release memory and prevent stale references.
+        sessions.clear();
+        unlockedOrder.clear();
+        lockedIds.clear();
+        // Clear event handlers to prevent memory leaks when handlers close over
+        // external state that would otherwise be retained by the disposed manager.
+        eventHandlers.length = 0;
+      } finally {
+        if (gcTimer) clearInterval(gcTimer);
+      }
     },
   };
 

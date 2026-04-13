@@ -70,7 +70,10 @@ const calculator = defineTool<{ a: number; b: number }>({
 const registry = createRegistry();
 registry.register(calculator);
 
-// 配置护栏
+// 配置护栏 —— pipeline 接受 {name, guard} 条目。
+// 内置工厂（createInjectionDetector / createContentFilter / ...）已经返回这个形状，
+// 直接把工厂返回值塞进去即可；自定义 Guardrail 需要显式包一层
+// `{ name: 'custom', guard: myGuardFn }`。
 const pipeline = createPipeline({
   input: [createInjectionDetector({ sensitivity: 'medium' })],
   failClosed: true,

@@ -596,17 +596,15 @@ describe('createInMemoryStore', () => {
   });
 
   describe('H1: ID uniqueness', () => {
-    it('generates IDs with randomness to avoid cross-process collisions', async () => {
+    it('generates IDs with cryptographic randomness (SEC-002)', async () => {
       const entry = await store.write({ key: 'k1', content: 'a', grade: 'useful' });
-      // ID should contain a random component beyond just timestamp + counter
-      // Format: mem_{timestamp}_{counter}_{random}
+      // SEC-002: IDs now use secureId() → 32 hex chars.
+      // Format: mem_{timestamp}_{32-hex}
       const parts = entry.id.split('_');
-      // With the fix, IDs have 4 parts: mem, timestamp, counter, random
-      expect(parts.length).toBe(4);
+      expect(parts.length).toBe(3);
       expect(parts[0]).toBe('mem');
-      // The random part should be a non-empty alphanumeric string
-      expect(parts[3]).toMatch(/^[a-z0-9]+$/);
-      expect(parts[3].length).toBeGreaterThanOrEqual(2);
+      // The random part is a 32-char hex string
+      expect(parts[2]).toMatch(/^[0-9a-f]{32}$/);
     });
 
     it('generates distinct IDs even with same timestamp', async () => {

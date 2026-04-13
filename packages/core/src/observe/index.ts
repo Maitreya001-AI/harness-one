@@ -5,6 +5,7 @@ export type {
   Trace,
   Span,
   SpanEvent,
+  SpanEventSeverity,
   SpanAttributes,
   SpanAttributeValue,
   TokenUsageRecord,
@@ -22,12 +23,12 @@ export type {
 } from './types.js';
 
 // Trace manager
-export type { TraceManager } from './trace-manager.js';
+export type { TraceManager, RetryMetrics } from './trace-manager.js';
 export { createTraceManager, createConsoleExporter, createNoOpExporter } from './trace-manager.js';
 
 // Cost tracker
 export type { ModelPricing, CostTracker } from './cost-tracker.js';
-export { createCostTracker } from './cost-tracker.js';
+export { createCostTracker, OVERFLOW_BUCKET_KEY, KahanSum } from './cost-tracker.js';
 
 // Logger
 export type { LogLevel, Logger, LoggerConfig } from './logger.js';

@@ -12,6 +12,7 @@
  */
 
 import { HarnessError } from '../core/errors.js';
+import { normalizeContextKey } from './orchestrator.js';
 import type {
   BoundaryPolicy,
   BoundaryViolation,
@@ -68,22 +69,33 @@ export function createContextBoundary(
     violations.push(violation);
   }
 
+  /**
+   * SEC-011: Compare keys and policy prefixes after normalizing both with
+   * NFKC + casefold (`.toLowerCase()`). This prevents Unicode homoglyph /
+   * full-width variant bypass attacks — e.g. the fullwidth "ＡＤＭＩＮ."
+   * would otherwise evade a literal "admin." prefix check.
+   *
+   * Callers MUST include any intended trailing separator in the prefix
+   * explicitly (e.g. `'admin.'` — not `'admin'`). We do not special-case
+   * separators; `'admin'` matches both `'admin.secret'` and `'administrator'`.
+   */
   function isAllowed(
     key: string,
     prefixes: readonly string[] | undefined,
     denyPrefixes: readonly string[] | undefined,
   ): boolean {
+    const normalizedKey = normalizeContextKey(key);
     // Deny takes precedence
     if (denyPrefixes) {
       for (const prefix of denyPrefixes) {
-        if (key.startsWith(prefix)) return false;
+        if (normalizedKey.startsWith(normalizeContextKey(prefix))) return false;
       }
     }
     // No allow list = full access
     if (!prefixes) return true;
     // Allow list present — must match at least one
     for (const prefix of prefixes) {
-      if (key.startsWith(prefix)) return true;
+      if (normalizedKey.startsWith(normalizeContextKey(prefix))) return true;
     }
     return false;
   }

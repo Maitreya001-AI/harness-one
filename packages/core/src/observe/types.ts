@@ -23,13 +23,26 @@ export type SpanAttributeValue =
 /** Typed attribute bag for spans and traces. */
 export type SpanAttributes = Readonly<Record<string, SpanAttributeValue>>;
 
-/** A distributed trace containing spans. */
+/**
+ * A distributed trace containing spans.
+ *
+ * SEC-016: Metadata is partitioned into `userMetadata` (caller-supplied,
+ * subject to redaction) and `systemMetadata` (library-authored, consumed by
+ * `shouldExport()` sampling hooks). The `metadata` field is retained as a
+ * backward-compatible alias that exposes user metadata plus any system
+ * metadata under a namespaced `__system__` key.
+ */
 export interface Trace {
   readonly id: string;
   readonly name: string;
   readonly startTime: number;
   readonly endTime?: number;
+  /** Backwards-compatible view: user metadata with `__system__` sub-object when system metadata is present. */
   readonly metadata: Record<string, unknown>;
+  /** SEC-016: caller-supplied metadata (may be redacted). */
+  readonly userMetadata?: Record<string, unknown>;
+  /** SEC-016: library-authored metadata; `shouldExport()` hooks MUST only read this. */
+  readonly systemMetadata?: Record<string, unknown>;
   readonly spans: readonly Span[];
   readonly status: 'running' | 'completed' | 'error';
 }
@@ -47,11 +60,21 @@ export interface Span {
   readonly status: 'running' | 'completed' | 'error';
 }
 
-/** An event recorded within a span. */
+/** Severity levels supported on span events. Mirrors log levels. */
+export type SpanEventSeverity = 'debug' | 'info' | 'warn' | 'error';
+
+/**
+ * An event recorded within a span.
+ *
+ * OBS-002: Events support an optional `severity` field. Exporters (OTel,
+ * Langfuse) can map `severity: 'error'` to a span status and elevate the
+ * event above info-level telemetry. Defaults to `'info'` when omitted.
+ */
 export interface SpanEvent {
   readonly name: string;
   readonly timestamp: number;
   readonly attributes?: Record<string, unknown>;
+  readonly severity?: SpanEventSeverity;
 }
 
 /** Record of token usage for cost tracking. */

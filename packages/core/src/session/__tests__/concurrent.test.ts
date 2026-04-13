@@ -48,16 +48,18 @@ describe('SessionManager concurrent access', () => {
     });
 
     it('eviction events are emitted correctly during rapid creates', () => {
+      // PERF-019: eviction is amortized — threshold = max(1, 5% * maxSessions).
       const events: SessionEvent[] = [];
       const sm = createSessionManager({ maxSessions: 2, gcIntervalMs: 0 });
       sm.onEvent((e) => events.push(e));
 
       sm.create({ name: 'first' });
       sm.create({ name: 'second' });
-      sm.create({ name: 'third' }); // triggers eviction of first
+      sm.create({ name: 'third' }); // within threshold (size=3 ≤ max+1)
+      sm.create({ name: 'fourth' }); // size=4 > 3, triggers eviction
 
       const evictedEvents = events.filter((e) => e.type === 'evicted');
-      expect(evictedEvents).toHaveLength(1);
+      expect(evictedEvents.length).toBeGreaterThanOrEqual(1);
       expect(evictedEvents[0].reason).toBe('lru_capacity');
 
       sm.dispose();
@@ -114,6 +116,7 @@ describe('SessionManager concurrent access', () => {
     });
 
     it('lock prevents eviction during LRU cleanup', () => {
+      // PERF-019: eviction is amortized; we must cross maxSessions+threshold.
       const sm = createSessionManager({ maxSessions: 2, gcIntervalMs: 0 });
       const s1 = sm.create();
       const s2 = sm.create();
@@ -121,7 +124,8 @@ describe('SessionManager concurrent access', () => {
       // Lock s1 (the LRU candidate)
       const { unlock } = sm.lock(s1.id);
 
-      // Create a third session, which should try to evict LRU
+      // Grow past maxSessions+threshold=3 to trigger eviction
+      sm.create();
       sm.create();
 
       // s1 is locked, so it should NOT be evicted

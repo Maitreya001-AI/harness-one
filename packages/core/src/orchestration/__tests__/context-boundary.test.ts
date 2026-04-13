@@ -240,4 +240,41 @@ describe('createContextBoundary', () => {
       boundary.clearAgent('nonexistent');
     });
   });
+
+  // SEC-011: Unicode variant bypass prevention via NFKC + casefold
+  describe('Unicode-variant policy normalization (SEC-011)', () => {
+    it('denies access through fullwidth-unicode-equivalent keys', () => {
+      // "ＡＤＭＩＮ" are fullwidth ASCII-equivalent characters (U+FF21..U+FF2E).
+      // NFKC folds them to "ADMIN" and .toLowerCase() yields "admin".
+      const orch = createOrchestrator();
+      // Normalization of stored keys happens at compare time, not at set time;
+      // we intentionally insert via the raw fullwidth key to simulate an
+      // attacker trying to evade the deny list.
+      orch.context.set('\uFF21\uFF24\uFF2D\uFF29\uFF2E.secret', 'top-secret');
+      const scoped = createContextBoundary(orch.context, [
+        { agent: 'worker', allowRead: ['public.'], denyRead: ['admin.'] },
+      ]).forAgent('worker');
+
+      expect(scoped.get('\uFF21\uFF24\uFF2D\uFF29\uFF2E.secret')).toBeUndefined();
+    });
+
+    it('treats case variants of a prefix as equivalent', () => {
+      const orch = createOrchestrator();
+      orch.context.set('Admin.secret', 'top-secret');
+      const scoped = createContextBoundary(orch.context, [
+        { agent: 'worker', allowRead: ['public.'], denyRead: ['admin.'] },
+      ]).forAgent('worker');
+      expect(scoped.get('Admin.secret')).toBeUndefined();
+    });
+
+    it('requires explicit trailing separator in policy prefix', () => {
+      // Policy `'admin.'` (with dot) should NOT match `adminofnotes`.
+      const orch = createOrchestrator();
+      orch.context.set('adminofnotes', 'visible');
+      const scoped = createContextBoundary(orch.context, [
+        { agent: 'worker', denyRead: ['admin.'] },
+      ]).forAgent('worker');
+      expect(scoped.get('adminofnotes')).toBe('visible');
+    });
+  });
 });

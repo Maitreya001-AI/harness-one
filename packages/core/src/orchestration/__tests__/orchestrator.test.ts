@@ -917,4 +917,120 @@ describe('onHandlerError wrapping (Fix 34)', () => {
     // Second handler should have received the event despite first handler and error handler throwing
     expect(events.length).toBeGreaterThan(0);
   });
+
+  // SEC-011: Prototype-polluting key rejection in contextStore.set
+  describe('context.set key sanitization (SEC-011)', () => {
+    it('rejects __proto__ with INVALID_KEY', () => {
+      const orch = createOrchestrator();
+      expect(() => orch.context.set('__proto__', { polluted: true })).toThrow(HarnessError);
+      try {
+        orch.context.set('__proto__', {});
+      } catch (e) {
+        expect((e as HarnessError).code).toBe('INVALID_KEY');
+      }
+      // Object.prototype must NOT have been polluted
+      expect(({} as Record<string, unknown>)['polluted']).toBeUndefined();
+    });
+
+    it('rejects "constructor" with INVALID_KEY', () => {
+      const orch = createOrchestrator();
+      expect(() => orch.context.set('constructor', 'x')).toThrow(HarnessError);
+    });
+
+    it('rejects "prototype" with INVALID_KEY', () => {
+      const orch = createOrchestrator();
+      expect(() => orch.context.set('prototype', 'x')).toThrow(HarnessError);
+    });
+
+    it('rejects empty string key', () => {
+      const orch = createOrchestrator();
+      expect(() => orch.context.set('', 'x')).toThrow(HarnessError);
+    });
+
+    it('allows safe user keys unchanged', () => {
+      const orch = createOrchestrator();
+      orch.context.set('user.name', 'Ada');
+      expect(orch.context.get('user.name')).toBe('Ada');
+    });
+  });
+
+  // CQ-026: `since` uses strict greater-than semantics
+  describe('getMessages since semantics (CQ-026)', () => {
+    it('does NOT return the boundary message (strict >)', () => {
+      const orch = createOrchestrator();
+      orch.register('a1', 'Sender');
+      orch.register('a2', 'Receiver');
+
+      vi.spyOn(Date, 'now').mockReturnValue(2000);
+      orch.send({ from: 'a1', to: 'a2', type: 'request', content: 'at-2000' });
+
+      // Passing the exact timestamp of the message should exclude it.
+      const strictlyAfter = orch.getMessages('a2', { since: 2000 });
+      expect(strictlyAfter).toHaveLength(0);
+
+      // A slightly earlier `since` still returns the message.
+      const before = orch.getMessages('a2', { since: 1999 });
+      expect(before).toHaveLength(1);
+    });
+  });
+
+  // OBS-009: droppedMessages counter exposed via getMetrics
+  describe('getMetrics droppedMessages (OBS-009)', () => {
+    it('increments per drop and is reachable via getMetrics', () => {
+      const orch = createOrchestrator({ maxQueueSize: 1 });
+      orch.register('a1', 'Sender');
+      orch.register('a2', 'Receiver');
+
+      orch.send({ from: 'a1', to: 'a2', type: 'request', content: 'first' });
+      // Queue cap = 1 → this push evicts "first".
+      orch.send({ from: 'a1', to: 'a2', type: 'request', content: 'second' });
+      orch.send({ from: 'a1', to: 'a2', type: 'request', content: 'third' });
+
+      expect(orch.getMetrics().droppedMessages).toBeGreaterThanOrEqual(2);
+    });
+
+    it('calls logger.warn on drop when logger is configured', () => {
+      const warn = vi.fn();
+      const logger = {
+        debug: vi.fn(), info: vi.fn(), warn, error: vi.fn(),
+        child() { return logger; },
+      };
+      const orch = createOrchestrator({ maxQueueSize: 1, logger });
+      orch.register('a1', 'Sender');
+      orch.register('a2', 'Receiver');
+      orch.send({ from: 'a1', to: 'a2', type: 'request', content: 'x' });
+      orch.send({ from: 'a1', to: 'a2', type: 'request', content: 'y' });
+      expect(warn).toHaveBeenCalled();
+    });
+  });
+
+  // CQ-028: Handler error routes to logger.warn when no onHandlerError
+  describe('event handler error routing (CQ-028)', () => {
+    it('routes to logger.warn when onHandlerError absent', () => {
+      const warn = vi.fn();
+      const logger = {
+        debug: vi.fn(), info: vi.fn(), warn, error: vi.fn(),
+        child() { return logger; },
+      };
+      const orch = createOrchestrator({ logger });
+      orch.onEvent(() => { throw new Error('boom'); });
+      orch.register('a1', 'X');
+      expect(warn).toHaveBeenCalled();
+    });
+  });
+
+  // PERF-017: eventHandlers Set allows O(1) unsubscribe
+  describe('eventHandlers Set (PERF-017)', () => {
+    it('unsubscribe removes exactly one handler', () => {
+      const orch = createOrchestrator();
+      const received: unknown[] = [];
+      const h = (): void => { received.push('h'); };
+      const unsub = orch.onEvent(h);
+      orch.register('a1', 'A');
+      const afterFirst = received.length;
+      unsub();
+      orch.register('a2', 'B');
+      expect(received.length).toBe(afterFirst);
+    });
+  });
 });

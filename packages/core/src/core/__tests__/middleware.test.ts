@@ -224,6 +224,73 @@ describe('createMiddlewareChain', () => {
     expect(seenType).toBe('tool_call');
   });
 
+  describe('CQ-016: unsubscribe and clear', () => {
+    it('use() returns an unsubscribe function that removes the middleware', async () => {
+      const chain = createMiddlewareChain();
+      const order: string[] = [];
+
+      const unsubscribe = chain.use(async (_ctx, next) => {
+        order.push('A');
+        return next();
+      });
+      chain.use(async (_ctx, next) => {
+        order.push('B');
+        return next();
+      });
+
+      // Before unsubscribe: both run
+      await chain.execute({ type: 'chat' }, async () => 'ok');
+      expect(order).toEqual(['A', 'B']);
+
+      // Unsubscribe A
+      order.length = 0;
+      unsubscribe();
+      await chain.execute({ type: 'chat' }, async () => 'ok');
+      expect(order).toEqual(['B']);
+    });
+
+    it('unsubscribe is idempotent', async () => {
+      const chain = createMiddlewareChain();
+      const order: string[] = [];
+
+      const unsubscribe = chain.use(async (_ctx, next) => {
+        order.push('A');
+        return next();
+      });
+
+      unsubscribe();
+      unsubscribe(); // second call should be a no-op, not a crash
+      await chain.execute({ type: 'chat' }, async () => 'ok');
+      expect(order).toEqual([]);
+    });
+
+    it('clear() removes all middlewares', async () => {
+      const chain = createMiddlewareChain();
+      const order: string[] = [];
+
+      chain.use(async (_ctx, next) => { order.push('A'); return next(); });
+      chain.use(async (_ctx, next) => { order.push('B'); return next(); });
+      chain.use(async (_ctx, next) => { order.push('C'); return next(); });
+
+      chain.clear();
+
+      await chain.execute({ type: 'chat' }, async () => 'ok');
+      expect(order).toEqual([]);
+    });
+
+    it('clear() allows adding new middlewares afterward', async () => {
+      const chain = createMiddlewareChain();
+      const order: string[] = [];
+
+      chain.use(async (_ctx, next) => { order.push('old'); return next(); });
+      chain.clear();
+      chain.use(async (_ctx, next) => { order.push('new'); return next(); });
+
+      await chain.execute({ type: 'chat' }, async () => 'ok');
+      expect(order).toEqual(['new']);
+    });
+  });
+
   describe('Fix 10: Error handling in middleware chain', () => {
     it('wraps middleware errors in HarnessError with MIDDLEWARE_ERROR code', async () => {
       const chain = createMiddlewareChain();

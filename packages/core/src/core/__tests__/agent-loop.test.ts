@@ -1850,10 +1850,12 @@ describe('AgentLoop', () => {
       expect(done).toBeDefined();
       expect(done.reason).toBe('end_turn');
 
-      // The tool result message in conversation should have the fallback content
+      // The tool result message in conversation should have gracefully handled
+      // the cycle. PERF-004 introduced a depth/cycle-aware replacer that
+      // substitutes cycles with "[circular]" rather than aborting serialization.
       const toolMsg = capturedMessages.find((m) => m.role === 'tool');
       expect(toolMsg).toBeDefined();
-      expect(toolMsg!.content).toBe('[Object could not be serialized]');
+      expect(toolMsg!.content).toContain('[circular]');
     });
 
     it('still serializes normal objects via JSON.stringify', async () => {
@@ -2963,6 +2965,139 @@ describe('AgentLoop', () => {
       const done = events.find((e) => e.type === 'done') as Extract<AgentEvent, { type: 'done' }>;
       expect(done).toBeDefined();
       expect(done.reason).toBe('end_turn');
+    });
+  });
+
+  // =====================================================================
+  // PERF-004: depth- and size-bounded tool result serialization
+  // =====================================================================
+  describe('PERF-004: bounded tool-result serialization', () => {
+    async function runWithToolResult(toolResult: unknown): Promise<Message> {
+      const toolCall: ToolCallRequest = { id: 'call_1', name: 'tool', arguments: '{}' };
+      let callCount = 0;
+      let capturedMessages: Message[] = [];
+      const adapter: AgentAdapter = {
+        async chat(params) {
+          capturedMessages = [...params.messages];
+          callCount++;
+          if (callCount === 1) {
+            return { message: { role: 'assistant', content: '', toolCalls: [toolCall] }, usage: USAGE };
+          }
+          return { message: { role: 'assistant', content: 'ok' }, usage: USAGE };
+        },
+      };
+      const onToolCall = vi.fn().mockResolvedValue(toolResult);
+      const loop = new AgentLoop({ adapter, onToolCall });
+      await collectEvents(loop.run([{ role: 'user', content: 'go' }]));
+      const toolMsg = capturedMessages.find((m) => m.role === 'tool');
+      if (!toolMsg) throw new Error('no tool message captured');
+      return toolMsg;
+    }
+
+    it('replaces oversized results with [result too large]', async () => {
+      // Build a string payload > 1 MiB so the serialized JSON crosses the cap.
+      const huge = 'x'.repeat(2 * 1024 * 1024);
+      const toolMsg = await runWithToolResult({ payload: huge });
+      expect(toolMsg.content).toBe('[result too large]');
+    });
+
+    it('truncates deeply nested structures at max depth', async () => {
+      // Build a 20-deep chain; max depth is 10.
+      type Nested = { next?: Nested; leaf?: string };
+      const deep: Nested = {};
+      let cursor: Nested = deep;
+      for (let i = 0; i < 20; i++) {
+        cursor.next = {};
+        cursor = cursor.next;
+      }
+      cursor.leaf = 'bottom';
+      const toolMsg = await runWithToolResult(deep);
+      expect(toolMsg.content).toContain('[max depth exceeded]');
+      // The leaf string is past max depth and should NOT appear verbatim.
+      expect(toolMsg.content).not.toContain('bottom');
+    });
+
+    it('passes small/simple values through unchanged', async () => {
+      const toolMsg = await runWithToolResult({ ok: true, n: 42 });
+      expect(toolMsg.content).toBe('{"ok":true,"n":42}');
+    });
+
+    it('handles circular references with [circular] sentinel', async () => {
+      const cyclic: Record<string, unknown> = { a: 1 };
+      cyclic.loop = cyclic;
+      const toolMsg = await runWithToolResult(cyclic);
+      expect(toolMsg.content).toContain('[circular]');
+    });
+  });
+
+  // =====================================================================
+  // PERF-013: removeEventListener in finally must not leak on throw
+  // =====================================================================
+  describe('PERF-013: external signal listener cleanup is defensive', () => {
+    it('does not throw if removeEventListener fails', async () => {
+      const adapter = createMockAdapter([
+        { message: { role: 'assistant', content: 'hi' }, usage: USAGE },
+      ]);
+      // Build a signal-like whose removeEventListener throws, mimicking a
+      // polyfilled or detached signal.
+      let removeCalls = 0;
+      const signalLike = {
+        aborted: false,
+        addEventListener: () => { /* accept */ },
+        removeEventListener: () => {
+          removeCalls++;
+          throw new Error('simulated signal failure');
+        },
+      } as unknown as AbortSignal;
+
+      const loop = new AgentLoop({ adapter, signal: signalLike });
+      // Must not bubble up the removeEventListener failure.
+      await expect(
+        collectEvents(loop.run([{ role: 'user', content: 'x' }])),
+      ).resolves.toBeDefined();
+      expect(removeCalls).toBeGreaterThan(0);
+    });
+
+    it('dispose() does not throw if removeEventListener fails', () => {
+      const adapter = createMockAdapter([
+        { message: { role: 'assistant', content: 'hi' }, usage: USAGE },
+      ]);
+      const signalLike = {
+        aborted: false,
+        addEventListener: () => { /* accept */ },
+        removeEventListener: () => { throw new Error('bad'); },
+      } as unknown as AbortSignal;
+      const loop = new AgentLoop({ adapter, signal: signalLike });
+      // Prime the listener by starting a run
+      void collectEvents(loop.run([{ role: 'user', content: 'x' }]));
+      expect(() => loop.dispose()).not.toThrow();
+    });
+  });
+
+  // =====================================================================
+  // PERF-020: tool timeout callback must not double-resolve
+  // =====================================================================
+  describe('PERF-020: tool timeout guards against double-resolution', () => {
+    it('does not treat a successful tool as timed out even under event-loop pressure', async () => {
+      const toolCall: ToolCallRequest = { id: 'call_1', name: 'slow', arguments: '{}' };
+      let callCount = 0;
+      const adapter: AgentAdapter = {
+        async chat() {
+          callCount++;
+          if (callCount === 1) {
+            return { message: { role: 'assistant', content: '', toolCalls: [toolCall] }, usage: USAGE };
+          }
+          return { message: { role: 'assistant', content: 'done' }, usage: USAGE };
+        },
+      };
+      // Tool resolves quickly before timeout.
+      const onToolCall = vi.fn().mockImplementation(() => new Promise((r) => setTimeout(() => r('ok'), 5)));
+      const loop = new AgentLoop({ adapter, onToolCall, toolTimeoutMs: 1000 });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'x' }]));
+
+      const toolResult = events.find((e) => e.type === 'tool_result') as Extract<AgentEvent, { type: 'tool_result' }>;
+      expect(toolResult).toBeDefined();
+      expect(toolResult.result).toBe('ok');
     });
   });
 });

@@ -14,15 +14,58 @@ function escapeRegExp(s: string): string {
 
 /**
  * Detect patterns that are likely ReDoS candidates.
- * Rejects patterns with nested quantifiers like `(a+)+`, `(\w+)*`, or adjacent quantifiers
- * that can cause catastrophic backtracking.
+ *
+ * Rejects patterns with:
+ *  - Nested quantifiers (`(a+)+`, `(\w+)*`, `(\w+)?`) — exponential backtracking.
+ *  - Adjacent quantifiers (`a++`, `a*?`) — mostly invalid or polynomial risk.
+ *  - Alternation with a repeat where the alternatives share a prefix
+ *    (`(a|a?)+`, `(a|ab)*`, `(a|b|ab)*`) — polynomial-time matcher inputs.
+ *  - Alternation containing overlapping literals with a quantified group.
+ *
+ * NOTE: this is a heuristic, not a theorem prover. Safe patterns may be
+ * rejected in rare cases; users should simplify them. The cost of a false
+ * positive is low (throw at construction); the cost of a false negative is
+ * a denial-of-service.
  */
-function isReDoSCandidate(pattern: string): boolean {
-  // Nested quantifiers: closing paren or bracket followed immediately by a quantifier,
-  // e.g. (a+)+ or (\w+)* or (\w+)?
+export function isReDoSCandidate(pattern: string): boolean {
+  // 1. Nested quantifiers: closing paren or bracket followed immediately by a
+  //    quantifier, e.g. (a+)+ or (\w+)* or (\w+)?
   if (/(\+|\*|\{)\s*\)(\+|\*|\{|\?)/.test(pattern)) return true;
-  // Adjacent quantifiers without grouping: e.g. a++ or a*+ or a*?
+  // 2. Adjacent quantifiers without grouping: e.g. a++ or a*+ or a*?
   if (/(\+|\*)\s*(\+|\*|\?)/.test(pattern)) return true;
+  // 3. Alternation containing an optional atom with a repeat, e.g. (a|a?)+
+  //    This is a classic polynomial-time pathology.
+  if (/\([^)]*\?\s*\)[+*]/.test(pattern)) return true;
+  // 4. Alternation whose branches share a literal prefix, wrapped in a repeat.
+  //    Examples: (a|ab)*, (foo|foobar)+, (a|b|ab)*.
+  //    Detect by extracting top-level alternation group and comparing branches.
+  const altMatch = /\(([^()]*\|[^()]*)\)[+*]/.exec(pattern);
+  if (altMatch && hasOverlappingAlternatives(altMatch[1])) return true;
+  return false;
+}
+
+/**
+ * Given the body of an alternation group (without the outer parens),
+ * return true if any two branches share a literal prefix character.
+ * This is a polynomial-time ReDoS amplifier when combined with a repeat.
+ */
+function hasOverlappingAlternatives(body: string): boolean {
+  const branches = body.split('|').map((b) => b.trim());
+  if (branches.length < 2) return false;
+  // Compare every pair; if any branch is a prefix of another (or they share
+  // the same first literal character), flag it.
+  for (let i = 0; i < branches.length; i++) {
+    for (let j = i + 1; j < branches.length; j++) {
+      const a = branches[i];
+      const b = branches[j];
+      if (a === '' || b === '') continue;
+      // Same first char (ignoring regex metachars at the very start) — treat
+      // as overlapping. E.g. (a|ab), (a|a?), (foo|foobar).
+      if (a[0] === b[0]) return true;
+      // One is a prefix of the other.
+      if (a.startsWith(b) || b.startsWith(a)) return true;
+    }
+  }
   return false;
 }
 
@@ -33,6 +76,21 @@ function isReDoSCandidate(pattern: string): boolean {
  * of both keywords and content, which prevents false positives on substrings
  * (e.g., "contest" will NOT match keyword "test") and catches Unicode obfuscation
  * using combining characters.
+ *
+ * **Case sensitivity (SEC-012):** Before pattern testing, the guard converts
+ * the content to lowercase and NFKC-normalizes it. This means:
+ *   - Keyword matches are effectively case-insensitive.
+ *   - User-supplied `blockedPatterns` are tested against **lowercased**
+ *     content. If your pattern uses uppercase literals (e.g., `/SECRET/`) it
+ *     will NEVER match — supply lowercase literals or add the `i` flag (which
+ *     makes no difference here but improves readability).
+ *   - `RegExp`s with the `g` flag are defensively reset via `.lastIndex = 0`
+ *     before each `.test()` so repeated calls don't silently miss matches.
+ *
+ * **ReDoS protection:** Every user-supplied `blockedPatterns` entry is
+ * validated at construction time for catastrophic-backtracking risk (nested
+ * quantifiers, overlapping alternation with a repeat, etc.). Unsafe patterns
+ * throw `HarnessError('REDOS_PATTERN')`.
  *
  * @example
  * ```ts

@@ -13,6 +13,7 @@ import { createTraceManager, createConsoleExporter, createCostTracker, createLog
 import type { TraceExporter, TraceManager, CostTracker, ModelPricing, Logger } from 'harness-one/observe';
 import { createPromptBuilder } from 'harness-one/prompt';
 import type { PromptBuilder } from 'harness-one/prompt';
+import { registerTokenizer } from 'harness-one/context';
 import { createRegistry } from 'harness-one/tools';
 import type { ToolRegistry, SchemaValidator } from 'harness-one/tools';
 import { createPipeline, createInjectionDetector, createRateLimiter, createContentFilter, createPIIDetector, runInput, runOutput } from 'harness-one/guardrails';
@@ -148,6 +149,15 @@ export interface AdapterHarnessConfig extends HarnessConfigBase {
  */
 export type HarnessConfig = AdapterHarnessConfig | AnthropicHarnessConfig | OpenAIHarnessConfig;
 
+/**
+ * Tokenizer shape accepted by {@link HarnessConfigBase.tokenizer} and exposed
+ * on the returned {@link Harness} instance.  Excludes the `'tiktoken'` string
+ * sentinel, since that triggers global registration and is not stored.
+ */
+export type Tokenizer =
+  | ((text: string) => number)
+  | { encode(text: string): { length: number } };
+
 /** A fully-wired harness instance. */
 export interface Harness {
   readonly loop: AgentLoop;
@@ -169,6 +179,15 @@ export interface Harness {
   readonly logger: Logger;
   readonly conversations: ConversationStore;
   readonly middleware: MiddlewareChain;
+  /**
+   * SPEC-009: Custom tokenizer provided via `config.tokenizer` (function or
+   * object form).  Stored so downstream code — context packers, compactors,
+   * custom AgentLoop adapters — can reach the tokenizer without re-reading
+   * the config.  `undefined` when `tokenizer` was omitted or set to
+   * `'tiktoken'` (the latter registers globally via `registerTiktokenModels()`
+   * rather than being stored).
+   */
+  readonly tokenizer?: Tokenizer;
 
   /**
    * Run the agent loop with the full pipeline (guardrails, tracing,
@@ -253,11 +272,23 @@ export function createHarness(config: HarnessConfig): Harness {
   // 5. Tokenizer — only call the global registerTiktokenModels() when explicitly
   //    requested via the legacy 'tiktoken' string value.  Function or object
   //    tokenizers are stored for later use without mutating global state.
+  let customTokenizer: Tokenizer | undefined;
   if (config.tokenizer === 'tiktoken') {
     registerTiktokenModels();
+  } else if (typeof config.tokenizer === 'function' || (config.tokenizer && typeof config.tokenizer === 'object')) {
+    // SPEC-009: retain the custom tokenizer so it reaches consumers via
+    // `harness.tokenizer`.  Also register it under the configured model name
+    // (when one exists) so `countTokens(model, messages)` and the context
+    // packer pick it up automatically.
+    customTokenizer = config.tokenizer as Tokenizer;
+    if (config.model) {
+      const tok: { encode(text: string): { length: number } } =
+        typeof customTokenizer === 'function'
+          ? { encode: (text: string) => ({ length: (customTokenizer as (t: string) => number)(text) }) }
+          : customTokenizer;
+      registerTokenizer(config.model, tok);
+    }
   }
-  // When a function or object tokenizer is provided, it can be used by
-  // consumers via `harness.tokenizer` without any global side-effects.
 
   // 6. Cost tracker
   const costs = config.langfuse
@@ -357,6 +388,8 @@ export function createHarness(config: HarnessConfig): Harness {
     logger,
     conversations,
     middleware,
+    // SPEC-009: only present when a function/object tokenizer was supplied.
+    ...(customTokenizer !== undefined && { tokenizer: customTokenizer }),
 
     async *run(
       messages: Message[],

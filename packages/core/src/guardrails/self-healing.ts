@@ -99,16 +99,27 @@ export async function withSelfHealing(
       }
     }
 
+    // SEC-008: hold a reference to the timeout id so we can ALWAYS clear it
+    // when the race settles (regardless of which side wins or throws). Without
+    // this, a fast regenerate leaves the reject-on-timeout timer pending,
+    // keeping the event loop alive and leaking one handle per retry.
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
     try {
-      content = await Promise.race([
-        config.regenerate(retryPrompt),
-        new Promise<never>((_, reject) =>
-          setTimeout(
+      try {
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(
             () => reject(new Error(`regenerate() timed out after ${regenerateTimeoutMs}ms`)),
             regenerateTimeoutMs,
-          ),
-        ),
-      ]);
+          );
+        });
+        content = await Promise.race([
+          config.regenerate(retryPrompt),
+          timeoutPromise,
+        ]);
+      } finally {
+        // Always clear the timer — regardless of success, rejection, or timeout.
+        if (timeoutId !== undefined) clearTimeout(timeoutId);
+      }
     } catch (err) {
       // Don't swallow regenerate() errors — include them in failure context
       const _errorMessage = err instanceof Error ? err.message : String(err);

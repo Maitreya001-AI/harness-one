@@ -277,4 +277,47 @@ describe('createHandoff', () => {
       expect(h.receive('y')?.summary).toBe('compat test');
     });
   });
+
+  // PERF-003: Binary-search insertion correctness & smoke perf
+  describe('PERF-003: priority insertion', () => {
+    it('preserves FIFO within the same priority tier', () => {
+      const orch = createOrchestrator();
+      orch.register('s', 'Sender');
+      orch.register('r', 'Receiver');
+      const h = createHandoff(orch);
+
+      // Alternate normal/high so the queue interleaves — then receive
+      // should come back in rank-desc order with FIFO within each rank.
+      h.send('s', 'r', { summary: 'n1', priority: 'normal' });
+      h.send('s', 'r', { summary: 'h1', priority: 'high' });
+      h.send('s', 'r', { summary: 'n2', priority: 'normal' });
+      h.send('s', 'r', { summary: 'h2', priority: 'high' });
+      h.send('s', 'r', { summary: 'l1', priority: 'low' });
+      h.send('s', 'r', { summary: 'n3', priority: 'normal' });
+
+      const order: string[] = [];
+      let next: ReturnType<typeof h.receive>;
+      while ((next = h.receive('r'))) order.push(next.summary);
+      expect(order).toEqual(['h1', 'h2', 'n1', 'n2', 'n3', 'l1']);
+    });
+
+    it('binary-search smoke perf: 1000 items complete quickly', () => {
+      const orch = createOrchestrator();
+      orch.register('s', 'Sender');
+      orch.register('r', 'Receiver');
+      const h = createHandoff(orch, { maxInboxPerAgent: 2000 });
+
+      const start = Date.now();
+      for (let i = 0; i < 1000; i++) {
+        // Randomize priority so the queue exercises both branches.
+        const p = i % 3 === 0 ? 'high' : i % 3 === 1 ? 'normal' : 'low';
+        h.send('s', 'r', { summary: `m${i}`, priority: p as 'high' | 'normal' | 'low' });
+      }
+      const elapsedMs = Date.now() - start;
+
+      // On even a modest laptop this should be well under 200ms; set a
+      // generous ceiling to avoid CI flakiness while still catching O(n²).
+      expect(elapsedMs).toBeLessThan(500);
+    });
+  });
 });

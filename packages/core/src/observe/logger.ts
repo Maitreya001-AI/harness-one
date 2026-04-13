@@ -7,6 +7,13 @@
  * @module
  */
 
+import {
+  createRedactor,
+  sanitizeAttributes,
+  type RedactConfig,
+  type Redactor,
+} from '../_internal/redact.js';
+
 /** Supported log levels, ordered from most to least verbose. */
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -28,6 +35,19 @@ export interface LoggerConfig {
   readonly json?: boolean;
   /** Custom output function. Default: console.log. */
   readonly output?: (line: string) => void;
+  /**
+   * SEC-001: Secret redaction. When set, every metadata object passed through
+   * the logger is scrubbed before serialization (API keys, tokens, passwords,
+   * cookies, etc.). Defaults to undefined (no redaction). Provide an empty
+   * object `{}` to enable default-pattern redaction without extra keys.
+   */
+  readonly redact?: RedactConfig;
+  /**
+   * OBS-001: Correlation ID automatically injected into every log record
+   * under the `correlationId` field. Useful for linking logs to a request or
+   * trace. Propagates to child loggers via normal baseMeta merging.
+   */
+  readonly correlationId?: string;
 }
 
 const LOG_LEVEL_VALUES: Record<LogLevel, number> = { debug: 0, info: 1, warn: 2, error: 3 };
@@ -73,7 +93,14 @@ export function createSafeReplacer(): (key: string, value: unknown) => unknown {
 export function createLogger(config?: LoggerConfig): Logger {
   const minLevel = config?.level ?? 'info';
   const json = config?.json ?? false;
+  // eslint-disable-next-line no-console -- library fallback when no output provided
   const output = config?.output ?? console.log;
+  // SEC-001: Build the redactor once at logger creation. `undefined` means
+  // no redaction; pass `{}` to enable default pattern only.
+  const redactor: Redactor | undefined = config?.redact
+    ? createRedactor(config.redact)
+    : undefined;
+  const correlationId = config?.correlationId;
 
   function shouldLog(level: LogLevel): boolean {
     return LOG_LEVEL_VALUES[level] >= LOG_LEVEL_VALUES[minLevel];
@@ -82,17 +109,27 @@ export function createLogger(config?: LoggerConfig): Logger {
   function createLoggerWithMeta(baseMeta: Record<string, unknown>): Logger {
     function log(level: LogLevel, message: string, meta?: Record<string, unknown>): void {
       if (!shouldLog(level)) return;
-      const merged = { ...baseMeta, ...meta };
+      // OBS-001: Inject correlationId (if configured) before redaction so it
+      // survives as-is — unless the caller intentionally overrides it in meta.
+      const merged: Record<string, unknown> = {
+        ...(correlationId !== undefined ? { correlationId } : {}),
+        ...baseMeta,
+        ...meta,
+      };
+      // SEC-001: Scrub sensitive keys FIRST. Runs before the replacer so keys
+      // like `api_key` are replaced even if the value is a Date/Error/circular.
+      const safeMerged = redactor ? sanitizeAttributes(merged, redactor) : merged;
       // Fix 10: Store as epoch millis, format only at output time
       const epochMs = Date.now();
-      // Fix 9: Use safe replacer for Error, Date, and circular reference handling
-      const replacer = createSafeReplacer();
       const timestamp = new Date(epochMs).toISOString();
+      // Fix 9 + PERF-014: Use safe replacer for Error/Date/circular handling,
+      // and pre-stringify once so JSON and text modes share work.
+      const replacer = createSafeReplacer();
       if (json) {
-        output(JSON.stringify({ level, message, timestamp, ...merged }, replacer));
+        output(JSON.stringify({ level, message, timestamp, ...safeMerged }, replacer));
       } else {
-        const metaKeys = Object.keys(merged);
-        const suffix = metaKeys.length > 0 ? ' ' + JSON.stringify(merged, replacer) : '';
+        const metaKeys = Object.keys(safeMerged);
+        const suffix = metaKeys.length > 0 ? ' ' + JSON.stringify(safeMerged, replacer) : '';
         output(`[${timestamp}] ${level.toUpperCase()} ${message}${suffix}`);
       }
     }

@@ -16,6 +16,7 @@ export type {
   Retriever,
   RAGPipelineConfig,
   RAGPipeline,
+  IngestMetrics,
 } from './types.js';
 
 // Loaders

@@ -6,6 +6,222 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.3.0] — 2026-04-13
+
+The 123-issue production-readiness audit release. Based on a fresh
+six-axis review (security, performance, code quality, spec compliance,
+observability, documentation + tests) run after the 0.2.0 architecture
+release. Closes 16 security findings (2 critical), 20 performance
+findings (6 P0 leaks / hangs), 30 code-quality findings, 18 spec-
+compliance findings, 24 docs / observability findings, and 15 test-
+quality items. **3,190 → 3,543 tests** (+353); typecheck + lint clean
+across all 9 packages.
+
+### Added — security foundations
+
+- `harness-one/_internal/redact` — shared `createRedactor()` and
+  `sanitizeAttributes()` utilities. Default deny pattern scrubs
+  `apiKey`, `authorization`, `token`, `password`, `cookie`,
+  `session_id`, `private_key`, `credential`, `bearer`; rejects
+  prototype-polluting keys (`__proto__`, `constructor`, `prototype`).
+- `harness-one/_internal/ids` — `secureId()` / `shortSecureId()` /
+  `uuid()` / `prefixedSecureId(prefix)` backed by `node:crypto`.
+- `createLogger({ redact, correlationId })` — redacts meta fields,
+  injects a correlation identifier into every record, propagates to
+  child loggers.
+- `createTraceManager({ redact })` — attribute-level redaction runs at
+  ingest so exporters (OTel, Langfuse) never see sensitive values;
+  new `systemMetadata` / `userMetadata` namespaces keep untrusted
+  callers out of sampling decisions.
+- `guardrails/schema-validator` — configurable `maxJsonBytes`
+  (default 1 MiB) enforced before `JSON.parse`.
+- `guardrails/self-healing` — regeneration timeout always cleared
+  via `finally`; no more event-loop retention under burst load.
+- `guardrails/content-filter` — broader ReDoS heuristic covers
+  `(a|a?)+` and overlapping-prefix alternation; pattern `lastIndex`
+  reset defensively before every `.test()`.
+- `guardrails/rate-limiter` — `onEviction(evicted)` callback signals
+  flood-based bucket loss; optional `bucketMs` time-bucketed mode.
+- `guardrails/injection-detector` — `extraPatterns` validated via the
+  shared ReDoS check; base64 pattern bounded to `{8,1024}`.
+- `openai.registerProvider(name, config, { force? })` — validates
+  URL + requires `https://` (except localhost), refuses to overwrite
+  built-ins without `force: true`.
+- `memory/fs-io` — entry IDs validated against
+  `/^[A-Za-z0-9_-]{1,128}$/` before join; post-join path containment
+  check; `memory/testkit.ts` conformance suite runs against the
+  in-memory, fs-store, and Redis backends to prove uniform tag-OR
+  semantics.
+- `redis` store gains `repair()` method (replaces the prior
+  victim-triggered auto-delete of corrupt entries).
+- `rag/retriever` cache keyed by `tenantId` + configurable
+  `maxQueryLength` (default 16 KiB).
+- `orchestration` shared context rejects polluting keys, normalizes
+  Unicode case before policy `startsWith`, requires explicit
+  trailing-separator semantics for prefix matches.
+- `observe/cost-tracker` — attacker-controlled model/trace keys no
+  longer evict legitimate totals; overflow aggregated into a
+  synthetic `__overflow__` bucket with optional `onOverflow` hook.
+- `_internal/json-schema` — `hasOwnProperty` checks on required
+  field and property walks; rejects prototype-polluting property
+  names; compiled `RegExp` pattern cache (bounded LRU).
+
+### Added — resource / perf hardening
+
+- Session `dispose()` wraps teardown in try/finally so
+  `clearInterval(gcTimer)` always runs; `evictLRU` amortized via a
+  threshold window (`max + max(1, floor(max * 5%))`).
+- Agent-loop tool-timeout guarded by a `settled` flag — racing timer
+  callbacks bail out instead of double-resolving.
+- Agent-loop external-signal listener removal wrapped in try/catch so
+  an exception in the listener teardown can't leave the listener
+  registered.
+- Agent-loop `JSON.stringify(toolResult)` is depth-bounded (max 10)
+  and size-bounded (default 1 MiB) with a `[result too large]`
+  placeholder for over-limit payloads.
+- `TraceManager.pendingExports.delete` runs under
+  `.catch().finally()` so rejected exports never leak Set entries;
+  `endTrace` now O(1) via a secondary `Map<traceId, index>`.
+- Memory `compact()` indexed iteration over a pre-sorted slice
+  (replaces O(n²) shift loop); query path iterates `.values()` lazily
+  when no indexed filter applies.
+- Orchestration `handoff` uses binary search within priority tiers
+  (O(log n) insertion) instead of linear scan + splice.
+- Orchestration event handlers backed by `Set` (O(1) unsubscribe).
+- `core/output-parser` caches `JSON.stringify(schema)` via `WeakMap`.
+- `@harness-one/ajv` LRU-caches compiled validators (default 256).
+- `@harness-one/tiktoken` exports `disposeTiktoken()` — iterates the
+  cache, calls `.free()` on native encoders, clears the registry.
+
+### Added — correctness / contract
+
+- `fallback-adapter` replaces recursive retry with a bounded loop —
+  eliminates stack overflow on repeated provider failures.
+- `memory/relay` `checkpoint()` / `addArtifact()` now route through
+  the same optimistic-concurrency helper as `save()`; throws
+  `RELAY_CONFLICT` on version mismatch; `lastKnownVersion` advanced
+  on every successful write.
+- `memory/fs-store.write()` unlinks the prior entry file when
+  overwriting an existing key — fixes slow disk leak.
+- `core/middleware.use(fn)` returns an `unsubscribe()` function;
+  `clear()` added; de-duplication contract documented.
+- `core/resilience` disposes the inner `AgentLoop` between retries.
+- `session/conversation-store` accepts `maxSessions` and
+  `maxMessagesPerSession` with LRU eviction (default unbounded,
+  warns on threshold cross).
+- `orchestration/agent-pool.acquireAsync({ signal })` removes the
+  pending entry and rejects with `AbortError` when the caller aborts.
+- `@harness-one/openai` adapter extracts
+  `prompt_tokens_details.cached_tokens` → `TokenUsage.cacheReadTokens`;
+  emits a one-time `console.warn` on zero-token non-stream
+  responses (matching the stream path).
+- Both `@harness-one/anthropic` and `@harness-one/openai` adapters
+  merge `params.config.extra` into the provider request body —
+  previously a MUST violation of `docs/provider-spec.md`.
+- `@harness-one/anthropic` adapter rethrows stream failures as
+  `HarnessError('PROVIDER_ERROR')` when the external signal is not
+  aborted; previously silently swallowed.
+- `@harness-one/opentelemetry` exporter passes real
+  `harness.startTime` / `harness.endTime` into OTel spans (durations
+  were clocking as zero). Spans whose direct parent is missing fall
+  back to the per-trace OTel root context so the hierarchy stays
+  connected.
+- CLI `ALL_MODULES` / templates include `orchestration` and `rag`;
+  `audit` recognizes imports from those submodules.
+- `@harness-one/preset` `Harness.tokenizer` exposes the custom
+  function / object tokenizer (previously stored but unreachable).
+
+### Added — observability
+
+- Logger `correlationId`, span-event `severity`, redaction on span
+  attributes, and namespace split for trusted vs caller metadata all
+  covered above.
+- `@harness-one/langfuse` now shares core's `KahanSum` for running
+  sums and maintains per-model / per-trace totals incrementally;
+  new `exceeded` branch on `checkBudget`; emits a `budget_exceeded`
+  event when the hard budget is crossed (deduped by model); flush
+  errors route through `onExportError` / `logger.error` with a
+  `flushErrors` counter; `getStats()` method added.
+- `@harness-one/opentelemetry` — dropped-attribute counter, semconv
+  mapping table (`harness.cache.hit_ratio` → `cache.hit_ratio`,
+  etc.), and evicted-parent LRU with configurable `evictedParentsTtlMs`
+  / `maxEvictedParents`.
+- RAG pipeline emits a child span per chunk and records ingestion
+  metrics: `{ attempted, succeeded, failed, byFailureReason }`.
+- Orchestrator dropped-message accounting cumulated via `getMetrics()`;
+  structured logger warn always fires (was optional callback only).
+
+### Added — docs / examples
+
+- Per-package `README.md` for every workspace package.
+- `LICENSE` (MIT), `CONTRIBUTING.md`, `NOTICE` at repo root.
+- `docs/guides/fallback.md` — troubleshooting fallback adapter
+  failures (categories that trigger failover, how to log
+  `adapter_switched`, recovery strategies).
+- `docs/architecture/06-observe.md` — `harness.*` OTel attribute
+  conventions, cache-monitor → OTEL_SEMCONV rename table.
+- `docs/architecture/12-orchestration-multi-agent.md` — delegation
+  cycle detection contract and error code.
+- `examples/observe/cache-monitor-integration.ts` — RAG-query cache
+  instrumentation pattern.
+- `examples/observe/error-handling.ts` — production error handling
+  with `toolError` categorization, error spans, fallback recovery.
+- PRD / provider-spec / architecture docs corrected for
+  `createContextManager`, factory names (`createPipeline`,
+  `createInMemoryStore`, `createFileSystemStore`, `createEvalRunner`),
+  `StreamChunk` shape, `HarnessError` constructor order, `compress()`
+  return type (`CompressResult`), `DoneReason` variants (including
+  `'error'`), Node `>= 18` engines, dependency graph, REQ-017
+  maturity scoring scope, and §7 Security network-call wording.
+- `toolSuccess` / `toolError` / `KahanSum` gained `@example` JSDoc.
+
+### Fixed — test quality
+
+- Prompt registry time tests use `vi.spyOn(Date, 'now')` (was
+  mutating global).
+- Self-healing exponential-backoff test runs under fake timers
+  (was ~1.5 s of real wall clock).
+- Fs-store test drops assertions on `_index.json.tmp` internal
+  sentinel.
+- Checkpoint manager boundary `maxCheckpoints: 1` explicitly
+  covered.
+- Eval runner concurrency test asserts both lower and upper bound.
+- Trace lifecycle recovery path explicitly tested.
+- Fallback adapter gains concurrent-failure-recovery tests under
+  fake timers.
+- Langfuse PROVIDER_ERROR non-string prompt path covered;
+  `maxRecords: undefined` default-fallback smoke-tested.
+
+### Changed
+
+- `createLogger`: `redact`, `correlationId`, and `output`
+  replacer-caching are now standard config; no breaking change
+  for callers that omit them.
+- `createTraceManager` accepts `redact` and splits `metadata` into
+  `systemMetadata` / `userMetadata`. Legacy `metadata` still
+  accepted and aliased to `userMetadata` for backwards compatibility.
+- `MemoryStore.query({ tags })` is documented as OR across all
+  backends (previously Redis implemented AND).
+- `costTracker.getTotalCost()` is documented as "recent-window"
+  (reflects the rolling buffer) while `getCostByModel` /
+  `getCostByTrace` are cumulative since start.
+
+### Security
+
+- All weak identifier sites swapped to crypto-random: session
+  manager, trace manager, memory store, fs-store. Session IDs are
+  no longer enumerable.
+- Prototype-pollution vectors closed in the minimal JSON-schema
+  validator and orchestrator shared-context.
+- Path traversal via `MemoryStore.read(id)` / `write(id)` blocked
+  at the fs-io boundary.
+- Provider registry (`@harness-one/openai`) hardened against
+  supply-chain SSRF.
+- Langfuse / OTel span attributes, log meta, and trace metadata
+  all pass through redaction before reaching the wire.
+
+---
+
 ## [0.2.0] — 2026-04-13
 
 The 50-issue architecture-review release. Based on the 7-axis deep

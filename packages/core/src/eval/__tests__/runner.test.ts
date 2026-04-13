@@ -196,6 +196,8 @@ describe('createEvalRunner', () => {
       expect(report.passedCases).toBe(6);
       // With concurrency=3, at least 2 should run concurrently
       expect(maxConcurrent).toBeGreaterThan(1);
+      // TEST-015: and the runner must never exceed the configured cap of 3.
+      expect(maxConcurrent).toBeLessThanOrEqual(3);
     });
 
     it('defaults to sequential execution when concurrency not set', async () => {
@@ -505,19 +507,67 @@ describe('createEvalRunner', () => {
     });
   });
 
-  // Fix 3: Batch scorer pre-check
-  describe('batch scorer pre-check (Fix 3)', () => {
-    it('fails fast when batch scorer pre-check returns wrong count', async () => {
+  // CQ-021: remove probe that doubles first-case cost
+  describe('CQ-021: scoreBatch probe is removed — no per-run probe call', () => {
+    it('invokes scoreBatch exactly once per run (no probe + full batch)', async () => {
+      const batchInputSizes: number[] = [];
+      const scorer: Scorer = {
+        name: 'counted',
+        description: 'Records batch sizes',
+        async score() { return { score: 0.5, explanation: '' }; },
+        async scoreBatch(cases) {
+          batchInputSizes.push(cases.length);
+          return cases.map(() => ({ score: 0.9, explanation: 'ok' }));
+        },
+      };
+
+      const runner = createEvalRunner({ scorers: [scorer] });
+      const cases = [
+        { id: 'c1', input: 'a' },
+        { id: 'c2', input: 'b' },
+        { id: 'c3', input: 'c' },
+      ];
+      await runner.run(cases, async (i) => i);
+
+      // Before CQ-021: [1, 3]  (probe + full batch → first case cost twice)
+      // After  CQ-021: [3]     (full batch only)
+      expect(batchInputSizes).toEqual([3]);
+    });
+
+    it('does NOT double-score the first case', async () => {
+      let firstCaseScoreCount = 0;
+      const scorer: Scorer = {
+        name: 'counter',
+        description: 'Counts first case scoring',
+        async score() { return { score: 0.5, explanation: '' }; },
+        async scoreBatch(cases) {
+          for (const c of cases) {
+            if (c.input === 'first') firstCaseScoreCount++;
+          }
+          return cases.map(() => ({ score: 0.9, explanation: 'ok' }));
+        },
+      };
+
+      const runner = createEvalRunner({ scorers: [scorer] });
+      await runner.run(
+        [
+          { id: 'c1', input: 'first' },
+          { id: 'c2', input: 'second' },
+        ],
+        async (i) => i,
+      );
+      // The first case must be scored exactly once, not twice.
+      expect(firstCaseScoreCount).toBe(1);
+    });
+
+    it('post-batch length check still catches SCORER_MISMATCH', async () => {
       const badBatchScorer: Scorer = {
         name: 'bad-batch',
-        description: 'Returns wrong count on pre-check',
-        async score() {
-          return { score: 0.5, explanation: 'individual' };
-        },
+        description: 'Returns wrong count',
+        async score() { return { score: 0.5, explanation: 'individual' }; },
         async scoreBatch(cases) {
-          // Pre-check: return 2 results for 1 input
-          if (cases.length === 1) return [{ score: 0.5, explanation: 'a' }, { score: 0.5, explanation: 'b' }];
-          return cases.map(() => ({ score: 0.5, explanation: 'ok' }));
+          // Return one fewer result than inputs
+          return cases.slice(0, -1).map(() => ({ score: 0.5, explanation: 'ok' }));
         },
       };
 
@@ -528,7 +578,7 @@ describe('createEvalRunner', () => {
         { id: 'c3', input: 'c' },
       ];
 
-      await expect(runner.run(cases, async (i) => i)).rejects.toThrow(/pre-check failed/);
+      await expect(runner.run(cases, async (i) => i)).rejects.toThrow(/SCORER_MISMATCH|expected 3/);
     });
   });
 });

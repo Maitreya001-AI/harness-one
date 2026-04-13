@@ -17,6 +17,60 @@ export interface OutputParser<T = unknown> {
 }
 
 /**
+ * PERF-18: Cache schema -> JSON string so `getFormatInstructions()` does not
+ * re-stringify the same schema on every parse loop iteration.
+ *
+ * - `WeakMap` covers object schemas (the normal case) and lets the cache
+ *   be collected when callers drop the schema.
+ * - Primitive/literal schemas can't be keys of a WeakMap; fall back to a
+ *   tiny LRU `Map` keyed by `typeof:value` so we still cache but bound memory.
+ *
+ * These caches are module-scoped and shared across parser instances — the
+ * schema identity is what matters, not the parser instance.
+ */
+const schemaObjectStringCache = new WeakMap<object, string>();
+const SCHEMA_PRIMITIVE_LRU_MAX = 32;
+const schemaPrimitiveStringCache = new Map<string, string>();
+
+function primitiveKey(schema: unknown): string {
+  // `typeof null` is 'object' so we branch null out first.
+  if (schema === null) return 'null:';
+  const t = typeof schema;
+  return `${t}:${String(schema)}`;
+}
+
+/** @internal Exposed for tests that want to reset the stringify cache. */
+export function __resetSchemaStringCache(): void {
+  schemaPrimitiveStringCache.clear();
+  // WeakMap intentionally left alone — entries disappear with their keys.
+}
+
+function stringifySchemaCached(schema: unknown): string {
+  if (schema !== null && (typeof schema === 'object' || typeof schema === 'function')) {
+    const cached = schemaObjectStringCache.get(schema as object);
+    if (cached !== undefined) return cached;
+    const str = JSON.stringify(schema);
+    schemaObjectStringCache.set(schema as object, str);
+    return str;
+  }
+  const key = primitiveKey(schema);
+  const cached = schemaPrimitiveStringCache.get(key);
+  if (cached !== undefined) {
+    // Refresh LRU position
+    schemaPrimitiveStringCache.delete(key);
+    schemaPrimitiveStringCache.set(key, cached);
+    return cached;
+  }
+  const str = JSON.stringify(schema);
+  schemaPrimitiveStringCache.set(key, str);
+  if (schemaPrimitiveStringCache.size > SCHEMA_PRIMITIVE_LRU_MAX) {
+    const oldest = schemaPrimitiveStringCache.keys().next().value;
+    if (oldest !== undefined) schemaPrimitiveStringCache.delete(oldest);
+  }
+  return str;
+}
+
+/**
  * Wrapper for JSON.parse that converts native SyntaxError into
  * `HarnessError('PARSE_INVALID_JSON')` with a contextual hint and the
  * original error as `cause`. Keeps upstream callers' retry loops informative
@@ -89,8 +143,11 @@ export function createJsonOutputParser<T = unknown>(schema?: JsonSchema): Output
       return parseJsonOrThrow<T>(text.trim(), 'response text');
     },
     getFormatInstructions(): string {
+      // PERF-18: cache the JSON string keyed on the schema identity so repeated
+      // parseWithRetry loops that call getFormatInstructions() each iteration
+      // don't re-stringify the same schema.
       return schema
-        ? `Respond with a JSON object matching this schema: ${JSON.stringify(schema)}`
+        ? `Respond with a JSON object matching this schema: ${stringifySchemaCached(schema)}`
         : 'Respond with valid JSON.';
     },
   };

@@ -1364,6 +1364,30 @@ describe('createHarness() factory', () => {
       });
       expect(mocks.registerTiktokenModels).not.toHaveBeenCalled();
     });
+
+    // SPEC-009: tokenizer is retained on the harness instance so downstream
+    // consumers can reach it without re-reading the config.
+    it('retains custom function tokenizer on harness.tokenizer', () => {
+      const tokenFn = (text: string) => text.length;
+      const harness = createHarness({ ...anthropicConfig, tokenizer: tokenFn });
+      expect(harness.tokenizer).toBe(tokenFn);
+    });
+
+    it('retains custom object tokenizer on harness.tokenizer', () => {
+      const tokenizer = { encode: (t: string) => ({ length: t.length }) };
+      const harness = createHarness({ ...anthropicConfig, tokenizer });
+      expect(harness.tokenizer).toBe(tokenizer);
+    });
+
+    it('leaves harness.tokenizer undefined when tokenizer is "tiktoken"', () => {
+      const harness = createHarness({ ...anthropicConfig, tokenizer: 'tiktoken' });
+      expect(harness.tokenizer).toBeUndefined();
+    });
+
+    it('leaves harness.tokenizer undefined when no tokenizer is configured', () => {
+      const harness = createHarness(anthropicConfig);
+      expect(harness.tokenizer).toBeUndefined();
+    });
   });
 
   // -----------------------------------------------------------------------

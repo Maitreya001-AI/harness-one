@@ -139,6 +139,34 @@ cost = (inputTokens/1000 * inputPrice) + (outputTokens/1000 * outputPrice)
 - 通过 `ModelPricing` 配置任意模型的定价
 - `onAlert()` 回调可触发自动降级或切换模型
 
+## OTel Attribute Conventions
+
+harness-one 自身使用 `harness.*` 命名空间来标记内部 trace/span 身份，避免与 OpenTelemetry 语义约定冲突。导出到 OTel 时这些属性原样保留。
+
+**命名空间**：`harness.*`
+
+| 属性键 | 含义 | 何时设置 |
+|--------|------|----------|
+| `harness.trace.id` | harness-one 内部 trace ID（TraceManager 分配） | 每个 span 自动携带；用于反查 `tm.getTrace(id)` |
+| `harness.span.id` | harness-one 内部 span ID | 每个 span 自动携带 |
+| `harness.parent.id` | 父 span 的 `harness.span.id` | 子 span 创建时写入；根 span 缺省 |
+
+> 不要把这些键用作业务数据——它们是诊断标识符，SRE 用来关联 `Trace` 快照与 exporter 落地的 OTel span。
+
+### CacheMonitor -> OTel semconv 映射
+
+CacheMonitor 历史上暴露的指标键（`hitRate`、`missRate`、`avgLatency`）与 OpenTelemetry 语义约定不一致。`@harness-one/opentelemetry` exporter 在写入 span attributes 时自动重命名：
+
+| harness-one 原名 | OTel semconv 名 | 单位/含义 |
+|-----------------|-----------------|-----------|
+| `hitRate` | `cache.hit_ratio` | 0–1，缓存命中率 |
+| `missRate` | `cache.miss_ratio` | 0–1，缓存未命中率 |
+| `avgLatency` | `cache.latency_ms` | 毫秒，平均延迟 |
+
+重命名只作用于 primitive 值；非 primitive（对象/数组）被 exporter 丢弃并计入 `getDroppedAttributeMetrics()`。下游仪表盘（Grafana、Honeycomb 查询）统一按 OTel 名读取即可。
+
+新代码在自定义 exporter 中应直接使用 `cache.*` 名称，避免依赖 rename 机制。
+
 ## harness.run() 的 trace 布局（0.2.0）
 
 当使用 `@harness-one/preset` 的 `createHarness()` 时，`harness.run()` 会为每次调用创建一个**顶层 trace** `harness.run`，并把以下内容挂在它下面：

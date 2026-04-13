@@ -523,6 +523,80 @@ describe('createSchemaValidator', () => {
     });
   });
 
+  // ---- SEC-006: max JSON bytes ----
+
+  describe('SEC-006: maxJsonBytes limit', () => {
+    it('blocks content that exceeds the default 1 MiB limit before parsing', () => {
+      const { guard } = createSchemaValidator({ type: 'string' });
+      // Build a 1 MiB + 1 byte JSON string
+      const big = '"' + 'a'.repeat(1_048_576) + '"';
+      const result = guard({ content: big });
+      expect(result.action).toBe('block');
+      if (result.action === 'block') {
+        expect(result.reason).toContain('exceeds max size');
+      }
+    });
+
+    it('accepts content up to the configured maxJsonBytes', () => {
+      const { guard } = createSchemaValidator(
+        { type: 'string' },
+        { maxJsonBytes: 100 },
+      );
+      // '"hello"' = 7 bytes UTF-8
+      const result = guard({ content: '"hello"' });
+      expect(result.action).toBe('allow');
+    });
+
+    it('blocks content over a custom maxJsonBytes', () => {
+      const { guard } = createSchemaValidator(
+        { type: 'string' },
+        { maxJsonBytes: 5 },
+      );
+      const result = guard({ content: '"hello world"' }); // 13 bytes
+      expect(result.action).toBe('block');
+      if (result.action === 'block') {
+        expect(result.reason).toContain('exceeds max size');
+      }
+    });
+
+    it('measures UTF-8 bytes, not JS code units (multi-byte chars counted correctly)', () => {
+      // Each "\u4e2d" (中) is 3 bytes in UTF-8 but 1 code unit in JS.
+      // '"中中"' = 1 + 3 + 3 + 1 = 8 UTF-8 bytes, but only 4 JS characters.
+      const { guard } = createSchemaValidator(
+        { type: 'string' },
+        { maxJsonBytes: 6 },
+      );
+      const result = guard({ content: '"中中"' });
+      expect(result.action).toBe('block'); // 8 > 6 in bytes
+    });
+
+    it('maxJsonBytes: 0 disables the size check', () => {
+      const { guard } = createSchemaValidator(
+        { type: 'string' },
+        { maxJsonBytes: 0 },
+      );
+      const big = '"' + 'a'.repeat(2_000_000) + '"';
+      const result = guard({ content: big });
+      expect(result.action).toBe('allow');
+    });
+
+    it('does not invoke JSON.parse when content exceeds maxJsonBytes', () => {
+      // Confirm the guard short-circuits before parse (we do that by feeding
+      // something that would be invalid JSON AND is oversized — the error should
+      // be about size, not parsing).
+      const { guard } = createSchemaValidator(
+        { type: 'object' },
+        { maxJsonBytes: 5 },
+      );
+      const result = guard({ content: 'not json at all but long enough' });
+      expect(result.action).toBe('block');
+      if (result.action === 'block') {
+        expect(result.reason).toContain('exceeds max size');
+        expect(result.reason).not.toContain('Invalid JSON');
+      }
+    });
+  });
+
   // ---- Name ----
 
   it('has name "schema-validator"', () => {
