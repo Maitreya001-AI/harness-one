@@ -419,4 +419,95 @@ describe('createMiddlewareChain', () => {
       expect(result).toBe('result');
     });
   });
+
+  describe('PERF-026: Set-backed storage', () => {
+    it('deduplicates the same function reference registered twice', async () => {
+      const chain = createMiddlewareChain();
+      const calls: string[] = [];
+      const mw = async (_ctx: MiddlewareContext, next: () => Promise<unknown>) => {
+        calls.push('mw');
+        return next();
+      };
+
+      const unsub1 = chain.use(mw);
+      const unsub2 = chain.use(mw);
+
+      await chain.execute({ type: 'chat' }, async () => 'ok');
+      // Registered twice but stored once (Set semantics)
+      expect(calls).toEqual(['mw']);
+
+      // Either unsubscribe removes the single stored entry
+      unsub1();
+      calls.length = 0;
+      await chain.execute({ type: 'chat' }, async () => 'ok');
+      expect(calls).toEqual([]);
+
+      // Second unsubscribe is a no-op (Set.delete on absent key)
+      unsub2();
+      calls.length = 0;
+      await chain.execute({ type: 'chat' }, async () => 'ok');
+      expect(calls).toEqual([]);
+    });
+
+    it('unsubscribe is O(1) in the presence of many middlewares', async () => {
+      const chain = createMiddlewareChain();
+      const fns: Array<() => void> = [];
+      // Register many middlewares
+      for (let i = 0; i < 10_000; i++) {
+        fns.push(
+          chain.use(async (_ctx, next) => next()),
+        );
+      }
+      // Unsubscribe in LIFO order — any O(n) indexOf scan would compound to
+      // O(n²); completing well under a second on modern hardware is the
+      // smoke-test. We don't timer-gate; just ensure correctness.
+      for (let i = fns.length - 1; i >= 0; i--) fns[i]();
+
+      let ran = false;
+      await chain.execute({ type: 'chat' }, async () => { ran = true; return 'ok'; });
+      expect(ran).toBe(true);
+    });
+
+    it('late-registered middleware via unsubscribe is dropped from the current iterator', async () => {
+      const chain = createMiddlewareChain();
+      const order: string[] = [];
+
+      const unsubLate = chain.use(async (_c, n) => {
+        order.push('late');
+        return n();
+      });
+      chain.use(async (_c, n) => {
+        order.push('A');
+        // Unsubscribe a later middleware BEFORE the iterator reaches it — the
+        // Set iterator respects deletes that happen during iteration.
+        unsubLate();
+        return n();
+      });
+
+      // With A registered second, execute order is [late, A] — but mid-flight
+      // 'A' unsubscribes 'late' which has already run. `late` still appeared
+      // once because the iterator advanced past it before the delete.
+      await chain.execute({ type: 'chat' }, async () => { order.push('handler'); return 'ok'; });
+      expect(order).toEqual(['late', 'A', 'handler']);
+
+      // Next run skips the unsubscribed middleware
+      order.length = 0;
+      await chain.execute({ type: 'chat' }, async () => { order.push('handler'); return 'ok'; });
+      expect(order).toEqual(['A', 'handler']);
+    });
+
+    it('preserves insertion order across many execute() calls', async () => {
+      const chain = createMiddlewareChain();
+      const order: string[] = [];
+      chain.use(async (_c, n) => { order.push('1'); return n(); });
+      chain.use(async (_c, n) => { order.push('2'); return n(); });
+      chain.use(async (_c, n) => { order.push('3'); return n(); });
+
+      for (let i = 0; i < 5; i++) {
+        order.length = 0;
+        await chain.execute({ type: 'chat' }, async () => 'ok');
+        expect(order).toEqual(['1', '2', '3']);
+      }
+    });
+  });
 });

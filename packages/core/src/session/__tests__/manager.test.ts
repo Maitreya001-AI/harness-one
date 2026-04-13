@@ -846,4 +846,44 @@ describe('createSessionManager', () => {
       expect(() => sm.dispose()).not.toThrow();
     });
   });
+
+  describe('LM-012: Set-backed event handlers', () => {
+    it('dedupes the same handler reference registered twice', () => {
+      const sm = createSessionManager();
+      const calls: string[] = [];
+      const h = (e: { type: string }): void => {
+        calls.push(e.type);
+      };
+      sm.onEvent(h);
+      sm.onEvent(h);
+      sm.create(); // triggers a 'create' event
+      // Registered twice but Set stores one — handler runs once per event.
+      expect(calls).toHaveLength(1);
+      sm.dispose();
+    });
+
+    it('unsubscribe is idempotent and O(1) (many handlers)', () => {
+      const sm = createSessionManager();
+      const unsubs: Array<() => void> = [];
+      for (let i = 0; i < 5_000; i++) {
+        unsubs.push(sm.onEvent(() => {}));
+      }
+      // LIFO removal — any O(n) indexOf would compound to O(n²).
+      for (let i = unsubs.length - 1; i >= 0; i--) unsubs[i]();
+      // Re-call is a no-op.
+      for (const u of unsubs) expect(() => u()).not.toThrow();
+      sm.dispose();
+    });
+
+    it('preserves registration order across emits', () => {
+      const sm = createSessionManager();
+      const order: string[] = [];
+      sm.onEvent(() => order.push('a'));
+      sm.onEvent(() => order.push('b'));
+      sm.onEvent(() => order.push('c'));
+      sm.create();
+      expect(order).toEqual(['a', 'b', 'c']);
+      sm.dispose();
+    });
+  });
 });

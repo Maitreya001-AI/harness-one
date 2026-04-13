@@ -499,4 +499,59 @@ describe('MessageQueue', () => {
       expect(warnings).toHaveLength(0);
     });
   });
+
+  describe('PERF-031: iterateMessages zero-copy generator', () => {
+    it('yields messages in FIFO order without copying the underlying queue', () => {
+      const mq = new MessageQueue();
+      mq.createQueue('a1');
+      const m1 = makeMessage({ content: 'm1' });
+      const m2 = makeMessage({ content: 'm2' });
+      mq.push('a1', m1);
+      mq.push('a1', m2);
+
+      const collected: AgentMessage[] = [];
+      for (const msg of mq.iterateMessages('a1')) collected.push(msg);
+
+      expect(collected).toHaveLength(2);
+      expect(collected[0]).toBe(m1);
+      expect(collected[1]).toBe(m2);
+    });
+
+    it('applies the same type/since filters as getMessages', () => {
+      const mq = new MessageQueue();
+      mq.createQueue('a1');
+      mq.push('a1', makeMessage({ type: 'request', timestamp: 100 }));
+      mq.push('a1', makeMessage({ type: 'response', timestamp: 200 }));
+      mq.push('a1', makeMessage({ type: 'request', timestamp: 300 }));
+
+      const requestsAfter100 = [
+        ...mq.iterateMessages('a1', { type: 'request', since: 100 }),
+      ];
+      expect(requestsAfter100.map((m) => m.timestamp)).toEqual([300]);
+    });
+
+    it('yields nothing for an unknown agent', () => {
+      const mq = new MessageQueue();
+      const collected = [...mq.iterateMessages('nope')];
+      expect(collected).toEqual([]);
+    });
+
+    it('captures queue length at iterator start (concurrent push is skipped)', () => {
+      const mq = new MessageQueue();
+      mq.createQueue('a1');
+      mq.push('a1', makeMessage({ content: 'a' }));
+      mq.push('a1', makeMessage({ content: 'b' }));
+
+      const iter = mq.iterateMessages('a1');
+      const first = iter.next();
+      expect(first.value?.content).toBe('a');
+
+      // Push a new message while iterating — should be ignored by this iterator.
+      mq.push('a1', makeMessage({ content: 'c' }));
+
+      const rest: AgentMessage[] = [];
+      for (const m of iter) rest.push(m);
+      expect(rest.map((m) => m.content)).toEqual(['b']);
+    });
+  });
 });

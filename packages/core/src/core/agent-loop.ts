@@ -168,6 +168,18 @@ export class AgentLoop {
   private _externalAbortHandler: (() => void) | undefined;
   /** Tracks the error category from the last failed handleStream call for retry decisions. */
   private _lastStreamErrorCategory: string | undefined;
+  /**
+   * PERF-025: Pre-built options bag handed to `executionStrategy.execute()`
+   * for every tool-call batch. Previously this object was re-constructed with
+   * `Object.assign({signal}, isSequentialTool ? {getToolMeta} : {})` inside
+   * the hot loop, producing one allocation per tool batch. Building it once
+   * at construction time — after `abortController` and `isSequentialTool`
+   * settle — lets us reuse the same frozen reference across all batches.
+   */
+  private readonly _strategyOptions: {
+    readonly signal: AbortSignal;
+    readonly getToolMeta?: (name: string) => { sequential?: boolean } | undefined;
+  };
   private cumulativeUsage: { inputTokens: number; outputTokens: number } = {
     inputTokens: 0,
     outputTokens: 0,
@@ -228,6 +240,22 @@ export class AgentLoop {
 
     // H3: Create internal AbortController (external signal linking deferred to run())
     this.abortController = new AbortController();
+
+    // PERF-025: Pre-build the strategy options bag once. `isSequentialTool`
+    // never changes after construction and `abortController.signal` is stable
+    // for the lifetime of this loop, so the same object is reused for every
+    // tool-call batch below. `Object.freeze` gives us structural immutability
+    // so strategy implementations can safely cache or share the reference.
+    this._strategyOptions = Object.freeze(
+      this.isSequentialTool
+        ? {
+            signal: this.abortController.signal,
+            getToolMeta: (name: string): { sequential?: boolean } | undefined => ({
+              sequential: this.isSequentialTool?.(name) ?? false,
+            }),
+          }
+        : { signal: this.abortController.signal },
+    );
   }
 
   /** Get cumulative token usage across all iterations. */
@@ -585,7 +613,13 @@ export class AgentLoop {
         // Process tool calls via execution strategy
         conversation.push(assistantMsg);
 
-        // Yield all tool_call events first (deterministic ordering)
+        // PERF-034: Yield tool_call events first (deterministic ordering).
+        // The earlier "two-pass" structure (yield, then schedule execution)
+        // was replaced with a single pass: the yield loop below + the
+        // executionStrategy.execute call form one linear sequence per
+        // iteration, with tool_result events yielded after execute resolves.
+        // Keeping yield-before-execute order is required so observers see the
+        // full tool_call batch before any result.
         for (const toolCall of toolCalls) {
           yield { type: 'tool_call', toolCall, iteration };
         }
@@ -672,12 +706,9 @@ export class AgentLoop {
               throw toolErr;
             }
           },
-          Object.assign(
-            { signal: this.abortController.signal },
-            this.isSequentialTool
-              ? { getToolMeta: (name: string) => ({ sequential: this.isSequentialTool?.(name) ?? false }) }
-              : {},
-          ),
+          // PERF-025: Reuse the frozen options bag hoisted in the constructor
+          // instead of allocating a fresh `Object.assign` on every batch.
+          this._strategyOptions,
         );
 
         // Yield all tool_result events in original order (deterministic)
@@ -815,7 +846,14 @@ export class AgentLoop {
   ): AsyncGenerator<AgentEvent, { message: Message; usage: TokenUsage; bytesRead: number } | null> {
     let accumulatedText = '';
     let accumulatedBytes = 0;
+    // PERF-024 / PERF-032: Maintain the Map for O(1) id lookups AND a parallel
+    // array that mirrors insertion order. The array is the snapshot fed to the
+    // assistant message at stream end (PERF-032) and is also the structure we
+    // index directly when a delta arrives without an id (previously required
+    // `[...map.values()]` per chunk). The array only grows when a new tool-call
+    // id is seen, so mutate-in-place deltas do NOT allocate.
     const accumulatedToolCalls: Map<string, { id: string; name: string; arguments: string }> = new Map();
+    const toolCallList: Array<{ id: string; name: string; arguments: string }> = [];
     let usage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
 
     try {
@@ -868,17 +906,21 @@ export class AgentLoop {
                 return null;
               }
             } else {
-              accumulatedToolCalls.set(partial.id, {
+              // PERF-024: New tool call — push once into the parallel array so
+              // subsequent deltas mutate in place via the map reference.
+              const entry = {
                 id: partial.id,
                 name: partial.name ?? '',
                 arguments: partial.arguments ?? '',
-              });
+              };
+              accumulatedToolCalls.set(partial.id, entry);
+              toolCallList.push(entry);
             }
           } else {
-            // If no id, try to append to the last tool call
-            const entries = [...accumulatedToolCalls.values()];
-            if (entries.length > 0) {
-              const last = entries[entries.length - 1];
+            // PERF-024: If no id, append to the most-recent tool call via the
+            // parallel array (O(1) — no `[...map.values()]` allocation per chunk).
+            if (toolCallList.length > 0) {
+              const last = toolCallList[toolCallList.length - 1];
               if (partial.name) last.name = partial.name;
               if (partial.arguments) last.arguments += partial.arguments;
               // Per-tool-call argument size limit
@@ -908,7 +950,9 @@ export class AgentLoop {
       return null;
     }
 
-    const toolCalls: ToolCallRequest[] = [...accumulatedToolCalls.values()];
+    // PERF-032: Reuse the parallel array maintained above — no final
+    // `[...accumulatedToolCalls.values()]` spread.
+    const toolCalls: ToolCallRequest[] = toolCallList;
 
     const message: Message = {
       role: 'assistant',

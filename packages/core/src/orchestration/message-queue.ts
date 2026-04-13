@@ -145,18 +145,77 @@ export class MessageQueue {
    * CQ-026: `since` uses **strict** greater-than semantics (`timestamp > since`)
    * so callers implementing tail-style broadcast loops can pass the last-seen
    * timestamp without receiving the boundary message twice.
+   *
+   * **Allocates a new array on every call.** For hot paths, prefer
+   * {@link iterateMessages} which yields matching messages without copying.
    */
   getMessages(agentId: string, options?: { type?: AgentMessage['type']; since?: number }): AgentMessage[] {
     const queue = this.queues.get(agentId);
     if (!queue) return [];
-    let messages: AgentMessage[] = queue;
-    if (options?.type !== undefined) {
-      messages = messages.filter((m) => m.type === options.type);
+    // PERF-031: Preserve historical "filter returns fresh array" semantics.
+    // When no options are supplied, return a shallow copy so callers can't
+    // mutate the internal queue via the returned array.
+    if (options === undefined || (options.type === undefined && options.since === undefined)) {
+      return queue.slice();
     }
-    if (options?.since !== undefined) {
-      messages = messages.filter((m) => m.timestamp > (options.since as number));
+    const result: AgentMessage[] = [];
+    const typeFilter = options.type;
+    const sinceFilter = options.since;
+    for (let i = 0; i < queue.length; i++) {
+      const m = queue[i];
+      if (typeFilter !== undefined && m.type !== typeFilter) continue;
+      if (sinceFilter !== undefined && !(m.timestamp > sinceFilter)) continue;
+      result.push(m);
     }
-    return messages;
+    return result;
+  }
+
+  /**
+   * PERF-031: Zero-copy iterator that yields messages for an agent without
+   * allocating a new array. Mirrors {@link getMessages} filtering semantics
+   * (FIFO order, optional `type` and strict-`>` `since` filters).
+   *
+   * The generator does NOT expose the underlying array — callers receive
+   * references to the stored `AgentMessage` objects, and yields happen only
+   * if the queue entry still satisfies the filter at the time of the yield.
+   * Structural mutation of yielded message objects is visible because the
+   * queue holds those same references; mutation of the iterator's output
+   * (re-assigning the loop variable, shadowing) does NOT affect the queue
+   * because the generator reads fresh from the underlying array each step.
+   */
+  *iterateMessages(
+    agentId: string,
+    options?: { type?: AgentMessage['type']; since?: number },
+  ): Generator<AgentMessage, void, void> {
+    const queue = this.queues.get(agentId);
+    if (!queue) return;
+    const typeFilter = options?.type;
+    const sinceFilter = options?.since;
+    // Capture length at iteration start so pushes during iteration don't
+    // affect this snapshot — matches the historical getMessages() behavior.
+    const snapshotLen = queue.length;
+    for (let i = 0; i < snapshotLen; i++) {
+      const m = queue[i];
+      if (m === undefined) continue; // queue shifted mid-iteration; skip
+      if (typeFilter !== undefined && m.type !== typeFilter) continue;
+      if (sinceFilter !== undefined && !(m.timestamp > sinceFilter)) continue;
+      yield m;
+    }
+  }
+
+  /**
+   * PERF-031: Read-only peek that returns the first-matching message without
+   * copying. Returns `undefined` when no match. Cheaper than `getMessages()`
+   * when the caller only needs one entry.
+   */
+  peekMessages(
+    agentId: string,
+    options?: { type?: AgentMessage['type']; since?: number },
+  ): AgentMessage | undefined {
+    for (const m of this.iterateMessages(agentId, options)) {
+      return m;
+    }
+    return undefined;
   }
 
   /**

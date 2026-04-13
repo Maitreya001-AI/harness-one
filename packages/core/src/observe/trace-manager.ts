@@ -275,15 +275,31 @@ export function createTraceManager(config?: {
      * guaranteed to export even if sampling was lowered before it ended.
      */
     samplingRateSnapshot: number;
+    /**
+     * PERF-029: doubly-linked-list pointers that implement the LRU order.
+     * `prev`/`next` link into `lruHead` / `lruTail` so `appendTraceOrder()`
+     * (link-at-tail) and `shiftTraceOrder()` (unlink-head) are both O(1).
+     * Previously we kept a parallel string[] + Map<string, number> index and
+     * rebuilt the index on every head-shift — O(n) per eviction.
+     */
+    lruPrev: MutableTrace | null;
+    lruNext: MutableTrace | null;
+    /**
+     * PERF-029: membership flag. True when the node is currently linked into
+     * the LRU list (not yet evicted/ended). Avoids walking the list to decide
+     * whether a `removeTraceOrder(id)` call has work to do.
+     */
+    inLru: boolean;
   }
 
   const traces = new Map<string, MutableTrace>();
   const spans = new Map<string, MutableSpan>();
-  const traceOrder: string[] = []; // For LRU eviction
-  // PERF-006: secondary index for O(1) removal from traceOrder in endTrace.
-  // Keeps mapping traceId -> position in traceOrder. On removal we swap the
-  // last element into the hole, updating the index for the moved entry.
-  const traceOrderIndex = new Map<string, number>();
+  // PERF-029: doubly-linked-list LRU. `lruHead` is the oldest entry (evict
+  // first). `lruTail` is the most recently added. Traversal is never needed —
+  // all mutations happen in O(1) via the per-trace prev/next pointers.
+  let lruHead: MutableTrace | null = null;
+  let lruTail: MutableTrace | null = null;
+  let lruSize = 0;
   let nextId = 1;
   let isEvicting = false; // Re-entrance guard for eviction (Fix 3)
   /**
@@ -312,39 +328,50 @@ export function createTraceManager(config?: {
   }
 
   /**
-   * PERF-006: Append `id` to `traceOrder` and record its index in O(1).
+   * PERF-029: Link `trace` at the tail of the LRU list in O(1).
    */
-  function appendTraceOrder(id: string): void {
-    traceOrderIndex.set(id, traceOrder.length);
-    traceOrder.push(id);
+  function appendTraceOrder(trace: MutableTrace): void {
+    if (trace.inLru) return;
+    trace.lruPrev = lruTail;
+    trace.lruNext = null;
+    if (lruTail) {
+      lruTail.lruNext = trace;
+    } else {
+      lruHead = trace;
+    }
+    lruTail = trace;
+    trace.inLru = true;
+    lruSize++;
   }
 
   /**
-   * PERF-006: Remove `id` from `traceOrder` using a swap-remove so we avoid
-   * the O(n) indexOf + splice that previously dominated endTrace on hot paths.
+   * PERF-029: Unlink `trace` from the LRU list in O(1) regardless of position.
+   * Replaces the old swap-remove on a parallel array + index rebuild.
    */
-  function removeTraceOrder(id: string): void {
-    const idx = traceOrderIndex.get(id);
-    if (idx === undefined) return;
-    const last = traceOrder.length - 1;
-    if (idx !== last) {
-      const moved = traceOrder[last];
-      traceOrder[idx] = moved;
-      traceOrderIndex.set(moved, idx);
-    }
-    traceOrder.pop();
-    traceOrderIndex.delete(id);
+  function removeTraceOrder(trace: MutableTrace): void {
+    if (!trace.inLru) return;
+    const prev = trace.lruPrev;
+    const next = trace.lruNext;
+    if (prev) prev.lruNext = next;
+    else lruHead = next;
+    if (next) next.lruPrev = prev;
+    else lruTail = prev;
+    trace.lruPrev = null;
+    trace.lruNext = null;
+    trace.inLru = false;
+    lruSize--;
   }
 
-  function shiftTraceOrder(): string | undefined {
-    const first = traceOrder.shift();
-    if (first === undefined) return undefined;
-    traceOrderIndex.delete(first);
-    // After shift, every remaining entry's index has decreased by one.
-    for (let i = 0; i < traceOrder.length; i++) {
-      traceOrderIndex.set(traceOrder[i], i);
-    }
-    return first;
+  /**
+   * PERF-029: Unlink and return the oldest LRU entry in O(1). Previously this
+   * shifted the first id off a string[] and rebuilt the indexing Map for every
+   * remaining entry — O(n) per eviction.
+   */
+  function shiftTraceOrder(): MutableTrace | undefined {
+    const head = lruHead;
+    if (!head) return undefined;
+    removeTraceOrder(head);
+    return head;
   }
 
   /**
@@ -374,7 +401,7 @@ export function createTraceManager(config?: {
     const allEvictedSpanIds: string[] = [];
 
     try {
-      // First, evict ended traces that are no longer in traceOrder.
+      // First, evict ended traces that are no longer in the LRU list.
       // These have already been exported and are safe to remove.
       if (traces.size > maxTraces) {
         for (const [id, trace] of traces) {
@@ -391,18 +418,17 @@ export function createTraceManager(config?: {
         }
       }
       // Then, evict oldest running traces from the LRU order if still over capacity.
-      while (traces.size > maxTraces && traceOrder.length > 0) {
-        const oldestId = shiftTraceOrder() as string;
-        const trace = traces.get(oldestId);
-        if (trace) {
-          // Finalize any still-running spans before removal (Fix 1)
-          allEvictedSpanIds.push(...finalizeSpansForEviction(trace));
-          for (const spanId of trace.spanIds) {
-            spans.delete(spanId);
-            retryingSpanIds.delete(spanId);
-          }
-          traces.delete(oldestId);
+      // PERF-029: shiftTraceOrder is O(1) — linked-list unlink-head.
+      while (traces.size > maxTraces && lruSize > 0) {
+        const oldest = shiftTraceOrder();
+        if (!oldest) break;
+        // Finalize any still-running spans before removal (Fix 1)
+        allEvictedSpanIds.push(...finalizeSpansForEviction(oldest));
+        for (const spanId of oldest.spanIds) {
+          spans.delete(spanId);
+          retryingSpanIds.delete(spanId);
         }
+        traces.delete(oldest.id);
       }
     } finally {
       isEvicting = false;
@@ -471,7 +497,7 @@ export function createTraceManager(config?: {
       const userMeta = metadata
         ? (redactor ? sanitizeAttributes(metadata, redactor) : { ...metadata })
         : {};
-      traces.set(id, {
+      const mutable: MutableTrace = {
         id,
         name,
         startTime: Date.now(),
@@ -481,8 +507,17 @@ export function createTraceManager(config?: {
         status: 'running',
         // LM-011 (Wave 4b): snapshot current sampling rate at trace-start.
         samplingRateSnapshot: samplingRate,
-      });
-      appendTraceOrder(id);
+        lruPrev: null,
+        lruNext: null,
+        inLru: false,
+      };
+      traces.set(id, mutable);
+      appendTraceOrder(mutable);
+      // LM-007: Actively evict even if exporters are fully healthy — otherwise
+      // `maxTraces` is only ever reached after a trace ends, letting the map
+      // grow when N concurrent running traces exceed capacity. With active
+      // eviction the oldest still-running trace is finalized early so memory
+      // tracks `maxTraces` even under bursty load or hung exporters.
       evictIfNeeded();
       return asTraceId(id);
     },
@@ -629,8 +664,27 @@ export function createTraceManager(config?: {
         }
       }
 
-      // Export — respects each exporter's isHealthy() hook and lazy initialize().
-      const snapshot: Span = { ...span, events: [...span.events] };
+      // PERF-021 / 023 / 033 / 035: Build one frozen readonly snapshot and
+      // reuse it across every exporter. Previously we deep-cloned the span
+      // (`{ ...span, events: [...span.events] }`) once per exporter — with
+      // N exporters this was N times the allocation for the same payload.
+      //
+      // Freezing both the snapshot envelope AND the `events` array means
+      // exporters cannot mutate the shared reference (or each other's view
+      // of it). `attributes` is kept mutation-free by assigning a shallow
+      // copy; freezing it outright would be a breaking change for exporters
+      // that still expect a writable attribute bag.
+      const snapshot: Span = Object.freeze({
+        id: span.id,
+        traceId: span.traceId,
+        ...(span.parentId !== undefined && { parentId: span.parentId }),
+        name: span.name,
+        startTime: span.startTime,
+        ...(span.endTime !== undefined && { endTime: span.endTime }),
+        attributes: { ...span.attributes },
+        events: Object.freeze(span.events.slice()) as readonly SpanEvent[],
+        status: span.status,
+      });
       for (const exporter of exporters) {
         exportSpanTo(exporter, snapshot);
       }
@@ -653,8 +707,8 @@ export function createTraceManager(config?: {
       trace.endTime = Date.now();
       trace.status = status ?? 'completed';
 
-      // PERF-006: O(1) removal via swap-remove; previously O(n) indexOf+splice.
-      removeTraceOrder(traceId);
+      // PERF-029: O(1) linked-list unlink; previously O(n) index rebuild.
+      removeTraceOrder(trace);
 
       // Export — respects isHealthy(), shouldExport(), lazy initialize(), and samplingRate.
       // LM-011 (Wave 4b): pass the rate captured at trace-start so concurrent
@@ -692,8 +746,12 @@ export function createTraceManager(config?: {
       // Settle pending in-flight exports before asking exporters to flush — a
       // span may have been fired microseconds ago and we don't want flush() to
       // race past it.
+      // PERF-028: `Promise.allSettled(pendingExports)` accepts any iterable,
+      // so we pass the Set directly instead of materialising a fresh array on
+      // every loop turn. Loop because a settled export's `finally` hook runs
+      // asynchronously and new exports can race in while we awaited.
       while (pendingExports.size > 0) {
-        await Promise.allSettled(Array.from(pendingExports));
+        await Promise.allSettled(pendingExports);
       }
       await Promise.all(exporters.map(e => e.flush()));
     },
@@ -725,8 +783,10 @@ export function createTraceManager(config?: {
       // LM-001: Settle outstanding in-flight export promises before asking
       // exporters to flush — otherwise a span fired milliseconds ago may still
       // be in the exporter's queue when we clear internal state.
+      // PERF-028: pass the Set directly to `Promise.allSettled` instead of
+      // allocating `Array.from(pendingExports)` per turn.
       while (pendingExports.size > 0) {
-        await Promise.allSettled(Array.from(pendingExports));
+        await Promise.allSettled(pendingExports);
       }
       // Flush every exporter — use allSettled so one failure doesn't block others.
       const flushResults = await Promise.allSettled(exporters.map(e => e.flush()));
@@ -774,8 +834,10 @@ export function createTraceManager(config?: {
       // Clear internal maps so the process can exit cleanly.
       traces.clear();
       spans.clear();
-      traceOrder.length = 0;
-      traceOrderIndex.clear();
+      // PERF-029: reset the linked-list LRU state.
+      lruHead = null;
+      lruTail = null;
+      lruSize = 0;
       retryingSpanIds.clear();
       deadTraceIds.clear();
       deadSpanIds.clear();

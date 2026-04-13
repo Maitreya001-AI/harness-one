@@ -1413,4 +1413,84 @@ describe('PERF-016 pendingExports leak fix', () => {
       await expect(tm.flush()).resolves.toBeUndefined();
     });
   });
+
+  describe('PERF-021/023/033/035: frozen readonly span snapshots', () => {
+    it('hands every exporter the same frozen snapshot reference', async () => {
+      const capturedA: unknown[] = [];
+      const capturedB: unknown[] = [];
+      const exporterA: TraceExporter = {
+        name: 'A',
+        async exportSpan(span) { capturedA.push(span); },
+        async exportTrace() {},
+        async flush() {},
+      };
+      const exporterB: TraceExporter = {
+        name: 'B',
+        async exportSpan(span) { capturedB.push(span); },
+        async exportTrace() {},
+        async flush() {},
+      };
+      const tm = createTraceManager({ exporters: [exporterA, exporterB] });
+      const tid = tm.startTrace('t');
+      const sid = tm.startSpan(tid, 's');
+      tm.addSpanEvent(sid, 'hi');
+      tm.endSpan(sid);
+      await tm.flush();
+
+      expect(capturedA).toHaveLength(1);
+      expect(capturedB).toHaveLength(1);
+      // Both exporters receive the same reference — no per-exporter deep clone.
+      expect(capturedA[0]).toBe(capturedB[0]);
+      // And the shared reference is frozen so neither exporter can mutate it.
+      expect(Object.isFrozen(capturedA[0])).toBe(true);
+    });
+
+    it('freezes the events array on the snapshot', async () => {
+      let captured: unknown;
+      const exporter: TraceExporter = {
+        name: 'capture',
+        async exportSpan(span) { captured = span; },
+        async exportTrace() {},
+        async flush() {},
+      };
+      const tm = createTraceManager({ exporters: [exporter] });
+      const tid = tm.startTrace('t');
+      const sid = tm.startSpan(tid, 's');
+      tm.addSpanEvent(sid, 'e1');
+      tm.addSpanEvent(sid, 'e2');
+      tm.endSpan(sid);
+      await tm.flush();
+
+      const snapshot = captured as { events: readonly unknown[] };
+      expect(Object.isFrozen(snapshot.events)).toBe(true);
+      expect(snapshot.events).toHaveLength(2);
+    });
+  });
+
+  describe('LM-007: active eviction when N concurrent running traces exceed maxTraces', () => {
+    it('caps memory at maxTraces even when no traces end', () => {
+      const tm = createTraceManager({ maxTraces: 3 });
+      const ids = [] as string[];
+      for (let i = 0; i < 10; i++) {
+        ids.push(tm.startTrace(`t-${i}`));
+      }
+      // Only the 3 most recent traces survive; older ones are evicted.
+      const alive = ids.filter((id) => tm.getTrace(id) !== undefined);
+      expect(alive).toHaveLength(3);
+      // The 3 most recent (last appended) are retained.
+      expect(alive).toEqual(ids.slice(-3));
+    });
+
+    it('PERF-029: LRU eviction remains correct after many evictions', () => {
+      const tm = createTraceManager({ maxTraces: 5 });
+      const ids = [] as string[];
+      for (let i = 0; i < 1_000; i++) {
+        ids.push(tm.startTrace(`t-${i}`));
+      }
+      // Only the last 5 ids are alive; everything older has been evicted in
+      // O(1) linked-list unlinks rather than O(n) index rebuilds.
+      const alive = ids.filter((id) => tm.getTrace(id) !== undefined);
+      expect(alive).toEqual(ids.slice(-5));
+    });
+  });
 });

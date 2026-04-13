@@ -453,4 +453,43 @@ describe('createLogger', () => {
       expect(parsed.correlationId).toBeUndefined();
     });
   });
+
+  describe('PERF-030: below-level log calls skip stringify work', () => {
+    it('debug() under info-level logger does not invoke output', () => {
+      const { lines, output } = captureOutput();
+      const logger = createLogger({ level: 'info', output });
+      logger.debug('hot loop', { k: 1, v: { nested: 'object' } });
+      expect(lines).toHaveLength(0);
+    });
+
+    it('text mode without meta skips JSON.stringify entirely', () => {
+      const { lines, output } = captureOutput();
+      const logger = createLogger({ level: 'info', json: false, output });
+      logger.info('plain'); // no meta
+      expect(lines).toHaveLength(1);
+      // The no-meta path emits without any brace, so the line must not
+      // contain JSON object syntax for the metadata suffix.
+      expect(lines[0]).not.toMatch(/\{.*\}/);
+    });
+
+    it('text mode with meta still appends a JSON suffix', () => {
+      const { lines, output } = captureOutput();
+      const logger = createLogger({ level: 'info', json: false, output });
+      logger.info('with-meta', { userId: 42 });
+      expect(lines[0]).toContain('{"userId":42}');
+    });
+
+    it('log-level threshold does not consume meta construction cost', () => {
+      const { lines, output } = captureOutput();
+      const logger = createLogger({ level: 'warn', output });
+      // The meta factory below would throw if invoked — behind the level
+      // gate, we never touch it because debug/info are dropped.
+      const poisonMeta = new Proxy({}, {
+        get(): never { throw new Error('meta was read below level gate'); },
+      });
+      expect(() => logger.debug('ignored', poisonMeta as Record<string, unknown>)).not.toThrow();
+      expect(() => logger.info('ignored', poisonMeta as Record<string, unknown>)).not.toThrow();
+      expect(lines).toHaveLength(0);
+    });
+  });
 });

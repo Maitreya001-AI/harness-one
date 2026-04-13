@@ -94,7 +94,11 @@ export function createSessionManager(config?: {
    */
   const unlockedOrder = new Map<SessionId, true>(); // LRU of active (unlocked)
   const lockedIds = new Set<SessionId>();
-  const eventHandlers: ((event: SessionEvent) => void)[] = [];
+  // LM-012: Set-backed event-handler storage — JS Sets preserve insertion
+  // order, so emit order is identical to the historical array version.
+  // Unsubscribe is O(1) instead of O(n) indexOf+splice. Registering the same
+  // handler reference twice is deduplicated (store one).
+  const eventHandlers = new Set<(event: SessionEvent) => void>();
 
   // Emit reentry protection: queue events if already emitting
   let emitting = false;
@@ -370,10 +374,11 @@ export function createSessionManager(config?: {
     },
 
     onEvent(handler: (event: SessionEvent) => void): () => void {
-      eventHandlers.push(handler);
+      // LM-012: O(1) add + O(1) delete — Set preserves insertion order so
+      // emit() still runs handlers in registration order.
+      eventHandlers.add(handler);
       return () => {
-        const idx = eventHandlers.indexOf(handler);
-        if (idx >= 0) eventHandlers.splice(idx, 1);
+        eventHandlers.delete(handler);
       };
     },
 
@@ -389,7 +394,7 @@ export function createSessionManager(config?: {
         lockedIds.clear();
         // Clear event handlers to prevent memory leaks when handlers close over
         // external state that would otherwise be retained by the disposed manager.
-        eventHandlers.length = 0;
+        eventHandlers.clear();
       } finally {
         if (gcTimer) clearInterval(gcTimer);
       }

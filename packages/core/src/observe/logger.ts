@@ -59,6 +59,10 @@ const LOG_LEVEL_VALUES: Record<LogLevel, number> = { debug: 0, info: 1, warn: 2,
  * - Error objects are serialized as `{ name, message, stack }`.
  * - Date objects are serialized as ISO 8601 strings.
  * - Circular references are replaced with the string `"[Circular]"`.
+ *
+ * PERF-030: The returned replacer carries per-call cycle-tracking state
+ * (a WeakSet), so it MUST be constructed fresh for each `JSON.stringify`
+ * invocation. The factory itself is stateless and hoisted to module scope.
  */
 export function createSafeReplacer(): (key: string, value: unknown) => unknown {
   const seen = new WeakSet<object>();
@@ -77,6 +81,18 @@ export function createSafeReplacer(): (key: string, value: unknown) => unknown {
     }
     return value;
   };
+}
+
+/**
+ * PERF-030: Object-key check that avoids allocating the `Object.keys(obj)`
+ * array just to ask "does this object have any own enumerable keys?". Used by
+ * the text-format path to decide whether to emit a JSON meta suffix.
+ */
+function hasOwnKeys(obj: Record<string, unknown>): boolean {
+  for (const _k in obj) {
+    if (Object.prototype.hasOwnProperty.call(obj, _k)) return true;
+  }
+  return false;
 }
 
 /**
@@ -108,6 +124,11 @@ export function createLogger(config?: LoggerConfig): Logger {
 
   function createLoggerWithMeta(baseMeta: Record<string, unknown>): Logger {
     function log(level: LogLevel, message: string, meta?: Record<string, unknown>): void {
+      // PERF-030: Gate ALL work behind the level check. Previously we still
+      // constructed `merged`, invoked the redactor, stamped a timestamp, and
+      // built a replacer even when the call was below the configured level —
+      // a common pattern in hot loops (`logger.debug(...)` at info level).
+      // Now `debug()` under a production `info` logger is a single branch.
       if (!shouldLog(level)) return;
       // OBS-001: Inject correlationId (if configured) before redaction so it
       // survives as-is — unless the caller intentionally overrides it in meta.
@@ -122,15 +143,19 @@ export function createLogger(config?: LoggerConfig): Logger {
       // Fix 10: Store as epoch millis, format only at output time
       const epochMs = Date.now();
       const timestamp = new Date(epochMs).toISOString();
-      // Fix 9 + PERF-014: Use safe replacer for Error/Date/circular handling,
-      // and pre-stringify once so JSON and text modes share work.
-      const replacer = createSafeReplacer();
+      // Fix 9 + PERF-014: Use safe replacer for Error/Date/circular handling.
+      // PERF-030: Only construct the replacer when we actually need to
+      // stringify. Text mode without meta keys skips it entirely.
       if (json) {
+        const replacer = createSafeReplacer();
         output(JSON.stringify({ level, message, timestamp, ...safeMerged }, replacer));
-      } else {
-        const metaKeys = Object.keys(safeMerged);
-        const suffix = metaKeys.length > 0 ? ' ' + JSON.stringify(safeMerged, replacer) : '';
+      } else if (hasOwnKeys(safeMerged)) {
+        const replacer = createSafeReplacer();
+        const suffix = ' ' + JSON.stringify(safeMerged, replacer);
         output(`[${timestamp}] ${level.toUpperCase()} ${message}${suffix}`);
+      } else {
+        // No metadata → skip JSON.stringify entirely.
+        output(`[${timestamp}] ${level.toUpperCase()} ${message}`);
       }
     }
 
