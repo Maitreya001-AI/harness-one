@@ -9,6 +9,11 @@
       "import": "./dist/index.js",
       "require": "./dist/cjs/index.cjs"
     },
+    "./essentials": {
+      "types": "./dist/essentials.d.ts",
+      "import": "./dist/essentials.js",
+      "require": "./dist/cjs/essentials.cjs"
+    },
     "./core": {
       "types": "./dist/core/index.d.ts",
       "import": "./dist/core/index.js",

@@ -1,0 +1,240 @@
+/**
+ * StreamAggregator — accumulates a streaming adapter response into a single
+ * assistant `Message` while emitting per-chunk events.
+ *
+ * Extracted from `AgentLoop.handleStream` (ARCH-001). The aggregator owns:
+ *
+ * - `accumulatedText` — concatenated `text_delta` payloads.
+ * - `accumulatedToolCalls` — `Map<id, {id,name,arguments}>` for O(1) id lookups.
+ * - `toolCallList` — parallel array preserving insertion order so the final
+ *   message can be assembled without a `Map.values()` spread.
+ * - `accumulatedBytes` — running byte count for per-iteration size limits.
+ *
+ * Behavioural parity with the historical inline implementation is the
+ * extraction's primary contract:
+ *
+ *   - The same events are emitted in the same order.
+ *   - Size-limit errors fire at the same chunk boundary.
+ *   - The final assembled `Message` has the same shape (`toolCalls` omitted
+ *     when empty rather than set to `[]`).
+ *
+ * Ownership: the aggregator is intentionally a class with internal mutable
+ * state — the streaming hot path is allocation-sensitive (PERF-024 / PERF-032),
+ * and a class lets the AgentLoop reuse a single instance (via `reset()`)
+ * across iterations should the loop ever choose to.
+ *
+ * @module
+ */
+
+import type { Message, ToolCallRequest, TokenUsage } from './types.js';
+
+/**
+ * Streaming chunk shape consumed by the aggregator. Mirrors the relevant
+ * subset of {@link import('./types.js').StreamChunk} so the aggregator can
+ * be unit-tested without an adapter. The `type` widens to `string` so the
+ * aggregator can ignore unknown chunk variants without breaking on future
+ * additions to the StreamChunk union.
+ */
+export interface StreamAggregatorChunk {
+  readonly type: 'text_delta' | 'tool_call_delta' | 'done' | string;
+  readonly text?: string;
+  readonly toolCall?: Partial<ToolCallRequest>;
+  readonly usage?: TokenUsage;
+}
+
+/**
+ * Discriminated union of events produced by `handleChunk`. The AgentLoop
+ * yields these to its consumer 1:1 (after wrapping `error` events in the
+ * standard `AgentEvent` taxonomy).
+ */
+export type StreamAggregatorEvent =
+  | { type: 'text_delta'; text: string }
+  | { type: 'tool_call_delta'; toolCall: Partial<ToolCallRequest> }
+  | { type: 'warning'; message: string }
+  | { type: 'error'; error: Error };
+
+/** Final accumulated state returned by `getMessage()`. */
+export interface StreamAggregatorMessage {
+  readonly message: Message;
+  readonly usage: TokenUsage;
+  readonly bytesRead: number;
+}
+
+/** Limits configuring stream-size enforcement. */
+export interface StreamAggregatorOptions {
+  /** Maximum bytes accumulated within this aggregator instance (per-iteration). */
+  readonly maxStreamBytes: number;
+  /** Maximum bytes per single tool-call's arguments. */
+  readonly maxToolArgBytes: number;
+  /** Cumulative bytes already read across all prior iterations of the loop. */
+  readonly cumulativeStreamBytesSoFar: number;
+  /** Cap on cumulative bytes across all iterations combined. */
+  readonly maxCumulativeStreamBytes: number;
+}
+
+/**
+ * Stateful aggregator. Construct once per stream iteration; feed every
+ * chunk through `handleChunk()`; collect the final `Message` via
+ * `getMessage(usage)`.
+ *
+ * Aborting / re-using: call `reset()` to discard accumulated state and
+ * reuse the instance for another iteration.
+ */
+export class StreamAggregator {
+  private readonly options: StreamAggregatorOptions;
+  private accumulatedText = '';
+  private accumulatedBytes = 0;
+  /** Map for O(1) id lookups. Mirrors `toolCallList` exactly. */
+  private readonly accumulatedToolCalls: Map<string, { id: string; name: string; arguments: string }> = new Map();
+  /**
+   * Parallel array preserving insertion order so we never need to spread
+   * `accumulatedToolCalls.values()` to build the final message (PERF-032).
+   */
+  private readonly toolCallList: Array<{ id: string; name: string; arguments: string }> = [];
+
+  constructor(options: StreamAggregatorOptions) {
+    this.options = options;
+  }
+
+  /** Total bytes consumed by this aggregator since construction / last reset. */
+  get bytesRead(): number {
+    return this.accumulatedBytes;
+  }
+
+  /**
+   * Process a single chunk from the adapter stream.
+   *
+   * Yields zero, one, or multiple events:
+   *  - `text_delta` — passthrough of the chunk's text content.
+   *  - `tool_call_delta` — passthrough for downstream visibility.
+   *  - `warning` — non-fatal aggregation issue (e.g. tool delta with no id
+   *    and no preceding tool call).
+   *  - `error` — size limit or other terminal aggregation failure. After
+   *    yielding an `error`, the caller MUST stop pumping chunks; subsequent
+   *    `handleChunk` calls are still safe but produce undefined message
+   *    state.
+   *
+   * Behavioural parity with the original inline implementation is preserved:
+   *   - Per-chunk size checks fire at exactly the same boundaries.
+   *   - Tool-call deltas without an id append to the most-recently-seen
+   *     tool call (when one exists) or emit a `warning` (when not).
+   */
+  *handleChunk(chunk: StreamAggregatorChunk): Generator<StreamAggregatorEvent> {
+    if (chunk.type === 'text_delta' && chunk.text) {
+      this.accumulatedBytes += chunk.text.length;
+      const sizeErr = this.checkSizeLimits();
+      if (sizeErr) {
+        yield { type: 'error', error: sizeErr };
+        return;
+      }
+      this.accumulatedText += chunk.text;
+      yield { type: 'text_delta', text: chunk.text };
+      return;
+    }
+
+    if (chunk.type === 'tool_call_delta' && chunk.toolCall) {
+      const partial = chunk.toolCall;
+      yield { type: 'tool_call_delta', toolCall: partial };
+
+      if (partial.arguments) {
+        this.accumulatedBytes += partial.arguments.length;
+        const sizeErr = this.checkSizeLimits();
+        if (sizeErr) {
+          yield { type: 'error', error: sizeErr };
+          return;
+        }
+      }
+
+      if (partial.id) {
+        const existing = this.accumulatedToolCalls.get(partial.id);
+        if (existing) {
+          if (partial.name) existing.name = partial.name;
+          if (partial.arguments) existing.arguments += partial.arguments;
+          if (existing.arguments.length > this.options.maxToolArgBytes) {
+            yield {
+              type: 'error',
+              error: new Error(
+                `Tool call "${existing.name}" arguments exceeded maximum size (${this.options.maxToolArgBytes} bytes)`,
+              ),
+            };
+            return;
+          }
+        } else {
+          // PERF-024: New tool call — push once into the parallel array so
+          // subsequent deltas mutate in place via the map reference.
+          const entry = {
+            id: partial.id,
+            name: partial.name ?? '',
+            arguments: partial.arguments ?? '',
+          };
+          this.accumulatedToolCalls.set(partial.id, entry);
+          this.toolCallList.push(entry);
+        }
+        return;
+      }
+
+      // No id: append to the most-recent tool call via the parallel array
+      // (O(1); avoids `[...map.values()]`).
+      if (this.toolCallList.length > 0) {
+        const last = this.toolCallList[this.toolCallList.length - 1];
+        if (partial.name) last.name = partial.name;
+        if (partial.arguments) last.arguments += partial.arguments;
+        if (last.arguments.length > this.options.maxToolArgBytes) {
+          yield {
+            type: 'error',
+            error: new Error(
+              `Tool call "${last.name}" arguments exceeded maximum size (${this.options.maxToolArgBytes} bytes)`,
+            ),
+          };
+          return;
+        }
+      } else {
+        yield {
+          type: 'warning',
+          message: 'Received partial tool call chunk without ID and no accumulated calls',
+        };
+      }
+      return;
+    }
+    // 'done' chunks carry usage; handled by the caller via `getMessage`.
+  }
+
+  /**
+   * Build the final assistant message + bytes-read metadata.
+   *
+   * `toolCalls` is omitted from the message entirely when no tool calls
+   * accumulated (preserves prior behaviour where the field was absent rather
+   * than `[]`, which downstream observers depend on).
+   */
+  getMessage(usage: TokenUsage): StreamAggregatorMessage {
+    // PERF-032: reuse the parallel array — no `[...map.values()]` spread.
+    const toolCalls: ToolCallRequest[] = this.toolCallList;
+    const message: Message = {
+      role: 'assistant',
+      content: this.accumulatedText,
+      ...(toolCalls.length > 0 ? { toolCalls } : {}),
+    };
+    return { message, usage, bytesRead: this.accumulatedBytes };
+  }
+
+  /** Discard accumulated state; the instance is ready for reuse. */
+  reset(): void {
+    this.accumulatedText = '';
+    this.accumulatedBytes = 0;
+    this.accumulatedToolCalls.clear();
+    this.toolCallList.length = 0;
+  }
+
+  private checkSizeLimits(): Error | null {
+    if (this.accumulatedBytes > this.options.maxStreamBytes) {
+      return new Error(`Stream exceeded maximum size (${this.options.maxStreamBytes} bytes)`);
+    }
+    if (
+      this.options.cumulativeStreamBytesSoFar + this.accumulatedBytes >
+      this.options.maxCumulativeStreamBytes
+    ) {
+      return new Error('Cumulative stream size exceeded maximum across all iterations');
+    }
+    return null;
+  }
+}

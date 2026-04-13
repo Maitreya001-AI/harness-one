@@ -186,6 +186,44 @@ export function createTraceManager(config?: {
       });
   }
 
+  /**
+   * ARCH-009: Reserved span-attribute prefixes. Keys outside this allow-list
+   * AND outside the `user.*` namespace produce a one-time-per-key warning so
+   * consumers can either:
+   *   - rename the key to `user.foo` to opt out, or
+   *   - request a new reserved prefix in a future release.
+   *
+   * This is intentionally permissive — non-prefixed keys are still accepted
+   * verbatim. The only effect is the warning. Use a `Set` lookup so the
+   * hot path stays O(1) per attribute.
+   */
+  const RESERVED_PREFIXES = [
+    'system.', 'error.', 'cost.', 'user.', 'harness.', 'eviction.', 'chunk.',
+  ] as const;
+  const RESERVED_KEYS = new Set([
+    'iteration', 'attempt', 'model', 'inputTokens', 'outputTokens',
+    'cacheReadTokens', 'cacheWriteTokens', 'path', 'latencyMs', 'passed',
+    'verdict', 'reason', 'events', 'parentId', 'errorCategory',
+    'errorMessage', 'errorName', 'error', 'streaming', 'conversationLength',
+    'adapter', 'toolCount', 'toolName', 'toolCallId', 'input', 'output',
+    'usage', 'metadata', 'status', 'spanCount', 'message',
+  ]);
+  const warnedAttrKeys = new Set<string>();
+
+  function maybeWarnAttributeKey(key: string): void {
+    if (warnedAttrKeys.has(key)) return;
+    if (RESERVED_KEYS.has(key)) return;
+    for (const prefix of RESERVED_PREFIXES) {
+      if (key.startsWith(prefix)) return;
+    }
+    warnedAttrKeys.add(key);
+    const msg = `[harness-one/trace-manager] span attribute key "${key}" does not match a reserved prefix (system.*, error.*, cost.*, user.*, harness.*). Consider prefixing with "user." to silence this warning.`;
+    if (logger) {
+      try { logger.warn(msg, { key }); } catch { /* logger threw — ignore */ }
+    }
+    // Intentionally silent fallback: the warning is advisory, not fatal.
+  }
+
   function reportExportError(err: unknown): void {
     if (onExportError) onExportError(err);
     else if (logger) logger.warn('[harness-one] trace export error', { error: err });
@@ -609,6 +647,12 @@ export function createTraceManager(config?: {
           'SPAN_NOT_FOUND',
           'Start a span before setting attributes',
         );
+      }
+      // ARCH-009: lint-style warning for non-reserved keys. One warning per
+      // distinct key per tracker — surfaces drift early without spamming.
+      // Skipped when no logger is configured (avoids stderr noise).
+      if (logger) {
+        for (const k of Object.keys(attributes)) maybeWarnAttributeKey(k);
       }
       // SEC-007: scrub attributes at ingestion — downstream exporters read
       // span.attributes verbatim, so redacting here guarantees no leak.

@@ -43,6 +43,7 @@ export type {
   ToolMessage,
   AgentAdapter,
   AgentLoopConfig,
+  AgentLoopHook,
   AgentLoopTraceManager,
   ChatParams,
   ChatResponse,
@@ -62,7 +63,12 @@ export type {
   OutputParser,
   EventBus,
   PruneResult,
+  StreamAggregatorEvent,
+  StreamAggregatorChunk,
+  StreamAggregatorMessage,
+  StreamAggregatorOptions,
 } from './core/index.js';
+export { StreamAggregator } from './core/index.js';
 
 // Tools
 export {
@@ -138,6 +144,7 @@ export type {
   SpanAttributeValue,
   TraceExporter,
   TraceManager,
+  InstrumentationPort,
   CostTracker,
   ModelPricing,
   TokenUsageRecord,

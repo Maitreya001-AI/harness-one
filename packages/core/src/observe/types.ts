@@ -20,7 +20,38 @@ export type SpanAttributeValue =
   | readonly number[]
   | readonly boolean[];
 
-/** Typed attribute bag for spans and traces. */
+/**
+ * Typed attribute bag for spans and traces.
+ *
+ * ARCH-009: span-attribute keys follow a reserved-prefix discipline. Using a
+ * non-reserved key without `user.` prefix triggers a `logger.warn` from
+ * `setSpanAttributes()` (the call still succeeds — this is a lint, not an
+ * error). Reserved prefixes:
+ *
+ * - `system.*` — owned by harness-one. Library-authored attributes (sampling
+ *   decisions, internal correlation IDs, build metadata).
+ * - `error.*` — error attributes set by harness-one error paths
+ *   (`error.message`, `error.category`, `error.stack`).
+ * - `cost.*` — cost-tracking attributes set by `CostTracker` and the
+ *   AgentLoop's per-iteration cost recording.
+ * - `user.*` — free-form caller attributes. Use this prefix to avoid the
+ *   warning when adding bespoke attributes.
+ *
+ * Other historically-used prefixes recognised for backwards compatibility
+ * (no warning emitted):
+ *
+ * - `harness.*`, `chunk.*`, `tool*`, `iteration`, `attempt`, `model`,
+ *   `inputTokens`, `outputTokens`, `cacheReadTokens`, `cacheWriteTokens`,
+ *   `path`, `latencyMs`, `passed`, `verdict`, `reason`, `events`,
+ *   `parentId`, `eviction.reason`, `errorCategory`, `errorMessage`,
+ *   `errorName`, `error`, `streaming`, `conversationLength`, `adapter`,
+ *   `toolCount`, `toolName`, `toolCallId`, `input`, `output`, `usage`,
+ *   `metadata`, `status`, `spanCount`.
+ *
+ * Unknown / non-prefixed keys are still accepted — the warning is advisory
+ * so callers can either add `user.` or extend the reserved-prefix list in
+ * future versions.
+ */
 export type SpanAttributes = Readonly<Record<string, SpanAttributeValue>>;
 
 /**

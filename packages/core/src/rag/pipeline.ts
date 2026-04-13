@@ -292,8 +292,10 @@ export function createRAGPipeline(config: RAGPipelineConfig): RAGPipeline {
       }
 
       // OBS-006: root trace for the full ingest() invocation.
+      // ARCH-012: `startTrace`/`endTrace` are optional on InstrumentationPort —
+      // ports that only support spans simply skip the wrapping trace.
       const tm = config.traceManager;
-      const traceId = tm ? tm.startTrace('rag.ingest') : undefined;
+      const traceId = tm?.startTrace ? tm.startTrace('rag.ingest') : undefined;
 
       try {
         // 1. Load documents
@@ -304,17 +306,17 @@ export function createRAGPipeline(config: RAGPipelineConfig): RAGPipeline {
 
         return { documents: documents.length, chunks: chunkCount };
       } finally {
-        if (tm && traceId) tm.endTrace(traceId);
+        if (tm?.endTrace && traceId) tm.endTrace(traceId);
       }
     },
 
     async ingestDocuments(documents: Document[]): Promise<number> {
       const tm = config.traceManager;
-      const traceId = tm ? tm.startTrace('rag.ingest_documents') : undefined;
+      const traceId = tm?.startTrace ? tm.startTrace('rag.ingest_documents') : undefined;
       try {
         return await chunkAndIndex(documents, traceId);
       } finally {
-        if (tm && traceId) tm.endTrace(traceId);
+        if (tm?.endTrace && traceId) tm.endTrace(traceId);
       }
     },
 

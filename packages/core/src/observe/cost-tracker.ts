@@ -6,6 +6,13 @@
 
 import type { TokenUsageRecord, CostAlert } from './types.js';
 import { HarnessError } from '../core/errors.js';
+import {
+  type EvictionStrategy,
+  type EvictionStrategyName,
+  getEvictionStrategy,
+} from './cost-tracker-eviction.js';
+export type { EvictionStrategy, EvictionStrategyName } from './cost-tracker-eviction.js';
+export { overflowBucketStrategy, lruStrategy, getEvictionStrategy } from './cost-tracker-eviction.js';
 
 /** Pricing configuration for a model. */
 export interface ModelPricing {
@@ -148,6 +155,21 @@ export class KahanSum {
 /**
  * Create a new CostTracker instance.
  *
+ * ARCH-008: Eviction semantics are pluggable via `evictionStrategy`. The
+ * default `'overflow-bucket'` matches the historical core behaviour:
+ *
+ *   - Per-model and per-trace cumulative totals are NEVER evicted; new keys
+ *     past `maxModels` / `maxTraces` are aggregated under
+ *     {@link OVERFLOW_BUCKET_KEY} (SEC-009).
+ *   - The bounded record buffer still shifts when oversize, decrementing
+ *     `getTotalCost()` (recent-window) but leaving per-model / per-trace
+ *     cumulative totals untouched.
+ *
+ * Pass `evictionStrategy: 'lru'` to switch to the langfuse-flavoured policy
+ * where per-key totals track the retained record window. See
+ * `@harness-one/langfuse`'s `createLangfuseCostTracker` for the documented
+ * divergence rationale.
+ *
  * @example
  * ```ts
  * const tracker = createCostTracker({
@@ -165,6 +187,12 @@ export function createCostTracker(config?: {
   maxRecords?: number;
   maxModels?: number;
   maxTraces?: number;
+  /**
+   * ARCH-008: select per-key total semantics. Defaults to `'overflow-bucket'`
+   * (cumulative since start, never evicts). `'lru'` matches Langfuse's
+   * sliding-window behaviour. Accepts a strategy object directly for tests.
+   */
+  evictionStrategy?: EvictionStrategyName | EvictionStrategy;
   /**
    * When `true`, `recordUsage()` throws if `model` is missing or empty or if
    * `inputTokens`/`outputTokens` are non-finite — so missing data surfaces
@@ -197,6 +225,12 @@ export function createCostTracker(config?: {
   const strictMode = config?.strictMode ?? false;
   const warnUnpricedModels = config?.warnUnpricedModels ?? true;
   const onOverflow = config?.onOverflow;
+  // ARCH-008: pluggable eviction strategy. Accept a string or an object so
+  // tests can inject custom strategies.
+  const evictionStrategy: EvictionStrategy =
+    typeof config?.evictionStrategy === 'object'
+      ? config.evictionStrategy
+      : getEvictionStrategy(config?.evictionStrategy ?? 'overflow-bucket');
   /**
    * Tracks models we've already warned about so we emit one warning per
    * unpriced model, not one per record.
@@ -384,48 +418,35 @@ export function createCostTracker(config?: {
       // Fix 5: Use KahanSum for running total
       runningSum.add(estimatedCost);
 
-      // Fix 4 + SEC-009: Accumulate per-model cost permanently. When at cap,
-      // aggregate new (previously-unseen) model keys under OVERFLOW_BUCKET_KEY
-      // instead of evicting existing totals — evictions would let any caller
-      // wipe legitimate totals by flooding junk keys.
-      let modelSum = modelTotals.get(usage.model);
-      if (!modelSum) {
-        if (modelTotals.size >= maxModels) {
-          signalOverflow('model', maxModels, usage.model);
-          modelSum = modelTotals.get(OVERFLOW_BUCKET_KEY);
-          if (!modelSum) {
-            modelSum = new KahanSum();
-            modelTotals.set(OVERFLOW_BUCKET_KEY, modelSum);
-          }
-        } else {
-          modelSum = new KahanSum();
-          modelTotals.set(usage.model, modelSum);
-        }
-      }
-      modelSum.add(estimatedCost);
+      // ARCH-008: Per-key bucket resolution is delegated to the configured
+      // EvictionStrategy. The default `'overflow-bucket'` strategy preserves
+      // SEC-009 semantics: existing totals are never evicted, new keys past
+      // capacity land in OVERFLOW_BUCKET_KEY. The throttled `signalOverflow`
+      // callback fires once per minute (per kind) to alert operators.
+      const modelSum = evictionStrategy.resolveKeyBucket(
+        modelTotals,
+        usage.model,
+        maxModels,
+        ({ key }) => signalOverflow('model', maxModels, key),
+      );
+      if (modelSum) modelSum.add(estimatedCost);
 
-      // PERF-03 + SEC-009: Same treatment for per-trace totals.
       if (usage.traceId) {
-        let traceSum = traceTotals.get(usage.traceId);
-        if (!traceSum) {
-          if (traceTotals.size >= maxTraces) {
-            signalOverflow('trace', maxTraces, usage.traceId);
-            traceSum = traceTotals.get(OVERFLOW_BUCKET_KEY);
-            if (!traceSum) {
-              traceSum = new KahanSum();
-              traceTotals.set(OVERFLOW_BUCKET_KEY, traceSum);
-            }
-          } else {
-            traceSum = new KahanSum();
-            traceTotals.set(usage.traceId, traceSum);
-          }
-        }
-        traceSum.add(estimatedCost);
+        const traceSum = evictionStrategy.resolveKeyBucket(
+          traceTotals,
+          usage.traceId,
+          maxTraces,
+          ({ key }) => signalOverflow('trace', maxTraces, key),
+        );
+        if (traceSum) traceSum.add(estimatedCost);
       }
 
       if (records.length > maxRecords) {
         const evicted = records.shift() as (typeof records)[number];
         runningSum.subtract(evicted.estimatedCost);
+        // ARCH-008: cumulative-since-start strategies leave per-key totals
+        // untouched; sliding-window strategies (`lru`) decrement them here.
+        evictionStrategy.onRecordEvicted(evicted, modelTotals, traceTotals);
       }
 
       // Check budget alerts after recording

@@ -4,7 +4,7 @@
  * @module
  */
 
-import type { TraceManager } from '../observe/trace-manager.js';
+import type { InstrumentationPort } from '../observe/instrumentation-port.js';
 
 /** A document to be processed by the RAG pipeline. */
 export interface Document {
@@ -74,12 +74,17 @@ export interface RAGPipelineConfig {
    */
   readonly validateEmbedding?: boolean;
   /**
-   * OBS-006: Optional TraceManager. When provided, ingest() / ingestDocuments()
-   * produce a parent span per ingest invocation and a child span per chunk.
-   * Failures (validation / embedding / indexing) set `status='error'` on the
-   * child span and record an `error.reason` attribute. Omit to disable tracing.
+   * OBS-006 / ARCH-012: Optional instrumentation. When provided, ingest() /
+   * ingestDocuments() produce a parent span per ingest invocation and a
+   * child span per chunk. Failures (validation / embedding / indexing) set
+   * `status='error'` on the child span and record an `error.reason`
+   * attribute. Omit to disable tracing.
+   *
+   * Accepts any object satisfying {@link InstrumentationPort} — the
+   * harness-one `TraceManager` is structurally compatible, so existing code
+   * passing `traceManager: createTraceManager(...)` keeps working unchanged.
    */
-  readonly traceManager?: TraceManager;
+  readonly traceManager?: InstrumentationPort;
 }
 
 /**

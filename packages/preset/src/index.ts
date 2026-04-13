@@ -7,7 +7,7 @@
  * @module
  */
 
-import { AgentLoop, HarnessError, createEventBus, createMiddlewareChain } from 'harness-one/core';
+import { AgentLoop, HarnessError, createMiddlewareChain } from 'harness-one/core';
 import type { AgentAdapter, Message, AgentEvent, EventBus, MiddlewareChain } from 'harness-one/core';
 import { createTraceManager, createConsoleExporter, createCostTracker, createLogger } from 'harness-one/observe';
 import type { TraceExporter, TraceManager, CostTracker, ModelPricing, Logger } from 'harness-one/observe';
@@ -170,10 +170,15 @@ export interface Harness {
   readonly prompts: PromptBuilder;
   readonly eval: EvalRunner;
   /**
-   * @deprecated The global event bus is not used by any module. Each module
-   * (sessions, orchestrator, etc.) exposes its own `onEvent()` subscription.
-   * Prefer per-module event subscriptions instead. This property will be
-   * removed in a future major version.
+   * @deprecated ARCH-010: The global event bus is not used by any module.
+   * Each module (sessions, orchestrator, etc.) exposes its own `onEvent()`
+   * subscription. Prefer per-module event subscriptions instead.
+   *
+   * As of 0.4.x the property is a **dead stub**: the factory no longer
+   * constructs a real bus, a one-time warning is logged on first access,
+   * and any method call throws `HarnessError('DEPRECATED_EVENT_BUS', ...)`.
+   *
+   * **This property will be REMOVED in 0.5.0.**
    */
   readonly eventBus: EventBus;
   readonly logger: Logger;
@@ -202,6 +207,20 @@ export interface Harness {
    *   conversation histories.
    */
   run(messages: Message[], options?: { sessionId?: string }): AsyncGenerator<AgentEvent>;
+
+  /**
+   * ARCH-007: Optional eager initialization.
+   *
+   * Awaits `initialize()` on every configured trace exporter (if they
+   * declare one) and warms the tokenizer when `config.tokenizer === 'tiktoken'`.
+   * Idempotent — subsequent calls return the same resolved promise.
+   *
+   * Calling `run()` before `initialize()` still works: exporters initialize
+   * lazily on first export and the tokenizer registers on first use. Eager
+   * initialization is useful in fail-fast startup paths where connection /
+   * registration failures should surface at boot, not mid-request.
+   */
+  initialize?(): Promise<void>;
 
   /** Shut down all services. */
   shutdown(): Promise<void>;
@@ -349,15 +368,40 @@ export function createHarness(config: HarnessConfig): Harness {
   // 12. Eval runner (default relevance scorer)
   const evalRunner = createEvalRunner({ scorers: [createRelevanceScorer()] });
 
-  // 13. Event bus
-  // NOTE: The global event bus is created for backward compatibility but is not
-  // actively used. Each module (sessions, orchestrator, traces, etc.) manages
-  // its own event subscriptions via onEvent(). Prefer per-module subscriptions
-  // for new code. See the @deprecated tag on Harness.eventBus.
-  const eventBus = createEventBus();
-
-  // 14. Logger
+  // 14. Logger (moved up: the dead-stub eventBus below needs `logger` in
+  // scope to emit the first-access warning).
   const logger = config.logger ?? createLogger();
+
+  // 13. Event bus — ARCH-010: DEAD STUB, to be REMOVED in 0.5.0.
+  // The global event bus is no longer constructed. Accessing the `eventBus`
+  // property logs a one-time warning; invoking any method throws
+  // `HarnessError('DEPRECATED_EVENT_BUS', ...)`. Callers migrating off this
+  // API should subscribe directly to the module that owns the event.
+  let eventBusWarnEmitted = false;
+  function denyEventBusMethod(method: string): never {
+    throw new HarnessError(
+      `Harness.eventBus.${method} is deprecated and no longer functional (ARCH-010). Subscribe via the owning module's onEvent() API instead.`,
+      'DEPRECATED_EVENT_BUS',
+      'Remove the eventBus call. This property will be removed in 0.5.0.',
+    );
+  }
+  const eventBus: EventBus = new Proxy({} as EventBus, {
+    get(_target, prop: string | symbol): unknown {
+      if (!eventBusWarnEmitted) {
+        eventBusWarnEmitted = true;
+        logger.warn(
+          '[harness-one/preset] Harness.eventBus is deprecated and will be REMOVED in 0.5.0 (ARCH-010). Subscribe via the owning module\'s onEvent() API instead.',
+        );
+      }
+      // String-keyed access to event-bus methods becomes a throwing stub.
+      // Symbol-keyed access (e.g. util.inspect.custom) returns undefined so
+      // console.logging the harness doesn't blow up in dev.
+      if (typeof prop === 'symbol') return undefined;
+      // Return a thrower for any method call. Non-method property reads
+      // (e.g. `.constructor`) also throw to surface the dead state loudly.
+      return () => denyEventBusMethod(String(prop));
+    },
+  });
 
   // 15. Conversation store
   const conversations = createInMemoryConversationStore();
@@ -409,6 +453,13 @@ export function createHarness(config: HarnessConfig): Harness {
    * point had completed.
    */
   let shutdownPromise: Promise<void> | null = null;
+  /**
+   * ARCH-007: `initializePromise` is the same latch pattern. Eager
+   * initialization awaits exporter `initialize()` hooks once and caches
+   * the result so second callers see the in-flight promise instead of
+   * re-initializing.
+   */
+  let initializePromise: Promise<void> | null = null;
 
   const harness: Harness = {
     loop,
@@ -426,6 +477,36 @@ export function createHarness(config: HarnessConfig): Harness {
     middleware,
     // SPEC-009: only present when a function/object tokenizer was supplied.
     ...(customTokenizer !== undefined && { tokenizer: customTokenizer }),
+
+    /**
+     * ARCH-007: Eager initialization.
+     *
+     * Awaits `traces.initialize()` (which calls `initialize()` on every
+     * exporter that declares one), warms the tokenizer when
+     * `config.tokenizer === 'tiktoken'`, and marks the harness as
+     * initialized. Idempotent via `initializePromise`. Calling `run()`
+     * before `initialize()` still works — this method only accelerates
+     * the first use, turning what would be a lazy cold-start latency
+     * spike on the first `run()` into an explicit boot-time step.
+     */
+    initialize(): Promise<void> {
+      if (initializePromise) return initializePromise;
+      initializePromise = (async () => {
+        try {
+          await traces.initialize();
+        } catch (err) {
+          logger.warn('TraceManager initialize error', { error: err });
+          // Initialization failure is non-fatal — exporter `isHealthy`
+          // gates future exports. Re-throw if you want fail-fast semantics
+          // at your call site.
+        }
+        // Tokenizer warming: when the caller asked for the tiktoken preset,
+        // `registerTiktokenModels()` already ran synchronously at factory
+        // time, so nothing more is required. Explicit no-op here keeps the
+        // extension point visible for future async tokenizer backends.
+      })();
+      return initializePromise;
+    },
 
     async *run(
       messages: Message[],

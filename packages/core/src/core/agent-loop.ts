@@ -13,25 +13,41 @@ import { AbortedError, HarnessError, MaxIterationsError, TokenBudgetExceededErro
 import { createSequentialStrategy, createParallelStrategy } from './execution-strategies.js';
 import { categorizeAdapterError } from './error-classifier.js';
 import { pruneConversation } from './conversation-pruner.js';
+import { StreamAggregator } from './stream-aggregator.js';
+import type { AgentLoopTraceManager } from './trace-interface.js';
+
+// ARCH-002: `AgentLoopTraceManager` lives in `./trace-interface.js`. Re-export
+// here so existing imports from `harness-one/core` (which historically pulled
+// the type from `agent-loop.ts`) keep working without a code change.
+export type { AgentLoopTraceManager } from './trace-interface.js';
 
 /**
- * Minimal tracing interface accepted by AgentLoop.
+ * ARCH-006: Iteration-level instrumentation hook. Every method is optional;
+ * a hook only needs to declare the events it cares about. Hooks are invoked
+ * synchronously from the `AgentLoop`. If a hook throws, the error is logged
+ * (when a `logger` is configured) and swallowed — hooks must never break
+ * the loop.
  *
- * Structurally compatible with the full `TraceManager` from the observe module
- * so that consumers can pass one directly without importing it into the core
- * module (avoids a circular dependency between core and observe).
+ * @example
+ * ```ts
+ * const loop = createAgentLoop({
+ *   adapter,
+ *   hooks: [{
+ *     onIterationStart: ({ iteration }) => console.log('iter', iteration),
+ *     onCost: ({ usage }) => metrics.add(usage),
+ *   }],
+ * });
+ * ```
  */
-export interface AgentLoopTraceManager {
-  startTrace(name: string, metadata?: Record<string, unknown>): string;
-  startSpan(traceId: string, name: string, parentId?: string): string;
-  setSpanAttributes(spanId: string, attributes: Record<string, unknown>): void;
-  /**
-   * Record a timestamped event within a span — used by AgentLoop to record
-   * adapter retries and other diagnostic markers without creating child spans.
-   */
-  addSpanEvent(spanId: string, event: { name: string; attributes?: Record<string, unknown> }): void;
-  endSpan(spanId: string, status?: 'completed' | 'error'): void;
-  endTrace(traceId: string, status?: 'completed' | 'error'): void;
+export interface AgentLoopHook {
+  /** Fires before any work in an iteration (right after the iteration counter increments). */
+  onIterationStart?(info: { iteration: number }): void;
+  /** Fires once per tool call yielded to the consumer, before tool execution. */
+  onToolCall?(info: { iteration: number; toolCall: ToolCallRequest }): void;
+  /** Fires after the adapter returns usage for the iteration. */
+  onCost?(info: { iteration: number; usage: TokenUsage }): void;
+  /** Fires at the end of the iteration. `done` indicates whether the loop is terminating. */
+  onIterationEnd?(info: { iteration: number; done: boolean }): void;
 }
 
 /** Configuration for the AgentLoop. */
@@ -132,14 +148,34 @@ export interface AgentLoopConfig {
    * to also retry transient network errors.
    */
   readonly retryableErrors?: readonly string[];
+  /**
+   * ARCH-006: Iteration-level instrumentation hooks. Each registered hook
+   * receives `onIterationStart`, `onToolCall`, `onCost`, and
+   * `onIterationEnd` callbacks (all optional). Hook errors are logged via
+   * `logger` (when set) and swallowed — hooks must never break the loop.
+   */
+  readonly hooks?: readonly AgentLoopHook[];
+  /**
+   * Optional structured logger. Used to surface hook failures (ARCH-006)
+   * and other diagnostic warnings that previously fell back to
+   * `console.warn`. Optional — when omitted, hook failures are silent.
+   */
+  readonly logger?: { warn: (msg: string, meta?: Record<string, unknown>) => void };
 }
 
 /**
  * Stateful agent loop that calls an LLM adapter in a loop, handling tool calls.
  *
+ * @deprecated ARCH-011: Prefer {@link createAgentLoop} (factory). The class
+ * export will be removed in 0.5.0. The factory returns the same instance
+ * shape — no behavioural change is required at the call site.
+ *
  * @example
  * ```ts
- * const loop = new AgentLoop({ adapter, onToolCall: handleTool });
+ * // Preferred:
+ * const loop = createAgentLoop({ adapter, onToolCall: handleTool });
+ * // Discouraged (still supported through 0.4.x):
+ * // const loop = new AgentLoop({ adapter, onToolCall: handleTool });
  * for await (const event of loop.run(messages)) {
  *   console.log(event.type);
  * }
@@ -163,6 +199,9 @@ export class AgentLoop {
   private readonly maxAdapterRetries: number;
   private readonly baseRetryDelayMs: number;
   private readonly retryableErrors: readonly string[];
+  /** ARCH-006: registered iteration-level hooks. Empty array when none. */
+  private readonly hooks: readonly AgentLoopHook[];
+  private readonly logger?: { warn: (msg: string, meta?: Record<string, unknown>) => void };
 
   private abortController: AbortController;
   private _externalAbortHandler: (() => void) | undefined;
@@ -211,6 +250,11 @@ export class AgentLoop {
     this.maxAdapterRetries = config.maxAdapterRetries ?? 0;
     this.baseRetryDelayMs = config.baseRetryDelayMs ?? 1000;
     this.retryableErrors = config.retryableErrors ?? ['ADAPTER_RATE_LIMIT'];
+    // ARCH-006: store hooks (defensive empty array, never undefined to
+    // simplify per-iteration dispatch). Logger is optional — when omitted,
+    // hook errors are swallowed silently.
+    this.hooks = config.hooks ?? [];
+    if (config.logger !== undefined) this.logger = config.logger;
 
     if (this.maxIterations < 1) {
       throw new HarnessError('maxIterations must be >= 1', 'INVALID_CONFIG', 'Provide a positive maxIterations value');
@@ -287,6 +331,40 @@ export class AgentLoop {
       this._externalAbortHandler = undefined;
     }
     this.abortController.abort();
+  }
+
+  /**
+   * ARCH-006: Invoke every registered hook for `event`. Hooks are called
+   * synchronously and in registration order. A throwing hook is logged
+   * (when a logger is configured) and otherwise silently swallowed —
+   * the loop must never observe a hook failure.
+   */
+  private runHook<E extends keyof AgentLoopHook>(
+    event: E,
+    info: Parameters<NonNullable<AgentLoopHook[E]>>[0],
+  ): void {
+    if (this.hooks.length === 0) return;
+    for (const hook of this.hooks) {
+      const fn = hook[event];
+      if (typeof fn !== 'function') continue;
+      try {
+        // Cast required because TS can't narrow the parameter type from the
+        // generic event key without explicit per-event overloads. Hooks are
+        // a typed contract at the public boundary (`AgentLoopHook`).
+        (fn as (i: typeof info) => void).call(hook, info);
+      } catch (err) {
+        if (this.logger) {
+          try {
+            this.logger.warn('[harness-one/agent-loop] hook threw', {
+              event,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          } catch {
+            // Logger itself failed — nothing more we can safely do.
+          }
+        }
+      }
+    }
   }
 
   /** Get a snapshot of the loop's current metrics. */
@@ -431,6 +509,17 @@ export class AgentLoop {
         }
 
         yield { type: 'iteration_start', iteration };
+        // ARCH-006: notify hooks immediately after the public iteration_start
+        // event so observers can correlate hook callbacks with the visible
+        // event stream. `iterationEndFired` lets us guarantee a paired
+        // `onIterationEnd` even on every terminating early-return below.
+        this.runHook('onIterationStart', { iteration });
+        let iterationEndFired = false;
+        const fireIterationEnd = (done: boolean): void => {
+          if (iterationEndFired) return;
+          iterationEndFired = true;
+          this.runHook('onIterationEnd', { iteration, done });
+        };
 
         // C5: Wrap adapter call in try-catch to handle exceptions gracefully
         // With retry logic for retryable errors (e.g. rate-limit, network)
@@ -489,6 +578,7 @@ export class AgentLoop {
                 iterationSpanId = undefined;
               }
               finalEventEmitted = true;
+              fireIterationEnd(true);
               yield this.doneEvent('error');
               return;
             }
@@ -545,6 +635,7 @@ export class AgentLoop {
                 err instanceof Error ? err : undefined,
               ) };
               finalEventEmitted = true;
+              fireIterationEnd(true);
               yield this.doneEvent('error');
               return;
             }
@@ -555,6 +646,7 @@ export class AgentLoop {
           // Safety: should not reach here, but guard against it
           if (iterationSpanId && tm) { tm.endSpan(iterationSpanId, 'error'); iterationSpanId = undefined; }
           finalEventEmitted = true;
+          fireIterationEnd(true);
           yield this.doneEvent('error');
           return;
         }
@@ -576,6 +668,7 @@ export class AgentLoop {
           if (iterationSpanId && tm) { tm.endSpan(iterationSpanId, 'error'); iterationSpanId = undefined; }
           yield { type: 'error', error: new AbortedError() };
           finalEventEmitted = true;
+          fireIterationEnd(true);
           yield this.doneEvent('aborted');
           return;
         }
@@ -585,6 +678,10 @@ export class AgentLoop {
         const safeOutput = Math.min(Math.max(0, responseUsage.outputTokens), 1_000_000_000);
         this.cumulativeUsage.inputTokens += safeInput;
         this.cumulativeUsage.outputTokens += safeOutput;
+        // ARCH-006: notify hooks about per-iteration token cost. Pass the
+        // adapter-reported usage (not cumulative) so observers can derive
+        // both per-iteration and cumulative metrics.
+        this.runHook('onCost', { iteration, usage: responseUsage });
 
         // H2: Check token budget immediately after accumulating tokens
         const postCallTokens = this.cumulativeUsage.inputTokens + this.cumulativeUsage.outputTokens;
@@ -595,6 +692,7 @@ export class AgentLoop {
           const err = new TokenBudgetExceededError(postCallTokens, this.maxTotalTokens);
           yield { type: 'error', error: err };
           finalEventEmitted = true;
+          fireIterationEnd(true);
           yield this.doneEvent('token_budget');
           return;
         }
@@ -606,6 +704,7 @@ export class AgentLoop {
           yield { type: 'message', message: assistantMsg, usage: responseUsage };
           if (iterationSpanId && tm) { tm.endSpan(iterationSpanId); iterationSpanId = undefined; }
           finalEventEmitted = true;
+          fireIterationEnd(true);
           yield this.doneEvent('end_turn');
           return;
         }
@@ -622,6 +721,9 @@ export class AgentLoop {
         // full tool_call batch before any result.
         for (const toolCall of toolCalls) {
           yield { type: 'tool_call', toolCall, iteration };
+          // ARCH-006: notify hooks once per tool call, after the public
+          // event yields so subscribers see the same ordering.
+          this.runHook('onToolCall', { iteration, toolCall });
         }
 
         // Execute via strategy, with optional per-tool-call tracing
@@ -738,9 +840,14 @@ export class AgentLoop {
           if (iterationSpanId && tm) { tm.endSpan(iterationSpanId, 'error'); iterationSpanId = undefined; }
           yield { type: 'error', error: new AbortedError() };
           finalEventEmitted = true;
+          fireIterationEnd(true);
           yield this.doneEvent('aborted');
           return;
         }
+        // ARCH-006: iteration completed normally and the loop will continue
+        // for another iteration. Fire `done: false` so observers can build
+        // per-iteration metrics without filtering on the doneEvent reason.
+        fireIterationEnd(false);
       }
     } finally {
       // Clean up external signal listener to prevent memory leaks even if
@@ -839,21 +946,24 @@ export class AgentLoop {
     return serialized;
   }
 
+  /**
+   * Handle streaming response from adapter.stream(). Thin wrapper around
+   * {@link StreamAggregator} (ARCH-001 extraction): the aggregator owns
+   * accumulation + size-limit semantics; this method owns the adapter
+   * iteration + AgentEvent translation. Behavior is preserved verbatim —
+   * see the original PERF-024 / PERF-032 notes on `StreamAggregator`.
+   */
   private async *handleStream(
     conversation: Message[],
     cumulativeStreamBytes: number,
     maxCumulativeStreamBytes: number,
   ): AsyncGenerator<AgentEvent, { message: Message; usage: TokenUsage; bytesRead: number } | null> {
-    let accumulatedText = '';
-    let accumulatedBytes = 0;
-    // PERF-024 / PERF-032: Maintain the Map for O(1) id lookups AND a parallel
-    // array that mirrors insertion order. The array is the snapshot fed to the
-    // assistant message at stream end (PERF-032) and is also the structure we
-    // index directly when a delta arrives without an id (previously required
-    // `[...map.values()]` per chunk). The array only grows when a new tool-call
-    // id is seen, so mutate-in-place deltas do NOT allocate.
-    const accumulatedToolCalls: Map<string, { id: string; name: string; arguments: string }> = new Map();
-    const toolCallList: Array<{ id: string; name: string; arguments: string }> = [];
+    const aggregator = new StreamAggregator({
+      maxStreamBytes: this.maxStreamBytes,
+      maxToolArgBytes: this.maxToolArgBytes,
+      cumulativeStreamBytesSoFar: cumulativeStreamBytes,
+      maxCumulativeStreamBytes,
+    });
     let usage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
 
     try {
@@ -864,78 +974,24 @@ export class AgentLoop {
       });
 
       for await (const chunk of stream) {
-        if (chunk.type === 'text_delta' && chunk.text) {
-          accumulatedBytes += chunk.text.length;
-          if (accumulatedBytes > this.maxStreamBytes) {
-            yield { type: 'error', error: new Error(`Stream exceeded maximum size (${this.maxStreamBytes} bytes)`) };
+        // 'done' chunks carry usage but produce no consumer events.
+        if (chunk.type === 'done') {
+          if (chunk.usage) usage = chunk.usage;
+          continue;
+        }
+
+        // Delegate accumulation to the aggregator. It yields exactly the
+        // same {text_delta, tool_call_delta, warning, error} sequence that
+        // the previous inline implementation produced.
+        for (const evt of aggregator.handleChunk(chunk)) {
+          if (evt.type === 'error') {
+            yield { type: 'error', error: evt.error };
             return null;
           }
-          // Cumulative cross-iteration check
-          if (cumulativeStreamBytes + accumulatedBytes > maxCumulativeStreamBytes) {
-            yield { type: 'error', error: new Error('Cumulative stream size exceeded maximum across all iterations') };
-            return null;
-          }
-          accumulatedText += chunk.text;
-          yield { type: 'text_delta', text: chunk.text };
-        } else if (chunk.type === 'tool_call_delta' && chunk.toolCall) {
-          const partial = chunk.toolCall;
-          yield { type: 'tool_call_delta', toolCall: partial };
-
-          // Accumulate tool call parts
-          if (partial.arguments) {
-            accumulatedBytes += partial.arguments.length;
-            if (accumulatedBytes > this.maxStreamBytes) {
-              yield { type: 'error', error: new Error(`Stream exceeded maximum size (${this.maxStreamBytes} bytes)`) };
-              return null;
-            }
-            // Cumulative cross-iteration check
-            if (cumulativeStreamBytes + accumulatedBytes > maxCumulativeStreamBytes) {
-              yield { type: 'error', error: new Error('Cumulative stream size exceeded maximum across all iterations') };
-              return null;
-            }
-          }
-
-          if (partial.id) {
-            const existing = accumulatedToolCalls.get(partial.id);
-            if (existing) {
-              if (partial.name) existing.name = partial.name;
-              if (partial.arguments) existing.arguments += partial.arguments;
-              // Per-tool-call argument size limit
-              if (existing.arguments.length > this.maxToolArgBytes) {
-                yield { type: 'error', error: new Error(`Tool call "${existing.name}" arguments exceeded maximum size (${this.maxToolArgBytes} bytes)`) };
-                return null;
-              }
-            } else {
-              // PERF-024: New tool call — push once into the parallel array so
-              // subsequent deltas mutate in place via the map reference.
-              const entry = {
-                id: partial.id,
-                name: partial.name ?? '',
-                arguments: partial.arguments ?? '',
-              };
-              accumulatedToolCalls.set(partial.id, entry);
-              toolCallList.push(entry);
-            }
-          } else {
-            // PERF-024: If no id, append to the most-recent tool call via the
-            // parallel array (O(1) — no `[...map.values()]` allocation per chunk).
-            if (toolCallList.length > 0) {
-              const last = toolCallList[toolCallList.length - 1];
-              if (partial.name) last.name = partial.name;
-              if (partial.arguments) last.arguments += partial.arguments;
-              // Per-tool-call argument size limit
-              if (last.arguments.length > this.maxToolArgBytes) {
-                yield { type: 'error', error: new Error(`Tool call "${last.name}" arguments exceeded maximum size (${this.maxToolArgBytes} bytes)`) };
-                return null;
-              }
-            } else {
-              yield { type: 'warning', message: 'Received partial tool call chunk without ID and no accumulated calls' };
-            }
-          }
-        } else if (chunk.type === 'done') {
-          if (chunk.usage) {
-            usage = chunk.usage;
-          }
+          // text_delta / tool_call_delta / warning passthrough — types match
+          // the agent-event union by construction (StreamAggregatorEvent is
+          // a strict subset of AgentEvent for the non-error variants).
+          yield evt;
         }
       }
     } catch (err) {
@@ -950,17 +1006,7 @@ export class AgentLoop {
       return null;
     }
 
-    // PERF-032: Reuse the parallel array maintained above — no final
-    // `[...accumulatedToolCalls.values()]` spread.
-    const toolCalls: ToolCallRequest[] = toolCallList;
-
-    const message: Message = {
-      role: 'assistant',
-      content: accumulatedText,
-      ...(toolCalls.length > 0 ? { toolCalls } : {}),
-    };
-
-    return { message, usage, bytesRead: accumulatedBytes };
+    return aggregator.getMessage(usage);
   }
 
   /** @deprecated Use the standalone `categorizeAdapterError` from `error-classifier.js` instead. */

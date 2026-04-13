@@ -11,7 +11,8 @@ import type { TraceExporter, Trace, Span } from 'harness-one/observe';
 import type { PromptBackend, PromptTemplate } from 'harness-one/prompt';
 import type { CostTracker, ModelPricing, Logger } from 'harness-one/observe';
 import type { TokenUsageRecord, CostAlert } from 'harness-one/observe';
-import { KahanSum } from 'harness-one/observe';
+import { KahanSum, lruStrategy } from 'harness-one/observe';
+import type { EvictionStrategy } from 'harness-one/observe';
 import { HarnessError } from 'harness-one/core';
 
 // ---------------------------------------------------------------------------
@@ -327,8 +328,19 @@ export interface LangfuseCostTracker extends CostTracker {
  *
  * Each usage record is exported as a Langfuse generation with cost metadata,
  * while also tracking totals locally for budget alerts.
+ *
+ * ARCH-008: This tracker uses the `lru` eviction strategy from
+ * `harness-one/observe` — `getCostByModel()` and `getCostByTrace()` track
+ * the *retained record window* (`maxRecords`). The core `createCostTracker`
+ * defaults to `'overflow-bucket'` (cumulative since start, never evicts
+ * per-key totals). The divergence is intentional: Langfuse pairs this local
+ * tracker with a backend that retains the long-tail history, so the
+ * in-process view is a sliding window matched to the bounded record buffer.
  */
 export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): LangfuseCostTracker {
+  // ARCH-008: explicit strategy reference so the divergence with the core
+  // tracker is grep-able and substitutable.
+  const evictionStrategy: EvictionStrategy = lruStrategy;
   const { client, onExportError, logger } = config;
   const maxRecords = config.maxRecords ?? 10_000;
   if (config.maxRecords !== undefined && config.maxRecords < 1) {
@@ -410,13 +422,14 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): La
     return cost;
   }
 
+  // ARCH-008: thin wrapper around the LRU strategy's bucket resolution.
+  // Capacity is set to Number.MAX_SAFE_INTEGER because Langfuse never
+  // capped the per-key map (and the LRU strategy ignores the capacity hint
+  // for non-overflow paths anyway). Kept as a function so the per-call
+  // shape stays identical to the historical `addToKeyedMap` helper.
   function addToKeyedMap(map: Map<string, KahanSum>, key: string, delta: number): void {
-    let sum = map.get(key);
-    if (!sum) {
-      sum = new KahanSum();
-      map.set(key, sum);
-    }
-    sum.add(delta);
+    const sum = evictionStrategy.resolveKeyBucket(map, key, Number.MAX_SAFE_INTEGER);
+    if (sum) sum.add(delta);
   }
 
   function emitAlert(alert: CostAlert): void {
@@ -492,11 +505,10 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): La
         const evicted = records.shift();
         if (evicted) {
           runningSum.subtract(evicted.estimatedCost);
-          // Keep per-key totals coherent with the retained window.
-          const m = modelTotals.get(evicted.model);
-          if (m) m.subtract(evicted.estimatedCost);
-          const t = traceTotals.get(evicted.traceId);
-          if (t) t.subtract(evicted.estimatedCost);
+          // ARCH-008: delegate per-key total decrement to the strategy. For
+          // `lruStrategy` this matches the historical "subtract from per-model
+          // / per-trace KahanSum" behaviour.
+          evictionStrategy.onRecordEvicted(evicted, modelTotals, traceTotals);
         }
       }
 
