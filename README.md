@@ -19,15 +19,43 @@ Harness engineering is the discipline of building robust, production-grade infra
 
 ## Quick Start
 
+> **Production users (1.0-rc+)**: prefer `createSecurePreset` over `createHarness`.
+> It fail-closed defaults redaction, guardrail pipeline, tool capability limits,
+> and `sealProviders()`. See the **Secure preset** section below.
+
 Two install paths:
 
 ```bash
 # À la carte — the core package (tree-shakeable submodules).
 npm install harness-one
 
-# Batteries-included preset — core + all integrations wired via createHarness().
+# Batteries-included preset — core + all integrations wired.
 npm install @harness-one/preset @anthropic-ai/sdk
 ```
+
+### Secure preset (recommended for production)
+
+```ts
+import { createSecurePreset } from '@harness-one/preset';
+import Anthropic from '@anthropic-ai/sdk';
+
+const harness = createSecurePreset({
+  provider: 'anthropic',
+  client: new Anthropic({ apiKey: process.env.ANTHROPIC_KEY }),
+  model: 'claude-sonnet-4-20250514',
+  // guardrailLevel defaults to 'standard' (injection + contentFilter + PII)
+});
+```
+
+Under the hood:
+- `logger` / `traceManager` redact secrets by default
+- `langfuseExporter` sanitizes span attributes
+- Tool registry defaults to `allowedCapabilities: ['readonly']` (fail-closed);
+  tools declaring `network`/`shell` must be widened via
+  `createRegistry({ allowedCapabilities: [...] })` or `createPermissiveRegistry()`
+- AgentLoop guardrail pipeline is pre-wired (input + output + tool-output hooks)
+- OpenAI provider registry is sealed after construction
+
 
 ### Using `harness-one` directly
 

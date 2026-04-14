@@ -6,6 +6,87 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.0.0-rc.1] — 2026-04-14 (Wave-5A)
+
+**Wave-5A — Security defaults flip.** Closes 6 P0 blockers from the
+2026-04-14 adversarial architecture review
+(`docs/forge-fix/wave-5/decisions.md`). First **breaking** release
+targeting 1.0-rc quality: all security defaults move from opt-in to
+fail-closed. Existing callers must adopt `createSecurePreset` or
+explicitly opt out.
+
+**3,721 → 3,770 tests** (+49); typecheck clean across 9 packages; 18
+atomic commits on `wave-5/production-grade`.
+
+### Added
+
+- **`@harness-one/preset`: `createSecurePreset(config)` — fail-closed
+  production entry** (T14). Recommended replacement for `createHarness`.
+  Wraps with all Wave-5A defaults enabled and seals providers after
+  construction. Guardrail levels `'minimal' | 'standard' | 'strict'`.
+- **`harness-one/_internal/safe-log`** (T01) — `createDefaultLogger()`
+  (redaction-on console wrapper), `safeWarn`/`safeError` helpers.
+- **Tool capability taxonomy** (T09) — `ToolCapability` =
+  `'readonly' | 'filesystem' | 'network' | 'shell' | 'destructive'`.
+  `defineTool({ capabilities })` + `createRegistry({ allowedCapabilities })`.
+  `createPermissiveRegistry()` for opt-out.
+- **`sealProviders()` / `isProvidersSealed()`** (T11,
+  `@harness-one/openai`) — explicit, idempotent, per-module-instance
+  seal against runtime provider-registry tampering.
+- **`AgentLoopConfig.inputPipeline` / `outputPipeline`** (T10) —
+  guardrail pipeline hook points at fixed positions (runInput →
+  runToolOutput → runOutput). Hard-block closes streaming via
+  AbortController + yields `guardrail_blocked` AgentEvent + excludes
+  `GUARDRAIL_VIOLATION` from retry path.
+- **Error codes** (T07) — `ADAPTER_INVALID_EXTRA`,
+  `TOOL_CAPABILITY_DENIED`, `PROVIDER_REGISTRY_SEALED`,
+  `GUARDRAIL_VIOLATION`.
+
+### Changed (Breaking)
+
+- **Redaction default-on** (T02/T03/T04). `createLogger()`,
+  `createTraceManager()`, `langfuseExporter.exportSpan` all redact by
+  default. Pass `redact: false` (logger/trace) or custom `sanitize`
+  function (langfuse) to override. Langfuse has no "off" switch — must
+  provide a replacement function.
+- **`LLMConfig.extra` allow-list** (T05/T06). Anthropic + OpenAI
+  adapters filter `extra` against per-provider allow-lists. Unknown
+  keys default to filter+warn; `strictExtraAllowList: true` throws
+  `ADAPTER_INVALID_EXTRA` before any network call.
+- **Tool registry production defaults** (T08). `maxCallsPerTurn=20`
+  (was `Infinity`), `maxCallsPerSession=100` (was `Infinity`),
+  `timeoutMs=30000` (was undefined).
+- **Tool registry `allowedCapabilities` default `['readonly']`** (T09) —
+  fail-closed. Tools declaring `network`/`shell`/etc. must widen the
+  registry or use `createPermissiveRegistry()`.
+
+### Migration
+
+```diff
+- import { createHarness } from '@harness-one/preset';
++ import { createSecurePreset } from '@harness-one/preset';
+- const harness = createHarness({ provider: 'anthropic', client, ... });
++ const harness = createSecurePreset({ provider: 'anthropic', client, ... });
+```
+
+Tool definitions gain a `capabilities` field:
+```diff
+  defineTool({
+    name: 'fetch_url',
++   capabilities: ['network'],
+    execute: async () => { /* ... */ },
+  });
+```
+
+See `.changeset/wave-5a-security-defaults.md` for the full migration guide.
+
+### Deferred
+
+- T12/T13 (`safeWarn` migration for adapter packages) — cosmetic, no
+  security impact. Scheduled for Wave-5F cleanup.
+
+---
+
 ## [0.4.0] — 2026-04-13
 
 The **wave-4 new-perspective deep-research audit** release. Five parallel
