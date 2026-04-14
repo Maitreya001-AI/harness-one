@@ -6,10 +6,17 @@
  * @module
  */
 
+import { HarnessError } from './errors.js';
+
 /**
  * Classify an adapter error into a category string based on its message content.
  *
  * Returns one of:
+ * - `'GUARDRAIL_VIOLATION'` — hard-block raised by a guardrail pipeline.
+ *   This category is **non-retryable by default**: the default
+ *   `retryableErrors` set in `AgentLoop` is `['ADAPTER_RATE_LIMIT']`, so a
+ *   GUARDRAIL_VIOLATION never enters the retry loop. Retrying a blocked
+ *   input would just hit the same guard again and waste budget.
  * - `'ADAPTER_RATE_LIMIT'` — rate limit / 429 / too many requests
  * - `'ADAPTER_AUTH'` — authentication / 401 / API key / unauthorized
  * - `'ADAPTER_NETWORK'` — timeout / connection refused / network / fetch
@@ -19,6 +26,13 @@
  * @param err - The error to classify (may be any value)
  */
 export function categorizeAdapterError(err: unknown): string {
+  // T10 (Wave-5A): guardrail hard-block takes priority over message-based
+  // heuristics — the structured error code is the authoritative signal.
+  // GUARDRAIL_VIOLATION is NEVER retryable; callers should not add this
+  // category to their `retryableErrors` allow-list.
+  if (err instanceof HarnessError && err.code === 'GUARDRAIL_VIOLATION') {
+    return 'GUARDRAIL_VIOLATION';
+  }
   const msg = err instanceof Error ? err.message.toLowerCase() : '';
   if (msg.includes('rate') || msg.includes('429') || msg.includes('too many')) return 'ADAPTER_RATE_LIMIT';
   if (msg.includes('auth') || msg.includes('401') || msg.includes('api key') || msg.includes('unauthorized')) return 'ADAPTER_AUTH';

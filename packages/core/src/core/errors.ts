@@ -25,6 +25,8 @@
  *   the registry allow-list.
  * - `PROVIDER_REGISTRY_SEALED` — an attempt was made to register a provider
  *   after the registry was sealed.
+ * - `GUARDRAIL_VIOLATION` — hard-block from input/output/tool_output guardrail
+ *   (non-retryable, emitted as guardrail_blocked AgentEvent).
  */
 export type HarnessErrorCode =
   | 'UNKNOWN'
@@ -37,6 +39,7 @@ export type HarnessErrorCode =
   | 'MAX_ITERATIONS'
   | 'ABORTED'
   | 'GUARDRAIL_BLOCKED'
+  | 'GUARDRAIL_VIOLATION'
   | 'INVALID_PIPELINE'
   | 'ADAPTER_INVALID_EXTRA'
   | 'TOOL_VALIDATION'

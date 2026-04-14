@@ -15,6 +15,13 @@ import { categorizeAdapterError } from './error-classifier.js';
 import { pruneConversation } from './conversation-pruner.js';
 import { StreamAggregator } from './stream-aggregator.js';
 import type { AgentLoopTraceManager } from './trace-interface.js';
+// T10 (Wave-5A): guardrail pipeline integration. Types-only import for the
+// opaque pipeline token; runtime helpers (`runInput`, `runOutput`,
+// `runToolOutput`) are called through named imports below.
+import type { GuardrailPipeline } from '../guardrails/pipeline.js';
+import type { PipelineResult } from '../guardrails/types.js';
+import { runInput, runOutput, runToolOutput } from '../guardrails/pipeline.js';
+import { safeWarn } from '../_internal/safe-log.js';
 
 // ARCH-002: `AgentLoopTraceManager` lives in `./trace-interface.js`. Re-export
 // here so existing imports from `harness-one/core` (which historically pulled
@@ -161,6 +168,26 @@ export interface AgentLoopConfig {
    * `console.warn`. Optional — when omitted, hook failures are silent.
    */
   readonly logger?: { warn: (msg: string, meta?: Record<string, unknown>) => void };
+  /**
+   * T10 (Wave-5A): optional guardrail pipeline applied to the latest user
+   * message before every adapter call. A hard-block (`action: 'block'`)
+   * terminates the loop with a `guardrail_blocked` AgentEvent followed by an
+   * `error` carrying `HarnessErrorCode.GUARDRAIL_VIOLATION` (non-retryable),
+   * and aborts the internal AbortController so any in-flight adapter call is
+   * torn down. Omitting both pipelines emits a one-time `safeWarn` on the
+   * first `run()` — security-relevant configurations should use
+   * `createSecurePreset`.
+   */
+  readonly inputPipeline?: GuardrailPipeline;
+  /**
+   * T10 (Wave-5A): optional guardrail pipeline applied to
+   * (a) each tool execution result — a block rewrites the tool result into a
+   *     `GUARDRAIL_VIOLATION: <guardName>` stub so the LLM's tool-use / -result
+   *     pairing stays valid and the loop continues, AND
+   * (b) the final assistant answer — a block terminates the loop with a
+   *     `guardrail_blocked` + `error` pair (see `inputPipeline`).
+   */
+  readonly outputPipeline?: GuardrailPipeline;
 }
 
 /**
@@ -202,6 +229,16 @@ export class AgentLoop {
   /** ARCH-006: registered iteration-level hooks. Empty array when none. */
   private readonly hooks: readonly AgentLoopHook[];
   private readonly logger?: { warn: (msg: string, meta?: Record<string, unknown>) => void };
+  /** T10 (Wave-5A): optional input-side guardrail pipeline. */
+  private readonly inputPipeline?: GuardrailPipeline;
+  /** T10 (Wave-5A): optional output-side guardrail pipeline (tool + final). */
+  private readonly outputPipeline?: GuardrailPipeline;
+  /**
+   * T10 (Wave-5A): guards the "no-guardrail" warn against duplication across
+   * multiple run() calls on the same AgentLoop instance. Flip once and never
+   * reset — the configuration is immutable per instance.
+   */
+  private _noPipelineWarned: boolean = false;
 
   private abortController: AbortController;
   private _externalAbortHandler: (() => void) | undefined;
@@ -255,6 +292,11 @@ export class AgentLoop {
     // hook errors are swallowed silently.
     this.hooks = config.hooks ?? [];
     if (config.logger !== undefined) this.logger = config.logger;
+    // T10 (Wave-5A): store optional guardrail pipelines. `exactOptionalPropertyTypes`
+    // forbids writing `undefined` to a `readonly pipe?: GuardrailPipeline`, so we
+    // gate the assignment behind an explicit presence check.
+    if (config.inputPipeline !== undefined) this.inputPipeline = config.inputPipeline;
+    if (config.outputPipeline !== undefined) this.outputPipeline = config.outputPipeline;
 
     if (this.maxIterations < 1) {
       throw new HarnessError('maxIterations must be >= 1', 'INVALID_CONFIG', 'Provide a positive maxIterations value');
@@ -409,6 +451,21 @@ export class AgentLoop {
     let iteration = 0;
     let finalEventEmitted = false;
 
+    // T10 (Wave-5A): emit a one-time security warning when neither pipeline
+    // is configured. Running an AgentLoop without guardrails is usually a
+    // misconfiguration — guide operators towards `createSecurePreset`. The
+    // flag lives on the instance so repeated run() calls don't spam logs.
+    if (!this._noPipelineWarned && !this.inputPipeline && !this.outputPipeline) {
+      this._noPipelineWarned = true;
+      const msg = 'AgentLoop has no guardrail pipeline — security risk';
+      const meta = { hint: 'use createSecurePreset' };
+      if (this.logger) {
+        try { this.logger.warn(msg, meta); } catch { /* logger failure non-fatal */ }
+      } else {
+        safeWarn(undefined, msg, meta);
+      }
+    }
+
     // Attach external signal listener at run() start (not constructor) so it
     // is always cleaned up in the finally block, even if dispose() is never called.
     // PERF-013: `{ once: true }` means the listener auto-detaches when abort
@@ -520,6 +577,39 @@ export class AgentLoop {
           iterationEndFired = true;
           this.runHook('onIterationEnd', { iteration, done });
         };
+
+        // T10 (Wave-5A): input guardrail pipeline runs before the adapter call
+        // on the latest user-role message. A block tears the loop down hard:
+        //   - abort internal signal so in-flight adapter calls (if any) wind
+        //     down via their AbortSignal,
+        //   - yield `guardrail_blocked` (phase='input') + `error` + `done`,
+        //   - classifier tags the error as non-retryable.
+        if (this.inputPipeline) {
+          const latestUser = AgentLoop.findLatestUserMessage(conversation);
+          if (latestUser !== undefined) {
+            const result = await runInput(this.inputPipeline, { content: latestUser });
+            if (!result.passed && result.verdict.action === 'block') {
+              const guardName = AgentLoop.pickBlockingGuardName(result, 'input');
+              const reason = result.verdict.reason;
+              // Tear down upstream work and emit the hard-block triplet.
+              this.abortController.abort();
+              yield { type: 'guardrail_blocked', phase: 'input', guardName, details: { reason } };
+              yield {
+                type: 'error',
+                error: new HarnessError(
+                  `guardrail "${guardName}" blocked input — ${reason}`,
+                  'GUARDRAIL_VIOLATION',
+                  'Review the input pipeline configuration and sanitize the user message',
+                ),
+              };
+              if (iterationSpanId && tm) { tm.endSpan(iterationSpanId, 'error'); iterationSpanId = undefined; }
+              finalEventEmitted = true;
+              fireIterationEnd(true);
+              yield this.doneEvent('error');
+              return;
+            }
+          }
+        }
 
         // C5: Wrap adapter call in try-catch to handle exceptions gracefully
         // With retry logic for retryable errors (e.g. rate-limit, network)
@@ -701,6 +791,34 @@ export class AgentLoop {
 
         // If no tool calls or empty tool calls -> end turn
         if (!toolCalls || toolCalls.length === 0) {
+          // T10 (Wave-5A): run output guardrail on the final assistant answer
+          // BEFORE yielding the `message` event. A block terminates the loop
+          // hard — same triplet as the input path (guardrail_blocked + error
+          // + done('error')) — and aborts the internal signal to cancel any
+          // streaming still holding a reader open.
+          if (this.outputPipeline) {
+            const finalContent = assistantMsg.content ?? '';
+            const result = await runOutput(this.outputPipeline, { content: finalContent });
+            if (!result.passed && result.verdict.action === 'block') {
+              const guardName = AgentLoop.pickBlockingGuardName(result, 'output');
+              const reason = result.verdict.reason;
+              this.abortController.abort();
+              yield { type: 'guardrail_blocked', phase: 'output', guardName, details: { reason } };
+              yield {
+                type: 'error',
+                error: new HarnessError(
+                  `guardrail "${guardName}" blocked output — ${reason}`,
+                  'GUARDRAIL_VIOLATION',
+                  'Review the output pipeline configuration and the model response',
+                ),
+              };
+              if (iterationSpanId && tm) { tm.endSpan(iterationSpanId, 'error'); iterationSpanId = undefined; }
+              finalEventEmitted = true;
+              fireIterationEnd(true);
+              yield this.doneEvent('error');
+              return;
+            }
+          }
           yield { type: 'message', message: assistantMsg, usage: responseUsage };
           if (iterationSpanId && tm) { tm.endSpan(iterationSpanId); iterationSpanId = undefined; }
           finalEventEmitted = true;
@@ -825,6 +943,38 @@ export class AgentLoop {
               : AgentLoop.safeStringifyToolResult(execResult.result);
           } catch {
             resultContent = '[Object could not be serialized]';
+          }
+
+          // T10 (Wave-5A): run the output pipeline on tool results. A block
+          // does NOT terminate the loop — instead we rewrite the tool result
+          // into a stub so the LLM still sees a tool_result for every
+          // tool_use (provider schemas reject mismatched pairs). The loop
+          // continues to the next iteration; a follow-up `output` block on
+          // the final assistant answer is still possible.
+          if (this.outputPipeline) {
+            const originTool = toolCalls.find((c) => c.id === execResult.toolCallId);
+            const result = await runToolOutput(
+              this.outputPipeline,
+              resultContent,
+              originTool?.name,
+            );
+            if (!result.passed && result.verdict.action === 'block') {
+              const guardName = AgentLoop.pickBlockingGuardName(result, 'output');
+              const reason = result.verdict.reason;
+              yield {
+                type: 'guardrail_blocked',
+                phase: 'tool_output',
+                guardName,
+                details: { toolCallId: execResult.toolCallId, toolName: originTool?.name, reason },
+              };
+              // Rewrite the content to a safe JSON-stringified error stub. The
+              // LLM sees a structured `{"error":"GUARDRAIL_VIOLATION: <name>"}`
+              // and typically recovers by summarizing or ending the turn.
+              resultContent = JSON.stringify({
+                error: `GUARDRAIL_VIOLATION: ${guardName}`,
+                reason,
+              });
+            }
           }
 
           const toolResultMsg: Message = {
@@ -1012,6 +1162,35 @@ export class AgentLoop {
   /** @deprecated Use the standalone `categorizeAdapterError` from `error-classifier.js` instead. */
   private static categorizeAdapterError(err: unknown): string {
     return categorizeAdapterError(err);
+  }
+
+  /**
+   * T10 (Wave-5A): walk the conversation from the tail until we find a user
+   * message. Returns its `content` string, or `undefined` when no user message
+   * exists (e.g., a pure system-only seed — we skip the input pipeline rather
+   * than running it on empty content).
+   */
+  private static findLatestUserMessage(messages: readonly Message[]): string | undefined {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (m.role === 'user') return m.content;
+    }
+    return undefined;
+  }
+
+  /**
+   * T10 (Wave-5A): derive a human-readable guard name from a blocking
+   * `PipelineResult`. Prefer the last event (the guard that actually blocked);
+   * fall back to a direction-qualified sentinel so logs and events always
+   * carry something renderable.
+   */
+  private static pickBlockingGuardName(
+    result: PipelineResult,
+    direction: 'input' | 'output',
+  ): string {
+    const last = result.results[result.results.length - 1];
+    if (last && last.verdict.action === 'block') return last.guardrail;
+    return `${direction}-guardrail`;
   }
 
   private isAborted(): boolean {

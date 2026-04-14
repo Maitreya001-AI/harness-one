@@ -101,7 +101,13 @@ describe('AgentLoopHook (ARCH-006)', () => {
     // The loop completed normally even though every hook threw.
     expect(events.some((e) => e.type === 'done')).toBe(true);
     expect(warn).toHaveBeenCalled();
-    const messages = warn.mock.calls.map((c) => c[0]);
+    // T10 (Wave-5A): the logger may additionally receive a one-time
+    // "no guardrail pipeline — security risk" warning. Filter that out so this
+    // assertion stays focused on hook-failure routing (its original intent).
+    const messages = warn.mock.calls
+      .map((c) => c[0])
+      .filter((m) => !(typeof m === 'string' && m.includes('guardrail pipeline')));
+    expect(messages.length).toBeGreaterThan(0);
     for (const m of messages) {
       expect(m).toContain('hook threw');
     }
