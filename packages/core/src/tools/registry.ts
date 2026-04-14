@@ -5,10 +5,17 @@
  */
 
 import type { ToolCallRequest, ToolSchema } from '../core/types.js';
-import type { ToolDefinition, ToolResult, SchemaValidator } from './types.js';
-import { toolError } from './types.js';
+import type {
+  ToolDefinition,
+  ToolResult,
+  SchemaValidator,
+  ToolCapabilityValue,
+} from './types.js';
+import { toolError, ALL_TOOL_CAPABILITIES } from './types.js';
 import { validateToolCall } from './validate.js';
 import { HarnessError } from '../core/errors.js';
+import { safeWarn } from '../_internal/safe-log.js';
+import type { Logger } from '../observe/logger.js';
 
 /**
  * Resolved registry configuration — reflects the defaults applied by
@@ -50,7 +57,7 @@ const TOOL_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_.]*$/;
  * const result = await registry.execute({ id: '1', name: 'myTool', arguments: '{}' });
  * ```
  */
-export function createRegistry(config?: {
+export interface CreateRegistryConfig {
   maxCallsPerTurn?: number;
   maxCallsPerSession?: number;
   /** Custom schema validator (default: internal json-schema validator). */
@@ -61,7 +68,25 @@ export function createRegistry(config?: {
   };
   /** Optional timeout in milliseconds for tool execution. */
   timeoutMs?: number;
-}): ToolRegistry {
+  /**
+   * Wave-5A: capability allow-list enforced at `register()` time. Tools
+   * declaring a capability outside this list are rejected with
+   * `TOOL_CAPABILITY_DENIED`. Default: `['readonly']` (fail-closed).
+   *
+   * Use `createPermissiveRegistry()` to opt into all capabilities, or
+   * pass an explicit list (e.g. `['readonly', 'filesystem']`) to whitelist
+   * specific classes of tools.
+   */
+  allowedCapabilities?: readonly ToolCapabilityValue[];
+  /**
+   * Optional structured logger. When provided, registration-time warnings
+   * (e.g. a tool missing its `capabilities` declaration) are routed here;
+   * otherwise `safeWarn` falls back to the process-wide default logger.
+   */
+  logger?: Logger;
+}
+
+export function createRegistry(config?: CreateRegistryConfig): ToolRegistry {
   const tools = new Map<string, ToolDefinition>();
   // T08: production-grade defaults. Callers can still opt out by passing
   // `Infinity` (rate limits) or their own numeric override (timeout).
@@ -70,6 +95,11 @@ export function createRegistry(config?: {
   const customValidator = config?.validator;
   const permissions = config?.permissions;
   const timeoutMs = config?.timeoutMs ?? 30_000;
+  // T09: capability allow-list. Default fail-closed to `readonly` only.
+  const allowedCapabilities = new Set<ToolCapabilityValue>(
+    config?.allowedCapabilities ?? ['readonly'],
+  );
+  const logger = config?.logger;
   let turnCalls = 0;
   let sessionCalls = 0;
 
@@ -88,6 +118,41 @@ export function createRegistry(config?: {
         'Use a unique name or check registry.get() before registering',
       );
     }
+
+    // -----------------------------------------------------------------
+    // T09: Capability allow-list enforcement.
+    //
+    // ORDERING (INT-09-01): capability check runs at register()-time and
+    // therefore necessarily precedes the permission check (which runs at
+    // execute()-time). Do NOT move this check below or into execute() —
+    // its whole point is to *prevent registration* of disallowed tools so
+    // they cannot be reached at all.
+    //
+    // Wave-5C upgrade plan (breaking, deferred to avoid a double breaking
+    // window with Wave-5A defaults):
+    //   1. `ToolDefinition.capabilities` becomes required (TS-level break).
+    //   2. Missing capabilities escalate from safeWarn to throw
+    //      TOOL_CAPABILITY_DENIED.
+    //   3. Keep warning in Wave-5A so legacy tools still load.
+    // -----------------------------------------------------------------
+    if (tool.capabilities === undefined) {
+      safeWarn(
+        logger,
+        `tool "${tool.name}" missing capabilities declaration — will be required in 1.0 (Wave-5C)`,
+        { tool: tool.name },
+      );
+    } else {
+      for (const cap of tool.capabilities) {
+        if (!allowedCapabilities.has(cap)) {
+          throw new HarnessError(
+            `tool "${tool.name}" declares capability "${cap}" not in registry allow-list`,
+            'TOOL_CAPABILITY_DENIED',
+            `Add "${cap}" to createRegistry({ allowedCapabilities }) or use createPermissiveRegistry()`,
+          );
+        }
+      }
+    }
+
     tools.set(tool.name, tool);
   }
 
@@ -297,4 +362,24 @@ export function createRegistry(config?: {
   }
 
   return { register, get, list, schemas, execute, handler, resetTurn, resetSession, getConfig };
+}
+
+/**
+ * Convenience factory that pre-sets `allowedCapabilities` to every
+ * {@link ALL_TOOL_CAPABILITIES} value. Useful in environments where the
+ * caller has already performed capability review out-of-band (tests,
+ * sandboxed processes, user-owned shells) and wants to accept any tool
+ * without per-site opt-in.
+ *
+ * @example
+ * ```ts
+ * const registry = createPermissiveRegistry({ timeoutMs: 10_000 });
+ * registry.register(shellTool);   // capabilities: ['shell']
+ * registry.register(networkTool); // capabilities: ['network']
+ * ```
+ */
+export function createPermissiveRegistry(
+  config?: Omit<CreateRegistryConfig, 'allowedCapabilities'>,
+): ToolRegistry {
+  return createRegistry({ ...config, allowedCapabilities: [...ALL_TOOL_CAPABILITIES] });
 }

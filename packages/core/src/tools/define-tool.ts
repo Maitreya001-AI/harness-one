@@ -5,7 +5,7 @@
  */
 
 import type { JsonSchema } from '../core/types.js';
-import type { ToolDefinition, ToolResult } from './types.js';
+import type { ToolDefinition, ToolResult, ToolCapabilityValue } from './types.js';
 import { toolError } from './types.js';
 import { HarnessError } from '../core/errors.js';
 
@@ -75,6 +75,11 @@ export function defineTool<TParams = unknown>(def: {
   description: string;
   parameters: JsonSchema;
   responseFormat?: 'concise' | 'detailed';
+  /**
+   * Declared capabilities for the tool. See {@link ToolDefinition.capabilities}.
+   * Optional in Wave-5A (warn-only), planned to become required in 1.0.
+   */
+  capabilities?: readonly ToolCapabilityValue[];
   execute: (params: TParams, signal?: AbortSignal) => Promise<ToolResult>;
 }): ToolDefinition<TParams> {
   // Validate schema structure at definition time to catch malformed schemas early
@@ -85,6 +90,7 @@ export function defineTool<TParams = unknown>(def: {
     description: def.description,
     parameters: def.parameters,
     ...(def.responseFormat !== undefined && { responseFormat: def.responseFormat }),
+    ...(def.capabilities !== undefined && { capabilities: def.capabilities }),
     execute: async (params: TParams, signal?: AbortSignal): Promise<ToolResult> => {
       try {
         return await def.execute(params, signal);

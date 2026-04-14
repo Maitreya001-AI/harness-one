@@ -6,6 +6,48 @@
 
 import type { JsonSchema } from '../core/types.js';
 
+/**
+ * Wave-5A: tool capabilities declare the *side-effect classes* a tool may
+ * exercise, letting registries fail-closed against unexpected capability
+ * escalation.
+ *
+ * The five values form a small, opinionated set tailored to agent tooling:
+ *   - `readonly`    — pure reads (math, format conversion, doc lookup).
+ *   - `filesystem`  — touches local files / directories (non-destructive R/W).
+ *   - `network`     — makes outbound network calls (HTTP, DNS, etc.).
+ *   - `shell`       — spawns subprocesses or executes shell commands.
+ *   - `destructive` — may delete, overwrite, or irreversibly mutate state.
+ *
+ * A tool may declare multiple capabilities (e.g. a `git push` tool would
+ * declare `['filesystem', 'network', 'destructive']`). The registry grants
+ * execution only if *every* declared capability is in its allow-list.
+ *
+ * @see {@link ToolDefinition.capabilities}
+ * @see ALL_TOOL_CAPABILITIES
+ */
+export const ToolCapability = {
+  Readonly: 'readonly',
+  Filesystem: 'filesystem',
+  Network: 'network',
+  Shell: 'shell',
+  Destructive: 'destructive',
+} as const;
+
+/** String-literal union of all `ToolCapability` values. */
+export type ToolCapabilityValue = typeof ToolCapability[keyof typeof ToolCapability];
+
+/**
+ * Frozen list of every {@link ToolCapability} value. Handy when building
+ * maximally permissive allow-lists (see `createPermissiveRegistry`).
+ */
+export const ALL_TOOL_CAPABILITIES: readonly ToolCapabilityValue[] = Object.freeze([
+  ToolCapability.Readonly,
+  ToolCapability.Filesystem,
+  ToolCapability.Network,
+  ToolCapability.Shell,
+  ToolCapability.Destructive,
+]);
+
 /** Feedback returned when a tool call fails. */
 export interface ToolFeedback {
   readonly message: string;
@@ -81,6 +123,18 @@ export interface ToolDefinition<TParams = unknown> {
    * and calls `next()` to move down the chain. See ToolMiddleware.
    */
   readonly middleware?: readonly ToolMiddleware<TParams>[];
+  /**
+   * Declared side-effect classes this tool may exercise. Registries refuse
+   * to register a tool whose capabilities are not in their allow-list.
+   *
+   * @optional (Wave-5A, transitional). Wave-5A emits a `safeWarn` when a
+   *           tool omits this field; Wave-5C will upgrade that warning to
+   *           a hard throw of `TOOL_CAPABILITY_DENIED` and make this field
+   *           required (TS-level breaking change).
+   *
+   * @required-in-1.0
+   */
+  readonly capabilities?: readonly ToolCapabilityValue[];
 }
 
 /** A parsed tool call with id, name, and arguments. */
