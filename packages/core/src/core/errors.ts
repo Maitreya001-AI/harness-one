@@ -17,6 +17,14 @@
  * - `INTERNAL_ERROR` — unreachable / invariant-violation sites.
  * - `CLI_PARSE_ERROR` — malformed CLI invocations.
  * - `MEMORY_CORRUPT` — persisted memory blobs failed runtime shape validation.
+ *
+ * Added in Wave 5:
+ * - `ADAPTER_INVALID_EXTRA` — adapter `extra` config contained a key outside
+ *   the allow-list while strict mode is enabled.
+ * - `TOOL_CAPABILITY_DENIED` — a tool declared a capability that is not in
+ *   the registry allow-list.
+ * - `PROVIDER_REGISTRY_SEALED` — an attempt was made to register a provider
+ *   after the registry was sealed.
  */
 export type HarnessErrorCode =
   | 'UNKNOWN'
@@ -30,15 +38,18 @@ export type HarnessErrorCode =
   | 'ABORTED'
   | 'GUARDRAIL_BLOCKED'
   | 'INVALID_PIPELINE'
+  | 'ADAPTER_INVALID_EXTRA'
   | 'TOOL_VALIDATION'
   | 'INVALID_TOOL_SCHEMA'
+  | 'TOOL_CAPABILITY_DENIED'
   | 'TOKEN_BUDGET_EXCEEDED'
   | 'SESSION_NOT_FOUND'
   | 'SESSION_LIMIT'
   | 'SESSION_LOCKED'
   | 'SESSION_EXPIRED'
   | 'TRACE_NOT_FOUND'
-  | 'SPAN_NOT_FOUND';
+  | 'SPAN_NOT_FOUND'
+  | 'PROVIDER_REGISTRY_SEALED';
 
 /**
  * Base error for all harness-one errors.

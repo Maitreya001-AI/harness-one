@@ -79,3 +79,34 @@ describe('TokenBudgetExceededError', () => {
     expect(err).toBeInstanceOf(HarnessError);
   });
 });
+
+describe('Wave-5 error codes', () => {
+  it('accepts ADAPTER_INVALID_EXTRA as a typed code', () => {
+    const err = new HarnessError(
+      'unknown extra key "foo"',
+      'ADAPTER_INVALID_EXTRA',
+      'Remove the key or disable strict mode',
+    );
+    expect(err.code).toBe('ADAPTER_INVALID_EXTRA');
+    expect(err).toBeInstanceOf(HarnessError);
+  });
+
+  it('accepts TOOL_CAPABILITY_DENIED as a typed code', () => {
+    const err = new HarnessError(
+      'tool capability "network" not in registry allow-list',
+      'TOOL_CAPABILITY_DENIED',
+    );
+    expect(err.code).toBe('TOOL_CAPABILITY_DENIED');
+    expect(err).toBeInstanceOf(HarnessError);
+  });
+
+  it('accepts PROVIDER_REGISTRY_SEALED as a typed code', () => {
+    const err = new HarnessError(
+      'provider registry is sealed; cannot register "openai"',
+      'PROVIDER_REGISTRY_SEALED',
+      'Register providers before sealing the registry',
+    );
+    expect(err.code).toBe('PROVIDER_REGISTRY_SEALED');
+    expect(err).toBeInstanceOf(HarnessError);
+  });
+});
