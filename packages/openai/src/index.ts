@@ -22,6 +22,7 @@ import type {
 } from 'harness-one/core';
 import { HarnessError } from 'harness-one/core';
 import type { Logger } from 'harness-one/observe';
+import { safeWarn } from 'harness-one/observe';
 
 const _providers: Record<string, { baseURL: string }> = {
   openrouter: { baseURL: 'https://openrouter.ai/api/v1' },
@@ -36,6 +37,89 @@ const _providers: Record<string, { baseURL: string }> = {
 
 /** Names reserved for built-in adapters; cannot be overridden without force. */
 const BUILT_IN_PROVIDER_NAMES: ReadonlySet<string> = new Set(['openai', 'anthropic']);
+
+/**
+ * Keys that `LLMConfig.extra` may carry into the OpenAI Chat Completions API.
+ *
+ * Only parameters that are (a) documented in the OpenAI Chat Completions spec
+ * and (b) safe-by-default (no auth, no routing, no callback URLs) are listed.
+ * Unknown keys are filtered with a single warn by default; pass
+ * `strictExtraAllowList: true` to the adapter to turn the filter into a hard
+ * `ADAPTER_INVALID_EXTRA` failure — useful for prod builds that want any
+ * provider-drift to surface as a test/CI failure.
+ *
+ * This list mirrors the symmetry with the Anthropic adapter's filter (T05) and
+ * is intentionally narrower than the OpenAI SDK surface: callers needing
+ * provider-specific knobs beyond this list should open a PR to expand it
+ * (preferred) or supply a pre-configured `client` that embeds the knob.
+ */
+const OPENAI_EXTRA_ALLOW_LIST: ReadonlySet<string> = new Set([
+  'temperature',
+  'top_p',
+  'frequency_penalty',
+  'presence_penalty',
+  'stop',
+  'seed',
+  'response_format',
+  'user',
+  'service_tier',
+  'parallel_tool_calls',
+]);
+
+/**
+ * Filter a caller-supplied `LLMConfig.extra` payload against the OpenAI
+ * allow-list.
+ *
+ * Behaviour:
+ *  - Undefined / empty input → returns `{}` with no warning.
+ *  - All keys allow-listed → returns the payload verbatim, no warning.
+ *  - Some unknown keys, `strict` = false → returns the filtered subset and
+ *    emits a single warn listing the rejected keys.
+ *  - Any unknown key, `strict` = true → throws `HarnessError` with code
+ *    `ADAPTER_INVALID_EXTRA`; nothing is forwarded.
+ *
+ * Kept package-local (not reused from anthropic) so each adapter owns its own
+ * allow-list surface and can evolve independently.
+ */
+function filterExtra(
+  extra: Readonly<Record<string, unknown>> | undefined,
+  strict: boolean,
+  logger: Pick<Logger, 'warn' | 'error'> | undefined,
+): Record<string, unknown> {
+  if (extra === undefined) return {};
+
+  const accepted: Record<string, unknown> = {};
+  const rejected: string[] = [];
+  for (const key of Object.keys(extra)) {
+    if (OPENAI_EXTRA_ALLOW_LIST.has(key)) {
+      accepted[key] = extra[key];
+    } else {
+      rejected.push(key);
+    }
+  }
+
+  if (rejected.length === 0) return accepted;
+
+  if (strict) {
+    throw new HarnessError(
+      `OpenAI adapter: LLMConfig.extra contained keys not in the allow-list: ${rejected.join(', ')}`,
+      'ADAPTER_INVALID_EXTRA',
+      'Remove the offending keys, add them to OPENAI_EXTRA_ALLOW_LIST via a PR, or disable strictExtraAllowList.',
+    );
+  }
+
+  const msg = `[harness-one/openai] LLMConfig.extra contained keys not in the allow-list and was filtered: ${rejected.join(', ')}. Pass strictExtraAllowList: true to fail instead of filtering.`;
+  const meta = { rejectedKeys: rejected };
+  if (logger !== undefined) {
+    // A caller-supplied logger (even the Pick<> narrow one used by this
+    // adapter) routes the warn itself; we only fall back to `safeWarn`'s
+    // default redaction-enabled logger when none is provided.
+    logger.warn(msg, meta);
+  } else {
+    safeWarn(undefined, msg, meta);
+  }
+  return accepted;
+}
 
 /**
  * Well-known OpenAI-compatible provider base URLs.
@@ -134,6 +218,13 @@ export interface OpenAIAdapterConfig {
    * to `console` — accept a logger so hosts can route/silence warnings.
    */
   readonly logger?: Pick<Logger, 'warn' | 'error'>;
+  /**
+   * When true, any key in `LLMConfig.extra` that is not in the adapter's
+   * allow-list raises `HarnessError { code: 'ADAPTER_INVALID_EXTRA' }` instead
+   * of being silently filtered-with-warn. Intended for prod builds that want
+   * provider-parameter drift to fail loudly in CI. Defaults to `false`.
+   */
+  readonly strictExtraAllowList?: boolean;
 }
 
 /** Convert a harness-one Message to OpenAI's chat completion message format. */
@@ -277,6 +368,7 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
     maxRetries: config.maxRetries,
   });
   const model = config.model ?? 'gpt-4o';
+  const strictExtra = config.strictExtraAllowList === true;
   const logger: Pick<Logger, 'warn' | 'error'> = config.logger ?? {
     warn: (msg: string, meta?: Record<string, unknown>): void => {
       if (meta && Object.keys(meta).length > 0) {
@@ -319,7 +411,9 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
         }),
         // Spec: LLMConfig.extra MUST be forwarded to the provider. Merge LAST
         // so caller-supplied unknown keys win over base params (per provider-spec.md).
-        ...(params.config?.extra ?? {}),
+        // T06: filtered against OPENAI_EXTRA_ALLOW_LIST; unknown keys are
+        // dropped-with-warn, or raise ADAPTER_INVALID_EXTRA under strictExtra.
+        ...filterExtra(params.config?.extra, strictExtra, logger),
       }, { signal: params.signal });
 
       const choice = response.choices[0];
@@ -368,7 +462,9 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
         stream_options: { include_usage: true },
         // Spec: LLMConfig.extra MUST be forwarded to the provider. Merge LAST
         // so caller-supplied unknown keys win over base params.
-        ...(params.config?.extra ?? {}),
+        // T06: filtered against OPENAI_EXTRA_ALLOW_LIST; unknown keys are
+        // dropped-with-warn, or raise ADAPTER_INVALID_EXTRA under strictExtra.
+        ...filterExtra(params.config?.extra, strictExtra, logger),
       }, { signal: params.signal });
 
       const toolCallAccum = new Map<

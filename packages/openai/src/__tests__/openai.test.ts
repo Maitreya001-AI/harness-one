@@ -1363,6 +1363,9 @@ describe('createOpenAIAdapter', () => {
 
   // -------------------------------------------------------------------------
   // SPEC-005 / SPEC-014: LLMConfig.extra must be forwarded to provider
+  // T06 (Wave-5A): extra is now filtered against OPENAI_EXTRA_ALLOW_LIST.
+  // These tests use allow-listed keys to validate the forwarding contract;
+  // see __tests__/extra-allow-list.test.ts for the full filter/strict behavior.
   // -------------------------------------------------------------------------
   describe('LLMConfig.extra forwarding (SPEC-005)', () => {
     it('forwards config.extra keys into chat() request body', async () => {
@@ -1374,12 +1377,12 @@ describe('createOpenAIAdapter', () => {
       const adapter = createOpenAIAdapter({ client: mock.client });
       await adapter.chat({
         messages: [{ role: 'user', content: 'Hi' }],
-        config: { extra: { customKey: 'v', another: 42 } },
+        config: { extra: { user: 'tenant-v', seed: 42 } },
       });
 
       const body = mock.mocks.create.mock.calls[0][0] as Record<string, unknown>;
-      expect(body.customKey).toBe('v');
-      expect(body.another).toBe(42);
+      expect(body.user).toBe('tenant-v');
+      expect(body.seed).toBe(42);
     });
 
     it('forwards config.extra keys into stream() request body', async () => {
@@ -1394,11 +1397,11 @@ describe('createOpenAIAdapter', () => {
       const adapter = createOpenAIAdapter({ client: mock.client });
       for await (const _c of adapter.stream!({
         messages: [{ role: 'user', content: 'Hi' }],
-        config: { extra: { providerSpecificFlag: true } },
+        config: { extra: { parallel_tool_calls: true } },
       })) { /* consume */ }
 
       const body = mock.mocks.create.mock.calls[0][0] as Record<string, unknown>;
-      expect(body.providerSpecificFlag).toBe(true);
+      expect(body.parallel_tool_calls).toBe(true);
     });
 
     it('extra overrides conflicting base params (extra merged last)', async () => {
