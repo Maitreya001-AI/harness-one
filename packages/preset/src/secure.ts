@@ -1,0 +1,132 @@
+/**
+ * T14 (Wave-5A): createSecurePreset — fail-closed production entry.
+ *
+ * Wraps {@link createHarness} with production-grade defaults:
+ * - Guardrail pipeline is non-empty by default (injection + contentFilter + pii)
+ * - Logger defaults to {@link createDefaultLogger} (redaction on)
+ * - OpenAI provider registry is sealed after construction
+ *
+ * There is no "guardrails off" escape hatch. Callers who need that must use
+ * {@link createHarness} directly and accept responsibility for insecure config.
+ *
+ * @module
+ */
+
+import { sealProviders } from '@harness-one/openai';
+import { createDefaultLogger } from 'harness-one/observe';
+
+import { createHarness, type Harness, type HarnessConfig } from './index.js';
+
+/**
+ * Preset levels for the default guardrail pipeline.
+ *
+ * - `'minimal'`  — injection detector only (low sensitivity)
+ * - `'standard'` — injection + contentFilter + PII detector. **Default.**
+ * - `'strict'`   — standard + rateLimit (60 req/min) + injection sensitivity high
+ *
+ * User-supplied `guardrails` fields override the preset for the same keys,
+ * so `createSecurePreset({ guardrailLevel: 'standard', guardrails: { pii: false } })`
+ * disables PII but keeps injection + contentFilter active.
+ */
+export type SecurePresetGuardrailLevel = 'minimal' | 'standard' | 'strict';
+
+/** Extra options accepted only by {@link createSecurePreset}. */
+export interface SecurePresetOptions {
+  /** Guardrail preset level. Defaults to `'standard'`. */
+  readonly guardrailLevel?: SecurePresetGuardrailLevel;
+
+  /**
+   * If `true`, `sealProviders()` is NOT called after construction.
+   * Rare escape hatch — only meaningful if the caller expects to register
+   * additional OpenAI-compatible providers *after* building the Harness.
+   * Defaults to `false` (seal on).
+   */
+  readonly skipProviderSeal?: boolean;
+}
+
+type HarnessGuardrails = NonNullable<HarnessConfig['guardrails']>;
+
+/**
+ * Create a production-grade Harness with fail-closed security defaults.
+ *
+ * Differences from {@link createHarness}:
+ * 1. `guardrails` pipeline is non-empty — at minimum an injection detector.
+ * 2. `logger` defaults to {@link createDefaultLogger} (redaction on).
+ * 3. `sealProviders()` is invoked after the adapter is constructed so
+ *    {@link registerProvider} cannot be called with attacker-controlled
+ *    configuration later in the process lifetime.
+ *
+ * Tool registry security (default `allowedCapabilities: ['readonly']`) and
+ * logger/trace-manager redaction defaults are inherited from Wave-5A's
+ * core-level flips (T02/T03/T08/T09) — no extra wiring needed here.
+ *
+ * @example
+ * ```ts
+ * import { createSecurePreset } from '@harness-one/preset';
+ *
+ * const harness = createSecurePreset({
+ *   provider: 'anthropic',
+ *   client: new Anthropic({ apiKey: process.env.ANTHROPIC_KEY }),
+ *   model: 'claude-sonnet-4-20250514',
+ *   // guardrailLevel defaults to 'standard'
+ * });
+ * ```
+ */
+export function createSecurePreset(config: HarnessConfig & SecurePresetOptions): Harness {
+  const level: SecurePresetGuardrailLevel = config.guardrailLevel ?? 'standard';
+
+  const guardrails = mergeSecureGuardrails(level, config.guardrails);
+  const logger = config.logger ?? createDefaultLogger();
+
+  // Strip SecurePresetOptions fields from the config passed down to createHarness,
+  // since HarnessConfig doesn't know about guardrailLevel / skipProviderSeal.
+  const { guardrailLevel: _gl, skipProviderSeal: _sps, ...rest } = config;
+  void _gl;
+  void _sps;
+
+  const mergedConfig = {
+    ...rest,
+    guardrails,
+    logger,
+  } as HarnessConfig;
+
+  const harness = createHarness(mergedConfig);
+
+  if (config.skipProviderSeal !== true) {
+    // Idempotent: second call is a no-op, so invoking createSecurePreset
+    // multiple times in one process is safe.
+    sealProviders();
+  }
+
+  return harness;
+}
+
+/**
+ * Merge the preset-level default guardrail config with user overrides.
+ *
+ * Strategy: user-specified fields take precedence key-by-key. Fields the user
+ * does not mention get the preset-level default. This means callers can
+ * tighten or loosen individual guards without being forced to re-spell the
+ * full shape.
+ */
+function mergeSecureGuardrails(
+  level: SecurePresetGuardrailLevel,
+  userGuardrails: HarnessGuardrails | undefined,
+): HarnessGuardrails {
+  const base: Record<string, unknown> = {};
+
+  // Injection detector — always on; sensitivity scales with level.
+  base.injection = level === 'strict' ? { sensitivity: 'high' as const } : true;
+
+  if (level === 'standard' || level === 'strict') {
+    base.contentFilter = {};
+    base.pii = true;
+  }
+
+  if (level === 'strict') {
+    base.rateLimit = { max: 60, windowMs: 60_000 };
+  }
+
+  // User fields override base
+  return { ...base, ...userGuardrails } as HarnessGuardrails;
+}

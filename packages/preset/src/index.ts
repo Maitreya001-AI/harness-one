@@ -884,3 +884,10 @@ function createGuardrails(config: HarnessConfig): GuardrailPipeline {
 // ---------------------------------------------------------------------------
 
 export { createConfigFromEnv } from './env.js';
+
+// ---------------------------------------------------------------------------
+// T14 (Wave-5A): Fail-closed production entry
+// ---------------------------------------------------------------------------
+
+export { createSecurePreset } from './secure.js';
+export type { SecurePresetGuardrailLevel, SecurePresetOptions } from './secure.js';
