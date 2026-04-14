@@ -35,6 +35,20 @@ const _providers: Record<string, { baseURL: string }> = {
   ollama: { baseURL: 'http://localhost:11434/v1' },
 };
 
+/**
+ * Module-private flag tracking whether {@link sealProviders} has been called.
+ *
+ * Kept behind the accessor pair `sealProviders()` / `isProvidersSealed()` so
+ * callers cannot mutate the flag directly (no exported mutable reference).
+ *
+ * Lifetime note: this flag is a *module singleton*. It is shared across every
+ * import of this module within one JS realm, but it does NOT cross
+ * `worker_threads`, child processes, or `vi.resetModules()` boundaries — each
+ * fresh module instance starts unsealed. Tests that need a clean slate should
+ * call `vi.resetModules()` (see `seal-providers.test.ts`).
+ */
+let _providersSealed = false;
+
 /** Names reserved for built-in adapters; cannot be overridden without force. */
 const BUILT_IN_PROVIDER_NAMES: ReadonlySet<string> = new Set(['openai', 'anthropic']);
 
@@ -154,6 +168,21 @@ export function registerProvider(
   config: { baseURL: string },
   options?: { readonly force?: boolean },
 ): void {
+  // Seal check runs FIRST, before any other validation. Rationale: once the
+  // registry is sealed we want every registration attempt — valid or not — to
+  // fail with the same distinct `PROVIDER_REGISTRY_SEALED` code, so production
+  // alerting can key off a single signal. Running validation ahead of the
+  // seal check would cause sealed-registry attempts with a typo in `name` or
+  // `config.baseURL` to surface as `INVALID_CONFIG` instead, hiding the real
+  // root cause.
+  if (_providersSealed) {
+    throw new HarnessError(
+      `cannot register provider "${name}" — provider registry is sealed`,
+      'PROVIDER_REGISTRY_SEALED',
+      'Call sealProviders() only after all providers are registered (typically at the end of bootstrap / inside createSecurePreset). Registering a new provider after seal requires restarting the process.',
+    );
+  }
+
   if (typeof name !== 'string' || name.length === 0) {
     throw new HarnessError(
       'registerProvider: name must be a non-empty string',
@@ -192,6 +221,48 @@ export function registerProvider(
   }
 
   _providers[name] = { baseURL: config.baseURL };
+}
+
+/**
+ * Seal the provider registry.
+ *
+ * After calling this, any subsequent {@link registerProvider} invocation
+ * throws `HarnessError` with code `PROVIDER_REGISTRY_SEALED`. Already-
+ * registered providers remain available through {@link providers} and can
+ * still be consumed by {@link createOpenAIAdapter} — seal only blocks *new*
+ * registrations.
+ *
+ * Idempotent: calling `sealProviders()` twice (or more) is a no-op; it never
+ * throws and never mutates anything beyond the first call.
+ *
+ * Intended use:
+ *  1. During application bootstrap, register every custom provider you need.
+ *  2. Once bootstrap is complete (e.g. inside `createSecurePreset`), call
+ *     `sealProviders()` so that later code paths — including tests, plugins,
+ *     and request handlers — cannot redirect traffic by registering rogue
+ *     providers.
+ *
+ * Scope note: the seal flag is a module singleton. It does NOT propagate
+ * across `worker_threads`, forked child processes, or test runners that call
+ * `vi.resetModules()`. Each fresh module instance starts unsealed.
+ *
+ * @see isProvidersSealed
+ * @see registerProvider
+ */
+export function sealProviders(): void {
+  _providersSealed = true;
+}
+
+/**
+ * Return `true` if the provider registry has been sealed via
+ * {@link sealProviders}, otherwise `false`.
+ *
+ * Useful in diagnostics/logging, in tests that assert seal state, and in
+ * higher-level presets that want to avoid double-sealing or to branch on
+ * whether bootstrap has completed.
+ */
+export function isProvidersSealed(): boolean {
+  return _providersSealed;
 }
 
 /** Configuration for the OpenAI adapter. */
