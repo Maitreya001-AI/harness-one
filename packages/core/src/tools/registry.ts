@@ -10,6 +10,20 @@ import { toolError } from './types.js';
 import { validateToolCall } from './validate.js';
 import { HarnessError } from '../core/errors.js';
 
+/**
+ * Resolved registry configuration — reflects the defaults applied by
+ * {@link createRegistry} plus any caller overrides. Useful for assertions
+ * and for operational visibility (e.g. surfacing the effective timeout).
+ */
+export interface ResolvedRegistryConfig {
+  /** Hard cap on tool calls within a single turn (default: 20). */
+  maxCallsPerTurn: number;
+  /** Hard cap on tool calls within a session (default: 100). */
+  maxCallsPerSession: number;
+  /** Per-call timeout in ms (default: 30_000). `undefined` disables timeout. */
+  timeoutMs: number | undefined;
+}
+
 /** A registry that manages tool definitions and executes tool calls. */
 export interface ToolRegistry {
   register(tool: ToolDefinition): void;
@@ -20,6 +34,8 @@ export interface ToolRegistry {
   handler(): (call: ToolCallRequest) => Promise<unknown>;
   resetTurn(): void;
   resetSession(): void;
+  /** Return the effective configuration (defaults + caller overrides). */
+  getConfig(): ResolvedRegistryConfig;
 }
 
 const TOOL_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_.]*$/;
@@ -47,11 +63,13 @@ export function createRegistry(config?: {
   timeoutMs?: number;
 }): ToolRegistry {
   const tools = new Map<string, ToolDefinition>();
-  const maxPerTurn = config?.maxCallsPerTurn ?? Infinity;
-  const maxPerSession = config?.maxCallsPerSession ?? Infinity;
+  // T08: production-grade defaults. Callers can still opt out by passing
+  // `Infinity` (rate limits) or their own numeric override (timeout).
+  const maxPerTurn = config?.maxCallsPerTurn ?? 20;
+  const maxPerSession = config?.maxCallsPerSession ?? 100;
   const customValidator = config?.validator;
   const permissions = config?.permissions;
-  const timeoutMs = config?.timeoutMs;
+  const timeoutMs = config?.timeoutMs ?? 30_000;
   let turnCalls = 0;
   let sessionCalls = 0;
 
@@ -270,5 +288,13 @@ export function createRegistry(config?: {
     turnCalls = 0;
   }
 
-  return { register, get, list, schemas, execute, handler, resetTurn, resetSession };
+  function getConfig(): ResolvedRegistryConfig {
+    return {
+      maxCallsPerTurn: maxPerTurn,
+      maxCallsPerSession: maxPerSession,
+      timeoutMs,
+    };
+  }
+
+  return { register, get, list, schemas, execute, handler, resetTurn, resetSession, getConfig };
 }

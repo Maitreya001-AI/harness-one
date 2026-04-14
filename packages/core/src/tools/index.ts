@@ -21,5 +21,5 @@ export { defineTool } from './define-tool.js';
 export { validateToolCall } from './validate.js';
 
 // Registry
-export type { ToolRegistry } from './registry.js';
+export type { ToolRegistry, ResolvedRegistryConfig } from './registry.js';
 export { createRegistry } from './registry.js';
