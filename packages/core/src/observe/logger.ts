@@ -36,12 +36,28 @@ export interface LoggerConfig {
   /** Custom output function. Default: console.log. */
   readonly output?: (line: string) => void;
   /**
-   * SEC-001: Secret redaction. When set, every metadata object passed through
-   * the logger is scrubbed before serialization (API keys, tokens, passwords,
-   * cookies, etc.). Defaults to undefined (no redaction). Provide an empty
-   * object `{}` to enable default-pattern redaction without extra keys.
+   * SEC-001 + T02 (Wave-5A): Secret redaction configuration.
+   *
+   * Every metadata object passed through the logger is scrubbed before
+   * serialization (API keys, tokens, passwords, cookies, etc.).
+   *
+   * Semantics (Wave-5, secure-by-default):
+   *   - `undefined` (omitted)   → DEFAULT redactor is enabled
+   *                               (equivalent to `{ useDefaultPattern: true }`).
+   *   - `false`                 → Redaction is fully disabled. Metadata flows
+   *                               through untouched. Prototype-pollution
+   *                               protection is also skipped — this is an
+   *                               intentional all-or-nothing escape hatch for
+   *                               callers who have their own sanitization.
+   *   - `RedactConfig` object   → Unchanged behavior: the config is passed
+   *                               verbatim to `createRedactor`. `{}` still
+   *                               activates the default pattern.
+   *
+   * Migration note from Wave-4: previously `undefined` meant "no redaction".
+   * This is a breaking change in semantics: existing callers who relied on
+   * zero redaction must now set `redact: false` explicitly.
    */
-  readonly redact?: RedactConfig;
+  readonly redact?: RedactConfig | false;
   /**
    * OBS-001: Correlation ID automatically injected into every log record
    * under the `correlationId` field. Useful for linking logs to a request or
@@ -111,11 +127,19 @@ export function createLogger(config?: LoggerConfig): Logger {
   const json = config?.json ?? false;
   // eslint-disable-next-line no-console -- library fallback when no output provided
   const output = config?.output ?? console.log;
-  // SEC-001: Build the redactor once at logger creation. `undefined` means
-  // no redaction; pass `{}` to enable default pattern only.
-  const redactor: Redactor | undefined = config?.redact
-    ? createRedactor(config.redact)
-    : undefined;
+  // SEC-001 + T02 (Wave-5A): Build the redactor once at logger creation.
+  // New defaulting semantics:
+  //   - `redact === false`    → no redactor (explicit opt-out).
+  //   - `redact === undefined`→ default redactor (useDefaultPattern: true).
+  //   - `redact === object`   → exact user config.
+  // `config?.redact ?? { useDefaultPattern: true }` is safe because the
+  // `false` case is short-circuited above. Note that `{}` already activates
+  // the default pattern inside `createRedactor`, so we choose `{ useDefaultPattern: true }`
+  // as the explicit default sentinel for clarity.
+  const redactor: Redactor | undefined =
+    config?.redact === false
+      ? undefined
+      : createRedactor(config?.redact ?? { useDefaultPattern: true });
   const correlationId = config?.correlationId;
 
   function shouldLog(level: LogLevel): boolean {

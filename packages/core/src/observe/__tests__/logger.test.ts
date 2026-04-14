@@ -367,9 +367,13 @@ describe('createLogger', () => {
       expect(parsed.ok).toBe('fine');
     });
 
-    it('does not redact when redact config is absent', () => {
+    it('does not redact when redact config is explicitly disabled', () => {
+      // T02 (Wave-5A): the default flipped from opt-in to opt-out. To keep
+      // the original intent of this test — "caller gets raw values" — the
+      // caller must now pass `redact: false` explicitly. Omitting `redact`
+      // activates the default redactor.
       const { lines, output } = captureOutput();
-      const logger = createLogger({ json: true, output });
+      const logger = createLogger({ json: true, output, redact: false });
       logger.info('no-redact', { api_key: 'visible' });
       const parsed = JSON.parse(lines[0]);
       expect(parsed.api_key).toBe('visible');
