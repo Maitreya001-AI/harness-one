@@ -773,9 +773,15 @@ describe('createAnthropicAdapter', () => {
 
   // -------------------------------------------------------------------------
   // SPEC-005 / SPEC-014: LLMConfig.extra must be forwarded to provider
+  //
+  // T05 (Wave-5A): As of T05, only keys in the Anthropic allow-list
+  // (`temperature`, `top_k`, `top_p`, `stop_sequences`, `thinking`, `metadata`,
+  // `system`) are forwarded by default; unknown keys are filtered with a warn.
+  // These tests therefore assert forwarding semantics using allow-listed keys.
+  // See `extra-allow-list.test.ts` for the full T05 contract (filter + strict).
   // -------------------------------------------------------------------------
   describe('LLMConfig.extra forwarding (SPEC-005)', () => {
-    it('forwards config.extra keys into chat() request body', async () => {
+    it('forwards allow-listed config.extra keys into chat() request body', async () => {
       mock.mocks.create.mockResolvedValue({
         content: [{ type: 'text', text: 'OK' }],
         usage: { input_tokens: 5, output_tokens: 2 },
@@ -784,15 +790,15 @@ describe('createAnthropicAdapter', () => {
       const adapter = createAnthropicAdapter({ client: mock.client });
       await adapter.chat({
         messages: [{ role: 'user', content: 'Hi' }],
-        config: { extra: { anthropicSpecific: 'v', metadata: { userId: 'u' } } },
+        config: { extra: { metadata: { userId: 'u' }, thinking: { budget_tokens: 1024 } } },
       });
 
       const body = mock.mocks.create.mock.calls[0][0] as Record<string, unknown>;
-      expect(body.anthropicSpecific).toBe('v');
       expect(body.metadata).toEqual({ userId: 'u' });
+      expect(body.thinking).toEqual({ budget_tokens: 1024 });
     });
 
-    it('forwards config.extra keys into stream() request body', async () => {
+    it('forwards allow-listed config.extra keys into stream() request body', async () => {
       function createMockStream(events: unknown[]) {
         const asyncIter = {
           async *[Symbol.asyncIterator]() {
@@ -811,11 +817,11 @@ describe('createAnthropicAdapter', () => {
       const adapter = createAnthropicAdapter({ client: mock.client });
       for await (const _c of adapter.stream!({
         messages: [{ role: 'user', content: 'Hi' }],
-        config: { extra: { betaFeature: true } },
+        config: { extra: { top_k: 42 } },
       })) { /* consume */ }
 
       const body = mock.mocks.stream.mock.calls[0][0] as Record<string, unknown>;
-      expect(body.betaFeature).toBe(true);
+      expect(body.top_k).toBe(42);
     });
 
     it('extra overrides conflicting base params (extra merged last)', async () => {

@@ -18,7 +18,29 @@ import type {
   ToolSchema,
 } from 'harness-one/core';
 import { HarnessError } from 'harness-one/core';
-import type { Logger } from 'harness-one/observe';
+import { safeWarn, type Logger } from 'harness-one/observe';
+
+/**
+ * T05 (Wave-5A): Allow-list of `LLMConfig.extra` keys that are safe to forward
+ * verbatim to the Anthropic Messages API. Any key outside this set is filtered
+ * out (with a single `safeWarn` emission) in non-strict mode, or rejected with
+ * a `HarnessError('ADAPTER_INVALID_EXTRA')` when `strictExtraAllowList: true`.
+ *
+ * Rationale: prior to T05, `extra` was spread into the request body unchecked,
+ * which made it trivial for callers (or upstream preset chains) to leak vendor
+ * keys, arbitrary fields, or typos to the provider. The allow-list is the
+ * minimum viable surface to keep SPEC-005 forwarding useful without the
+ * shotgun risk.
+ */
+const ANTHROPIC_EXTRA_ALLOW_LIST = new Set<string>([
+  'temperature',
+  'top_k',
+  'top_p',
+  'stop_sequences',
+  'thinking',
+  'metadata',
+  'system',
+]);
 
 /** Configuration for the Anthropic adapter. */
 export interface AnthropicAdapterConfig {
@@ -33,6 +55,59 @@ export interface AnthropicAdapterConfig {
    * logger so hosts can route/silence warnings.
    */
   readonly logger?: Pick<Logger, 'warn' | 'error'>;
+  /**
+   * T05 (Wave-5A): when `true`, unknown keys in `LLMConfig.extra` cause
+   * `chat()`/`stream()` to throw `HarnessError('ADAPTER_INVALID_EXTRA')`
+   * before contacting the provider. Defaults to `false` — unknown keys are
+   * silently filtered and reported via a single `safeWarn` emission so the
+   * caller can notice without breaking their pipeline.
+   */
+  readonly strictExtraAllowList?: boolean;
+}
+
+/**
+ * T05 (Wave-5A): Filter `extra` against the Anthropic allow-list.
+ *
+ * - Returns `undefined` when the input is `undefined` (pure pass-through,
+ *   zero side effects).
+ * - Returns the filtered subset plus a single `safeWarn` emission when keys
+ *   are rejected and `strict === false`.
+ * - Throws `HarnessError('ADAPTER_INVALID_EXTRA')` when keys are rejected
+ *   and `strict === true`.
+ *
+ * The `logger` parameter is structurally compatible with `safeWarn`'s
+ * `Logger | undefined` signature at runtime (only `.warn` is invoked); we
+ * widen via a single cast at the call site to avoid forcing adapter callers
+ * to supply a full `Logger` when they only care about `warn`/`error`.
+ */
+function filterExtra(
+  extra: Readonly<Record<string, unknown>> | undefined,
+  strict: boolean,
+  logger: Pick<Logger, 'warn' | 'error'> | undefined,
+): Record<string, unknown> | undefined {
+  if (!extra) return undefined;
+  const filtered: Record<string, unknown> = {};
+  const rejected: string[] = [];
+  for (const [k, v] of Object.entries(extra)) {
+    if (ANTHROPIC_EXTRA_ALLOW_LIST.has(k)) {
+      filtered[k] = v;
+    } else {
+      rejected.push(k);
+    }
+  }
+  if (rejected.length === 0) return filtered;
+  if (strict) {
+    throw new HarnessError(
+      `Anthropic adapter: extra contains keys outside the allow-list: ${rejected.join(', ')}`,
+      'ADAPTER_INVALID_EXTRA',
+      'Remove the listed keys from LLMConfig.extra, or set strictExtraAllowList=false to filter-and-warn instead of throwing.',
+    );
+  }
+  // `safeWarn` accepts `Logger | undefined`; our adapter type is a narrower
+  // `Pick<Logger, 'warn' | 'error'>`. At runtime `safeWarn` only invokes
+  // `target.warn(msg, meta)`, so the cast is sound.
+  safeWarn(logger as Logger | undefined, 'anthropic adapter: extra keys filtered', { rejected });
+  return filtered;
 }
 
 /** Default logger used when no custom logger is injected. Routes to the global console. */
@@ -217,11 +292,16 @@ export function createAnthropicAdapter(config: AnthropicAdapterConfig): AgentAda
   const { client } = config;
   const model = config.model ?? 'claude-sonnet-4-20250514';
   const logger: Pick<Logger, 'warn' | 'error'> = config.logger ?? defaultLogger();
+  const strictExtra = config.strictExtraAllowList ?? false;
 
   return {
     name: `anthropic:${model}`,
     async chat(params: ChatParams): Promise<ChatResponse> {
       const { system, rest } = extractSystem(params.messages);
+
+      // T05: filter `extra` against Anthropic allow-list BEFORE spreading.
+      // Under strict mode this throws before any network call.
+      const safeExtra = filterExtra(params.config?.extra, strictExtra, config.logger);
 
       const response = await client.messages.create({
         model,
@@ -234,7 +314,8 @@ export function createAnthropicAdapter(config: AnthropicAdapterConfig): AgentAda
         ...(params.config?.stopSequences !== undefined && { stop_sequences: params.config.stopSequences as string[] }),
         // Spec: LLMConfig.extra MUST be forwarded to the provider. Merge LAST
         // so caller-supplied unknown keys win over base params (per provider-spec.md).
-        ...(params.config?.extra ?? {}),
+        // T05: only allow-listed keys are forwarded; see ANTHROPIC_EXTRA_ALLOW_LIST.
+        ...(safeExtra ?? {}),
       }, { signal: params.signal });
 
       if (!response.content || response.content.length === 0) {
@@ -250,6 +331,11 @@ export function createAnthropicAdapter(config: AnthropicAdapterConfig): AgentAda
     async *stream(params: ChatParams): AsyncIterable<StreamChunk> {
       const { system, rest } = extractSystem(params.messages);
 
+      // T05: filter `extra` against Anthropic allow-list BEFORE calling stream().
+      // Under strict mode this throws before the HTTP request is initiated, which
+      // is also why the tests assert `mock.stream` was NOT invoked.
+      const safeExtra = filterExtra(params.config?.extra, strictExtra, config.logger);
+
       const stream = client.messages.stream({
         model,
         max_tokens: params.config?.maxTokens ?? 4096,
@@ -261,7 +347,8 @@ export function createAnthropicAdapter(config: AnthropicAdapterConfig): AgentAda
         ...(params.config?.stopSequences !== undefined && { stop_sequences: params.config.stopSequences as string[] }),
         // Spec: LLMConfig.extra MUST be forwarded to the provider. Merge LAST
         // so caller-supplied unknown keys win over base params.
-        ...(params.config?.extra ?? {}),
+        // T05: only allow-listed keys are forwarded; see ANTHROPIC_EXTRA_ALLOW_LIST.
+        ...(safeExtra ?? {}),
       }, { signal: params.signal });
 
       let currentToolId: string | undefined;
