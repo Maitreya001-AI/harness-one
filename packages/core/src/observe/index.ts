@@ -51,3 +51,6 @@ export { createCacheMonitor } from './cache-monitor.js';
 // Dataset Exporter
 export type { DatasetEntry, DatasetExporterConfig } from './dataset-exporter.js';
 export { createDatasetExporter } from './dataset-exporter.js';
+
+// Safe-log primitive (fallback logger + safeWarn/safeError helpers)
+export { createDefaultLogger, safeWarn, safeError } from '../_internal/safe-log.js';
