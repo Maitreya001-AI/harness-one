@@ -122,19 +122,31 @@ export function createTraceManager(config?: {
    * trace metadata, and span events at the ingestion boundary. Because
    * exporters (console, OTel, Langfuse) read `span.attributes` and
    * `trace.metadata` verbatim, scrubbing here guarantees downstream observers
-   * never see unredacted secrets. Set to `{}` to enable default patterns.
+   * never see unredacted secrets.
+   *
+   * Secure-by-default (T03): when omitted (`undefined`), the
+   * `DEFAULT_SECRET_PATTERN` is active so common key names (api_key,
+   * authorization, password, token, …) are scrubbed automatically. Pass a
+   * `RedactConfig` object to customize (e.g. add extra keys / patterns or
+   * disable the default pattern while keeping redaction active). Pass
+   * `false` to explicitly disable redaction entirely — use only when exports
+   * are known to be safe (e.g. tests, trusted internal sinks).
    */
-  redact?: RedactConfig;
+  redact?: RedactConfig | false;
 }): TraceManager {
   const exporters = config?.exporters ?? [];
   const maxTraces = config?.maxTraces ?? 1000;
   const onExportError = config?.onExportError;
   const logger = config?.logger;
   let samplingRate = config?.defaultSamplingRate ?? 1;
-  // SEC-007: Build redactor once. `undefined` means pass-through.
-  const redactor: Redactor | undefined = config?.redact
-    ? createRedactor(config.redact)
-    : undefined;
+  // SEC-007 / T03: Build redactor once.
+  //   - `redact === false`            => no redactor (explicit opt-out)
+  //   - `redact === undefined`        => default redactor (secure-by-default)
+  //   - `redact: RedactConfig` object => honor the config as-is
+  const redactor: Redactor | undefined =
+    config?.redact === false
+      ? undefined
+      : createRedactor(config?.redact ?? undefined);
 
   if (maxTraces < 1) {
     throw new HarnessError('maxTraces must be >= 1', 'INVALID_CONFIG', 'Provide a positive maxTraces value');

@@ -1086,11 +1086,14 @@ describe('SEC-007 secret redaction', () => {
     expect(trace!.metadata.ssn).toBe('[REDACTED]');
   });
 
-  it('does not redact when no redact config is provided (back-compat)', async () => {
+  it('redacts by default when no redact config is provided (T03 secure-by-default)', async () => {
+    // T03: `redact` omitted => DEFAULT_SECRET_PATTERN active (secure-by-default).
+    // To opt out explicitly, pass `redact: false` — covered by
+    // `trace-manager-redact-default.test.ts`.
     const tm = createTraceManager();
     const tid = tm.startTrace('t', { api_key: 'visible' });
     const trace = tm.getTrace(tid);
-    expect(trace!.metadata.api_key).toBe('visible');
+    expect(trace!.metadata.api_key).toBe('[REDACTED]');
   });
 });
 
