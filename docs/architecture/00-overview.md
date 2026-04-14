@@ -2,6 +2,16 @@
 
 > **Agent = Model + Harness.** harness-one 提供 Harness 层的通用基础设施。
 
+> **Production entry (Wave-5A, 1.0-rc)**: 生产部署请直接用 `createSecurePreset` 而非 `createHarness`。
+> 它 fail-closed 默认启用 guardrail pipeline、redaction（logger + trace + Langfuse）、tool
+> capability 限制（`['readonly']`）、tool registry 配额（20/turn, 100/session, 30s timeout）、
+> `sealProviders()`。`createHarness` 仍保留作为逃生门。
+>
+> ```ts
+> import { createSecurePreset } from '@harness-one/preset';
+> const harness = createSecurePreset({ provider: 'anthropic', client, model: 'claude-sonnet-4-20250514' });
+> ```
+
 ## 定位
 
 harness-one 是一个 TypeScript 工具库，为 AI Agent 产品提供 Harness Engineering 的通用原语。覆盖参考架构的 9 个层次，以 12+ 个独立模块 + 1 个 CLI 工具的形式交付。自 2026-04 起，新增多 Agent 编排基础设施（Agent Pool、Handoff Protocol、Context Boundary）和 RAG 流水线，将单 Agent 架构扩展至多 Agent 协作与检索增强场景。

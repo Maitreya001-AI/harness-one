@@ -1,6 +1,27 @@
 # Guardrails
 
-> 安全护栏：Pipeline 编排、自愈重试、4 个内置护栏。
+> 安全护栏：Pipeline 编排、自愈重试、4 个内置护栏，AgentLoop 强制 hook。
+
+## Wave-5A: AgentLoop 强制 hook 点（T10）
+
+`AgentLoopConfig.inputPipeline?: GuardrailPipeline` 和 `outputPipeline?: GuardrailPipeline`。
+每轮迭代固定顺序：
+
+1. **Input** — 调 adapter 前，对最新 user turn 跑 `runInput`
+2. **Tool output** — 工具执行后，对结果跑 `runToolOutput`；block 时将 result 替换为
+   `JSON.stringify({ error: 'GUARDRAIL_VIOLATION: <guardName>', reason })` 回写，继续下一轮（LLM 看到
+   结构化错误，不会孤儿 tool_use）
+3. **Output** — assistant final answer 后，跑 `runOutput`
+
+**Hard-block 语义**：
+- `this.abortController.abort('guardrail_violation')` — 关闭上游 stream 连接
+- yield `{ type: 'guardrail_blocked', phase, guardName, details }` 事件
+- yield `{ type: 'error', error: HarnessError('GUARDRAIL_VIOLATION') }`
+- return 终止 loop
+- `error-classifier` 明确把 `GUARDRAIL_VIOLATION` 归类为 `retryable: false`（不进入 retry 路径）
+
+**无 pipeline 配置** → AgentLoop 实例首次 `run()` 时 `safeWarn` 一次（推荐 `createSecurePreset`）。
+后续不再 warn。
 
 ## 概述
 

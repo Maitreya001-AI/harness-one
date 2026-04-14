@@ -1,6 +1,26 @@
 # Tools
 
-> 工具系统：定义、注册、JSON Schema 验证、速率限制、执行。
+> 工具系统：定义、注册、JSON Schema 验证、速率限制、执行、capability 分类。
+
+## Wave-5A: Production defaults (1.0-rc)
+
+**默认配额（T08）**：`createRegistry()` 无参数时默认 `maxCallsPerTurn=20`, `maxCallsPerSession=100`,
+`timeoutMs=30000`。显式传 `Infinity` 或数字可覆盖；`getConfig(): ResolvedRegistryConfig` 供观测。
+
+**Tool capability 分类（T09）**：
+
+```ts
+type ToolCapabilityValue = 'readonly' | 'filesystem' | 'network' | 'shell' | 'destructive';
+```
+
+`defineTool({ capabilities: ['network'] })` 声明工具能力；`createRegistry({ allowedCapabilities })`
+默认 `['readonly']`（fail-closed）。注册时 capability 不在 allow-list → 抛 `TOOL_CAPABILITY_DENIED`。
+未声明 capability 的工具本阶段只 `safeWarn`（**Wave-5C 将升级为 throw**）。
+
+**逃生门**：`createPermissiveRegistry()` 允许全部 5 个 capability。
+
+**Trust model**: `capabilities` 是**声明性契约**，不是沙箱。Host 侧仍需独立验证（如 middleware 拦截
+network/shell syscall），不可仅依赖工具自报。
 
 ## 概述
 

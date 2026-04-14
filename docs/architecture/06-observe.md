@@ -1,6 +1,21 @@
 # Observe
 
-> 可观测性：Trace/Span 管理、成本追踪、预算告警、导出器。
+> 可观测性：Trace/Span 管理、成本追踪、预算告警、导出器、默认 redaction、safe-log 原语。
+
+## Wave-5A: Secure-by-default redaction (1.0-rc)
+
+**默认启用**（T02/T03/T04）：
+- `createLogger()` 无参默认 `useDefaultPattern: true`——scrub `api_key`/`token`/`password`/`authorization` 等
+- `createTraceManager()` 同上——span attributes、trace metadata、span events 默认 redacted
+- `langfuseExporter.exportSpan` 默认 `sanitize = sanitizeAttributes(attrs, defaultRedactor())`
+
+**关 redaction 的逃生门**：
+- Logger / TraceManager 接受 `redact: false`
+- Langfuse exporter 不接受 `sanitize: false`——必须提供**替代函数**（强制显式）
+
+**`_internal/safe-log.ts`（T01）**：新增 `createDefaultLogger()`（redaction-on console 包装）+
+`safeWarn(logger?, msg, meta)` / `safeError(logger?, msg, meta)` 消除 `logger ?? console.warn`
+boilerplate。
 
 ## 概述
 
