@@ -16,6 +16,90 @@ import type { EvictionStrategy } from 'harness-one/observe';
 import { HarnessError } from 'harness-one/core';
 
 // ---------------------------------------------------------------------------
+// SEC-A01 (T04) · Default sanitize for exported span attributes
+// ---------------------------------------------------------------------------
+//
+// `createLangfuseExporter` is secure-by-default: when the caller does not
+// supply `config.sanitize`, the exporter redacts sensitive keys (API keys,
+// tokens, passwords, cookies, …) and drops prototype-polluting keys before
+// shipping attributes to Langfuse. The caller may override by passing any
+// `sanitize(attrs) => attrs`, but there is NO opt-out — the exporter can
+// only be given a different scrubber, never a disabled one.
+//
+// The implementation is intentionally self-contained: core's
+// `sanitizeAttributes` / `createRedactor` live in `_internal/` and are not
+// part of the public `harness-one/observe` surface. Inlining the same rules
+// (mirrored 1:1 from `_internal/redact.ts`) keeps the package's dependency
+// on `harness-one` bounded to its public exports.
+
+const LANGFUSE_REDACTED_VALUE = '[REDACTED]';
+
+/**
+ * Mirrors `DEFAULT_SECRET_PATTERN` in `packages/core/src/_internal/redact.ts`.
+ * Matches common secret-indicator tokens anywhere in a dotted/underscored
+ * key path (e.g. `api_key`, `x-authorization`, `user.password`).
+ */
+const LANGFUSE_DEFAULT_SECRET_PATTERN =
+  /(^|[._-])(api[_-]?key|authorization|auth[_-]?token|secret|token|password|passwd|credential|bearer|cookie|session[_-]?id|private[_-]?key|access[_-]?key|refresh[_-]?token)([._-]|$)/i;
+
+/** Keys that pollute `Object.prototype` or similar when assigned. */
+const LANGFUSE_POLLUTING_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+function isLangfusePollutingKey(key: string): boolean {
+  return LANGFUSE_POLLUTING_KEYS.has(key);
+}
+
+function shouldLangfuseRedactKey(key: string): boolean {
+  if (typeof key !== 'string') return false;
+  return LANGFUSE_DEFAULT_SECRET_PATTERN.test(key);
+}
+
+/**
+ * Deep-redact a value tree using the built-in default rules. Returns a
+ * fresh clone; the input is never mutated. Circular references become the
+ * sentinel string `'[Circular]'`, matching core's `redactValue`.
+ */
+function langfuseRedactValue(value: unknown, seen: WeakSet<object>): unknown {
+  if (value === null || typeof value !== 'object') return value;
+  if (value instanceof Error) {
+    return { name: value.name, message: value.message, stack: value.stack };
+  }
+  if (value instanceof Date) return value.toISOString();
+  if (seen.has(value as object)) return '[Circular]';
+  seen.add(value as object);
+  if (Array.isArray(value)) {
+    return value.map((v) => langfuseRedactValue(v, seen));
+  }
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (isLangfusePollutingKey(k)) continue;
+    out[k] = shouldLangfuseRedactKey(k)
+      ? LANGFUSE_REDACTED_VALUE
+      : langfuseRedactValue(v, seen);
+  }
+  return out;
+}
+
+/**
+ * Default sanitize function used when `LangfuseExporterConfig.sanitize` is
+ * not provided. Drops prototype-polluting keys and deep-redacts sensitive
+ * values. Returns a new object; does not mutate the input.
+ */
+function defaultLangfuseSanitize(
+  attrs: Record<string, unknown>,
+): Record<string, unknown> {
+  const seen = new WeakSet<object>();
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(attrs)) {
+    if (isLangfusePollutingKey(k)) continue;
+    out[k] = shouldLangfuseRedactKey(k)
+      ? LANGFUSE_REDACTED_VALUE
+      : langfuseRedactValue(v, seen);
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // TraceExporter
 // ---------------------------------------------------------------------------
 
@@ -23,7 +107,16 @@ import { HarnessError } from 'harness-one/core';
 export interface LangfuseExporterConfig {
   /** A pre-configured Langfuse client instance. */
   readonly client: Langfuse;
-  /** Optional: sanitize span attributes before export (e.g., strip PII). */
+  /**
+   * Sanitize span attributes before export (e.g., strip PII).
+   *
+   * SEC-A01 (Wave-5A · T04): When omitted, a built-in default sanitizer is
+   * applied — it redacts keys matching the standard secret pattern
+   * (`api_key`, `authorization`, `token`, `password`, `cookie`, …) and
+   * drops prototype-polluting keys (`__proto__`, `constructor`, `prototype`).
+   * Passing an explicit function fully replaces the default (no composition);
+   * there is no opt-out, the exporter will always apply *some* sanitizer.
+   */
   readonly sanitize?: (attributes: Record<string, unknown>) => Record<string, unknown>;
   /** Maximum number of trace entries to retain in the LRU map. Defaults to 1000. */
   readonly maxTraceMapSize?: number;
@@ -102,7 +195,11 @@ export function createLangfuseExporter(config: LangfuseExporterConfig): TraceExp
         touchTrace(span.traceId);
       }
 
-      const attrs = config.sanitize ? config.sanitize(span.attributes) : span.attributes;
+      // SEC-A01 (T04): secure-by-default sanitize. `config.sanitize` overrides,
+      // undefined falls back to the built-in default redactor. There is no
+      // opt-out — the exporter always applies some scrubber.
+      const sanitize = config.sanitize ?? defaultLangfuseSanitize;
+      const attrs = sanitize(span.attributes);
 
       // Prioritize explicit kind attribute. Fallback heuristics only apply when
       // harness.span.kind is not set, to avoid misclassifying non-LLM operations
