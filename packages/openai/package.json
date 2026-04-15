@@ -29,7 +29,7 @@
     "openai": ">=4.0.0"
   },
   "devDependencies": {
-    "openai": "^4.0.0",
+    "openai": "^6.34.0",
     "tsup": "^8.0.0",
     "typescript": "^5.5.0",
     "vitest": "^2.0.0"
