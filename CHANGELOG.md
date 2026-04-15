@@ -8,6 +8,82 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (BREAKING — Wave-5C PR-3)
+
+- **F-1: Root `harness-one` barrel trimmed to 19 curated value symbols.**
+  Previously exported ~40 factories + utilities; now re-exports only the
+  core user-journey primitives (UJ-1..UJ-5 per `wave-5c-prd-v2.md` §5).
+  Every other runtime factory must be imported from its owning subpath
+  (`harness-one/core`, `harness-one/tools`, `harness-one/guardrails`,
+  `harness-one/observe`, `harness-one/session`, `harness-one/infra`) or
+  from a sibling package (`@harness-one/cli`, `@harness-one/devkit`,
+  `@harness-one/preset`). Type-only re-exports remain unbounded per ADR
+  §5.2 (zero runtime bundle cost). Per R-01 lead decision,
+  `createSecurePreset` is NOT re-exported from the root — import it
+  exclusively from `@harness-one/preset` to avoid a three-leg dependency
+  cycle.
+
+  Surviving root exports: `createAgentLoop`, `AgentLoop`,
+  `createResilientLoop`, `createMiddlewareChain`, `HarnessError`,
+  `HarnessErrorCode`, `MaxIterationsError`, `AbortedError`,
+  `GuardrailBlockedError`, `ToolValidationError`,
+  `TokenBudgetExceededError`, `defineTool`, `createRegistry`,
+  `createPipeline`, `createTraceManager`, `createLogger`,
+  `createCostTracker`, `createSessionManager`, `disposeAll`.
+
+- **F-6: `HarnessErrorCode` closed + module-prefixed.** The type is no
+  longer widened with `(string & {})`; switch-exhaustiveness now holds.
+  Members renamed to module-prefixed form. 1:1 rename mapping:
+
+  | Old member                | New member                             |
+  |---------------------------|----------------------------------------|
+  | `UNKNOWN`                 | `CORE_UNKNOWN`                         |
+  | `INVALID_CONFIG`          | `CORE_INVALID_CONFIG`                  |
+  | `INVALID_STATE`           | `CORE_INVALID_STATE`                   |
+  | `INTERNAL_ERROR`          | `CORE_INTERNAL_ERROR`                  |
+  | `MAX_ITERATIONS`          | `CORE_MAX_ITERATIONS`                  |
+  | `ABORTED`                 | `CORE_ABORTED`                         |
+  | `MEMORY_CORRUPT`          | `MEMORY_DATA_CORRUPTION`               |
+  | `STORE_CORRUPTION`        | `MEMORY_DATA_CORRUPTION`               |
+  | `GUARDRAIL_VIOLATION`     | `GUARD_VIOLATION`                      |
+  | `GUARDRAIL_BLOCKED`       | `GUARD_BLOCKED`                        |
+  | `INVALID_PIPELINE`        | `GUARD_INVALID_PIPELINE`               |
+  | `CLI_PARSE_ERROR`         | `CLI_PARSE_ERROR` (unchanged)          |
+  | `ADAPTER_INVALID_EXTRA`   | `ADAPTER_INVALID_EXTRA` (unchanged)    |
+  | `ADAPTER_CUSTOM`          | `ADAPTER_CUSTOM` (unchanged)           |
+
+  New codes added alongside the rename: `CORE_INVALID_INPUT`,
+  `CORE_INVALID_ID`, `CORE_INVALID_KEY`, `CORE_INVALID_PATTERN`,
+  `CORE_INVALID_BUDGET`, `CORE_TOKEN_BUDGET_EXCEEDED`,
+  `ADAPTER_UNKNOWN`/`_ERROR`/`_AUTH`/`_NETWORK`/`_PARSE`/`_RATE_LIMIT`,
+  `PROVIDER_REGISTRY_SEALED`, `TOOL_VALIDATION`/`_INVALID_SCHEMA`/
+  `_CAPABILITY_DENIED`, `SESSION_*`, `MEMORY_*`, `TRACE_*`, `ORCH_*`,
+  `PROMPT_*`, `RAG_*`, `EVOLVE_*`, `CONTEXT_*`, `LOCK_*`, `POOL_*`,
+  `EVAL_*`.
+
+  Adapter sub-codes remain open by contract — third-party adapters throw
+  with `HarnessErrorCode.ADAPTER_CUSTOM` and populate
+  `details.adapterCode` with vendor-specific strings. See ADR §5.2 + §6
+  for migration examples.
+
+  **IMPORTANT — value import required.** `import type { HarnessErrorCode }`
+  silently drops the runtime `Object.values()` record. The new custom
+  lint rule `harness-one/no-type-only-harness-error-code` flags this at
+  lint time.
+
+- **F-8 (partial): api-extractor CI gate activated in snapshot-diff mode.**
+  A new `api-check` workflow re-runs api-extractor on every PR, fails if
+  any `packages/*/etc/*.api.md` snapshot is out of date, and requires a
+  `## API change rationale` section (≥20 chars) in the PR body. Stability-
+  tag enforcement (strict mode) stays OFF in main per PD-3 — Wave-5C.1
+  will flip it after the tag audit.
+
+- **F-14: `@harness-one/core`, `/runtime`, `/sdk`, `/framework` reserved.**
+  Placeholder packages published at `0.0.0-reserved` to squat names
+  against typo-squatters (pending org-admin npm token — R-3.C). The
+  current runtime remains the unscoped `harness-one` package; scoped
+  names are reservations only.
+
 ### Changed (Internal)
 
 - **Wave-5B — AgentLoop decomposition** (2026-04-15). `AgentLoop` 拆为

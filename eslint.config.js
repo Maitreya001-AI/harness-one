@@ -1,9 +1,18 @@
 import tseslint from 'typescript-eslint';
 import importPlugin from 'eslint-plugin-import';
+import noTypeOnlyHarnessErrorCode from './tools/eslint-rules/no-type-only-harness-error-code.js';
 
 export default tseslint.config(
   {
-    ignores: ['**/dist/', '**/node_modules/', '**/coverage/', '**/examples/'],
+    ignores: [
+      '**/dist/',
+      '**/node_modules/',
+      '**/coverage/',
+      '**/examples/',
+      // Lint fixtures exist to be invalid — exclude from normal lint; run
+      // manually with `--no-ignore` when verifying rule behavior.
+      '**/__lint-fixtures__/',
+    ],
   },
   ...tseslint.configs.recommended,
   ...tseslint.configs.strict,
@@ -64,6 +73,22 @@ export default tseslint.config(
           'harness-one/dist/infra/**',
         ],
       }],
+    },
+  },
+  // Wave-5C PR-3 T-3.3: HarnessErrorCode must be a value import (it is a
+  // string enum with runtime introspection — `import type` silently breaks
+  // Object.values(). ADR §3.f + §7 PR-3 step 4.
+  {
+    files: ['packages/**/*.{ts,tsx}'],
+    plugins: {
+      'harness-one': {
+        rules: {
+          'no-type-only-harness-error-code': noTypeOnlyHarnessErrorCode,
+        },
+      },
+    },
+    rules: {
+      'harness-one/no-type-only-harness-error-code': 'error',
     },
   },
   // Relax rules for test files

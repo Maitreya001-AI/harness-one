@@ -1,0 +1,46 @@
+name: API Check
+
+# Wave-5C PR-3 T-3.5: enforces api-extractor snapshot discipline.
+#
+# Gate mode: snapshot-diff (PRD F-8 / ADR §7 PR-3 step 3). Any PR touching
+# public API must:
+#   1. Regenerate the affected `packages/*/etc/*.api.md` via `pnpm api:update`
+#      and commit the diff (otherwise api-extractor fails in strict mode
+#      because local/committed snapshots disagree).
+#   2. Include a "## API change rationale" section (≥20 chars) in the PR body
+#      justifying WHY the surface is changing.
+#
+# Stability-tag enforcement (PRD F-8 second layer) remains OFF in Wave-5C
+# main per PD-3; 5C.1 will flip it by switching api-extractor.json to
+# `reportPolicy: "strict"` + tagged-only exports.
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  api-extractor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      - name: Verify api.md snapshots match committed ones
+        run: pnpm api:check
+
+      - name: PR-body rationale gate for api.md diffs
+        # Fails the PR if any packages/*/etc/*.api.md differs vs base and
+        # the PR body lacks a "## API change rationale" section.
+        run: pnpm exec tsx tools/check-api-rationale.ts

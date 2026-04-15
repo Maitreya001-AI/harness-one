@@ -45,21 +45,30 @@ harness-one 是一个 TypeScript 工具库，为 AI Agent 产品提供 Harness E
 | `@harness-one/opentelemetry` | OpenTelemetry exporter |
 | `@harness-one/tiktoken` | tiktoken 驱动的精确 tokenizer |
 
-## 导入路径（0.2.0）
+## 导入路径（1.0-rc / Wave-5C）
 
-用户可以从**三种位置**获取同一套 API：
+用户从**三种位置**获取同一套 API。Wave-5C 将根桶从 ~40 收紧到 **19 个精选值导出**（UJ-1..UJ-5 主路径），其余工厂必须走子路径或兄弟包。
 
 ```ts
-// 1) 根入口（0.2.0 新增）—— 常用类型/工厂一次性拿到
-import { AgentLoop, createAgentLoop, createRegistry, createTraceManager } from 'harness-one';
+// 1) 根入口（19 精选值）—— createAgentLoop / AgentLoop / createResilientLoop /
+//    createMiddlewareChain / HarnessError / HarnessErrorCode / MaxIterationsError /
+//    AbortedError / GuardrailBlockedError / ToolValidationError /
+//    TokenBudgetExceededError / defineTool / createRegistry / createPipeline /
+//    createTraceManager / createLogger / createCostTracker /
+//    createSessionManager / disposeAll
+import { createAgentLoop, HarnessErrorCode } from 'harness-one';
 
-// 2) 子路径（tree-shake 更友好）
-import { AgentLoop } from 'harness-one/core';
-import { createRegistry } from 'harness-one/tools';
+// 2) 子路径（tree-shake 更友好；非根桶内的其余工厂从这里拿）
+import { createEventBus } from 'harness-one/core';
+import { toSSEStream } from 'harness-one/core';
+import { createFsMemoryStore } from 'harness-one/memory';
 
-// 3) preset —— 直接拿装配好的 Harness
-import { createHarness } from '@harness-one/preset';
+// 3) 兄弟包（preset / cli / devkit）—— 工具性surface从 @harness-one/* 拿
+import { createSecurePreset } from '@harness-one/preset';   // Wave-5C 不再经由 harness-one 根桶
+import { createEvalRunner } from '@harness-one/devkit';      // 取代旧的 harness-one/eval
 ```
+
+**重要（Wave-5C）**：`HarnessErrorCode` 是字符串枚举，必须**值导入**（`import { HarnessErrorCode }`）。`import type` 会静默丢失运行时 `Object.values()` 记录；自定义 lint 规则 `harness-one/no-type-only-harness-error-code` 会在 lint 时拦截。
 
 ## 9 层参考架构映射
 

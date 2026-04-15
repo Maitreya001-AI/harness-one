@@ -74,12 +74,14 @@ core 模块定义了 harness-one 的共享类型契约（Message、TokenUsage、
 
 | 类 | code | 触发场景 |
 |----|------|---------|
-| `HarnessError` | 自定义 | 所有编程错误的基类 |
-| `MaxIterationsError` | `MAX_ITERATIONS` | 循环超过 maxIterations |
-| `AbortedError` | `ABORTED` | 循环被外部中止 |
-| `GuardrailBlockedError` | `GUARDRAIL_BLOCKED` | 护栏拦截执行 |
+| `HarnessError` | 自定义（`HarnessErrorCode` 成员） | 所有编程错误的基类 |
+| `MaxIterationsError` | `CORE_MAX_ITERATIONS` | 循环超过 maxIterations |
+| `AbortedError` | `CORE_ABORTED` | 循环被外部中止 |
+| `GuardrailBlockedError` | `GUARD_BLOCKED` | 护栏拦截执行 |
 | `ToolValidationError` | `TOOL_VALIDATION` | 工具参数校验失败 |
-| `TokenBudgetExceededError` | `TOKEN_BUDGET_EXCEEDED` | 累计 token 超出预算 |
+| `TokenBudgetExceededError` | `CORE_TOKEN_BUDGET_EXCEEDED` | 累计 token 超出预算 |
+
+**Wave-5C：`HarnessErrorCode` 已闭合**（不再 `(string & {})` widening）。成员改为模块前缀形式；适配器自定义代码走 `ADAPTER_CUSTOM` + `details.adapterCode` escape hatch。完整枚举见 `packages/core/src/core/errors.ts`；迁移映射见根 `CHANGELOG.md`。
 
 ### AgentLoop 类 + createAgentLoop 工厂
 
@@ -102,7 +104,7 @@ function createAgentLoop(config: AgentLoopConfig): AgentLoop;
 
 **行为**：在循环中调用 `adapter.chat()`（或 `adapter.stream()`），如果 LLM 返回 toolCalls，则依次调用 `onToolCall` 并将结果回填，继续循环直到 LLM 不再请求工具或触发安全阀（maxIterations / maxTotalTokens / abort）。
 
-**非重入（0.2.0 新增）**：`run()` 在同一实例上并发调用会抛 `HarnessError('INVALID_STATE')`。两路并发时 `_iteration` / `cumulativeUsage` / `abortController` 会竞争，过去可能静默损坏状态；现在直接失败暴露误用。模式：**每条并发请求一个 AgentLoop 实例**，或把调用序列化。
+**非重入（0.2.0 新增）**：`run()` 在同一实例上并发调用会抛 `HarnessError(HarnessErrorCode.CORE_INVALID_STATE)`。两路并发时 `_iteration` / `cumulativeUsage` / `abortController` 会竞争，过去可能静默损坏状态；现在直接失败暴露误用。模式：**每条并发请求一个 AgentLoop 实例**，或把调用序列化。
 
 **构造时输入验证**：`AgentLoopConfig` 中所有数值参数（`maxIterations`、`maxTotalTokens`、`maxStreamBytes`、`maxToolArgBytes`、`toolTimeoutMs`）在构造时校验，非正数或非有限值会立即抛出错误，防止无效配置静默生效。
 

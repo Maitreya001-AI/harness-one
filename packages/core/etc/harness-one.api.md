@@ -10,16 +10,6 @@ export class AbortedError extends HarnessError {
 }
 
 // @public
-interface AcquireAsyncOptions {
-    // (undocumented)
-    readonly role?: string;
-    // (undocumented)
-    readonly signal?: AbortSignal;
-    // (undocumented)
-    readonly timeoutMs?: number;
-}
-
-// @public
 export interface AgentAdapter {
     // (undocumented)
     chat(params: ChatParams): Promise<ChatResponse>;
@@ -162,116 +152,6 @@ export interface AgentLoopTraceManager {
     startTrace(name: string, metadata?: Record<string, unknown>): string;
 }
 
-// @public
-interface AgentMessage {
-    // (undocumented)
-    readonly content: string;
-    // (undocumented)
-    readonly from: string;
-    // (undocumented)
-    readonly metadata?: Record<string, unknown>;
-    // (undocumented)
-    readonly timestamp: number;
-    // (undocumented)
-    readonly to: string;
-    // (undocumented)
-    readonly type: 'request' | 'response' | 'broadcast';
-}
-
-// @public
-interface AgentOrchestrator {
-    broadcast(from: string, content: string, options?: {
-        parentId?: string;
-        metadata?: Record<string, unknown>;
-    }): void;
-    // Warning: (ae-forgotten-export) The symbol "SharedContext" needs to be exported by the entry point index.d.ts
-    readonly context: SharedContext;
-    // Warning: (ae-forgotten-export) The symbol "DelegationTask" needs to be exported by the entry point index.d.ts
-    delegate(task: DelegationTask): Promise<string | undefined>;
-    dispose(): void;
-    getAgent(id: string): AgentRegistration | undefined;
-    getChildren(parentId: string): AgentRegistration[];
-    getMessages(agentId: string, options?: {
-        type?: AgentMessage['type'];
-        since?: number;
-    }): AgentMessage[];
-    // Warning: (ae-forgotten-export) The symbol "OrchestratorMetrics" needs to be exported by the entry point index.d.ts
-    getMetrics(): OrchestratorMetrics;
-    listAgents(filter?: {
-        status?: AgentStatus;
-        parentId?: string;
-    }): AgentRegistration[];
-    // Warning: (ae-forgotten-export) The symbol "OrchestrationMode" needs to be exported by the entry point index.d.ts
-    readonly mode: OrchestrationMode;
-    // Warning: (ae-forgotten-export) The symbol "OrchestratorEvent" needs to be exported by the entry point index.d.ts
-    onEvent(handler: (event: OrchestratorEvent) => void): () => void;
-    // Warning: (ae-forgotten-export) The symbol "AgentRegistration" needs to be exported by the entry point index.d.ts
-    register(id: string, name: string, options?: {
-        parentId?: string;
-        metadata?: Record<string, unknown>;
-    }): AgentRegistration;
-    // Warning: (ae-forgotten-export) The symbol "AgentMessage" needs to be exported by the entry point index.d.ts
-    send(message: Omit<AgentMessage, 'timestamp'>): void;
-    setStatus(id: string, status: AgentStatus): void;
-    unregister(id: string): boolean;
-}
-
-// @public
-interface AgentPool {
-    // Warning: (ae-forgotten-export) The symbol "PooledAgent" needs to be exported by the entry point index.d.ts
-    acquire(role?: string): PooledAgent;
-    dispose(): Promise<void>;
-    drain(timeoutMs?: number): Promise<void>;
-    release(agent: PooledAgent): void;
-    resize(target: number): void;
-    // Warning: (ae-forgotten-export) The symbol "PoolStats" needs to be exported by the entry point index.d.ts
-    readonly stats: PoolStats;
-}
-
-// @public
-interface AgentRegistration {
-    // (undocumented)
-    readonly id: string;
-    // (undocumented)
-    readonly metadata?: Record<string, unknown>;
-    // (undocumented)
-    readonly name: string;
-    // (undocumented)
-    readonly parentId?: string;
-    readonly sessionId?: string;
-    // (undocumented)
-    readonly status: AgentStatus;
-}
-
-// @public
-type AgentStatus = 'idle' | 'running' | 'completed' | 'failed';
-
-// Warning: (ae-forgotten-export) The symbol "CacheStabilityReport" needs to be exported by the entry point index.d.ts
-//
-// @public
-export function analyzeCacheStability(v1: readonly Message[], v2: readonly Message[], model?: string): CacheStabilityReport;
-
-// @public
-interface AssembledPrompt {
-    // Warning: (ae-forgotten-export) The symbol "PromptLayer" needs to be exported by the entry point index.d.ts
-    //
-    // (undocumented)
-    readonly layers: readonly PromptLayer[];
-    // (undocumented)
-    readonly metadata: {
-        readonly totalTokens: number;
-        readonly cacheableTokens: number;
-        readonly layerCount: number;
-    };
-    // (undocumented)
-    readonly stablePrefixHash: string;
-    // (undocumented)
-    readonly systemPrompt: string;
-}
-
-// @public
-export function assertNever(x: never): never;
-
 // Warning: (ae-forgotten-export) The symbol "BaseMessage" needs to be exported by the entry point index.d.ts
 //
 // @public
@@ -280,20 +160,6 @@ export interface AssistantMessage extends BaseMessage {
     readonly role: 'assistant';
     // (undocumented)
     readonly toolCalls?: readonly ToolCallRequest[];
-}
-
-// @public
-interface AsyncPromptRegistry {
-    get(id: string, version?: string): Promise<PromptTemplate | undefined>;
-    has(id: string): boolean;
-    list(): Promise<PromptTemplate[]>;
-    prefetch(ids: string[]): Promise<{
-        succeeded: string[];
-        failed: string[];
-    }>;
-    // Warning: (ae-forgotten-export) The symbol "PromptTemplate" needs to be exported by the entry point index.d.ts
-    register(template: PromptTemplate): void;
-    resolve(id: string, variables: Record<string, string>, version?: string, sanitize?: boolean): Promise<string>;
 }
 
 // @public
@@ -323,58 +189,9 @@ interface BaseMessage {
 }
 
 // @public
-interface BoundaryPolicy {
-    // (undocumented)
-    readonly agent: string;
-    // (undocumented)
-    readonly allowRead?: readonly string[];
-    // (undocumented)
-    readonly allowWrite?: readonly string[];
-    // (undocumented)
-    readonly denyRead?: readonly string[];
-    // (undocumented)
-    readonly denyWrite?: readonly string[];
-}
-
-// @public
-interface BoundaryViolation {
-    // (undocumented)
-    readonly agentId: string;
-    // (undocumented)
-    readonly key: string;
-    // (undocumented)
-    readonly timestamp: number;
-    // (undocumented)
-    readonly type: 'read_denied' | 'write_denied';
-}
-
-// @public
-interface BoundedContext {
-    clearAgent(agentId: string): void;
-    forAgent(agentId: string): SharedContext;
-    getPolicies(agentId: string): BoundaryPolicy | undefined;
-    // Warning: (ae-forgotten-export) The symbol "BoundaryViolation" needs to be exported by the entry point index.d.ts
-    getViolations(): readonly BoundaryViolation[];
-    // Warning: (ae-forgotten-export) The symbol "BoundaryPolicy" needs to be exported by the entry point index.d.ts
-    setPolicies(policies: readonly BoundaryPolicy[]): void;
-}
-
-// @public
 type Brand<T, B extends string> = T & {
     readonly __brand: B;
 };
-
-// @public
-interface BudgetConfig {
-    // (undocumented)
-    readonly responseReserve?: number;
-    // Warning: (ae-forgotten-export) The symbol "Segment" needs to be exported by the entry point index.d.ts
-    //
-    // (undocumented)
-    readonly segments: readonly Segment[];
-    // (undocumented)
-    readonly totalTokens: number;
-}
 
 // @public
 export interface CacheMetrics {
@@ -414,31 +231,6 @@ export interface CacheMonitor {
 }
 
 // @public
-interface CacheMonitorConfig {
-    readonly maxBuckets?: number;
-    readonly pricing?: {
-        readonly cacheReadPer1kTokens: number;
-        readonly inputPer1kTokens: number;
-    };
-}
-
-// @public
-interface CacheStabilityReport {
-    readonly contentOverlapRatio: number;
-    // (undocumented)
-    readonly firstDivergenceIndex: number;
-    // (undocumented)
-    readonly prefixMatchRatio: number;
-    // (undocumented)
-    readonly recommendations: string[];
-    // (undocumented)
-    readonly stablePrefixTokens: number;
-}
-
-// @public
-export function categorizeAdapterError(err: unknown): string;
-
-// @public
 export interface ChatParams {
     readonly config?: LLMConfig;
     // (undocumented)
@@ -457,67 +249,6 @@ export interface ChatResponse {
     // (undocumented)
     readonly usage: TokenUsage;
 }
-
-// @public
-interface Checkpoint {
-    // (undocumented)
-    readonly id: string;
-    // (undocumented)
-    readonly label?: string;
-    // (undocumented)
-    readonly messages: readonly Message[];
-    // (undocumented)
-    readonly metadata?: Readonly<Record<string, unknown>>;
-    // (undocumented)
-    readonly timestamp: number;
-    // (undocumented)
-    readonly tokenCount: number;
-}
-
-// @public
-interface CheckpointManager {
-    dispose(): void;
-    list(): readonly Checkpoint[];
-    prune(options?: {
-        maxCheckpoints?: number;
-        maxAge?: number;
-    }): number;
-    restore(checkpointId: string): readonly Message[];
-    // Warning: (ae-forgotten-export) The symbol "Checkpoint" needs to be exported by the entry point index.d.ts
-    save(messages: readonly Message[], label?: string, metadata?: Record<string, unknown>): Checkpoint;
-}
-
-// @public
-interface CheckpointManagerConfig {
-    readonly countTokens?: (messages: readonly Message[]) => number;
-    readonly maxCheckpoints?: number;
-    // Warning: (ae-forgotten-export) The symbol "CheckpointStorage" needs to be exported by the entry point index.d.ts
-    readonly storage?: CheckpointStorage;
-}
-
-// @public
-interface CheckpointStorage {
-    delete(id: string): boolean;
-    list(): readonly Checkpoint[];
-    load(id: string): Checkpoint | undefined;
-    save(checkpoint: Checkpoint): void;
-}
-
-// @public
-interface ChunkingStrategy {
-    // Warning: (ae-forgotten-export) The symbol "Document" needs to be exported by the entry point index.d.ts
-    // Warning: (ae-forgotten-export) The symbol "DocumentChunk" needs to be exported by the entry point index.d.ts
-    //
-    // (undocumented)
-    chunk(document: Document): DocumentChunk[];
-    // (undocumented)
-    readonly name: string;
-}
-
-// Warning: (ae-forgotten-export) The symbol "CompactOptions" needs to be exported by the entry point index.d.ts
-//
-// @public
-export function compactIfNeeded(messages: readonly Message[], options: CompactOptions): Promise<Message[]>;
 
 // @public
 export interface CompactionPolicy {
@@ -541,89 +272,6 @@ export interface CompactionResult {
     readonly remaining: number;
     // (undocumented)
     readonly removed: number;
-}
-
-// @public
-interface CompactOptions {
-    // (undocumented)
-    readonly budget: number;
-    readonly countTokens?: (messages: readonly Message[]) => number;
-    readonly onError?: (err: unknown, fallbackReason: string) => void;
-    // (undocumented)
-    readonly preserve?: (msg: Message) => boolean;
-    // Warning: (ae-forgotten-export) The symbol "CompressionStrategy" needs to be exported by the entry point index.d.ts
-    //
-    // (undocumented)
-    readonly strategy: string | CompressionStrategy;
-    // (undocumented)
-    readonly summarizer?: (messages: Message[]) => Promise<string>;
-    // (undocumented)
-    readonly threshold?: number;
-    // (undocumented)
-    readonly windowSize?: number;
-}
-
-// Warning: (ae-forgotten-export) The symbol "CompressOptions" needs to be exported by the entry point index.d.ts
-// Warning: (ae-forgotten-export) The symbol "CompressResult" needs to be exported by the entry point index.d.ts
-//
-// @public
-export function compress(messages: readonly Message[], options: CompressOptions): Promise<CompressResult>;
-
-// @public
-interface CompressionStrategy {
-    // (undocumented)
-    compress(messages: readonly Message[], targetTokens: number, options?: {
-        preserve?: (msg: Message) => boolean;
-        signal?: AbortSignal;
-    }): Promise<readonly Message[]>;
-    // (undocumented)
-    readonly name: string;
-}
-
-// @public
-interface CompressOptions {
-    // (undocumented)
-    readonly budget: number;
-    readonly onError?: (err: unknown, fallbackReason: string) => void;
-    // (undocumented)
-    readonly preserve?: (msg: Message) => boolean;
-    // (undocumented)
-    readonly strategy: string | CompressionStrategy;
-    // (undocumented)
-    readonly summarizer?: (messages: Message[]) => Promise<string>;
-    // (undocumented)
-    readonly windowSize?: number;
-}
-
-// @public
-interface CompressResult {
-    readonly compressed: boolean;
-    readonly fallbackReason?: string;
-    readonly finalTokens: number;
-    // (undocumented)
-    readonly messages: Message[];
-    readonly originalTokens: number;
-    readonly truncated?: boolean;
-}
-
-// @public
-interface ContextBoundaryConfig {
-    readonly maxViolations?: number;
-    readonly strictMode?: boolean;
-}
-
-// @public
-interface ContextLayout {
-    // Warning: (ae-forgotten-export) The symbol "TokenBudget" needs to be exported by the entry point index.d.ts
-    //
-    // (undocumented)
-    readonly budget: TokenBudget;
-    // (undocumented)
-    readonly head: Message[];
-    // (undocumented)
-    readonly mid: Message[];
-    // (undocumented)
-    readonly tail: Message[];
 }
 
 // @public
@@ -661,14 +309,6 @@ export interface ConversationStoreCapabilities {
 }
 
 // @public
-interface ConversationStoreConfig {
-    readonly maxMessagesPerSession?: number;
-    readonly maxSessions?: number;
-    readonly onWarning?: (message: string) => void;
-    readonly unboundedWarnThreshold?: number;
-}
-
-// @public
 export interface CostAlert {
     // (undocumented)
     readonly budget: number;
@@ -701,73 +341,7 @@ export interface CostTracker {
 }
 
 // @public
-export function countTokens(model: string, messages: readonly Message[]): number;
-
-// @public
-export function createAdapterSummarizer(adapter: AgentAdapter): (messages: Message[]) => Promise<string>;
-
-// @public
 export function createAgentLoop(config: AgentLoopConfig): AgentLoop;
-
-// Warning: (ae-forgotten-export) The symbol "PoolConfig" needs to be exported by the entry point index.d.ts
-// Warning: (ae-forgotten-export) The symbol "AgentPool" needs to be exported by the entry point index.d.ts
-//
-// @public
-export function createAgentPool(config: PoolConfig): AgentPool & {
-    acquireAsync(optsOrTimeout?: number | AcquireAsyncOptions): Promise<PooledAgent>;
-};
-
-// Warning: (ae-forgotten-export) The symbol "PromptBackend" needs to be exported by the entry point index.d.ts
-// Warning: (ae-forgotten-export) The symbol "AsyncPromptRegistry" needs to be exported by the entry point index.d.ts
-//
-// @public
-export function createAsyncPromptRegistry(backend: PromptBackend): AsyncPromptRegistry;
-
-// @public
-export function createAuthContext(config: {
-    userId: string;
-    tenantId?: string;
-    roles?: string[];
-    permissions?: string[];
-    metadata?: Record<string, unknown>;
-}): AuthContext;
-
-// Warning: (ae-forgotten-export) The symbol "BudgetConfig" needs to be exported by the entry point index.d.ts
-//
-// @public
-export function createBudget(config: BudgetConfig): TokenBudget;
-
-// Warning: (ae-forgotten-export) The symbol "CacheMonitorConfig" needs to be exported by the entry point index.d.ts
-//
-// @public
-export function createCacheMonitor(config?: CacheMonitorConfig): CacheMonitor;
-
-// Warning: (ae-forgotten-export) The symbol "CheckpointManagerConfig" needs to be exported by the entry point index.d.ts
-// Warning: (ae-forgotten-export) The symbol "CheckpointManager" needs to be exported by the entry point index.d.ts
-//
-// @public
-export function createCheckpointManager(config?: CheckpointManagerConfig): CheckpointManager;
-
-// @public
-export function createConsoleExporter(config?: {
-    verbose?: boolean;
-    output?: (line: string) => void;
-}): TraceExporter;
-
-// @public
-export function createContentFilter(config: {
-    blocked?: string[];
-    blockedPatterns?: RegExp[];
-}): {
-    name: string;
-    guard: Guardrail;
-};
-
-// Warning: (ae-forgotten-export) The symbol "ContextBoundaryConfig" needs to be exported by the entry point index.d.ts
-// Warning: (ae-forgotten-export) The symbol "BoundedContext" needs to be exported by the entry point index.d.ts
-//
-// @public
-export function createContextBoundary(context: SharedContext, policies?: readonly BoundaryPolicy[], boundaryConfig?: ContextBoundaryConfig): BoundedContext;
 
 // @public
 export function createCostTracker(config?: {
@@ -790,73 +364,6 @@ export function createCostTracker(config?: {
     }) => void;
 }): CostTracker;
 
-// Warning: (ae-forgotten-export) The symbol "DatasetExporterConfig" needs to be exported by the entry point index.d.ts
-//
-// @public
-export function createDatasetExporter(config?: DatasetExporterConfig): {
-    exportToJsonl(traces: Trace[]): string;
-    exportToEntries(traces: Trace[]): DatasetEntry[];
-};
-
-// Warning: (ae-forgotten-export) The symbol "DisclosureManager" needs to be exported by the entry point index.d.ts
-//
-// @public
-export function createDisclosureManager(): DisclosureManager;
-
-// Warning: (ae-forgotten-export) The symbol "EventBusOptions" needs to be exported by the entry point index.d.ts
-//
-// @public @deprecated
-export function createEventBus(options?: EventBusOptions): EventBus;
-
-// Warning: (ae-forgotten-export) The symbol "FailureTaxonomyConfig" needs to be exported by the entry point index.d.ts
-// Warning: (ae-forgotten-export) The symbol "FailureTaxonomy" needs to be exported by the entry point index.d.ts
-//
-// @public
-export function createFailureTaxonomy(config?: FailureTaxonomyConfig): FailureTaxonomy;
-
-// @public
-export function createFallbackAdapter(config: FallbackAdapterConfig): AgentAdapter;
-
-// @public
-export function createFileSystemStore(config: {
-    directory: string;
-    indexFile?: string;
-}): MemoryStore;
-
-// Warning: (ae-forgotten-export) The symbol "MessageTransport" needs to be exported by the entry point index.d.ts
-// Warning: (ae-forgotten-export) The symbol "HandoffConfig" needs to be exported by the entry point index.d.ts
-// Warning: (ae-forgotten-export) The symbol "HandoffManager" needs to be exported by the entry point index.d.ts
-//
-// @public
-export function createHandoff(transport: MessageTransport, handoffConfig?: HandoffConfig): HandoffManager;
-
-// Warning: (ae-forgotten-export) The symbol "AgentOrchestrator" needs to be exported by the entry point index.d.ts
-//
-// @public @deprecated (undocumented)
-export function createHandoff(orchestrator: AgentOrchestrator, handoffConfig?: HandoffConfig): HandoffManager;
-
-// @public
-export function createInjectionDetector(config?: {
-    extraPatterns?: RegExp[];
-    sensitivity?: 'low' | 'medium' | 'high';
-}): {
-    name: string;
-    guard: Guardrail;
-};
-
-// Warning: (ae-forgotten-export) The symbol "ConversationStoreConfig" needs to be exported by the entry point index.d.ts
-//
-// @public
-export function createInMemoryConversationStore(config?: ConversationStoreConfig): ConversationStore;
-
-// @public
-export function createInMemoryStore(config?: {
-    maxEntries?: number;
-}): MemoryStore;
-
-// @public
-export function createJsonOutputParser<T = unknown>(schema?: JsonSchema): OutputParser<T>;
-
 // Warning: (ae-forgotten-export) The symbol "LoggerConfig" needs to be exported by the entry point index.d.ts
 //
 // @public
@@ -866,28 +373,6 @@ export function createLogger(config?: LoggerConfig): Logger;
 export function createMiddlewareChain<TExtra extends Record<string, unknown> = Record<string, unknown>>(options?: {
     onError?: (error: Error, ctx: MiddlewareContext<TExtra>) => void;
 }): MiddlewareChain<TExtra>;
-
-// @public
-export function createNoOpExporter(): TraceExporter;
-
-// Warning: (ae-forgotten-export) The symbol "OrchestratorConfig" needs to be exported by the entry point index.d.ts
-//
-// @public
-export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrator;
-
-// @public
-export function createParallelStrategy(options?: {
-    maxConcurrency?: number;
-}): ExecutionStrategy;
-
-// @public
-export function createPIIDetector(config?: {
-    detect?: PIIDetectConfig;
-    customPatterns?: CustomPIIPattern[];
-}): {
-    name: string;
-    guard: Guardrail;
-};
 
 // @public
 export function createPipeline(config: {
@@ -906,45 +391,6 @@ export function createPipeline(config: {
     defaultTimeoutMs?: number;
     maxResults?: number;
 }): GuardrailPipeline;
-
-// Warning: (ae-forgotten-export) The symbol "PromptBuilder" needs to be exported by the entry point index.d.ts
-//
-// @public
-export function createPromptBuilder(config?: {
-    separator?: string;
-    maxTokens?: number;
-    model?: string;
-    sanitize?: boolean;
-}): PromptBuilder;
-
-// Warning: (ae-forgotten-export) The symbol "PromptRegistryConfig" needs to be exported by the entry point index.d.ts
-// Warning: (ae-forgotten-export) The symbol "PromptRegistry" needs to be exported by the entry point index.d.ts
-//
-// @public
-export function createPromptRegistry(config?: PromptRegistryConfig): PromptRegistry;
-
-// Warning: (ae-forgotten-export) The symbol "RAGPipelineConfig" needs to be exported by the entry point index.d.ts
-// Warning: (ae-forgotten-export) The symbol "RAGPipeline" needs to be exported by the entry point index.d.ts
-//
-// @public
-export function createRAGPipeline(config: RAGPipelineConfig): RAGPipeline;
-
-// @public
-export function createRateLimiter(config: {
-    max: number;
-    windowMs: number;
-    keyFn?: (ctx: GuardrailContext) => string;
-    maxKeys?: number;
-    distributed?: boolean;
-    onEviction?: (evicted: {
-        key: string;
-        lastSeen: number;
-    }) => void;
-    bucketMs?: number;
-}): {
-    name: string;
-    guard: Guardrail;
-};
 
 // Warning: (ae-forgotten-export) The symbol "CreateRegistryConfig" needs to be exported by the entry point index.d.ts
 //
@@ -968,26 +414,7 @@ interface CreateRegistryConfig {
 }
 
 // @public
-export function createRelay(config: {
-    store: MemoryStore;
-    relayKey?: string;
-    onCorruption?: (id: string, error: Error) => void;
-}): ContextRelay;
-
-// @public
 export function createResilientLoop(config: ResilientLoopConfig): ResilientLoop;
-
-// @public
-export function createSchemaValidator(schema: JsonSchema, options?: {
-    redactErrors?: boolean;
-    maxJsonBytes?: number;
-}): {
-    name: string;
-    guard: Guardrail;
-};
-
-// @public
-export function createSequentialStrategy(): ExecutionStrategy;
 
 // @public
 export function createSessionManager(config?: {
@@ -995,12 +422,6 @@ export function createSessionManager(config?: {
     ttlMs?: number;
     gcIntervalMs?: number;
 }): SessionManager;
-
-// Warning: (ae-forgotten-export) The symbol "SkillEngineConfig" needs to be exported by the entry point index.d.ts
-// Warning: (ae-forgotten-export) The symbol "SkillEngine" needs to be exported by the entry point index.d.ts
-//
-// @public
-export function createSkillEngine(config?: SkillEngineConfig): SkillEngine;
 
 // @public
 export function createTraceManager(config?: {
@@ -1015,48 +436,6 @@ export function createTraceManager(config?: {
 }): TraceManager;
 
 // @public
-interface CustomPIIPattern {
-    // (undocumented)
-    name: string;
-    // (undocumented)
-    pattern: RegExp;
-}
-
-// @public
-interface DatasetEntry {
-    messages: Array<{
-        role: string;
-        content: string;
-    }>;
-    metadata: {
-        traceId: string;
-        spanId: string;
-        model?: string;
-        tokenUsage?: {
-            inputTokens: number;
-            outputTokens: number;
-        };
-        cost?: number;
-        latencyMs?: number;
-    };
-    output: {
-        role: string;
-        content: string;
-        toolCalls?: Array<{
-            name: string;
-            arguments: string;
-        }>;
-    };
-}
-
-// @public
-interface DatasetExporterConfig {
-    includeToolCalls?: boolean;
-    minQuality?: number;
-    model?: string;
-}
-
-// @public
 export function defineTool<TParams = unknown>(def: {
     name: string;
     description: string;
@@ -1065,42 +444,6 @@ export function defineTool<TParams = unknown>(def: {
     capabilities?: readonly ToolCapabilityValue[];
     execute: (params: TParams, signal?: AbortSignal) => Promise<ToolResult>;
 }): ToolDefinition<TParams>;
-
-// @public
-interface DelegationStrategy {
-    select(agents: readonly AgentRegistration[], task: DelegationTask): Promise<string | undefined> | string | undefined;
-}
-
-// @public
-interface DelegationTask {
-    // (undocumented)
-    readonly description: string;
-    // (undocumented)
-    readonly metadata?: Record<string, unknown>;
-    // (undocumented)
-    readonly requirements?: readonly string[];
-}
-
-// @public
-interface DisclosureLevel {
-    // (undocumented)
-    readonly content: string;
-    // (undocumented)
-    readonly level: number;
-    // (undocumented)
-    readonly trigger?: string;
-}
-
-// @public
-interface DisclosureManager {
-    expand(topic: string): string;
-    getContent(topic: string, maxLevel?: number): string;
-    getCurrentLevel(topic: string): number;
-    listTopics(): string[];
-    // Warning: (ae-forgotten-export) The symbol "DisclosureLevel" needs to be exported by the entry point index.d.ts
-    register(topic: string, levels: DisclosureLevel[]): void;
-    reset(topic: string): void;
-}
 
 // @public
 interface Disposable_2 {
@@ -1120,48 +463,7 @@ export class DisposeAggregateError extends Error {
 export function disposeAll(disposables: readonly Disposable_2[]): Promise<void>;
 
 // @public
-interface Document {
-    // (undocumented)
-    readonly content: string;
-    // (undocumented)
-    readonly id: string;
-    // (undocumented)
-    readonly metadata?: Record<string, unknown>;
-    // (undocumented)
-    readonly source?: string;
-}
-
-// @public
-interface DocumentChunk {
-    // (undocumented)
-    readonly content: string;
-    // (undocumented)
-    readonly documentId: string;
-    readonly embedding?: readonly number[];
-    // (undocumented)
-    readonly id: string;
-    // (undocumented)
-    readonly index: number;
-    // (undocumented)
-    readonly metadata?: Record<string, unknown>;
-}
-
-// @public
-interface DocumentLoader {
-    // (undocumented)
-    load(): Promise<Document[]>;
-}
-
-// @public
 export type DoneReason = 'end_turn' | 'max_iterations' | 'token_budget' | 'aborted' | 'error';
-
-// @public
-interface EmbeddingModel {
-    // (undocumented)
-    readonly dimensions: number;
-    // (undocumented)
-    embed(texts: readonly string[]): Promise<readonly (readonly number[])[]>;
-}
 
 // @public @deprecated
 export interface EventBus {
@@ -1170,11 +472,6 @@ export interface EventBus {
     // Warning: (ae-forgotten-export) The symbol "EventHandler" needs to be exported by the entry point index.d.ts
     on<T = unknown>(event: string, handler: EventHandler<T>): () => void;
     removeAll(event?: string): void;
-}
-
-// @public
-interface EventBusOptions {
-    onHandlerError?: (event: string, error: Error) => void;
 }
 
 // @public @deprecated
@@ -1220,47 +517,13 @@ export interface FailureClassification {
 }
 
 // @public
-interface FailureDetector {
-    // (undocumented)
-    detect(trace: Trace): {
-        confidence: number;
-        evidence: string;
-    } | null;
-}
-
-// @public
 export type FailureMode = 'early_stop' | 'tool_loop' | 'context_forgetting' | 'hallucination' | 'budget_exceeded' | 'timeout' | 'unrecoverable_error' | 'unknown';
-
-// @public
-interface FailureTaxonomy {
-    classify(trace: Trace): readonly FailureClassification[];
-    getStats(): Readonly<Record<string, number>>;
-    // Warning: (ae-forgotten-export) The symbol "FailureDetector" needs to be exported by the entry point index.d.ts
-    registerDetector(mode: string, detector: FailureDetector): void;
-    reset(): void;
-}
-
-// @public
-interface FailureTaxonomyConfig {
-    readonly detectors?: Readonly<Record<string, FailureDetector>>;
-    readonly minConfidence?: number;
-    readonly thresholds?: {
-        readonly toolLoopMinRun?: number;
-        readonly earlyStopMaxSpans?: number;
-        readonly budgetExceededConfidence?: number;
-    };
-}
 
 // @public
 export interface FallbackAdapterConfig {
     readonly adapters: readonly AgentAdapter[];
     readonly maxFailures?: number;
 }
-
-// Warning: (ae-forgotten-export) The symbol "SSEChunk" needs to be exported by the entry point index.d.ts
-//
-// @public
-export function formatSSE(chunk: SSEChunk): string;
 
 // @public
 export type Guardrail = (ctx: GuardrailContext) => Promise<GuardrailVerdict> | GuardrailVerdict;
@@ -1313,84 +576,12 @@ export type GuardrailVerdict = {
 };
 
 // @public
-interface HandoffArtifact {
-    // (undocumented)
-    readonly content: string;
-    // (undocumented)
-    readonly label?: string;
-    // (undocumented)
-    readonly type: string;
-}
-
-// @public
-interface HandoffConfig {
-    readonly maxInboxPerAgent?: number;
-    readonly maxReceipts?: number;
-    readonly receiptTtlMs?: number;
-}
-
-// @public
-interface HandoffManager {
-    dispose(): void;
-    history(agentId: string): readonly HandoffReceipt[];
-    receive(agentId: string): HandoffPayload | undefined;
-    // Warning: (ae-forgotten-export) The symbol "HandoffPayload" needs to be exported by the entry point index.d.ts
-    // Warning: (ae-forgotten-export) The symbol "HandoffReceipt" needs to be exported by the entry point index.d.ts
-    send(from: string, to: string, payload: HandoffPayload): HandoffReceipt;
-    // Warning: (ae-forgotten-export) The symbol "HandoffVerificationResult" needs to be exported by the entry point index.d.ts
-    verify(receiptId: string, output: unknown, verifier: (criterion: string, output: unknown) => boolean): HandoffVerificationResult;
-}
-
-// @public
-interface HandoffPayload {
-    // (undocumented)
-    readonly acceptanceCriteria?: readonly string[];
-    // Warning: (ae-forgotten-export) The symbol "HandoffArtifact" needs to be exported by the entry point index.d.ts
-    //
-    // (undocumented)
-    readonly artifacts?: readonly HandoffArtifact[];
-    // (undocumented)
-    readonly concerns?: readonly string[];
-    // (undocumented)
-    readonly context?: Readonly<Record<string, unknown>>;
-    // (undocumented)
-    readonly metadata?: Readonly<Record<string, unknown>>;
-    readonly priority?: 'high' | 'normal' | 'low';
-    // (undocumented)
-    readonly summary: string;
-}
-
-// @public
-interface HandoffReceipt {
-    // (undocumented)
-    readonly from: string;
-    // (undocumented)
-    readonly id: string;
-    // (undocumented)
-    readonly payload: HandoffPayload;
-    // (undocumented)
-    readonly timestamp: number;
-    // (undocumented)
-    readonly to: string;
-}
-
-// @public
-interface HandoffVerificationResult {
-    // (undocumented)
-    readonly passed: boolean;
-    // (undocumented)
-    readonly violations: readonly string[];
-}
-
-// @public
 export class HarnessError extends Error {
-    constructor(message: string, code: HarnessErrorCode | (string & {}), suggestion?: string | undefined, cause?: Error | undefined, details?: HarnessErrorDetails);
+    constructor(message: string, code: HarnessErrorCode, suggestion?: string | undefined, cause?: Error | undefined, details?: HarnessErrorDetails);
     // (undocumented)
     readonly cause?: Error | undefined;
-    // Warning: (ae-forgotten-export) The symbol "HarnessErrorCode" needs to be exported by the entry point index.d.ts
-    //
     // (undocumented)
-    readonly code: HarnessErrorCode | (string & {});
+    readonly code: HarnessErrorCode;
     // Warning: (ae-forgotten-export) The symbol "HarnessErrorDetails" needs to be exported by the entry point index.d.ts
     //
     // (undocumented)
@@ -1400,35 +591,166 @@ export class HarnessError extends Error {
 }
 
 // @public
-enum HarnessErrorCode {
+export enum HarnessErrorCode {
     // (undocumented)
-    ABORTED = "ABORTED",
-    // (undocumented)
+    ADAPTER_AUTH = "ADAPTER_AUTH",
     ADAPTER_CUSTOM = "ADAPTER_CUSTOM",
+    // (undocumented)
+    ADAPTER_ERROR = "ADAPTER_ERROR",
     // (undocumented)
     ADAPTER_INVALID_EXTRA = "ADAPTER_INVALID_EXTRA",
     // (undocumented)
+    ADAPTER_NETWORK = "ADAPTER_NETWORK",
+    // (undocumented)
+    ADAPTER_PARSE = "ADAPTER_PARSE",
+    // (undocumented)
+    ADAPTER_RATE_LIMIT = "ADAPTER_RATE_LIMIT",
+    // (undocumented)
+    ADAPTER_UNKNOWN = "ADAPTER_UNKNOWN",
+    // (undocumented)
     CLI_PARSE_ERROR = "CLI_PARSE_ERROR",
     // (undocumented)
-    GUARDRAIL_BLOCKED = "GUARDRAIL_BLOCKED",
+    CONTEXT_CHECKPOINT_NOT_FOUND = "CONTEXT_CHECKPOINT_NOT_FOUND",
     // (undocumented)
-    GUARDRAIL_VIOLATION = "GUARDRAIL_VIOLATION",
+    CONTEXT_MISSING_SUMMARIZER = "CONTEXT_MISSING_SUMMARIZER",
     // (undocumented)
-    INTERNAL_ERROR = "INTERNAL_ERROR",
+    CONTEXT_SEGMENT_OVERFLOW = "CONTEXT_SEGMENT_OVERFLOW",
     // (undocumented)
-    INVALID_CONFIG = "INVALID_CONFIG",
+    CONTEXT_UNKNOWN_SEGMENT = "CONTEXT_UNKNOWN_SEGMENT",
     // (undocumented)
-    INVALID_PIPELINE = "INVALID_PIPELINE",
+    CORE_ABORTED = "CORE_ABORTED",
     // (undocumented)
-    INVALID_STATE = "INVALID_STATE",
+    CORE_FALLBACK_EXHAUSTED = "CORE_FALLBACK_EXHAUSTED",
     // (undocumented)
-    INVALID_TOOL_SCHEMA = "INVALID_TOOL_SCHEMA",
+    CORE_INTERNAL_ERROR = "CORE_INTERNAL_ERROR",
     // (undocumented)
-    MAX_ITERATIONS = "MAX_ITERATIONS",
+    CORE_INVALID_BUDGET = "CORE_INVALID_BUDGET",
+    // (undocumented)
+    CORE_INVALID_CONFIG = "CORE_INVALID_CONFIG",
+    // (undocumented)
+    CORE_INVALID_ID = "CORE_INVALID_ID",
+    // (undocumented)
+    CORE_INVALID_INPUT = "CORE_INVALID_INPUT",
+    // (undocumented)
+    CORE_INVALID_KEY = "CORE_INVALID_KEY",
+    // (undocumented)
+    CORE_INVALID_PATTERN = "CORE_INVALID_PATTERN",
+    // (undocumented)
+    CORE_INVALID_STATE = "CORE_INVALID_STATE",
+    // (undocumented)
+    CORE_MAX_ITERATIONS = "CORE_MAX_ITERATIONS",
+    // (undocumented)
+    CORE_MIDDLEWARE_ERROR = "CORE_MIDDLEWARE_ERROR",
+    // (undocumented)
+    CORE_PARSE_EMPTY_CODEBLOCK = "CORE_PARSE_EMPTY_CODEBLOCK",
+    // (undocumented)
+    CORE_PARSE_EMPTY_INPUT = "CORE_PARSE_EMPTY_INPUT",
+    // (undocumented)
+    CORE_PARSE_INVALID_JSON = "CORE_PARSE_INVALID_JSON",
+    // (undocumented)
+    CORE_PARSE_UNCLOSED_CODEBLOCK = "CORE_PARSE_UNCLOSED_CODEBLOCK",
+    // (undocumented)
+    CORE_REDOS_PATTERN = "CORE_REDOS_PATTERN",
+    // (undocumented)
+    CORE_STREAM_NOT_SUPPORTED = "CORE_STREAM_NOT_SUPPORTED",
+    // (undocumented)
+    CORE_TOKEN_BUDGET_EXCEEDED = "CORE_TOKEN_BUDGET_EXCEEDED",
+    // (undocumented)
+    CORE_UNEXPECTED_VALUE = "CORE_UNEXPECTED_VALUE",
+    // (undocumented)
+    CORE_UNKNOWN = "CORE_UNKNOWN",
+    // (undocumented)
+    CORE_UNSUPPORTED_OPERATION = "CORE_UNSUPPORTED_OPERATION",
+    // (undocumented)
+    EVAL_CONFIG = "EVAL_CONFIG",
+    // (undocumented)
+    EVAL_EMPTY = "EVAL_EMPTY",
+    // (undocumented)
+    EVAL_SCORER_MISMATCH = "EVAL_SCORER_MISMATCH",
+    // (undocumented)
+    EVOLVE_COMPONENT_DUPLICATE = "EVOLVE_COMPONENT_DUPLICATE",
+    // (undocumented)
+    EVOLVE_COMPONENT_NOT_FOUND = "EVOLVE_COMPONENT_NOT_FOUND",
+    // (undocumented)
+    EVOLVE_NO_BASELINE = "EVOLVE_NO_BASELINE",
+    // (undocumented)
+    EVOLVE_TASTE_DUPLICATE = "EVOLVE_TASTE_DUPLICATE",
+    // (undocumented)
+    EVOLVE_TASTE_NOT_FOUND = "EVOLVE_TASTE_NOT_FOUND",
+    // (undocumented)
+    GUARD_BLOCKED = "GUARD_BLOCKED",
+    // (undocumented)
+    GUARD_INVALID_PIPELINE = "GUARD_INVALID_PIPELINE",
+    // (undocumented)
+    GUARD_SELF_HEALING_ABORTED = "GUARD_SELF_HEALING_ABORTED",
+    // (undocumented)
+    GUARD_VIOLATION = "GUARD_VIOLATION",
+    // (undocumented)
+    LOCK_ABORTED = "LOCK_ABORTED",
     // (undocumented)
     MEMORY_CORRUPT = "MEMORY_CORRUPT",
     // (undocumented)
+    MEMORY_DATA_CORRUPTION = "MEMORY_DATA_CORRUPTION",
+    // (undocumented)
+    MEMORY_NOT_FOUND = "MEMORY_NOT_FOUND",
+    // (undocumented)
+    MEMORY_RELAY_CONFLICT = "MEMORY_RELAY_CONFLICT",
+    // (undocumented)
+    MEMORY_STORE_CORRUPTION = "MEMORY_STORE_CORRUPTION",
+    // (undocumented)
+    ORCH_AGENT_NOT_FOUND = "ORCH_AGENT_NOT_FOUND",
+    // (undocumented)
+    ORCH_BOUNDARY_READ_DENIED = "ORCH_BOUNDARY_READ_DENIED",
+    // (undocumented)
+    ORCH_BOUNDARY_WRITE_DENIED = "ORCH_BOUNDARY_WRITE_DENIED",
+    // (undocumented)
+    ORCH_DELEGATION_CYCLE = "ORCH_DELEGATION_CYCLE",
+    // (undocumented)
+    ORCH_DUPLICATE_AGENT = "ORCH_DUPLICATE_AGENT",
+    // (undocumented)
+    ORCH_HANDOFF_SERIALIZATION_ERROR = "ORCH_HANDOFF_SERIALIZATION_ERROR",
+    // (undocumented)
+    ORCH_INVALID_TRANSITION = "ORCH_INVALID_TRANSITION",
+    // (undocumented)
+    ORCH_INVALID_TRANSITION_TARGET = "ORCH_INVALID_TRANSITION_TARGET",
+    // (undocumented)
+    ORCH_MAX_AGENTS = "ORCH_MAX_AGENTS",
+    // (undocumented)
+    ORCH_QUEUE_FULL = "ORCH_QUEUE_FULL",
+    // (undocumented)
+    ORCH_STAGE_NOT_FOUND = "ORCH_STAGE_NOT_FOUND",
+    // (undocumented)
+    ORCH_TOPIC_NOT_FOUND = "ORCH_TOPIC_NOT_FOUND",
+    // (undocumented)
+    ORCH_UNKNOWN_STRATEGY = "ORCH_UNKNOWN_STRATEGY",
+    // (undocumented)
+    POOL_ABORTED = "POOL_ABORTED",
+    // (undocumented)
+    POOL_DISPOSED = "POOL_DISPOSED",
+    // (undocumented)
+    POOL_EXHAUSTED = "POOL_EXHAUSTED",
+    // (undocumented)
+    POOL_TIMEOUT = "POOL_TIMEOUT",
+    // (undocumented)
+    PROMPT_MISSING_VARIABLE = "PROMPT_MISSING_VARIABLE",
+    // (undocumented)
+    PROMPT_NO_ACTIVE_SKILL = "PROMPT_NO_ACTIVE_SKILL",
+    // (undocumented)
+    PROMPT_SKILL_NOT_FOUND = "PROMPT_SKILL_NOT_FOUND",
+    // (undocumented)
+    PROMPT_TEMPLATE_NOT_FOUND = "PROMPT_TEMPLATE_NOT_FOUND",
+    // (undocumented)
     PROVIDER_REGISTRY_SEALED = "PROVIDER_REGISTRY_SEALED",
+    // (undocumented)
+    RAG_EMBEDDING_MISMATCH = "RAG_EMBEDDING_MISMATCH",
+    // (undocumented)
+    RAG_EMBEDDING_VALIDATION = "RAG_EMBEDDING_VALIDATION",
+    // (undocumented)
+    RAG_INVALID_CONFIG = "RAG_INVALID_CONFIG",
+    // (undocumented)
+    RAG_NO_LOADER = "RAG_NO_LOADER",
+    // (undocumented)
+    RAG_QUERY_TOO_LONG = "RAG_QUERY_TOO_LONG",
     // (undocumented)
     SESSION_EXPIRED = "SESSION_EXPIRED",
     // (undocumented)
@@ -1438,19 +760,19 @@ enum HarnessErrorCode {
     // (undocumented)
     SESSION_NOT_FOUND = "SESSION_NOT_FOUND",
     // (undocumented)
-    SPAN_NOT_FOUND = "SPAN_NOT_FOUND",
-    // (undocumented)
-    STORE_CORRUPTION = "STORE_CORRUPTION",
-    // (undocumented)
-    TOKEN_BUDGET_EXCEEDED = "TOKEN_BUDGET_EXCEEDED",
-    // (undocumented)
     TOOL_CAPABILITY_DENIED = "TOOL_CAPABILITY_DENIED",
+    // (undocumented)
+    TOOL_DUPLICATE = "TOOL_DUPLICATE",
+    // (undocumented)
+    TOOL_INVALID_NAME = "TOOL_INVALID_NAME",
+    // (undocumented)
+    TOOL_INVALID_SCHEMA = "TOOL_INVALID_SCHEMA",
     // (undocumented)
     TOOL_VALIDATION = "TOOL_VALIDATION",
     // (undocumented)
     TRACE_NOT_FOUND = "TRACE_NOT_FOUND",
     // (undocumented)
-    UNKNOWN = "UNKNOWN"
+    TRACE_SPAN_NOT_FOUND = "TRACE_SPAN_NOT_FOUND"
 }
 
 // @public
@@ -1458,24 +780,6 @@ interface HarnessErrorDetails {
     // (undocumented)
     readonly [k: string]: unknown;
     readonly adapterCode?: string;
-}
-
-// @public
-interface Index {
-    // (undocumented)
-    keys: Record<string, string>;
-}
-
-// @public
-interface IngestMetrics {
-    // (undocumented)
-    readonly attempted: number;
-    // (undocumented)
-    readonly byFailureReason: Record<string, number>;
-    // (undocumented)
-    readonly failed: number;
-    // (undocumented)
-    readonly succeeded: number;
 }
 
 // @public
@@ -1668,52 +972,6 @@ interface MessageMeta {
 }
 
 // @public
-export class MessageQueue {
-    // Warning: (ae-forgotten-export) The symbol "MessageQueueConfig" needs to be exported by the entry point index.d.ts
-    constructor(config?: MessageQueueConfig);
-    clear(): void;
-    createQueue(agentId: string): void;
-    deleteQueue(agentId: string): boolean;
-    dequeue(agentId: string, limit?: number): AgentMessage[];
-    getMessages(agentId: string, options?: {
-        type?: AgentMessage['type'];
-        since?: number;
-    }): AgentMessage[];
-    hasQueue(agentId: string): boolean;
-    iterateMessages(agentId: string, options?: {
-        type?: AgentMessage['type'];
-        since?: number;
-    }): Generator<AgentMessage, void, void>;
-    peek(agentId: string, limit?: number): AgentMessage[];
-    peekMessages(agentId: string, options?: {
-        type?: AgentMessage['type'];
-        since?: number;
-    }): AgentMessage | undefined;
-    push(agentId: string, message: AgentMessage): boolean;
-    size(agentId: string): number;
-}
-
-// @public
-interface MessageQueueConfig {
-    readonly backpressure?: boolean;
-    // (undocumented)
-    readonly maxQueueSize?: number;
-    // Warning: (ae-forgotten-export) The symbol "QueueEventEmitter" needs to be exported by the entry point index.d.ts
-    //
-    // (undocumented)
-    readonly onEvent?: QueueEventEmitter;
-    // Warning: (ae-forgotten-export) The symbol "QueueWarningHandler" needs to be exported by the entry point index.d.ts
-    //
-    // (undocumented)
-    readonly onWarning?: QueueWarningHandler;
-}
-
-// @public
-interface MessageTransport {
-    send(message: Omit<AgentMessage, 'timestamp'>): void;
-}
-
-// @public
 export interface MiddlewareChain<TExtra extends Record<string, unknown> = Record<string, unknown>> {
     clear(): void;
     execute(ctx: MiddlewareContext<TExtra>, handler: () => Promise<unknown>): Promise<unknown>;
@@ -1744,60 +1002,6 @@ export interface ModelPricing {
 }
 
 // @public
-type OrchestrationMode = 'hierarchical' | 'peer';
-
-// @public
-interface OrchestratorConfig {
-    readonly logger?: Logger;
-    // (undocumented)
-    readonly maxAgents?: number;
-    // (undocumented)
-    readonly maxQueueSize?: number;
-    // (undocumented)
-    readonly mode?: OrchestrationMode;
-    readonly onHandlerError?: (error: unknown, event: OrchestratorEvent) => void;
-    readonly onWarning?: (warning: {
-        message: string;
-        droppedCount: number;
-        queueSize: number;
-    }) => void;
-    // Warning: (ae-forgotten-export) The symbol "DelegationStrategy" needs to be exported by the entry point index.d.ts
-    //
-    // (undocumented)
-    readonly strategy?: DelegationStrategy;
-}
-
-// @public
-type OrchestratorEvent = {
-    readonly type: 'agent_registered';
-    readonly agent: AgentRegistration;
-} | {
-    readonly type: 'agent_status_changed';
-    readonly agentId: string;
-    readonly from: AgentStatus;
-    readonly to: AgentStatus;
-} | {
-    readonly type: 'message_sent';
-    readonly message: AgentMessage;
-} | {
-    readonly type: 'message_dropped';
-    readonly agentId: string;
-    readonly droppedCount: number;
-} | {
-    readonly type: 'task_delegated';
-    readonly agentId: string;
-    readonly task: DelegationTask;
-} | {
-    readonly type: 'context_updated';
-    readonly key: string;
-};
-
-// @public
-interface OrchestratorMetrics {
-    readonly droppedMessages: number;
-}
-
-// @public
 export interface OutputParser<T = unknown> {
     // (undocumented)
     getFormatInstructions(): string;
@@ -1805,180 +1009,8 @@ export interface OutputParser<T = unknown> {
     parse(text: string): T;
 }
 
-// Warning: (ae-forgotten-export) The symbol "ContextLayout" needs to be exported by the entry point index.d.ts
-//
-// @public
-export function packContext(layout: ContextLayout, model?: string): {
-    messages: Message[];
-    truncated: boolean;
-    midBudgetExhausted: boolean;
-    usage: {
-        head: number;
-        mid: number;
-        tail: number;
-    };
-};
-
-// @public
-export function parseJsonSafe(raw: string): {
-    ok: true;
-    value: unknown;
-} | {
-    ok: false;
-    error: Error;
-};
-
-// Warning: (ae-forgotten-export) The symbol "ParseWithRetryOptions" needs to be exported by the entry point index.d.ts
-//
-// @public (undocumented)
-export function parseWithRetry<T>(parser: OutputParser<T>, text: string, regenerate: (feedback: string) => Promise<string>, maxRetriesOrOptions?: number | ParseWithRetryOptions): Promise<{
-    result: T;
-    attempts: number;
-}>;
-
-// @public
-interface ParseWithRetryOptions {
-    maxRetries?: number;
-    regenerateTimeoutMs?: number;
-}
-
 // @public
 type PermissionLevel = 'strict' | 'default' | 'permissive';
-
-// @public
-interface PIIDetectConfig {
-    apiKey?: boolean;
-    // (undocumented)
-    creditCard?: boolean;
-    // (undocumented)
-    email?: boolean;
-    ipAddress?: boolean;
-    // (undocumented)
-    phone?: boolean;
-    privateKey?: boolean;
-    // (undocumented)
-    ssn?: boolean;
-}
-
-// @public
-interface PipelineResult {
-    modifiedContent?: string;
-    // (undocumented)
-    passed: boolean;
-    // (undocumented)
-    results: GuardrailEvent[];
-    // (undocumented)
-    verdict: GuardrailVerdict;
-}
-
-// @public
-interface PoolConfig {
-    readonly factory: (role?: string) => AgentLoop;
-    readonly idleTimeout?: number;
-    readonly max?: number;
-    readonly maxAge?: number;
-    readonly min?: number;
-}
-
-// @public
-interface PooledAgent {
-    // (undocumented)
-    readonly createdAt: number;
-    // (undocumented)
-    readonly id: string;
-    // (undocumented)
-    readonly loop: AgentLoop;
-    // (undocumented)
-    readonly role?: string;
-}
-
-// @public
-interface PoolStats {
-    // (undocumented)
-    readonly active: number;
-    // (undocumented)
-    readonly created: number;
-    // (undocumented)
-    readonly idle: number;
-    // (undocumented)
-    readonly recycled: number;
-    // (undocumented)
-    readonly total: number;
-}
-
-// @public
-interface PromptBackend {
-    fetch(id: string, version?: string): Promise<PromptTemplate | undefined>;
-    list?(): Promise<PromptTemplate[]>;
-    push?(template: PromptTemplate): Promise<void>;
-}
-
-// @public
-interface PromptBuilder {
-    addLayer(layer: PromptLayer): void;
-    // Warning: (ae-forgotten-export) The symbol "AssembledPrompt" needs to be exported by the entry point index.d.ts
-    build(): AssembledPrompt;
-    getStablePrefixHash(): string;
-    removeLayer(name: string): void;
-    setVariable(key: string, value: string): void;
-}
-
-// @public
-interface PromptLayer {
-    // (undocumented)
-    readonly cacheable: boolean;
-    // (undocumented)
-    readonly content: string;
-    // (undocumented)
-    readonly metadata?: Record<string, unknown>;
-    // (undocumented)
-    readonly name: string;
-    // (undocumented)
-    readonly priority: number;
-}
-
-// @public
-interface PromptRegistry {
-    get(id: string, version?: string): PromptTemplate | undefined;
-    getExpired(): PromptTemplate[];
-    has(id: string): boolean;
-    isExpired(id: string, version?: string): boolean;
-    list(): PromptTemplate[];
-    // Warning: (ae-forgotten-export) The symbol "RegisterOptions" needs to be exported by the entry point index.d.ts
-    register(template: PromptTemplate, options?: RegisterOptions): void;
-    removeExpired(): number;
-    resolve(id: string, variables: Record<string, string>, version?: string, sanitize?: boolean): string;
-}
-
-// @public
-interface PromptRegistryConfig {
-    // Warning: (ae-forgotten-export) The symbol "PromptRegistryLogger" needs to be exported by the entry point index.d.ts
-    readonly logger?: PromptRegistryLogger;
-}
-
-// @public
-interface PromptRegistryLogger {
-    // (undocumented)
-    warn(message: string, meta?: Record<string, unknown>): void;
-}
-
-// @public
-interface PromptTemplate {
-    // (undocumented)
-    readonly content: string;
-    readonly expiresAt?: number;
-    // (undocumented)
-    readonly id: string;
-    // (undocumented)
-    readonly metadata?: Record<string, unknown>;
-    // (undocumented)
-    readonly variables: string[];
-    // (undocumented)
-    readonly version: string;
-}
-
-// @public
-export function pruneConversation(conversation: Message[], maxMessages: number): PruneResult;
 
 // @public
 export interface PruneResult {
@@ -1989,87 +1021,12 @@ export interface PruneResult {
 }
 
 // @public
-interface QueueEventEmitter {
-    // (undocumented)
-    (event: {
-        type: 'message_dropped';
-        agentId: string;
-        droppedCount: number;
-    }): void;
-}
-
-// @public
-interface QueueWarningHandler {
-    // (undocumented)
-    (warning: {
-        message: string;
-        droppedCount: number;
-        queueSize: number;
-    }): void;
-}
-
-// @public
-interface RAGPipeline {
-    clear(): void;
-    getChunks(): DocumentChunk[];
-    // Warning: (ae-forgotten-export) The symbol "IngestMetrics" needs to be exported by the entry point index.d.ts
-    getIngestMetrics(): IngestMetrics;
-    ingest(): Promise<{
-        documents: number;
-        chunks: number;
-    }>;
-    ingestDocuments(documents: Document[]): Promise<number>;
-    // Warning: (ae-forgotten-export) The symbol "RetrievalResult" needs to be exported by the entry point index.d.ts
-    query(text: string, options?: {
-        limit?: number;
-        minScore?: number;
-    }): Promise<RetrievalResult[]>;
-}
-
-// @public
-interface RAGPipelineConfig {
-    // Warning: (ae-forgotten-export) The symbol "ChunkingStrategy" needs to be exported by the entry point index.d.ts
-    //
-    // (undocumented)
-    readonly chunking?: ChunkingStrategy;
-    // Warning: (ae-forgotten-export) The symbol "EmbeddingModel" needs to be exported by the entry point index.d.ts
-    //
-    // (undocumented)
-    readonly embedding: EmbeddingModel;
-    // Warning: (ae-forgotten-export) The symbol "DocumentLoader" needs to be exported by the entry point index.d.ts
-    //
-    // (undocumented)
-    readonly loader?: DocumentLoader;
-    readonly maxChunks?: number;
-    readonly onWarning?: (warning: {
-        message: string;
-        type: 'duplicate' | 'capacity';
-    }) => void;
-    // Warning: (ae-forgotten-export) The symbol "Retriever" needs to be exported by the entry point index.d.ts
-    //
-    // (undocumented)
-    readonly retriever: Retriever;
-    readonly traceManager?: InstrumentationPort;
-    readonly validateEmbedding?: boolean;
-}
-
-// @public
 interface RedactConfig {
     readonly blockPollutingKeys?: boolean;
     readonly extraKeys?: readonly string[];
     readonly extraPatterns?: readonly RegExp[];
     readonly useDefaultPattern?: boolean;
 }
-
-// @public
-interface RegisterOptions {
-    readonly force?: boolean;
-}
-
-// Warning: (ae-forgotten-export) The symbol "Tokenizer" needs to be exported by the entry point index.d.ts
-//
-// @public
-export function registerTokenizer(model: string, tokenizer: Tokenizer): void;
 
 // @public
 export interface RelayState {
@@ -2125,24 +1082,6 @@ export type ResponseFormat = {
 };
 
 // @public
-interface RetrievalResult {
-    // (undocumented)
-    readonly chunk: DocumentChunk;
-    // (undocumented)
-    readonly score: number;
-    readonly tokens?: number;
-}
-
-// @public
-interface Retriever {
-    index(chunks: readonly DocumentChunk[]): Promise<void>;
-    retrieve(query: string, options?: {
-        limit?: number;
-        minScore?: number;
-    }): Promise<RetrievalResult[]>;
-}
-
-// @public
 interface RetryMetrics {
     readonly failedAfterRetries: number;
     readonly successAfterRetry: number;
@@ -2151,22 +1090,6 @@ interface RetryMetrics {
 
 // @public
 export type Role = 'system' | 'user' | 'assistant' | 'tool';
-
-// Warning: (ae-forgotten-export) The symbol "PipelineResult" needs to be exported by the entry point index.d.ts
-//
-// @public
-export function runInput(pipeline: GuardrailPipeline, ctx: GuardrailContext): Promise<PipelineResult>;
-
-// Warning: (ae-forgotten-export) The symbol "TestKitRunner" needs to be exported by the entry point index.d.ts
-//
-// @public
-export function runMemoryStoreConformance(runner: TestKitRunner, createStore: () => Promise<MemoryStore> | MemoryStore): void;
-
-// @public
-export function runOutput(pipeline: GuardrailPipeline, ctx: GuardrailContext): Promise<PipelineResult>;
-
-// @public
-export function runToolOutput(pipeline: GuardrailPipeline, toolResult: string, toolName?: string): Promise<PipelineResult>;
 
 // @public
 export interface SchemaValidator {
@@ -2177,18 +1100,6 @@ export interface SchemaValidator {
         valid: boolean;
         errors: ValidationError[];
     }>;
-}
-
-// @public
-interface Segment {
-    // (undocumented)
-    readonly maxTokens: number;
-    // (undocumented)
-    readonly name: string;
-    // (undocumented)
-    readonly reserved?: boolean;
-    // (undocumented)
-    readonly trimPriority?: number;
 }
 
 // @public
@@ -2241,82 +1152,6 @@ export interface SessionManager {
 }
 
 // @public
-interface SharedContext {
-    entries(): ReadonlyMap<string, unknown>;
-    get(key: string): unknown;
-    set(key: string, value: unknown): void;
-}
-
-// @public
-interface SkillDefinition {
-    // (undocumented)
-    readonly description: string;
-    // (undocumented)
-    readonly id: string;
-    // (undocumented)
-    readonly initialStage: string;
-    // (undocumented)
-    readonly name: string;
-    // Warning: (ae-forgotten-export) The symbol "SkillStage" needs to be exported by the entry point index.d.ts
-    //
-    // (undocumented)
-    readonly stages: SkillStage[];
-}
-
-// @public
-interface SkillEngine {
-    advanceTo(stageId: string): void;
-    readonly currentStage: SkillStage;
-    getAvailableTools(): string[];
-    getCurrentPrompt(): string;
-    isComplete(): boolean;
-    processTurn(message: string, history?: readonly {
-        role: string;
-        content: string;
-    }[]): {
-        advanced: boolean;
-        previousStage?: string;
-        currentStage: string;
-        reason?: string;
-    };
-    // Warning: (ae-forgotten-export) The symbol "SkillDefinition" needs to be exported by the entry point index.d.ts
-    registerSkill(skill: SkillDefinition): void;
-    reset(): void;
-    readonly stageHistory: readonly string[];
-    startSkill(skillId: string): void;
-    readonly turnCount: number;
-}
-
-// @public
-interface SkillEngineConfig {
-    onTransition?: (event: {
-        skillName: string;
-        from: string;
-        to: string;
-        reason: string;
-        turn: number;
-    }) => void;
-}
-
-// @public
-interface SkillStage {
-    // (undocumented)
-    readonly id: string;
-    // (undocumented)
-    readonly maxTurns?: number;
-    // (undocumented)
-    readonly name: string;
-    // (undocumented)
-    readonly prompt: string;
-    // (undocumented)
-    readonly tools?: string[];
-    // Warning: (ae-forgotten-export) The symbol "StageTransition" needs to be exported by the entry point index.d.ts
-    //
-    // (undocumented)
-    readonly transitions: StageTransition[];
-}
-
-// @public
 export interface Span {
     // (undocumented)
     readonly attributes: Record<string, unknown>;
@@ -2363,33 +1198,6 @@ type SpanEventSeverity = 'debug' | 'info' | 'warn' | 'error';
 
 // @public
 type SpanId = Brand<string, 'SpanId'>;
-
-// @public
-interface SSEChunk {
-    // (undocumented)
-    data: string;
-    // (undocumented)
-    event: string;
-}
-
-// @public
-interface StageTransition {
-    // Warning: (ae-forgotten-export) The symbol "TransitionCondition" needs to be exported by the entry point index.d.ts
-    //
-    // (undocumented)
-    readonly condition: TransitionCondition;
-    // (undocumented)
-    readonly to: string;
-}
-
-// @public
-export class StreamAggregator {
-    constructor(options: StreamAggregatorOptions);
-    get bytesRead(): number;
-    getMessage(usage: TokenUsage): StreamAggregatorMessage;
-    handleChunk(chunk: StreamAggregatorChunk): Generator<StreamAggregatorEvent>;
-    reset(): void;
-}
 
 // @public
 export interface StreamAggregatorChunk {
@@ -2455,62 +1263,12 @@ export interface SystemMessage extends BaseMessage {
 }
 
 // @public
-interface TestKitRunner {
-    // (undocumented)
-    beforeEach?: (fn: () => void | Promise<void>) => void;
-    // (undocumented)
-    describe: (name: string, fn: () => void) => void;
-    // (undocumented)
-    expect: (actual: unknown) => {
-        toBe: (expected: unknown) => void;
-        toEqual: (expected: unknown) => void;
-        toBeNull: () => void;
-        toBeDefined: () => void;
-        toBeGreaterThanOrEqual: (n: number) => void;
-        toContain: (v: unknown) => void;
-    };
-    // (undocumented)
-    it: (name: string, fn: () => void | Promise<void>) => void;
-}
-
-// @public
-interface TokenBudget {
-    // (undocumented)
-    allocate(segmentName: string, tokens: number): void;
-    // (undocumented)
-    needsTrimming(): boolean;
-    // (undocumented)
-    remaining(segmentName: string): number;
-    // (undocumented)
-    reset(segmentName: string): void;
-    // (undocumented)
-    readonly responseReserve: number;
-    // (undocumented)
-    readonly totalTokens: number;
-    // (undocumented)
-    trimOrder(): Array<{
-        segment: string;
-        trimBy: number;
-        priority: number;
-    }>;
-    tryAllocate(segmentName: string, tokens: number): boolean;
-}
-
-// @public
 export class TokenBudgetExceededError extends HarnessError {
     constructor(used: number, budget: number, cause?: Error);
     // (undocumented)
     readonly budget: number;
     // (undocumented)
     readonly used: number;
-}
-
-// @public
-interface Tokenizer {
-    // (undocumented)
-    encode(text: string): {
-        length: number;
-    };
 }
 
 // @public
@@ -2599,9 +1357,6 @@ export interface ToolDefinition<TParams = unknown> {
 }
 
 // @public
-export function toolError(message: string, category: ToolFeedback['category'], suggestedAction: string, retryable?: boolean): ToolResult<never>;
-
-// @public
 interface ToolExecutionResult {
     // (undocumented)
     readonly result: unknown;
@@ -2682,15 +1437,9 @@ export interface ToolSchema {
 }
 
 // @public
-export function toolSuccess<T>(data: T): ToolResult<T>;
-
-// @public
 export class ToolValidationError extends HarnessError {
     constructor(message: string, cause?: Error);
 }
-
-// @public
-export function toSSEStream(events: AsyncIterable<AgentEvent>): AsyncGenerator<SSEChunk>;
 
 // @public
 export interface Trace {
@@ -2757,58 +1506,10 @@ export interface TraceManager {
 }
 
 // @public
-type TransitionCondition = {
-    type: 'turn_count';
-    count: number;
-} | {
-    type: 'keyword';
-    keywords: string[];
-} | {
-    type: 'manual';
-} | {
-    type: 'custom';
-    check: (context: TransitionContext) => boolean;
-};
-
-// @public
-interface TransitionContext {
-    // (undocumented)
-    readonly currentStage: string;
-    // (undocumented)
-    readonly history: readonly {
-        role: string;
-        content: string;
-    }[];
-    // (undocumented)
-    readonly lastMessage: string;
-    // (undocumented)
-    readonly turnCount: number;
-}
-
-// @public
 export interface UserMessage extends BaseMessage {
     // (undocumented)
     readonly role: 'user';
 }
-
-// Warning: (ae-forgotten-export) The symbol "Index" needs to be exported by the entry point index.d.ts
-//
-// @public
-export function validateIndex(v: unknown): Index;
-
-// @public
-export function validateMemoryEntry(v: unknown, source?: string): MemoryEntry;
-
-// @public
-export function validateRelayState(v: unknown): RelayState & {
-    _version?: number;
-};
-
-// @public
-export function validateToolCall(schema: JsonSchema, params: unknown): {
-    valid: boolean;
-    errors: ValidationError[];
-};
 
 // @public
 export interface ValidationError {
@@ -2827,41 +1528,13 @@ export interface VectorSearchOptions {
     readonly minScore?: number;
 }
 
-// @public
-export function withSelfHealing(config: {
-    maxRetries?: number;
-    guardrails: Array<{
-        name: string;
-        guard: Guardrail;
-    }>;
-    buildRetryPrompt: (content: string, failures: Array<{
-        reason: string;
-    }>) => string;
-    regenerate: (prompt: string) => Promise<string>;
-    regenerateTimeoutMs?: number;
-    estimateTokens?: (text: string) => number;
-    maxTotalTokens?: number;
-    signal?: AbortSignal;
-}, initialContent: string): Promise<{
-    content: string;
-    attempts: number;
-    passed: boolean;
-    totalTokens?: number;
-}>;
-
 // Warnings were encountered during analysis:
 //
-// dist/dataset-exporter-BPhu7ctH.d.ts:345:5 - (ae-forgotten-export) The symbol "RedactConfig" needs to be exported by the entry point index.d.ts
-// dist/dataset-exporter-BPhu7ctH.d.ts:617:5 - (ae-forgotten-export) The symbol "EvictionStrategyName" needs to be exported by the entry point index.d.ts
-// dist/dataset-exporter-BPhu7ctH.d.ts:617:5 - (ae-forgotten-export) The symbol "EvictionStrategy" needs to be exported by the entry point index.d.ts
-// dist/dataset-exporter-BPhu7ctH.d.ts:725:5 - (ae-forgotten-export) The symbol "DatasetEntry" needs to be exported by the entry point index.d.ts
-// dist/guardrails/index.d.ts:261:5 - (ae-forgotten-export) The symbol "PIIDetectConfig" needs to be exported by the entry point index.d.ts
-// dist/guardrails/index.d.ts:262:5 - (ae-forgotten-export) The symbol "CustomPIIPattern" needs to be exported by the entry point index.d.ts
-// dist/message-queue-B6DsFS36.d.ts:239:9 - (ae-forgotten-export) The symbol "AgentStatus" needs to be exported by the entry point index.d.ts
-// dist/message-queue-B6DsFS36.d.ts:344:5 - (ae-forgotten-export) The symbol "AcquireAsyncOptions" needs to be exported by the entry point index.d.ts
-// dist/pipeline-kIbszkGP.d.ts:94:5 - (ae-forgotten-export) The symbol "GuardrailEvent" needs to be exported by the entry point index.d.ts
-// dist/prompt/index.d.ts:57:5 - (ae-forgotten-export) The symbol "TransitionContext" needs to be exported by the entry point index.d.ts
-// dist/resilience-CuLZ6IPd.d.ts:255:5 - (ae-forgotten-export) The symbol "MiddlewareContext" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-DuPeBp9y.d.ts:345:5 - (ae-forgotten-export) The symbol "RedactConfig" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-DuPeBp9y.d.ts:617:5 - (ae-forgotten-export) The symbol "EvictionStrategyName" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-DuPeBp9y.d.ts:617:5 - (ae-forgotten-export) The symbol "EvictionStrategy" needs to be exported by the entry point index.d.ts
+// dist/pipeline-TMNlcXBi.d.ts:94:5 - (ae-forgotten-export) The symbol "GuardrailEvent" needs to be exported by the entry point index.d.ts
+// dist/resilience-BO5GN2qg.d.ts:255:5 - (ae-forgotten-export) The symbol "MiddlewareContext" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 
