@@ -4,7 +4,7 @@
  * @module
  */
 
-import { HarnessError } from '../core/errors.js';
+import { HarnessError } from 'harness-one';
 
 // ── Module definitions ────────────────────────────────────────────────────────
 

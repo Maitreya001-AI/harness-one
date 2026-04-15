@@ -1,0 +1,59 @@
+{
+  "name": "@harness-one/cli",
+  "version": "1.0.0-rc.1",
+  "description": "CLI scaffolding + audit tool for harness-one",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "bin": {
+    "harness-one": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": { "node": ">=18" },
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "test:parser": "vitest run src/__tests__/templates-subpaths.test.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/"
+  },
+  "dependencies": {
+    "harness-one": "workspace:*"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  },
+  "license": "MIT",
+  "author": "harness-one contributors",
+  "keywords": [
+    "harness-one",
+    "cli",
+    "scaffold",
+    "audit"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Maitreya001-AI/harness-one",
+    "directory": "packages/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/Maitreya001-AI/harness-one/issues"
+  },
+  "homepage": "https://github.com/Maitreya001-AI/harness-one#readme"
+}

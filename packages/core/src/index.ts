@@ -205,10 +205,10 @@ export {
   MessageQueue,
 } from './orchestration/index.js';
 
-// Eval / Evolve / RAG — less frequently imported directly, but convenient
-// to surface their factories here.
-export { createEvalRunner, createRelevanceScorer } from './eval/index.js';
-export { createComponentRegistry } from './evolve/index.js';
+// RAG — the remaining auxiliary factory surfaced from the root barrel.
+// `createEvalRunner`, `createRelevanceScorer`, and `createComponentRegistry`
+// moved to `@harness-one/devkit` in Wave-5C PR-2 (R-07); the architecture
+// checker is re-exported via `harness-one/evolve-check` per ADR §3.h hybrid.
 export { createRAGPipeline } from './rag/index.js';
 
 // Lifecycle primitives (ARCH-005): codified Disposable contract + helpers.

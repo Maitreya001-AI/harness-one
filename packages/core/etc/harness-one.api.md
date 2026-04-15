@@ -563,49 +563,6 @@ interface CompactOptions {
     readonly windowSize?: number;
 }
 
-// @public
-interface ComponentMeta {
-    // (undocumented)
-    readonly createdAt: string;
-    // (undocumented)
-    readonly description: string;
-    // (undocumented)
-    readonly id: string;
-    // (undocumented)
-    readonly lastValidated?: string;
-    // (undocumented)
-    readonly modelAssumption: string;
-    // (undocumented)
-    readonly name: string;
-    // (undocumented)
-    readonly retirementCondition: string | ((context: Record<string, unknown>) => boolean);
-    // (undocumented)
-    readonly tags?: string[];
-}
-
-// @public
-interface ComponentRegistry {
-    // (undocumented)
-    get(id: string): ComponentMeta | undefined;
-    // (undocumented)
-    getStale(maxAgeDays: number): ComponentMeta[];
-    // (undocumented)
-    list(filter?: {
-        tags?: string[];
-    }): ComponentMeta[];
-    // (undocumented)
-    markValidated(id: string): void;
-    // Warning: (ae-forgotten-export) The symbol "ComponentMeta" needs to be exported by the entry point index.d.ts
-    //
-    // (undocumented)
-    register(meta: ComponentMeta): void;
-    // (undocumented)
-    validate(id: string, context?: Record<string, unknown>): {
-        valid: boolean;
-        reason: string;
-    };
-}
-
 // Warning: (ae-forgotten-export) The symbol "CompressOptions" needs to be exported by the entry point index.d.ts
 // Warning: (ae-forgotten-export) The symbol "CompressResult" needs to be exported by the entry point index.d.ts
 //
@@ -791,11 +748,6 @@ export function createCacheMonitor(config?: CacheMonitorConfig): CacheMonitor;
 // @public
 export function createCheckpointManager(config?: CheckpointManagerConfig): CheckpointManager;
 
-// Warning: (ae-forgotten-export) The symbol "ComponentRegistry" needs to be exported by the entry point index.d.ts
-//
-// @public
-export function createComponentRegistry(): ComponentRegistry;
-
 // @public
 export function createConsoleExporter(config?: {
     verbose?: boolean;
@@ -850,12 +802,6 @@ export function createDatasetExporter(config?: DatasetExporterConfig): {
 //
 // @public
 export function createDisclosureManager(): DisclosureManager;
-
-// Warning: (ae-forgotten-export) The symbol "EvalConfig" needs to be exported by the entry point index.d.ts
-// Warning: (ae-forgotten-export) The symbol "EvalRunner" needs to be exported by the entry point index.d.ts
-//
-// @public
-export function createEvalRunner(config: EvalConfig): EvalRunner;
 
 // Warning: (ae-forgotten-export) The symbol "EventBusOptions" needs to be exported by the entry point index.d.ts
 //
@@ -1027,11 +973,6 @@ export function createRelay(config: {
     relayKey?: string;
     onCorruption?: (id: string, error: Error) => void;
 }): ContextRelay;
-
-// Warning: (ae-forgotten-export) The symbol "Scorer" needs to be exported by the entry point index.d.ts
-//
-// @public
-export function createRelevanceScorer(): Scorer;
 
 // @public
 export function createResilientLoop(config: ResilientLoopConfig): ResilientLoop;
@@ -1220,86 +1161,6 @@ interface EmbeddingModel {
     readonly dimensions: number;
     // (undocumented)
     embed(texts: readonly string[]): Promise<readonly (readonly number[])[]>;
-}
-
-// @public
-interface EvalCase {
-    // (undocumented)
-    readonly context?: string;
-    // (undocumented)
-    readonly expectedOutput?: string;
-    // (undocumented)
-    readonly id: string;
-    // (undocumented)
-    readonly input: string;
-    // (undocumented)
-    readonly metadata?: Record<string, unknown>;
-    // (undocumented)
-    readonly tags?: string[];
-}
-
-// @public
-interface EvalConfig {
-    readonly concurrency?: number;
-    // (undocumented)
-    readonly overallPassRate?: number;
-    // (undocumented)
-    readonly passThreshold?: number;
-    // (undocumented)
-    readonly scorers: Scorer[];
-    readonly scorerThresholds?: Record<string, number>;
-}
-
-// @public
-interface EvalReport {
-    // (undocumented)
-    readonly averageScores: Record<string, number>;
-    // (undocumented)
-    readonly duration: number;
-    // (undocumented)
-    readonly failedCases: number;
-    // (undocumented)
-    readonly passedCases: number;
-    // (undocumented)
-    readonly passRate: number;
-    // Warning: (ae-forgotten-export) The symbol "EvalResult" needs to be exported by the entry point index.d.ts
-    //
-    // (undocumented)
-    readonly results: EvalResult[];
-    // (undocumented)
-    readonly timestamp: number;
-    // (undocumented)
-    readonly totalCases: number;
-}
-
-// @public
-interface EvalResult {
-    // (undocumented)
-    readonly caseId: string;
-    // (undocumented)
-    readonly details: Record<string, string>;
-    // (undocumented)
-    readonly duration: number;
-    // (undocumented)
-    readonly passed: boolean;
-    // (undocumented)
-    readonly scores: Record<string, number>;
-}
-
-// @public
-interface EvalRunner {
-    // (undocumented)
-    checkGate(report: EvalReport): {
-        passed: boolean;
-        reason: string;
-    };
-    // Warning: (ae-forgotten-export) The symbol "EvalCase" needs to be exported by the entry point index.d.ts
-    // Warning: (ae-forgotten-export) The symbol "EvalReport" needs to be exported by the entry point index.d.ts
-    //
-    // (undocumented)
-    run(cases: EvalCase[], generate: (input: string) => Promise<string>): Promise<EvalReport>;
-    // (undocumented)
-    runSingle(evalCase: EvalCase, output: string): Promise<EvalResult>;
 }
 
 // @public @deprecated
@@ -2316,27 +2177,6 @@ export interface SchemaValidator {
         valid: boolean;
         errors: ValidationError[];
     }>;
-}
-
-// @public
-interface Scorer {
-    // (undocumented)
-    readonly description: string;
-    // (undocumented)
-    readonly name: string;
-    // (undocumented)
-    score(input: string, output: string, context?: string): Promise<{
-        score: number;
-        explanation: string;
-    }>;
-    scoreBatch?(cases: Array<{
-        input: string;
-        output: string;
-        context?: string;
-    }>): Promise<Array<{
-        score: number;
-        explanation: string;
-    }>>;
 }
 
 // @public

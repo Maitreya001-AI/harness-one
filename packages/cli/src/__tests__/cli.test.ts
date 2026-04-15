@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { parseArgs, getTemplate, auditProject, ALL_MODULES, MODULE_DESCRIPTIONS, FILE_NAMES, c, SUPPORTS_COLOR, writeModuleFiles, runInit, runAudit, showHelp } from '../index.js';
 import { scanFiles, maturityLabel } from '../audit.js';
 import type { ModuleName, ParsedArgs } from '../index.js';
-import { HarnessError } from '../../core/errors.js';
+import { HarnessError } from 'harness-one';
 import { mkdirSync, writeFileSync, rmSync, existsSync, symlinkSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -153,9 +153,22 @@ describe('Template generation', () => {
   });
 
   it('templates use correct import paths', () => {
+    // After Wave-5C PR-2, `eval` + (parts of) `evolve` are served by
+    // `@harness-one/devkit` rather than `harness-one/<mod>`. The rest of
+    // the modules still import from the core subpaths.
+    const DEVKIT_ONLY: ReadonlySet<ModuleName> = new Set<ModuleName>(['eval']);
     for (const mod of ALL_MODULES) {
       const template = getTemplate(mod);
-      expect(template).toContain(`harness-one/${mod === 'core' ? 'core' : mod}`);
+      if (DEVKIT_ONLY.has(mod)) {
+        expect(template).toContain('@harness-one/devkit');
+      } else if (mod === 'evolve') {
+        // evolve scaffold mixes devkit (registry, drift) with
+        // harness-one/evolve-check (architecture checker).
+        expect(template).toContain('@harness-one/devkit');
+        expect(template).toContain('harness-one/evolve-check');
+      } else {
+        expect(template).toContain(`harness-one/${mod}`);
+      }
     }
   });
 

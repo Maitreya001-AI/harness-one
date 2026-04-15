@@ -49,15 +49,10 @@
       "import": "./dist/memory/index.js",
       "require": "./dist/cjs/memory/index.cjs"
     },
-    "./eval": {
-      "types": "./dist/eval/index.d.ts",
-      "import": "./dist/eval/index.js",
-      "require": "./dist/cjs/eval/index.cjs"
-    },
-    "./evolve": {
-      "types": "./dist/evolve/index.d.ts",
-      "import": "./dist/evolve/index.js",
-      "require": "./dist/cjs/evolve/index.cjs"
+    "./evolve-check": {
+      "types": "./dist/evolve-check/index.d.ts",
+      "import": "./dist/evolve-check/index.js",
+      "require": "./dist/cjs/evolve-check/index.cjs"
     },
     "./rag": {
       "types": "./dist/rag/index.d.ts",
@@ -68,15 +63,7 @@
       "types": "./dist/orchestration/index.d.ts",
       "import": "./dist/orchestration/index.js",
       "require": "./dist/cjs/orchestration/index.cjs"
-    },
-    "./cli": {
-      "types": "./dist/cli/index.d.ts",
-      "import": "./dist/cli/index.js",
-      "require": "./dist/cli/index.cjs"
     }
-  },
-  "bin": {
-    "harness-one": "./dist/cli/index.js"
   },
   "files": [
     "dist"

@@ -17,14 +17,15 @@ import { createInterface } from 'node:readline';
 // Re-export public API from sub-modules
 export { ALL_MODULES, parseArgs, MODULE_DESCRIPTIONS } from './parser.js';
 export type { ModuleName, ParsedArgs } from './parser.js';
-export { getTemplate, FILE_NAMES } from './templates.js';
+export { getTemplate, FILE_NAMES, TEMPLATES, SUBPATH_MAP } from './templates/index.js';
+export type { SubpathRef } from './templates/index.js';
 export { auditProject, scanFiles, maturityLabel } from './audit.js';
 export { c, SUPPORTS_COLOR } from './ui.js';
 
 // Internal imports for the main() function
 import { ALL_MODULES, parseArgs, MODULE_DESCRIPTIONS } from './parser.js';
 import type { ModuleName, ParsedArgs } from './parser.js';
-import { getTemplate, FILE_NAMES } from './templates.js';
+import { getTemplate, FILE_NAMES } from './templates/index.js';
 import { auditProject, maturityLabel } from './audit.js';
 import { c } from './ui.js';
 
