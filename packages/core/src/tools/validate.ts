@@ -6,7 +6,7 @@
 
 import type { JsonSchema } from '../core/types.js';
 import type { ValidationError } from './types.js';
-import { validateJsonSchema } from '../_internal/json-schema.js';
+import { validateJsonSchema } from '../infra/json-schema.js';
 
 /**
  * Validate tool call parameters against a JSON Schema.

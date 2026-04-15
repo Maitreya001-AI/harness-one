@@ -8,7 +8,7 @@
 
 import type { Message, AgentAdapter } from '../core/types.js';
 import type { CompressionStrategy } from './types.js';
-import { estimateTokens } from '../_internal/token-estimator.js';
+import { estimateTokens } from '../infra/token-estimator.js';
 import { HarnessError } from '../core/errors.js';
 
 /** Estimate token count for a single message using the default model heuristic. */

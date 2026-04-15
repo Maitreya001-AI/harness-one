@@ -27,15 +27,15 @@ import { HarnessError } from 'harness-one/core';
 // only be given a different scrubber, never a disabled one.
 //
 // The implementation is intentionally self-contained: core's
-// `sanitizeAttributes` / `createRedactor` live in `_internal/` and are not
+// `sanitizeAttributes` / `createRedactor` live in `infra/` and are not
 // part of the public `harness-one/observe` surface. Inlining the same rules
-// (mirrored 1:1 from `_internal/redact.ts`) keeps the package's dependency
+// (mirrored 1:1 from `infra/redact.ts`) keeps the package's dependency
 // on `harness-one` bounded to its public exports.
 
 const LANGFUSE_REDACTED_VALUE = '[REDACTED]';
 
 /**
- * Mirrors `DEFAULT_SECRET_PATTERN` in `packages/core/src/_internal/redact.ts`.
+ * Mirrors `DEFAULT_SECRET_PATTERN` in `packages/core/src/infra/redact.ts`.
  * Matches common secret-indicator tokens anywhere in a dotted/underscored
  * key path (e.g. `api_key`, `x-authorization`, `user.password`).
  */

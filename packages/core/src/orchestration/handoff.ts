@@ -147,7 +147,7 @@ export function createHandoff(transport: MessageTransport, handoffConfig?: Hando
       // explicit yield point. Kept compact and free of awaits on purpose; any
       // future refactor that introduces `await` between the push and the
       // eviction MUST wrap this block in a per-agent AsyncLock (see
-      // `createAsyncLock` in core/_internal). The test
+      // `createAsyncLock` in core/infra). The test
       // "200 concurrent sends never exceed maxInboxPerAgent" enforces the
       // invariant.
       // Fix 29: Insert by priority

@@ -9,7 +9,7 @@
 
 import type { AgentAdapter, ChatParams, ChatResponse, StreamChunk } from './types.js';
 import { HarnessError } from './errors.js';
-import { createAsyncLock } from '../_internal/async-lock.js';
+import { createAsyncLock } from '../infra/async-lock.js';
 
 /** Configuration for the fallback adapter. */
 export interface FallbackAdapterConfig {

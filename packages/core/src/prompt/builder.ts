@@ -7,7 +7,7 @@
 import { createHash } from 'node:crypto';
 
 import type { PromptLayer, AssembledPrompt } from './types.js';
-import { estimateTokens as estimateTokensInternal } from '../_internal/token-estimator.js';
+import { estimateTokens as estimateTokensInternal } from '../infra/token-estimator.js';
 
 /** Builder for assembling multi-layer prompts with cache optimization. */
 export interface PromptBuilder {

@@ -5,7 +5,7 @@
  */
 
 import { HarnessError } from '../core/errors.js';
-import { asSessionId, prefixedSecureId } from '../_internal/ids.js';
+import { asSessionId, prefixedSecureId } from '../infra/ids.js';
 import type { SessionId } from '../core/types.js';
 import type { Session, SessionEvent } from './types.js';
 

@@ -6,7 +6,7 @@
 
 import { HarnessError } from '../core/errors.js';
 import { MessageQueue } from './message-queue.js';
-import { createAsyncLock, type AsyncLock } from '../_internal/async-lock.js';
+import { createAsyncLock, type AsyncLock } from '../infra/async-lock.js';
 import type { Logger } from '../observe/logger.js';
 import type {
   AgentMessage,

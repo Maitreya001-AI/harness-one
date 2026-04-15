@@ -8,7 +8,7 @@
 
 import { HarnessError } from '../core/errors.js';
 import { createFileIO } from './fs-io.js';
-import { secureId } from '../_internal/ids.js';
+import { secureId } from '../infra/ids.js';
 import type { MemoryEntry } from './types.js';
 import type { MemoryStore } from './store.js';
 

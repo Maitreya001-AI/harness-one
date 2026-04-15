@@ -12,7 +12,7 @@ import {
   sanitizeAttributes,
   type RedactConfig,
   type Redactor,
-} from '../_internal/redact.js';
+} from '../infra/redact.js';
 
 /** Supported log levels, ordered from most to least verbose. */
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { compress, compactIfNeeded, createAdapterSummarizer } from '../compress.js';
 import type { Message, AgentAdapter, ChatResponse } from '../../core/types.js';
-import { estimateTokens } from '../../_internal/token-estimator.js';
+import { estimateTokens } from '../../infra/token-estimator.js';
 
 function msg(role: Message['role'], content: string, meta?: Message['meta']): Message {
   return { role, content, meta };

@@ -5,11 +5,11 @@
  */
 
 import type { Message } from '../core/types.js';
-import type { Tokenizer } from '../_internal/token-estimator.js';
+import type { Tokenizer } from '../infra/token-estimator.js';
 import {
   estimateTokens,
   registerTokenizer as internalRegister,
-} from '../_internal/token-estimator.js';
+} from '../infra/token-estimator.js';
 
 /**
  * WeakMap-based memoization cache for per-message token counts.

@@ -5,7 +5,7 @@
  */
 
 import { HarnessError } from '../core/errors.js';
-import { secureId } from '../_internal/ids.js';
+import { secureId } from '../infra/ids.js';
 import type {
   MemoryEntry,
   MemoryFilter,

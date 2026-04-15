@@ -25,7 +25,7 @@ import {
   type IterationContext,
   type IterationRunner,
 } from './iteration-runner.js';
-import { safeWarn } from '../_internal/safe-log.js';
+import { safeWarn } from '../infra/safe-log.js';
 
 // ARCH-002: `AgentLoopTraceManager` lives in `./trace-interface.js`. Re-export
 // here so existing imports from `harness-one/core` (which historically pulled

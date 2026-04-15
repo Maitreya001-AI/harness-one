@@ -14,7 +14,7 @@ import type {
 import { toolError, ALL_TOOL_CAPABILITIES } from './types.js';
 import { validateToolCall } from './validate.js';
 import { HarnessError } from '../core/errors.js';
-import { safeWarn } from '../_internal/safe-log.js';
+import { safeWarn } from '../infra/safe-log.js';
 import type { Logger } from '../observe/logger.js';
 
 /**

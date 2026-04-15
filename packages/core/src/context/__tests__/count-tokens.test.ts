@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { countTokens, registerTokenizer } from '../count-tokens.js';
-import * as tokenEstimator from '../../_internal/token-estimator.js';
+import * as tokenEstimator from '../../infra/token-estimator.js';
 
 describe('countTokens', () => {
   it('returns a positive number for messages with content', () => {

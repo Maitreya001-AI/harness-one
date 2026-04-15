@@ -1,4 +1,5 @@
 import tseslint from 'typescript-eslint';
+import importPlugin from 'eslint-plugin-import';
 
 export default tseslint.config(
   {
@@ -37,6 +38,32 @@ export default tseslint.config(
       '@typescript-eslint/no-invalid-void-type': 'off',
       // Disallow console in library source code (use structured logging)
       'no-console': ['warn', { allow: ['warn', 'debug'] }],
+    },
+  },
+  // Wave-5C F-2 / ADR §3.e: forbid reaching into harness-one's infra/
+  // internals from outside packages/core/src/. Tests inside packages/core
+  // are allowed to import infra (they own it); other packages must go
+  // through the public subpaths.
+  {
+    files: ['packages/*/src/**/*.{ts,tsx}'],
+    ignores: [
+      'packages/core/src/**',
+      '**/__tests__/**',
+      '**/*.test.ts',
+      '**/__lint-fixtures__/**',
+    ],
+    plugins: {
+      import: importPlugin,
+    },
+    rules: {
+      'import/no-internal-modules': ['error', {
+        forbid: [
+          'harness-one/infra',
+          'harness-one/infra/**',
+          'harness-one/dist/infra',
+          'harness-one/dist/infra/**',
+        ],
+      }],
     },
   },
   // Relax rules for test files

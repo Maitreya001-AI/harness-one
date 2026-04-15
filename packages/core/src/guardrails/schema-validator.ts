@@ -6,7 +6,7 @@
 
 import type { JsonSchema } from '../core/types.js';
 import type { Guardrail } from './types.js';
-import { validateJsonSchema } from '../_internal/json-schema.js';
+import { validateJsonSchema } from '../infra/json-schema.js';
 
 /** Default maximum byte length for JSON content (1 MiB). Protects against DoS via oversized payloads. */
 const DEFAULT_MAX_JSON_BYTES = 1_048_576;

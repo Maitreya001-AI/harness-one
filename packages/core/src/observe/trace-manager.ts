@@ -5,15 +5,15 @@
  */
 
 import { HarnessError } from '../core/errors.js';
-import { asSpanId, asTraceId } from '../_internal/ids.js';
+import { asSpanId, asTraceId } from '../infra/ids.js';
 import type { SpanId, TraceId } from '../core/types.js';
 import {
   createRedactor,
   sanitizeAttributes,
   type RedactConfig,
   type Redactor,
-} from '../_internal/redact.js';
-import { createLazyAsync, type LazyAsync } from '../_internal/lazy-async.js';
+} from '../infra/redact.js';
+import { createLazyAsync, type LazyAsync } from '../infra/lazy-async.js';
 import type { Trace, Span, SpanEvent, SpanEventSeverity, TraceExporter } from './types.js';
 
 /** Retry telemetry aggregates exposed via `getRetryMetrics()`. */

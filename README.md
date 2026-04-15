@@ -842,17 +842,13 @@ const loop = new AgentLoop({
 });
 ```
 
-**Event bus removal**: `harness.eventBus` is a deprecated dead stub as of 0.4.0 — any property access warns once and any method call throws `HarnessError('DEPRECATED_EVENT_BUS')`. The field will be removed in 0.5.0. Each module exposes its own `onEvent()` subscription (sessions, orchestrator, traces); use those for new code.
+**Event bus removal** (Wave-5C): `harness.eventBus` was a deprecated dead stub in 0.4.x and has been **removed** entirely in the 1.0-rc line. Each module exposes its own `onEvent()` subscription (sessions, orchestrator, traces); use those for new code.
 
 **AgentLoop class deprecation**: the `new AgentLoop(...)` constructor is `@deprecated` as of 0.4.0 — prefer the `createAgentLoop()` factory. The class still works for backward compatibility and will be removed in 0.5.0.
 
 **Harness.initialize()** (0.4.0) — optional warmup that pre-initialises exporters and tokenizers behind an idempotent latch. `harness.run()` still works without it but may pay a cold-start latency on the first call.
 
-**harness-one/essentials** (0.4.0) — curated entry point with the 12 most-used symbols (`AgentLoop`, `HarnessError`, `defineTool`, `createTraceManager`, `createLogger`, `createSessionManager`, `createMiddlewareChain`, `createPipeline`, …). Import from this module instead of the root if you want a smaller surface and faster bundle:
-
-```ts
-import { createAgentLoop, defineTool, createLogger } from 'harness-one/essentials';
-```
+**harness-one/essentials removed** (Wave-5C): the curated `harness-one/essentials` subpath has been removed as redundant with the trimmed root barrel. Import the symbols you need directly from `harness-one` or the relevant submodule (`harness-one/core`, `harness-one/observe`, …).
 
 **AgentLoopHook** (0.4.0) — pass an array of hooks in `AgentLoopConfig.hooks` to receive `onIterationStart` / `onToolCall` / `onCost` / `onIterationEnd` callbacks without subscribing to `AgentEvent`. Hook errors are swallowed through the injected logger and never break the loop.
 
@@ -877,7 +873,7 @@ The `init` command creates working starter files in a `harness/` directory. The 
 
 ```
                     +-----------+
-                    | _internal |  <- JSON Schema validator + token estimator + LRU
+                    |   infra   |  <- JSON Schema validator + token estimator + LRU
                     +-----+-----+
                           |
                     +-----+-----+
@@ -895,9 +891,9 @@ context  prompt   tools   guardrails  observe  session  memory    eval    evolve
 
 Dependency rules (enforced):
 
-1. `_internal/` -> no dependencies (leaf module)
-2. `core/` -> only `_internal/`
-3. Every feature module -> only `core/` + `_internal/` (mostly type-only imports)
+1. `infra/` -> no dependencies (leaf module)
+2. `core/` -> only `infra/`
+3. Every feature module -> only `core/` + `infra/` (mostly type-only imports)
 4. Feature modules never import each other (`context`, `tools`, `guardrails`, `prompt`, etc. are siblings)
 5. `cli/` -> only Node.js built-ins (`fs`, `path`, `readline`)
 

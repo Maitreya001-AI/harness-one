@@ -6,7 +6,7 @@
 
 import type { DocumentChunk, EmbeddingModel, Retriever, RetrievalResult } from './types.js';
 import { HarnessError } from '../core/errors.js';
-import { createLazyAsync, type LazyAsync } from '../_internal/lazy-async.js';
+import { createLazyAsync, type LazyAsync } from '../infra/lazy-async.js';
 
 /** Extended retrieval result that includes skipped chunk tracking (Fix 15). */
 export interface ExtendedRetrievalResult {
