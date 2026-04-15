@@ -4,7 +4,7 @@
  * @module
  */
 
-import { HarnessError } from 'harness-one';
+import { HarnessError, HarnessErrorCode} from 'harness-one';
 
 // ── Module definitions ────────────────────────────────────────────────────────
 
@@ -74,10 +74,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
 
   if (all && modules.length > 0) {
     // CQ-040: Surface via HarnessError so wrappers / test harnesses can
-    // catch by `.code === 'CLI_PARSE_ERROR'` instead of string-matching.
+    // catch by `.code === HarnessErrorCode.CLI_PARSE_ERROR` instead of string-matching.
     throw new HarnessError(
       'Conflicting flags: --all and --modules cannot be used together.',
-      'CLI_PARSE_ERROR',
+      HarnessErrorCode.CLI_PARSE_ERROR,
       'Use --all to select all modules, or --modules to select specific ones.',
     );
   }

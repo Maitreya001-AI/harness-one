@@ -13,7 +13,7 @@ import type {
 } from './types.js';
 import { toolError, ALL_TOOL_CAPABILITIES } from './types.js';
 import { validateToolCall } from './validate.js';
-import { HarnessError } from '../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import { safeWarn } from '../infra/safe-log.js';
 import type { Logger } from '../observe/logger.js';
 
@@ -107,14 +107,14 @@ export function createRegistry(config?: CreateRegistryConfig): ToolRegistry {
     if (!TOOL_NAME_RE.test(tool.name)) {
       throw new HarnessError(
         `Invalid tool name "${tool.name}": must match /^[a-zA-Z][a-zA-Z0-9_.]*$/`,
-        'INVALID_TOOL_NAME',
+        HarnessErrorCode.TOOL_INVALID_NAME,
         'Tool names must start with a letter and contain only letters, digits, dots, or underscores',
       );
     }
     if (tools.has(tool.name)) {
       throw new HarnessError(
         `Tool "${tool.name}" is already registered`,
-        'DUPLICATE_TOOL',
+        HarnessErrorCode.TOOL_DUPLICATE,
         'Use a unique name or check registry.get() before registering',
       );
     }
@@ -146,7 +146,7 @@ export function createRegistry(config?: CreateRegistryConfig): ToolRegistry {
         if (!allowedCapabilities.has(cap)) {
           throw new HarnessError(
             `tool "${tool.name}" declares capability "${cap}" not in registry allow-list`,
-            'TOOL_CAPABILITY_DENIED',
+            HarnessErrorCode.TOOL_CAPABILITY_DENIED,
             `Add "${cap}" to createRegistry({ allowedCapabilities }) or use createPermissiveRegistry()`,
           );
         }

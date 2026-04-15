@@ -5,7 +5,7 @@
  */
 
 import type { Document, DocumentChunk, IngestMetrics, RAGPipeline, RAGPipelineConfig } from './types.js';
-import { HarnessError } from '../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 
 /** Fix 18: Result of an ingest operation with capacity signaling. */
 export interface IngestResult {
@@ -61,7 +61,7 @@ export function createRAGPipeline(config: RAGPipelineConfig): RAGPipeline {
       if (!probeResult || probeResult.length !== 1) {
         throw new HarnessError(
           'Embedding validation failed: probe did not return exactly 1 embedding',
-          'RAG_EMBEDDING_VALIDATION',
+          HarnessErrorCode.RAG_EMBEDDING_VALIDATION,
           'Ensure the embedding model returns one embedding per input text',
         );
       }
@@ -69,7 +69,7 @@ export function createRAGPipeline(config: RAGPipelineConfig): RAGPipeline {
       if (!Array.isArray(embedding) || embedding.length === 0) {
         throw new HarnessError(
           'Embedding validation failed: probe returned empty or non-array embedding',
-          'RAG_EMBEDDING_VALIDATION',
+          HarnessErrorCode.RAG_EMBEDDING_VALIDATION,
           'Ensure the embedding model returns a valid number array',
         );
       }
@@ -77,7 +77,7 @@ export function createRAGPipeline(config: RAGPipelineConfig): RAGPipeline {
         if (typeof val !== 'number' || Number.isNaN(val)) {
           throw new HarnessError(
             'Embedding validation failed: probe returned non-numeric values',
-            'RAG_EMBEDDING_VALIDATION',
+            HarnessErrorCode.RAG_EMBEDDING_VALIDATION,
             'Ensure the embedding model returns valid numbers',
           );
         }
@@ -86,7 +86,7 @@ export function createRAGPipeline(config: RAGPipelineConfig): RAGPipeline {
       if (err instanceof HarnessError) throw err;
       throw new HarnessError(
         `Embedding validation failed: ${err instanceof Error ? err.message : String(err)}`,
-        'RAG_EMBEDDING_VALIDATION',
+        HarnessErrorCode.RAG_EMBEDDING_VALIDATION,
         'Check that the embedding model is properly configured',
       );
     }
@@ -207,7 +207,7 @@ export function createRAGPipeline(config: RAGPipelineConfig): RAGPipeline {
         if (embeddings.length !== batch.length) {
           const mismatchErr = new HarnessError(
             `Embedding model returned ${embeddings.length} embeddings for ${batch.length} chunks`,
-            'RAG_EMBEDDING_MISMATCH',
+            HarnessErrorCode.RAG_EMBEDDING_MISMATCH,
             'Ensure the embedding model returns one embedding per input text',
           );
           // Mark each chunk span errored before throwing
@@ -255,7 +255,7 @@ export function createRAGPipeline(config: RAGPipelineConfig): RAGPipeline {
         // Choose a reason: if we already recorded embedding_mismatch above,
         // don't double-count. Detect via HarnessError code.
         const code = err instanceof HarnessError ? err.code : undefined;
-        const alreadyCounted = code === 'RAG_EMBEDDING_MISMATCH';
+        const alreadyCounted = code === HarnessErrorCode.RAG_EMBEDDING_MISMATCH;
         if (!alreadyCounted) {
           const reason = code ?? 'batch_error';
           recordFailure(batch.length, reason);
@@ -286,7 +286,7 @@ export function createRAGPipeline(config: RAGPipelineConfig): RAGPipeline {
       if (!config.loader) {
         throw new HarnessError(
           'No loader configured — use ingestDocuments() for pre-loaded documents',
-          'RAG_NO_LOADER',
+          HarnessErrorCode.RAG_NO_LOADER,
           'Provide a loader in the pipeline config or use ingestDocuments() instead',
         );
       }

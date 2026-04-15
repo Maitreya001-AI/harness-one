@@ -9,7 +9,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createFileIO } from '../fs-io.js';
-import { HarnessError } from '../../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../../core/errors.js';
 
 describe('fs-io corruption detection', () => {
   let dir: string;
@@ -24,7 +24,7 @@ describe('fs-io corruption detection', () => {
     const io = createFileIO({ directory: dir });
     writeFileSync(join(dir, '_index.json'), '{not json');
     await expect(io.readIndex()).rejects.toMatchObject({
-      code: 'STORE_CORRUPTION',
+      code: HarnessErrorCode.MEMORY_STORE_CORRUPTION,
     });
   });
 
@@ -39,7 +39,7 @@ describe('fs-io corruption detection', () => {
     // distinguish persisted-shape corruption from other store-level errors.
     const io = createFileIO({ directory: dir });
     writeFileSync(join(dir, '_index.json'), JSON.stringify({ keys: { a: 42 } }));
-    await expect(io.readIndex()).rejects.toMatchObject({ code: 'MEMORY_CORRUPT' });
+    await expect(io.readIndex()).rejects.toMatchObject({ code: HarnessErrorCode.MEMORY_CORRUPT });
   });
 
   it('readIndex: returns empty on ENOENT (first run)', async () => {
@@ -50,7 +50,7 @@ describe('fs-io corruption detection', () => {
   it('readEntry: throws STORE_CORRUPTION on invalid JSON', async () => {
     const io = createFileIO({ directory: dir });
     writeFileSync(join(dir, 'id1.json'), '{corrupt');
-    await expect(io.readEntry('id1')).rejects.toMatchObject({ code: 'STORE_CORRUPTION' });
+    await expect(io.readEntry('id1')).rejects.toMatchObject({ code: HarnessErrorCode.MEMORY_STORE_CORRUPTION });
   });
 
   it('readEntry: throws MEMORY_CORRUPT on shape mismatch (bad grade)', async () => {
@@ -68,7 +68,7 @@ describe('fs-io corruption detection', () => {
         updatedAt: 1,
       }),
     );
-    await expect(io.readEntry('id2')).rejects.toMatchObject({ code: 'MEMORY_CORRUPT' });
+    await expect(io.readEntry('id2')).rejects.toMatchObject({ code: HarnessErrorCode.MEMORY_CORRUPT });
   });
 
   it('readEntry: returns null on ENOENT', async () => {

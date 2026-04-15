@@ -117,7 +117,7 @@ vi.mock('@harness-one/tiktoken', () => ({
 
 import { createHarness } from '../index.js';
 import type { AnthropicHarnessConfig, OpenAIHarnessConfig, AdapterHarnessConfig } from '../index.js';
-import { HarnessError } from 'harness-one/core';
+import { HarnessError, HarnessErrorCode} from 'harness-one/core';
 import type { AgentAdapter } from 'harness-one/core';
 import type { MemoryStore } from 'harness-one/memory';
 import type { SchemaValidator } from 'harness-one/tools';
@@ -275,7 +275,7 @@ describe('createHarness() factory', () => {
       try {
         createHarness(badConfig);
       } catch (e) {
-        expect((e as HarnessError).code).toBe('INVALID_CONFIG');
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.CORE_INVALID_CONFIG);
         expect((e as HarnessError).message).toContain('adapter');
       }
     });
@@ -514,7 +514,7 @@ describe('createHarness() factory', () => {
 
       const errorEvent = events.find((e) => (e as { type: string }).type === 'error');
       expect(errorEvent).toBeDefined();
-      expect((errorEvent as { error: { code?: string } }).error.code).toBe('GUARDRAIL_BLOCKED');
+      expect((errorEvent as { error: { code?: string } }).error.code).toBe(HarnessErrorCode.GUARD_BLOCKED);
     });
 
     it('emits done event with error reason after guardrail block', async () => {
@@ -560,7 +560,7 @@ describe('createHarness() factory', () => {
 
       const errorEvent = events.find((e) => (e as { type: string }).type === 'error');
       expect(errorEvent).toBeDefined();
-      expect((errorEvent as { error: { code?: string } }).error.code).toBe('GUARDRAIL_BLOCKED');
+      expect((errorEvent as { error: { code?: string } }).error.code).toBe(HarnessErrorCode.GUARD_BLOCKED);
     });
 
     it('blocks tool result output through output guardrails', async () => {
@@ -586,7 +586,7 @@ describe('createHarness() factory', () => {
 
       const errorEvent = events.find((e) => (e as { type: string }).type === 'error');
       expect(errorEvent).toBeDefined();
-      expect((errorEvent as { error: { code?: string } }).error.code).toBe('GUARDRAIL_BLOCKED');
+      expect((errorEvent as { error: { code?: string } }).error.code).toBe(HarnessErrorCode.GUARD_BLOCKED);
     });
 
     it('blocks tool call arguments through input guardrails', async () => {
@@ -616,7 +616,7 @@ describe('createHarness() factory', () => {
 
       const errorEvent = events.find((e) => (e as { type: string }).type === 'error');
       expect(errorEvent).toBeDefined();
-      expect((errorEvent as { error: { code?: string } }).error.code).toBe('GUARDRAIL_BLOCKED');
+      expect((errorEvent as { error: { code?: string } }).error.code).toBe(HarnessErrorCode.GUARD_BLOCKED);
     });
 
     it('calls loop.abort() when input guardrail blocks user message', async () => {

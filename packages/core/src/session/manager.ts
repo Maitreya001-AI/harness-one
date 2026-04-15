@@ -4,7 +4,7 @@
  * @module
  */
 
-import { HarnessError } from '../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import { asSessionId, prefixedSecureId } from '../infra/ids.js';
 import type { SessionId } from '../core/types.js';
 import type { Session, SessionEvent } from './types.js';
@@ -71,10 +71,10 @@ export function createSessionManager(config?: {
   const gcIntervalMs = config?.gcIntervalMs ?? 60000;
 
   if (maxSessions < 1) {
-    throw new HarnessError('maxSessions must be >= 1', 'INVALID_CONFIG', 'Provide a positive maxSessions value');
+    throw new HarnessError('maxSessions must be >= 1', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide a positive maxSessions value');
   }
   if (ttlMs <= 0) {
-    throw new HarnessError('ttlMs must be > 0', 'INVALID_CONFIG', 'Provide a positive TTL value');
+    throw new HarnessError('ttlMs must be > 0', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide a positive TTL value');
   }
 
   interface MutableSession {
@@ -216,7 +216,7 @@ export function createSessionManager(config?: {
       if (sessions.size >= maxSessions && unlockedOrder.size === 0) {
         throw new HarnessError(
           'Cannot create session: all sessions are locked and max capacity reached',
-          'SESSION_LIMIT',
+          HarnessErrorCode.SESSION_LIMIT,
           'Unlock or destroy an existing session before creating a new one',
         );
       }
@@ -255,7 +255,7 @@ export function createSessionManager(config?: {
       if (!session) {
         throw new HarnessError(
           `Session not found: ${id}`,
-          'SESSION_NOT_FOUND',
+          HarnessErrorCode.SESSION_NOT_FOUND,
           'Create a session before accessing it',
         );
       }
@@ -263,7 +263,7 @@ export function createSessionManager(config?: {
       if (session.status === 'locked') {
         throw new HarnessError(
           `Session is locked: ${id}`,
-          'SESSION_LOCKED',
+          HarnessErrorCode.SESSION_LOCKED,
           'Wait for the session to be unlocked',
         );
       }
@@ -272,7 +272,7 @@ export function createSessionManager(config?: {
         session.status = 'expired';
         throw new HarnessError(
           `Session has expired: ${id}`,
-          'SESSION_EXPIRED',
+          HarnessErrorCode.SESSION_EXPIRED,
           'Create a new session',
         );
       }
@@ -289,7 +289,7 @@ export function createSessionManager(config?: {
       if (!session) {
         throw new HarnessError(
           `Session not found: ${id}`,
-          'SESSION_NOT_FOUND',
+          HarnessErrorCode.SESSION_NOT_FOUND,
           'Create a session before locking it',
         );
       }
@@ -305,7 +305,7 @@ export function createSessionManager(config?: {
           if (!sessions.has(key)) {
             throw new HarnessError(
               `Session was destroyed while locked: ${key}`,
-              'SESSION_NOT_FOUND',
+              HarnessErrorCode.SESSION_NOT_FOUND,
               'Do not destroy a session while it is locked',
             );
           }

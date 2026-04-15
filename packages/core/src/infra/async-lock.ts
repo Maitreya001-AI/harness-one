@@ -15,13 +15,13 @@
  * @module
  */
 
-import { HarnessError } from '../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 
 /** Options accepted by {@link AsyncLock.acquire}. */
 export interface AcquireOptions {
   /**
    * Optional abort signal. When the signal fires before the lock becomes
-   * available, `acquire()` rejects with a `HarnessError('LOCK_ABORTED')`
+   * available, `acquire()` rejects with a `HarnessError(HarnessErrorCode.LOCK_ABORTED)`
    * and the waiter is removed from the queue.
    */
   readonly signal?: AbortSignal;
@@ -94,7 +94,7 @@ export function createAsyncLock(): AsyncLock {
     if (signal?.aborted) {
       throw new HarnessError(
         'Lock acquire aborted',
-        'LOCK_ABORTED',
+        HarnessErrorCode.LOCK_ABORTED,
         'The AbortSignal was already aborted when acquire() was called',
       );
     }
@@ -118,7 +118,7 @@ export function createAsyncLock(): AsyncLock {
           reject(
             new HarnessError(
               'Lock acquire aborted',
-              'LOCK_ABORTED',
+              HarnessErrorCode.LOCK_ABORTED,
               'The AbortSignal fired while waiting for the lock',
             ),
           );

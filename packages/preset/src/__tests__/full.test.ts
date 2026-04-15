@@ -101,7 +101,7 @@ vi.mock('@harness-one/tiktoken', () => ({
 
 import { createHarness } from '../index.js';
 import type { AnthropicHarnessConfig, AdapterHarnessConfig } from '../index.js';
-import { HarnessError } from 'harness-one/core';
+import { HarnessError, HarnessErrorCode} from 'harness-one/core';
 import type { AgentAdapter } from 'harness-one/core';
 import type { MemoryStore } from 'harness-one/memory';
 import type { SchemaValidator } from 'harness-one/tools';
@@ -537,7 +537,7 @@ describe('createHarness', () => {
       try {
         createHarness(badConfig);
       } catch (e) {
-        expect((e as HarnessError).code).toBe('INVALID_CONFIG');
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.CORE_INVALID_CONFIG);
         expect((e as HarnessError).message).toContain('adapter');
       }
     });
@@ -547,7 +547,7 @@ describe('createHarness', () => {
       try {
         createHarness({ ...baseConfig, maxIterations: 0 });
       } catch (e) {
-        expect((e as HarnessError).code).toBe('INVALID_CONFIG');
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.CORE_INVALID_CONFIG);
         expect((e as HarnessError).message).toContain('maxIterations');
       }
     });
@@ -561,7 +561,7 @@ describe('createHarness', () => {
       try {
         createHarness({ ...baseConfig, maxTotalTokens: 0 });
       } catch (e) {
-        expect((e as HarnessError).code).toBe('INVALID_CONFIG');
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.CORE_INVALID_CONFIG);
         expect((e as HarnessError).message).toContain('maxTotalTokens');
       }
     });
@@ -575,7 +575,7 @@ describe('createHarness', () => {
       try {
         createHarness({ ...baseConfig, budget: 0 });
       } catch (e) {
-        expect((e as HarnessError).code).toBe('INVALID_CONFIG');
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.CORE_INVALID_CONFIG);
         expect((e as HarnessError).message).toContain('budget');
       }
     });
@@ -592,7 +592,7 @@ describe('createHarness', () => {
       try {
         createHarness({ ...baseConfig, guardrails: { rateLimit: { max: 0, windowMs: 60000 } } });
       } catch (e) {
-        expect((e as HarnessError).code).toBe('INVALID_CONFIG');
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.CORE_INVALID_CONFIG);
         expect((e as HarnessError).message).toContain('rateLimit.max');
       }
     });
@@ -612,7 +612,7 @@ describe('createHarness', () => {
       try {
         createHarness({ ...baseConfig, guardrails: { rateLimit: { max: 10, windowMs: 0 } } });
       } catch (e) {
-        expect((e as HarnessError).code).toBe('INVALID_CONFIG');
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.CORE_INVALID_CONFIG);
         expect((e as HarnessError).message).toContain('windowMs');
       }
     });
@@ -628,7 +628,7 @@ describe('createHarness', () => {
           pricing: [{ model: 'test-model', inputPer1kTokens: -0.01, outputPer1kTokens: 0.02 }],
         });
       } catch (e) {
-        expect((e as HarnessError).code).toBe('INVALID_CONFIG');
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.CORE_INVALID_CONFIG);
         expect((e as HarnessError).message).toContain('test-model');
       }
     });

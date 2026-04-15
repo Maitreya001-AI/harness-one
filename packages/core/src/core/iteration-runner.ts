@@ -23,7 +23,7 @@
 import type { ExecutionStrategy, Message, TokenUsage, ToolCallRequest } from './types.js';
 import type { AgentEvent, DoneReason } from './events.js';
 import { assertNever } from './events.js';
-import { AbortedError, HarnessError, TokenBudgetExceededError } from './errors.js';
+import { AbortedError, HarnessError, TokenBudgetExceededError, HarnessErrorCode} from './errors.js';
 import type { AgentLoopHook } from './agent-loop.js';
 import type { AdapterCaller } from './adapter-caller.js';
 import type { AgentLoopTraceManager } from './trace-interface.js';
@@ -342,7 +342,7 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
             type: 'error',
             error: new HarnessError(
               `guardrail "${guardName}" blocked input — ${reason}`,
-              'GUARDRAIL_VIOLATION',
+              HarnessErrorCode.GUARD_VIOLATION,
               'Review the input pipeline configuration and sanitize the user message',
             ),
           };
@@ -389,7 +389,7 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
         });
       }
 
-      if (errorCategory === 'ABORTED') {
+      if (errorCategory === HarnessErrorCode.CORE_ABORTED) {
         // Abort fired during backoff (synthetic category from AdapterCaller).
         return yield* bailOut(ctx, {
           reason: 'aborted',
@@ -487,7 +487,7 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
             type: 'error',
             error: new HarnessError(
               `guardrail "${guardName}" blocked output — ${reason}`,
-              'GUARDRAIL_VIOLATION',
+              HarnessErrorCode.GUARD_VIOLATION,
               'Review the output pipeline configuration and the model response',
             ),
           };
@@ -623,7 +623,7 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
             },
           };
           resultContent = JSON.stringify({
-            error: `GUARDRAIL_VIOLATION: ${guardName}`,
+            error: `${HarnessErrorCode.GUARD_VIOLATION}: ${guardName}`,
             reason,
           });
         }

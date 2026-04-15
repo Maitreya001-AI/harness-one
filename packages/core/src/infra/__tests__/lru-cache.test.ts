@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { LRUCache } from '../lru-cache.js';
-import { HarnessError } from '../../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../../core/errors.js';
 
 describe('LRUCache', () => {
   describe('constructor', () => {
@@ -20,7 +20,7 @@ describe('LRUCache', () => {
         throw new Error('expected throw');
       } catch (err) {
         expect(err).toBeInstanceOf(HarnessError);
-        expect((err as HarnessError).code).toBe('INVALID_CONFIG');
+        expect((err as HarnessError).code).toBe(HarnessErrorCode.CORE_INVALID_CONFIG);
         expect((err as HarnessError).suggestion).toBe('Use a value >= 1');
       }
     });

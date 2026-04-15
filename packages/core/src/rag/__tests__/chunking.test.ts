@@ -4,7 +4,7 @@ import {
   createParagraphChunking,
   createSlidingWindowChunking,
 } from '../chunking.js';
-import { HarnessError } from '../../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../../core/errors.js';
 import type { Document } from '../types.js';
 
 // ---------------------------------------------------------------------------
@@ -116,7 +116,7 @@ describe('createFixedSizeChunking', () => {
     try {
       createFixedSizeChunking({ chunkSize: 0 });
     } catch (e) {
-      expect((e as HarnessError).code).toBe('RAG_INVALID_CONFIG');
+      expect((e as HarnessError).code).toBe(HarnessErrorCode.RAG_INVALID_CONFIG);
     }
   });
 
@@ -367,7 +367,7 @@ describe('createSlidingWindowChunking', () => {
       createSlidingWindowChunking({ windowSize: 0, stepSize: 5 });
     } catch (e) {
       expect(e).toBeInstanceOf(HarnessError);
-      expect((e as HarnessError).code).toBe('RAG_INVALID_CONFIG');
+      expect((e as HarnessError).code).toBe(HarnessErrorCode.RAG_INVALID_CONFIG);
     }
   });
 });

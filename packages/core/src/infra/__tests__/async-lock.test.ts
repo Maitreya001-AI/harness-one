@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createAsyncLock } from '../async-lock.js';
-import { HarnessError } from '../../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../../core/errors.js';
 
 describe('createAsyncLock', () => {
   it('runs single-owner critical sections exclusively', async () => {
@@ -67,7 +67,7 @@ describe('createAsyncLock', () => {
     const ac = new AbortController();
     ac.abort();
     await expect(lock.acquire({ signal: ac.signal })).rejects.toMatchObject({
-      code: 'LOCK_ABORTED',
+      code: HarnessErrorCode.LOCK_ABORTED,
     });
   });
 
@@ -79,7 +79,7 @@ describe('createAsyncLock', () => {
     // Abort before release.
     ac.abort();
     await expect(p).rejects.toBeInstanceOf(HarnessError);
-    await expect(p).rejects.toMatchObject({ code: 'LOCK_ABORTED' });
+    await expect(p).rejects.toMatchObject({ code: HarnessErrorCode.LOCK_ABORTED });
     // Lock owner can still release cleanly.
     release();
     // And the lock remains functional.
@@ -95,7 +95,7 @@ describe('createAsyncLock', () => {
     const results: string[] = [];
     const ok = lock.withLock(async () => { results.push('ok'); });
     ac.abort();
-    await expect(aborted).rejects.toMatchObject({ code: 'LOCK_ABORTED' });
+    await expect(aborted).rejects.toMatchObject({ code: HarnessErrorCode.LOCK_ABORTED });
     release();
     await ok;
     expect(results).toEqual(['ok']);
@@ -130,7 +130,7 @@ describe('createAsyncLock', () => {
     ac.abort();
     await expect(
       lock.withLock(async () => 'never', { signal: ac.signal }),
-    ).rejects.toMatchObject({ code: 'LOCK_ABORTED' });
+    ).rejects.toMatchObject({ code: HarnessErrorCode.LOCK_ABORTED });
   });
 
   it('errors include operator-friendly hint text', async () => {
@@ -142,7 +142,7 @@ describe('createAsyncLock', () => {
     } catch (err) {
       expect(err).toBeInstanceOf(HarnessError);
       const he = err as HarnessError;
-      expect(he.code).toBe('LOCK_ABORTED');
+      expect(he.code).toBe(HarnessErrorCode.LOCK_ABORTED);
       expect(typeof he.suggestion).toBe('string');
     }
   });

@@ -4,7 +4,7 @@
  * @module
  */
 
-import { HarnessError } from '../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import { MessageQueue } from './message-queue.js';
 import { createAsyncLock, type AsyncLock } from '../infra/async-lock.js';
 import type { Logger } from '../observe/logger.js';
@@ -234,7 +234,7 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
     if (!agent) {
       throw new HarnessError(
         `Agent not found: ${id}`,
-        'AGENT_NOT_FOUND',
+        HarnessErrorCode.ORCH_AGENT_NOT_FOUND,
         'Register the agent before performing operations on it',
       );
     }
@@ -258,14 +258,14 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
       if (typeof key !== 'string' || key.length === 0) {
         throw new HarnessError(
           `Invalid context key: keys must be non-empty strings`,
-          'INVALID_KEY',
+          HarnessErrorCode.CORE_INVALID_KEY,
           'Provide a non-empty string key',
         );
       }
       if (FORBIDDEN_CONTEXT_KEYS.has(key)) {
         throw new HarnessError(
           `Invalid context key "${key}": reserved prototype-polluting identifier`,
-          'INVALID_KEY',
+          HarnessErrorCode.CORE_INVALID_KEY,
           `Avoid keys in {${Array.from(FORBIDDEN_CONTEXT_KEYS).join(', ')}}`,
         );
       }
@@ -284,14 +284,14 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
       if (agents.has(id)) {
         throw new HarnessError(
           `Agent already registered: ${id}`,
-          'DUPLICATE_AGENT',
+          HarnessErrorCode.ORCH_DUPLICATE_AGENT,
           'Use a unique ID or unregister the existing agent first',
         );
       }
       if (agents.size >= maxAgents) {
         throw new HarnessError(
           `Maximum agents limit reached (${maxAgents})`,
-          'MAX_AGENTS',
+          HarnessErrorCode.ORCH_MAX_AGENTS,
           'Increase maxAgents or unregister unused agents',
         );
       }
@@ -426,7 +426,7 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
               if (current === delegatedFrom) {
                 throw new HarnessError(
                   `Delegation cycle detected: ${selectedId} is already in the delegation chain of ${delegatedFrom}`,
-                  'DELEGATION_CYCLE',
+                  HarnessErrorCode.ORCH_DELEGATION_CYCLE,
                   'Avoid delegating tasks back to agents that originated the delegation',
                 );
               }

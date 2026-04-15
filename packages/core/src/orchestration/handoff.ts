@@ -4,7 +4,7 @@
  * @module
  */
 
-import { HarnessError } from '../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import type {
   HandoffManager,
   HandoffPayload,
@@ -75,7 +75,7 @@ export function createHandoff(transport: MessageTransport, handoffConfig?: Hando
     } catch (err) {
       throw new HarnessError(
         `Failed to serialize handoff payload: ${err instanceof Error ? err.message : String(err)}`,
-        'HANDOFF_SERIALIZATION_ERROR',
+        HarnessErrorCode.ORCH_HANDOFF_SERIALIZATION_ERROR,
         'Ensure all values in the handoff payload are JSON-serializable',
       );
     }
@@ -95,10 +95,10 @@ export function createHandoff(transport: MessageTransport, handoffConfig?: Hando
   const manager: HandoffManager = {
     send(from: string, to: string, payload: HandoffPayload): HandoffReceipt {
       if (!from || typeof from !== 'string') {
-        throw new HarnessError('from agent ID must be a non-empty string', 'INVALID_CONFIG', 'Provide a valid agent ID for the sender');
+        throw new HarnessError('from agent ID must be a non-empty string', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide a valid agent ID for the sender');
       }
       if (!to || typeof to !== 'string') {
-        throw new HarnessError('to agent ID must be a non-empty string', 'INVALID_CONFIG', 'Provide a valid agent ID for the receiver');
+        throw new HarnessError('to agent ID must be a non-empty string', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide a valid agent ID for the receiver');
       }
       const content = serializePayload(payload);
 

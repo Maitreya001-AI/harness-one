@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createDriftDetector } from '../drift-detector.js';
-import { HarnessError } from 'harness-one';
+import { HarnessError, HarnessErrorCode} from 'harness-one';
 
 describe('createDriftDetector', () => {
   describe('check', () => {
@@ -64,7 +64,7 @@ describe('createDriftDetector', () => {
       try {
         detector.check('unknown', { a: 1 });
       } catch (e) {
-        expect((e as HarnessError).code).toBe('NO_BASELINE');
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.EVOLVE_NO_BASELINE);
       }
     });
 

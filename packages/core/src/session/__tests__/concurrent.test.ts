@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createSessionManager } from '../manager.js';
-import { HarnessError } from '../../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../../core/errors.js';
 import type { SessionEvent } from '../types.js';
 
 describe('SessionManager concurrent access', () => {
@@ -77,7 +77,7 @@ describe('SessionManager concurrent access', () => {
       try {
         sm.access(session.id);
       } catch (e) {
-        expect((e as HarnessError).code).toBe('SESSION_LOCKED');
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.SESSION_LOCKED);
       }
 
       unlock();
@@ -234,7 +234,7 @@ describe('SessionManager concurrent access', () => {
       try {
         unlock();
       } catch (e) {
-        expect((e as HarnessError).code).toBe('SESSION_NOT_FOUND');
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.SESSION_NOT_FOUND);
       }
 
       sm.dispose();

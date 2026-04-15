@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createContentFilter } from '../content-filter.js';
-import { HarnessError } from '../../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../../core/errors.js';
 
 describe('createContentFilter', () => {
   // ---- Blocks content matching blocked keywords ----
@@ -311,7 +311,7 @@ describe('createContentFilter', () => {
         createContentFilter({ blockedPatterns: [/(a+)+/] });
       } catch (err) {
         expect(err).toBeInstanceOf(HarnessError);
-        expect((err as HarnessError).code).toBe('REDOS_PATTERN');
+        expect((err as HarnessError).code).toBe(HarnessErrorCode.CORE_REDOS_PATTERN);
         expect((err as HarnessError).message).toContain('ReDoS');
       }
     });

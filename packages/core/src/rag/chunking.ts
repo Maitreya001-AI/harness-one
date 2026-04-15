@@ -4,7 +4,7 @@
  * @module
  */
 
-import { HarnessError } from '../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import type { ChunkingStrategy, Document, DocumentChunk } from './types.js';
 
 /**
@@ -50,7 +50,7 @@ export function createFixedSizeChunking(config: {
   if (chunkSize <= 0) {
     throw new HarnessError(
       `chunkSize must be greater than 0, got ${chunkSize}`,
-      'RAG_INVALID_CONFIG',
+      HarnessErrorCode.RAG_INVALID_CONFIG,
       'Provide a positive chunkSize value',
     );
   }
@@ -58,7 +58,7 @@ export function createFixedSizeChunking(config: {
   if (overlap < 0) {
     throw new HarnessError(
       `overlap must be non-negative, got ${overlap}`,
-      'RAG_INVALID_CONFIG',
+      HarnessErrorCode.RAG_INVALID_CONFIG,
       'Provide a non-negative overlap value',
     );
   }
@@ -66,7 +66,7 @@ export function createFixedSizeChunking(config: {
   if (overlap >= chunkSize) {
     throw new HarnessError(
       `overlap (${overlap}) must be less than chunkSize (${chunkSize})`,
-      'RAG_INVALID_CONFIG',
+      HarnessErrorCode.RAG_INVALID_CONFIG,
       'Reduce overlap or increase chunkSize',
     );
   }
@@ -134,7 +134,7 @@ export function createParagraphChunking(config?: {
   if (maxChunkSize !== undefined && maxChunkSize <= 0) {
     throw new HarnessError(
       `maxChunkSize must be greater than 0, got ${maxChunkSize}`,
-      'RAG_INVALID_CONFIG',
+      HarnessErrorCode.RAG_INVALID_CONFIG,
       'Provide a positive maxChunkSize value',
     );
   }
@@ -212,7 +212,7 @@ export function createSlidingWindowChunking(config: {
   if (windowSize <= 0) {
     throw new HarnessError(
       `windowSize must be greater than 0, got ${windowSize}`,
-      'RAG_INVALID_CONFIG',
+      HarnessErrorCode.RAG_INVALID_CONFIG,
       'Provide a positive windowSize value',
     );
   }
@@ -220,7 +220,7 @@ export function createSlidingWindowChunking(config: {
   if (stepSize <= 0) {
     throw new HarnessError(
       `stepSize must be greater than 0, got ${stepSize}`,
-      'RAG_INVALID_CONFIG',
+      HarnessErrorCode.RAG_INVALID_CONFIG,
       'Provide a positive stepSize value',
     );
   }

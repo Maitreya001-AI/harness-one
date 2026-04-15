@@ -12,7 +12,7 @@ import { readFile, writeFile, mkdir, readdir, unlink, rename } from 'node:fs/pro
 import { join, basename, resolve, sep } from 'node:path';
 import type { MemoryEntry } from './types.js';
 import { validateIndex, validateMemoryEntry, parseJsonSafe } from './_schemas.js';
-import { HarnessError } from '../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 
 /** Index mapping keys to entry IDs. */
 export interface Index {
@@ -31,7 +31,7 @@ const ENTRY_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 /**
  * Validate an entry ID against {@link ENTRY_ID_PATTERN}.
  *
- * Throws `HarnessError('INVALID_ID')` when the id contains anything that could
+ * Throws `HarnessError(HarnessErrorCode.CORE_INVALID_ID)` when the id contains anything that could
  * escape the store directory (e.g., `../etc/passwd`, `foo/bar`, backslashes,
  * nuls, or just an over-long string). The helper is invoked at the top of
  * every function that turns an id into a filesystem path, so the invariant is
@@ -42,7 +42,7 @@ export function validateEntryId(id: string): void {
   if (typeof id !== 'string' || !ENTRY_ID_PATTERN.test(id)) {
     throw new HarnessError(
       'memory entry id format',
-      'INVALID_ID',
+      HarnessErrorCode.CORE_INVALID_ID,
       'Entry ids must match /^[A-Za-z0-9_-]{1,128}$/ — no path separators or dots allowed.',
     );
   }
@@ -87,7 +87,7 @@ export function createFileIO(config: { directory: string; indexFile?: string }):
     if (!absolute.startsWith(resolvedDirPrefix)) {
       throw new HarnessError(
         'memory entry path escapes store directory',
-        'INVALID_ID',
+        HarnessErrorCode.CORE_INVALID_ID,
         'Refusing to operate on a path outside the configured directory — refuse and report.',
       );
     }
@@ -114,7 +114,7 @@ export function createFileIO(config: { directory: string; indexFile?: string }):
       if (!parsed.ok) {
         throw new HarnessError(
           `Corrupted memory index at ${indexPath}: ${parsed.error.message}`,
-          'STORE_CORRUPTION',
+          HarnessErrorCode.MEMORY_STORE_CORRUPTION,
           'The index file is not valid JSON. Delete it to rebuild from entry files, ' +
             'or restore from backup.',
           parsed.error,
@@ -146,7 +146,7 @@ export function createFileIO(config: { directory: string; indexFile?: string }):
       if (!parsed.ok) {
         throw new HarnessError(
           `Corrupted memory entry at ${entryPath(id)}: ${parsed.error.message}`,
-          'STORE_CORRUPTION',
+          HarnessErrorCode.MEMORY_STORE_CORRUPTION,
           'The entry file is not valid JSON. Delete the file to drop the entry, ' +
             'or restore from backup.',
           parsed.error,

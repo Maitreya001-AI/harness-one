@@ -5,7 +5,7 @@
  */
 
 import type { Guardrail, GuardrailContext } from './types.js';
-import { HarnessError } from '../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import { isReDoSCandidate } from './content-filter.js';
 
 // Zero-width characters to strip before matching
@@ -128,7 +128,7 @@ export function createInjectionDetector(config?: {
     if (isReDoSCandidate(pat.source)) {
       throw new HarnessError(
         `Injection detector extraPattern /${pat.source}/ is a potential ReDoS candidate (contains nested or adjacent quantifiers)`,
-        'INVALID_CONFIG',
+        HarnessErrorCode.CORE_INVALID_CONFIG,
         'Simplify the pattern to avoid nested quantifiers like (a+)+ or overlapping alternation like (a|ab)*',
       );
     }

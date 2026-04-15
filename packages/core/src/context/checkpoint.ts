@@ -11,7 +11,7 @@ import type {
   CheckpointManagerConfig,
   CheckpointStorage,
 } from './types.js';
-import { HarnessError } from '../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 
 /** Default token heuristic: ~4 characters per token. */
 function defaultCountTokens(messages: readonly Message[]): number {
@@ -64,7 +64,7 @@ export function createCheckpointManager(
   }
   const maxCheckpoints = config?.maxCheckpoints ?? 5;
   if (maxCheckpoints < 1) {
-    throw new HarnessError('maxCheckpoints must be >= 1', 'INVALID_CONFIG', 'Provide a positive integer for maxCheckpoints');
+    throw new HarnessError('maxCheckpoints must be >= 1', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide a positive integer for maxCheckpoints');
   }
   const countTokens = config?.countTokens ?? defaultCountTokens;
   const storage = config?.storage ?? createInMemoryStorage();
@@ -104,7 +104,7 @@ export function createCheckpointManager(
       if (!cp) {
         throw new HarnessError(
           `Checkpoint not found: ${checkpointId}`,
-          'CHECKPOINT_NOT_FOUND',
+          HarnessErrorCode.CONTEXT_CHECKPOINT_NOT_FOUND,
           'Check the checkpoint ID and try again.',
         );
       }

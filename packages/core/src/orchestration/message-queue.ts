@@ -4,7 +4,7 @@
  * Provides per-agent bounded message queues with configurable overflow policy:
  * - Default (backpressure=false): drop-oldest overflow policy with backpressure
  *   signaling via callbacks and events.
- * - Backpressure mode (backpressure=true): reject the send with 'QUEUE_FULL'
+ * - Backpressure mode (backpressure=true): reject the send with HarnessErrorCode.ORCH_QUEUE_FULL
  *   error, letting the sender decide whether to retry or buffer.
  *
  * Message ordering is FIFO per sender-receiver pair within a single process.
@@ -15,7 +15,7 @@
  * @module
  */
 
-import { HarnessError } from '../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import type { AgentMessage } from './types.js';
 
 /** Callback for when messages are dropped due to queue overflow. */
@@ -34,7 +34,7 @@ export interface MessageQueueConfig {
   readonly onWarning?: QueueWarningHandler;
   readonly onEvent?: QueueEventEmitter;
   /**
-   * Fix 26: When true, reject sends with 'QUEUE_FULL' error instead of
+   * Fix 26: When true, reject sends with HarnessErrorCode.ORCH_QUEUE_FULL error instead of
    * dropping oldest messages. The sender can then decide to retry or buffer.
    * Default: false (backward compatible drop-oldest behavior).
    */
@@ -61,7 +61,7 @@ export class MessageQueue {
   constructor(config?: MessageQueueConfig) {
     this.maxQueueSize = config?.maxQueueSize ?? 1000;
     if (this.maxQueueSize < 1) {
-      throw new HarnessError('maxQueueSize must be >= 1', 'INVALID_CONFIG', 'Provide a positive maxQueueSize value');
+      throw new HarnessError('maxQueueSize must be >= 1', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide a positive maxQueueSize value');
     }
     this.onWarning = config?.onWarning;
     this.onEvent = config?.onEvent;
@@ -89,7 +89,7 @@ export class MessageQueue {
    * When the queue is at capacity:
    * - **backpressure=false** (default): The oldest message is dropped to make room,
    *   and a warning/event is emitted for backpressure signaling.
-   * - **backpressure=true** (Fix 26): Throws HarnessError with code 'QUEUE_FULL'
+   * - **backpressure=true** (Fix 26): Throws HarnessError with code HarnessErrorCode.ORCH_QUEUE_FULL
    *   instead of dropping. The sender can then decide to retry or buffer.
    *
    * Thread-safety note: The check-then-modify pattern below (read queue.length,
@@ -109,7 +109,7 @@ export class MessageQueue {
       if (this.backpressure) {
         throw new HarnessError(
           `Queue full for agent "${agentId}" (maxQueueSize: ${this.maxQueueSize})`,
-          'QUEUE_FULL',
+          HarnessErrorCode.ORCH_QUEUE_FULL,
           'Wait for messages to be consumed or increase maxQueueSize',
         );
       }

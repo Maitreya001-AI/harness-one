@@ -6,7 +6,7 @@
  * capability declarations to hard throws; this test suite locks the
  * Wave-5A contract (warn-only for missing, throw for disallowed).
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { createRegistry, createPermissiveRegistry } from '../registry.js';
 import { defineTool } from '../define-tool.js';
 import { toolSuccess } from '../types.js';
@@ -15,7 +15,7 @@ import {
   ALL_TOOL_CAPABILITIES,
   type ToolCapabilityValue,
 } from '../types.js';
-import { HarnessError } from '../../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../../core/errors.js';
 import type { Logger } from '../../observe/logger.js';
 
 function makeTool(opts: {
@@ -92,7 +92,7 @@ describe('T09: createRegistry default allow-list = ["readonly"]', () => {
     }
     expect(caught).toBeInstanceOf(HarnessError);
     const he = caught as HarnessError;
-    expect(he.code).toBe('TOOL_CAPABILITY_DENIED');
+    expect(he.code).toBe(HarnessErrorCode.TOOL_CAPABILITY_DENIED);
     expect(he.message).toMatch(/shell/);
     expect(he.message).toMatch(/sh/);
   });
@@ -191,7 +191,7 @@ describe('T09: capability check ordered before permission check (INT-09-01)', ()
       caught = err;
     }
     expect(caught).toBeInstanceOf(HarnessError);
-    expect((caught as HarnessError).code).toBe('TOOL_CAPABILITY_DENIED');
+    expect((caught as HarnessError).code).toBe(HarnessErrorCode.TOOL_CAPABILITY_DENIED);
   });
 });
 
@@ -199,7 +199,7 @@ describe('T09: TOOL_CAPABILITY_DENIED is a non-retryable config error', () => {
   it('surfaces via HarnessError.code so the classifier can treat it as non-retryable', () => {
     // HarnessError has no `.retryable` field by design — config-time errors
     // are inherently non-retryable. The classifier contract (T07) is that a
-    // consumer inspecting `err.code === 'TOOL_CAPABILITY_DENIED'` must be able
+    // consumer inspecting `err.code === HarnessErrorCode.TOOL_CAPABILITY_DENIED` must be able
     // to decide "do not retry". We encode that contract here: the error code
     // is stable, and the error does NOT expose a truthy `.retryable`.
     const registry = createRegistry();
@@ -211,7 +211,7 @@ describe('T09: TOOL_CAPABILITY_DENIED is a non-retryable config error', () => {
     }
     expect(err).toBeInstanceOf(HarnessError);
     const he = err as HarnessError & { retryable?: boolean };
-    expect(he.code).toBe('TOOL_CAPABILITY_DENIED');
+    expect(he.code).toBe(HarnessErrorCode.TOOL_CAPABILITY_DENIED);
     // Explicitly assert non-retryable semantics.
     expect(he.retryable).not.toBe(true);
   });

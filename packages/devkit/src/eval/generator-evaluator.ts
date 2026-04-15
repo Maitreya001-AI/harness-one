@@ -7,7 +7,7 @@
  * @module
  */
 
-import { HarnessError } from 'harness-one';
+import { HarnessError, HarnessErrorCode} from 'harness-one';
 import type { GeneratorEvaluatorConfig } from './types.js';
 
 /**
@@ -36,7 +36,7 @@ export async function runGeneratorEvaluator(
   if (maxRetries < 1) {
     throw new HarnessError(
       'maxRetries must be at least 1',
-      'EVAL_CONFIG',
+      HarnessErrorCode.EVAL_CONFIG,
       'Set maxRetries to 1 or higher',
     );
   }

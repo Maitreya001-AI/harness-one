@@ -7,7 +7,7 @@
  * @module
  */
 
-import { AgentLoop, HarnessError, createMiddlewareChain } from 'harness-one/core';
+import { AgentLoop, HarnessError, createMiddlewareChain, HarnessErrorCode} from 'harness-one/core';
 import type { AgentAdapter, Message, AgentEvent, MiddlewareChain } from 'harness-one/core';
 import { createTraceManager, createConsoleExporter, createCostTracker, createLogger } from 'harness-one/observe';
 import type { TraceExporter, TraceManager, CostTracker, ModelPricing, Logger } from 'harness-one/observe';
@@ -226,7 +226,7 @@ export interface Harness {
 export function createHarness(config: HarnessConfig): Harness {
   // Validate config
   if (!config.adapter && !(config as AnthropicHarnessConfig | OpenAIHarnessConfig).client) {
-    throw new HarnessError('Either adapter or client must be provided', 'INVALID_CONFIG', 'Pass a pre-built adapter or a provider client');
+    throw new HarnessError('Either adapter or client must be provided', HarnessErrorCode.CORE_INVALID_CONFIG, 'Pass a pre-built adapter or a provider client');
   }
   // CQ-039: Require finite positive *integers* for iteration / token caps so
   // fractional values (25.7), non-finite ones (`NaN`, `Infinity`, `-Infinity`)
@@ -237,13 +237,13 @@ export function createHarness(config: HarnessConfig): Harness {
     config.maxIterations !== undefined &&
     (!Number.isInteger(config.maxIterations) || config.maxIterations <= 0)
   ) {
-    throw new HarnessError('maxIterations must be a positive integer', 'INVALID_CONFIG', 'Use an integer value >= 1');
+    throw new HarnessError('maxIterations must be a positive integer', HarnessErrorCode.CORE_INVALID_CONFIG, 'Use an integer value >= 1');
   }
   if (
     config.maxTotalTokens !== undefined &&
     (!Number.isInteger(config.maxTotalTokens) || config.maxTotalTokens <= 0)
   ) {
-    throw new HarnessError('maxTotalTokens must be a positive integer', 'INVALID_CONFIG', 'Use an integer value >= 1');
+    throw new HarnessError('maxTotalTokens must be a positive integer', HarnessErrorCode.CORE_INVALID_CONFIG, 'Use an integer value >= 1');
   }
   // Budget is cost in currency units — may be fractional, but must be
   // finite and strictly positive.
@@ -251,7 +251,7 @@ export function createHarness(config: HarnessConfig): Harness {
     config.budget !== undefined &&
     (!Number.isFinite(config.budget) || config.budget <= 0)
   ) {
-    throw new HarnessError('budget must be a finite positive number', 'INVALID_CONFIG', 'Use a value > 0');
+    throw new HarnessError('budget must be a finite positive number', HarnessErrorCode.CORE_INVALID_CONFIG, 'Use a value > 0');
   }
 
   // Validate guardrails sub-config — rate-limit max/windowMs are counts, so
@@ -259,10 +259,10 @@ export function createHarness(config: HarnessConfig): Harness {
   if (config.guardrails?.rateLimit) {
     const rl = config.guardrails.rateLimit;
     if (!Number.isInteger(rl.max) || rl.max <= 0) {
-      throw new HarnessError('guardrails.rateLimit.max must be a positive integer', 'INVALID_CONFIG', 'Use an integer value >= 1');
+      throw new HarnessError('guardrails.rateLimit.max must be a positive integer', HarnessErrorCode.CORE_INVALID_CONFIG, 'Use an integer value >= 1');
     }
     if (!Number.isInteger(rl.windowMs) || rl.windowMs <= 0) {
-      throw new HarnessError('guardrails.rateLimit.windowMs must be a positive integer', 'INVALID_CONFIG', 'Use an integer value >= 1');
+      throw new HarnessError('guardrails.rateLimit.windowMs must be a positive integer', HarnessErrorCode.CORE_INVALID_CONFIG, 'Use an integer value >= 1');
     }
   }
 
@@ -272,7 +272,7 @@ export function createHarness(config: HarnessConfig): Harness {
       if (p.inputPer1kTokens < 0 || p.outputPer1kTokens < 0) {
         throw new HarnessError(
           `Pricing for model "${p.model}" has negative values`,
-          'INVALID_CONFIG',
+          HarnessErrorCode.CORE_INVALID_CONFIG,
           'All pricing values must be >= 0',
         );
       }
@@ -516,7 +516,7 @@ export function createHarness(config: HarnessConfig): Harness {
                 type: 'error',
                 error: new HarnessError(
                   `Input blocked by guardrail: ${'reason' in inputResult.verdict ? inputResult.verdict.reason : 'policy violation'}`,
-                  'GUARDRAIL_BLOCKED',
+                  HarnessErrorCode.GUARD_BLOCKED,
                   'Modify the input to comply with configured guardrails',
                 ),
               };
@@ -545,7 +545,7 @@ export function createHarness(config: HarnessConfig): Harness {
                 type: 'error',
                 error: new HarnessError(
                   `Tool arguments blocked by guardrails: ${'reason' in argCheck.verdict ? argCheck.verdict.reason : 'policy violation'}`,
-                  'GUARDRAIL_BLOCKED',
+                  HarnessErrorCode.GUARD_BLOCKED,
                   'Tool call arguments were blocked by input guardrails',
                 ),
               };
@@ -564,7 +564,7 @@ export function createHarness(config: HarnessConfig): Harness {
                 type: 'error',
                 error: new HarnessError(
                   `Output blocked by guardrail: ${'reason' in outputResult.verdict ? outputResult.verdict.reason : 'policy violation'}`,
-                  'GUARDRAIL_BLOCKED',
+                  HarnessErrorCode.GUARD_BLOCKED,
                   'The model response was blocked by output guardrails',
                 ),
               };
@@ -589,7 +589,7 @@ export function createHarness(config: HarnessConfig): Harness {
                 type: 'error',
                 error: new HarnessError(
                   `Tool output blocked by guardrail: ${'reason' in toolOutputResult.verdict ? toolOutputResult.verdict.reason : 'policy violation'}`,
-                  'GUARDRAIL_BLOCKED',
+                  HarnessErrorCode.GUARD_BLOCKED,
                   'A tool result was blocked by output guardrails',
                 ),
               };
@@ -739,7 +739,7 @@ function createAdapter(config: AnthropicHarnessConfig | OpenAIHarnessConfig): Ag
   }
   // Exhaustiveness check — TypeScript narrows config.provider to `never` here
   const _exhaustive: never = config;
-  throw new HarnessError(`Unknown provider: ${(_exhaustive as AnthropicHarnessConfig | OpenAIHarnessConfig).provider}`, 'INVALID_CONFIG', 'Use one of: anthropic, openai');
+  throw new HarnessError(`Unknown provider: ${(_exhaustive as AnthropicHarnessConfig | OpenAIHarnessConfig).provider}`, HarnessErrorCode.CORE_INVALID_CONFIG, 'Use one of: anthropic, openai');
 }
 
 function createExporters(config: HarnessConfig): TraceExporter[] {
@@ -754,7 +754,7 @@ function createExporters(config: HarnessConfig): TraceExporter[] {
       throw new HarnessError(
         'config.langfuse is not a valid Langfuse client (expected object with .trace() method). ' +
         'If you received a Promise, await it before passing to createHarness.',
-        'INVALID_CONFIG',
+        HarnessErrorCode.CORE_INVALID_CONFIG,
         'Construct the Langfuse client synchronously and pass the resolved instance',
       );
     }

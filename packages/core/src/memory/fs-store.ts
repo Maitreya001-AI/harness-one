@@ -6,7 +6,7 @@
  * @module
  */
 
-import { HarnessError } from '../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import { createFileIO } from './fs-io.js';
 import { secureId } from '../infra/ids.js';
 import type { MemoryEntry } from './types.js';
@@ -142,7 +142,7 @@ export function createFileSystemStore(config: {
         if (!existing) {
           throw new HarnessError(
             `Memory entry not found: ${id}`,
-            'MEMORY_NOT_FOUND',
+            HarnessErrorCode.MEMORY_NOT_FOUND,
             'Check that the entry ID is correct',
           );
         }

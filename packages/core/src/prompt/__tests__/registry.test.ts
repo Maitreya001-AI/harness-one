@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createPromptRegistry, createAsyncPromptRegistry } from '../registry.js';
-import { HarnessError } from '../../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../../core/errors.js';
 import type { PromptBackend, PromptTemplate } from '../types.js';
 
 describe('CQ-019: register() warns on silent overwrite', () => {
@@ -98,7 +98,7 @@ describe('createPromptRegistry', () => {
       try {
         reg.resolve('nope', {});
       } catch (e) {
-        expect((e as HarnessError).code).toBe('TEMPLATE_NOT_FOUND');
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.PROMPT_TEMPLATE_NOT_FOUND);
       }
     });
 
@@ -109,7 +109,7 @@ describe('createPromptRegistry', () => {
       try {
         reg.resolve('g', {});
       } catch (e) {
-        expect((e as HarnessError).code).toBe('MISSING_VARIABLE');
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.PROMPT_MISSING_VARIABLE);
       }
     });
   });
@@ -552,7 +552,7 @@ describe('createAsyncPromptRegistry', () => {
       try {
         await reg.resolve('nope', {});
       } catch (e) {
-        expect((e as HarnessError).code).toBe('TEMPLATE_NOT_FOUND');
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.PROMPT_TEMPLATE_NOT_FOUND);
       }
     });
 
@@ -564,7 +564,7 @@ describe('createAsyncPromptRegistry', () => {
       try {
         await reg.resolve('nope', {}, '2.0');
       } catch (e) {
-        expect((e as HarnessError).code).toBe('TEMPLATE_NOT_FOUND');
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.PROMPT_TEMPLATE_NOT_FOUND);
         expect((e as HarnessError).message).toContain('nope@2.0');
       }
     });
@@ -578,7 +578,7 @@ describe('createAsyncPromptRegistry', () => {
       try {
         await reg.resolve('a', {});
       } catch (e) {
-        expect((e as HarnessError).code).toBe('MISSING_VARIABLE');
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.PROMPT_MISSING_VARIABLE);
       }
     });
 
@@ -768,7 +768,7 @@ describe('Issue 2: semver validation at registration time', () => {
     try {
       reg.register({ id: 'a', version: 'latest', content: 'test', variables: [] });
     } catch (e) {
-      expect((e as HarnessError).code).toBe('INVALID_CONFIG');
+      expect((e as HarnessError).code).toBe(HarnessErrorCode.CORE_INVALID_CONFIG);
       expect((e as HarnessError).message).toContain('latest');
     }
   });
@@ -780,7 +780,7 @@ describe('Issue 2: semver validation at registration time', () => {
     try {
       reg.register({ id: 'a', version: '1.a.3', content: 'test', variables: [] });
     } catch (e) {
-      expect((e as HarnessError).code).toBe('INVALID_CONFIG');
+      expect((e as HarnessError).code).toBe(HarnessErrorCode.CORE_INVALID_CONFIG);
       expect((e as HarnessError).message).toContain('1.a.3');
     }
   });
@@ -792,7 +792,7 @@ describe('Issue 2: semver validation at registration time', () => {
     try {
       reg.register({ id: 'a', version: '1.2.x', content: 'test', variables: [] });
     } catch (e) {
-      expect((e as HarnessError).code).toBe('INVALID_CONFIG');
+      expect((e as HarnessError).code).toBe(HarnessErrorCode.CORE_INVALID_CONFIG);
       expect((e as HarnessError).message).toContain('1.2.x');
     }
   });

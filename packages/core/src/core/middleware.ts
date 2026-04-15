@@ -7,7 +7,7 @@
  * @module
  */
 
-import { HarnessError } from './errors.js';
+import { HarnessError, HarnessErrorCode} from './errors.js';
 
 /** Context passed through the middleware chain. */
 export type MiddlewareContext<TExtra extends Record<string, unknown> = Record<string, unknown>> = {
@@ -113,7 +113,7 @@ export function createMiddlewareChain<TExtra extends Record<string, unknown> = R
             }
             throw new HarnessError(
               error.message,
-              'MIDDLEWARE_ERROR',
+              HarnessErrorCode.CORE_MIDDLEWARE_ERROR,
               'Check the middleware implementation',
               error,
             );

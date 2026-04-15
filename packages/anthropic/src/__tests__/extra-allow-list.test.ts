@@ -7,12 +7,12 @@
  *   - A single warn is emitted via the injected logger when keys are filtered,
  *     with meta.rejected listing the filtered keys.
  *   - When `strictExtraAllowList: true`, rejected keys cause a `HarnessError`
- *     with `code === 'ADAPTER_INVALID_EXTRA'`.
+ *     with `code === HarnessErrorCode.ADAPTER_INVALID_EXTRA`.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createAnthropicAdapter } from '../index.js';
 import type { AnthropicAdapterConfig } from '../index.js';
-import { HarnessError } from 'harness-one/core';
+import { HarnessError, HarnessErrorCode} from 'harness-one/core';
 
 function createMockAnthropicClient() {
   const createFn = vi.fn();
@@ -84,7 +84,7 @@ describe('Anthropic adapter: extra allow-list (T05)', () => {
       }),
     ).rejects.toMatchObject({
       name: 'HarnessError',
-      code: 'ADAPTER_INVALID_EXTRA',
+      code: HarnessErrorCode.ADAPTER_INVALID_EXTRA,
     });
 
     // Also sanity-check the message mentions the rejected key.
@@ -97,7 +97,7 @@ describe('Anthropic adapter: extra allow-list (T05)', () => {
     } catch (err) {
       expect(err).toBeInstanceOf(HarnessError);
       expect((err as HarnessError).message).toContain('evil_key');
-      expect((err as HarnessError).code).toBe('ADAPTER_INVALID_EXTRA');
+      expect((err as HarnessError).code).toBe(HarnessErrorCode.ADAPTER_INVALID_EXTRA);
     }
   });
 
@@ -218,7 +218,7 @@ describe('Anthropic adapter: extra allow-list (T05)', () => {
       for await (const _c of iter) { /* consume */ }
     })()).rejects.toMatchObject({
       name: 'HarnessError',
-      code: 'ADAPTER_INVALID_EXTRA',
+      code: HarnessErrorCode.ADAPTER_INVALID_EXTRA,
     });
 
     expect(mock.mocks.stream).not.toHaveBeenCalled();

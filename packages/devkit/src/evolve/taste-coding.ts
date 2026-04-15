@@ -4,7 +4,7 @@
  * @module
  */
 
-import { HarnessError } from 'harness-one';
+import { HarnessError, HarnessErrorCode} from 'harness-one';
 import type { TasteCodingRule } from './types.js';
 
 /** Maximum allowed pattern length. Patterns exceeding this are rejected. */
@@ -66,7 +66,7 @@ export function createTasteCodingRegistry(): TasteCodingRegistry {
       if (rules.has(rule.id)) {
         throw new HarnessError(
           `Taste-coding rule already exists: ${rule.id}`,
-          'TASTE_DUPLICATE',
+          HarnessErrorCode.EVOLVE_TASTE_DUPLICATE,
           'Use a unique rule ID or remove the existing rule first',
         );
       }
@@ -75,7 +75,7 @@ export function createTasteCodingRegistry(): TasteCodingRegistry {
       if (rule.pattern.length > MAX_PATTERN_LENGTH) {
         throw new HarnessError(
           `Pattern too long (${rule.pattern.length} chars, max ${MAX_PATTERN_LENGTH}). Patterns should be simple word-match patterns, not complex regexes.`,
-          'INVALID_PATTERN',
+          HarnessErrorCode.CORE_INVALID_PATTERN,
           `Reduce pattern length to ${MAX_PATTERN_LENGTH} characters or fewer`,
         );
       }
@@ -86,7 +86,7 @@ export function createTasteCodingRegistry(): TasteCodingRegistry {
       } catch {
         throw new HarnessError(
           `Invalid pattern: "${rule.pattern}". Patterns should be simple word-match patterns, not complex regexes.`,
-          'INVALID_PATTERN',
+          HarnessErrorCode.CORE_INVALID_PATTERN,
           'Use a simple string pattern that can be safely converted to a regex',
         );
       }
@@ -106,7 +106,7 @@ export function createTasteCodingRegistry(): TasteCodingRegistry {
       if (!rules.delete(id)) {
         throw new HarnessError(
           `Taste-coding rule not found: ${id}`,
-          'TASTE_NOT_FOUND',
+          HarnessErrorCode.EVOLVE_TASTE_NOT_FOUND,
           'Check the rule ID',
         );
       }

@@ -5,7 +5,7 @@
  */
 
 import type { DocumentChunk, EmbeddingModel, Retriever, RetrievalResult } from './types.js';
-import { HarnessError } from '../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import { createLazyAsync, type LazyAsync } from '../infra/lazy-async.js';
 
 /** Extended retrieval result that includes skipped chunk tracking (Fix 15). */
@@ -110,7 +110,7 @@ export function createInMemoryRetriever(config: {
     if (query.length > maxQueryLength) {
       throw new HarnessError(
         `Query length ${query.length} exceeds maxQueryLength ${maxQueryLength}`,
-        'RAG_QUERY_TOO_LONG',
+        HarnessErrorCode.RAG_QUERY_TOO_LONG,
         `Shorten the query below ${maxQueryLength} characters or raise maxQueryLength`,
       );
     }

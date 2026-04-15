@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createAnthropicAdapter } from '../index.js';
 import type { AnthropicAdapterConfig } from '../index.js';
 import type { Message, StreamChunk } from 'harness-one/core';
-import { HarnessError } from 'harness-one/core';
+import { HarnessError, HarnessErrorCode } from 'harness-one/core';
 
 // ---------------------------------------------------------------------------
 // Mock Anthropic client
@@ -706,7 +706,7 @@ describe('createAnthropicAdapter', () => {
         await drain();
       } catch (err) {
         expect(err).toBeInstanceOf(HarnessError);
-        expect((err as HarnessError).code).toBe('PROVIDER_ERROR');
+        expect((err as HarnessError).code).toBe(HarnessErrorCode.ADAPTER_ERROR);
         // cause must be preserved so operators can trace the real failure
         expect((err as HarnessError).cause).toBe(rootCause);
       }

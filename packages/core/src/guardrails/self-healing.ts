@@ -5,12 +5,12 @@
  */
 
 import type { Guardrail, GuardrailContext } from './types.js';
-import { HarnessError } from '../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 
 /**
  * A1-19 (Wave 4b): AbortSignal-aware sleep.
  *
- * Rejects with a `HarnessError('SELF_HEALING_ABORTED')` if the signal fires
+ * Rejects with a `HarnessError(HarnessErrorCode.GUARD_SELF_HEALING_ABORTED)` if the signal fires
  * during the sleep. On both resolution paths we clear the timer AND detach the
  * listener — forgetting either side leaks a handle (the timer keeps the event
  * loop alive; the listener keeps the AgentLoop/other host alive via the
@@ -21,7 +21,7 @@ import { HarnessError } from '../core/errors.js';
 function sleepWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     if (signal?.aborted) {
-      reject(new HarnessError('Self-healing aborted', 'SELF_HEALING_ABORTED', 'Abort fired before sleep started'));
+      reject(new HarnessError('Self-healing aborted', HarnessErrorCode.GUARD_SELF_HEALING_ABORTED, 'Abort fired before sleep started'));
       return;
     }
     let onAbort: (() => void) | undefined;
@@ -36,7 +36,7 @@ function sleepWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
         clearTimeout(timeoutId);
         // removeEventListener is idempotent + safe if `once: true` already fired.
         try { signal.removeEventListener('abort', onAbort as () => void); } catch { /* non-fatal */ }
-        reject(new HarnessError('Self-healing aborted', 'SELF_HEALING_ABORTED', 'Abort fired during backoff sleep'));
+        reject(new HarnessError('Self-healing aborted', HarnessErrorCode.GUARD_SELF_HEALING_ABORTED, 'Abort fired during backoff sleep'));
       };
       signal.addEventListener('abort', onAbort, { once: true });
     }
@@ -81,7 +81,7 @@ export async function withSelfHealing(
 ): Promise<{ content: string; attempts: number; passed: boolean; totalTokens?: number }> {
   const maxRetries = config.maxRetries ?? 3;
   if (maxRetries < 1) {
-    throw new HarnessError('maxRetries must be >= 1', 'INVALID_CONFIG', 'Provide a maxRetries value of 1 or higher');
+    throw new HarnessError('maxRetries must be >= 1', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide a maxRetries value of 1 or higher');
   }
   const regenerateTimeoutMs = config.regenerateTimeoutMs ?? 30_000;
   const estimateTokens = config.estimateTokens;
@@ -128,7 +128,7 @@ export async function withSelfHealing(
     try {
       await sleepWithAbort(backoffMs, config.signal);
     } catch (err) {
-      if (err instanceof HarnessError && err.code === 'SELF_HEALING_ABORTED') {
+      if (err instanceof HarnessError && err.code === HarnessErrorCode.GUARD_SELF_HEALING_ABORTED) {
         return { content, attempts: attempt, passed: false, ...(totalTokens !== undefined && { totalTokens }) };
       }
       throw err;

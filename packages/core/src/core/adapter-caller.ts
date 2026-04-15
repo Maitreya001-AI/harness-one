@@ -23,7 +23,7 @@
 
 import type { AgentAdapter, Message, TokenUsage, ToolSchema } from './types.js';
 import type { AgentEvent } from './events.js';
-import { AbortedError, HarnessError } from './errors.js';
+import { AbortedError, HarnessError, HarnessErrorCode} from './errors.js';
 import { categorizeAdapterError } from './error-classifier.js';
 import type { StreamHandler } from './stream-handler.js';
 
@@ -38,7 +38,7 @@ export interface AdapterCallOnceOk {
 export interface AdapterCallOnceFail {
   readonly ok: false;
   readonly error: HarnessError | Error;
-  readonly errorCategory: string;
+  readonly errorCategory: HarnessErrorCode;
 }
 
 /** Discriminated union returned by {@link AdapterCaller.callOnce}. */
@@ -56,11 +56,11 @@ export interface AdapterCallOk {
   readonly attempts: number;
 }
 
-/** Failed adapter turn result; `errorCategory` includes synthetic `'ABORTED'`. */
+/** Failed adapter turn result; `errorCategory` includes synthetic `HarnessErrorCode.CORE_ABORTED`. */
 export interface AdapterCallFail {
   readonly ok: false;
   readonly error: HarnessError | Error;
-  readonly errorCategory: string;
+  readonly errorCategory: HarnessErrorCode;
   readonly path: 'chat' | 'stream';
   readonly attempts: number;
 }
@@ -80,7 +80,7 @@ export type AdapterCallResult = AdapterCallOk | AdapterCallFail;
  */
 export interface AdapterRetryInfo {
   readonly attempt: number;
-  readonly errorCategory: string;
+  readonly errorCategory: HarnessErrorCode;
   readonly path: 'chat' | 'stream';
   /** REQUIRED on chat path; UNDEFINED on stream path. Sliced to ≤500 chars. */
   readonly errorPreview?: string;
@@ -115,7 +115,7 @@ export interface AdapterCaller {
    * path, forwards `text_delta` / `tool_call_delta` / `warning` /
    * `error` events from {@link StreamHandler}; on chat path yields
    * NOTHING (return-only). Internal retry loop consumes abort during
-   * backoff and surfaces it as `{ok:false, errorCategory:'ABORTED'}`.
+   * backoff and surfaces it as `{ok:false, errorCategory:HarnessErrorCode.CORE_ABORTED}`.
    *
    * Asymmetry (ADR §9 R1): StreamHandler yields `{type:'error'}` itself
    * on stream failure; AdapterCaller does NOT re-yield. On chat
@@ -233,7 +233,7 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
           return {
             ok: false,
             error: new AbortedError(),
-            errorCategory: 'ABORTED',
+            errorCategory: HarnessErrorCode.CORE_ABORTED,
             path,
             attempts: attempt,
           };
@@ -388,10 +388,10 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
         ok: false,
         error: new HarnessError(
           'AdapterCaller retry loop exited without a terminal branch',
-          'ADAPTER_UNKNOWN',
+          HarnessErrorCode.ADAPTER_UNKNOWN,
           'This indicates a logic error in AdapterCaller.call; please report',
         ),
-        errorCategory: 'ADAPTER_UNKNOWN',
+        errorCategory: HarnessErrorCode.ADAPTER_UNKNOWN,
         path,
         attempts: config.maxAdapterRetries + 1,
       };

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { assertNever } from '../events.js';
-import { HarnessError } from '../errors.js';
+import { HarnessError, HarnessErrorCode} from '../errors.js';
 
 describe('assertNever', () => {
   it('throws HarnessError with the unexpected value in the message', () => {
@@ -16,7 +16,7 @@ describe('assertNever', () => {
       expect.unreachable('assertNever should have thrown');
     } catch (err) {
       expect(err).toBeInstanceOf(HarnessError);
-      expect((err as HarnessError).code).toBe('UNEXPECTED_VALUE');
+      expect((err as HarnessError).code).toBe(HarnessErrorCode.CORE_UNEXPECTED_VALUE);
     }
   });
 

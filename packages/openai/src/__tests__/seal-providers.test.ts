@@ -3,7 +3,7 @@
  *
  * Contract:
  *  - `sealProviders()` freezes the registry; subsequent `registerProvider`
- *    calls throw `HarnessError { code: 'PROVIDER_REGISTRY_SEALED' }`.
+ *    calls throw `HarnessError { code: HarnessErrorCode.PROVIDER_REGISTRY_SEALED }`.
  *  - `isProvidersSealed()` reports the current state.
  *  - Sealing is idempotent — calling it twice is a no-op.
  *  - `createOpenAIAdapter()` does NOT auto-seal (risk-assessor TECH-11-03
@@ -18,6 +18,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { HarnessErrorCode } from 'harness-one';
 
 // Module-level stable mock so the `openai` default export is replaced before
 // `src/index.ts` is (re-)evaluated on each dynamic import.
@@ -89,7 +90,7 @@ describe('OpenAI adapter — provider registry seal (T11)', () => {
 
     expect(caught).toBeInstanceOf(HarnessError);
     const err = caught as InstanceType<typeof HarnessError>;
-    expect(err.code).toBe('PROVIDER_REGISTRY_SEALED');
+    expect(err.code).toBe(HarnessErrorCode.PROVIDER_REGISTRY_SEALED);
     expect(err.message).toMatch(/rogue/);
     expect(err.message).toMatch(/sealed/i);
     // A suggestion must be present to guide remediation.
@@ -116,7 +117,7 @@ describe('OpenAI adapter — provider registry seal (T11)', () => {
     } catch (err) {
       expect(err).toBeInstanceOf(HarnessError);
       expect((err as InstanceType<typeof HarnessError>).code).toBe(
-        'PROVIDER_REGISTRY_SEALED',
+        HarnessErrorCode.PROVIDER_REGISTRY_SEALED,
       );
     }
   });
@@ -214,7 +215,7 @@ describe('OpenAI adapter — provider registry seal (T11)', () => {
       } catch (err) {
         expect(err).toBeInstanceOf(HarnessError);
         const e = err as InstanceType<typeof HarnessError>;
-        expect(e.code).toBe('PROVIDER_REGISTRY_SEALED');
+        expect(e.code).toBe(HarnessErrorCode.PROVIDER_REGISTRY_SEALED);
         expect(e.message).toContain(name);
       }
     }

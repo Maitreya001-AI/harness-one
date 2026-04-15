@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { AgentLoop } from '../../core/agent-loop.js';
-import { HarnessError } from '../../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../../core/errors.js';
 import { createAgentPool } from '../agent-pool.js';
 import type { PoolConfig } from '../types.js';
 
@@ -65,7 +65,7 @@ describe('AgentPool', () => {
     try {
       pool.acquire();
     } catch (err) {
-      expect((err as HarnessError).code).toBe('POOL_EXHAUSTED');
+      expect((err as HarnessError).code).toBe(HarnessErrorCode.POOL_EXHAUSTED);
     }
   });
 
@@ -77,7 +77,7 @@ describe('AgentPool', () => {
     try {
       pool.acquire();
     } catch (err) {
-      expect((err as HarnessError).code).toBe('POOL_DISPOSED');
+      expect((err as HarnessError).code).toBe(HarnessErrorCode.POOL_DISPOSED);
     }
   });
 
@@ -274,7 +274,7 @@ describe('AgentPool', () => {
       try {
         await pool.acquireAsync(100);
       } catch (e) {
-        expect((e as HarnessError).code).toBe('POOL_TIMEOUT');
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.POOL_TIMEOUT);
       }
     });
 
@@ -292,7 +292,7 @@ describe('AgentPool', () => {
       pool = makePool();
       const ac = new AbortController();
       ac.abort();
-      await expect(pool.acquireAsync({ signal: ac.signal })).rejects.toMatchObject({ code: 'POOL_ABORTED' });
+      await expect(pool.acquireAsync({ signal: ac.signal })).rejects.toMatchObject({ code: HarnessErrorCode.POOL_ABORTED });
     });
 
     it('rejects with POOL_ABORTED when signal aborts while pending, and removes from queue', async () => {
@@ -305,18 +305,18 @@ describe('AgentPool', () => {
       // Abort shortly after queueing.
       setTimeout(() => ac.abort(), 20);
 
-      await expect(promise).rejects.toMatchObject({ code: 'POOL_ABORTED' });
+      await expect(promise).rejects.toMatchObject({ code: HarnessErrorCode.POOL_ABORTED });
 
       // Subsequent acquireAsync can still be queued (entry was removed cleanly).
       const ac2 = new AbortController();
       setTimeout(() => ac2.abort(), 10);
-      await expect(pool.acquireAsync({ timeoutMs: 5000, signal: ac2.signal })).rejects.toMatchObject({ code: 'POOL_ABORTED' });
+      await expect(pool.acquireAsync({ timeoutMs: 5000, signal: ac2.signal })).rejects.toMatchObject({ code: HarnessErrorCode.POOL_ABORTED });
     });
 
     it('accepts legacy numeric timeoutMs argument', async () => {
       pool = makePool({ max: 1 });
       pool.acquire();
-      await expect(pool.acquireAsync(50)).rejects.toMatchObject({ code: 'POOL_TIMEOUT' });
+      await expect(pool.acquireAsync(50)).rejects.toMatchObject({ code: HarnessErrorCode.POOL_TIMEOUT });
     });
 
     it('does not invoke abort listener after successful resolution', async () => {
@@ -366,7 +366,7 @@ describe('AgentPool', () => {
       pool.acquire(); // exhaust
       const pending = pool.acquireAsync(10_000);
       const disposal = pool.dispose();
-      await expect(pending).rejects.toMatchObject({ code: 'POOL_DISPOSED' });
+      await expect(pending).rejects.toMatchObject({ code: HarnessErrorCode.POOL_DISPOSED });
       await disposal;
     });
 

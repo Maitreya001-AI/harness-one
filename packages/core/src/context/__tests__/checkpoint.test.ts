@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { createCheckpointManager } from '../checkpoint.js';
 import type { CheckpointStorage, Checkpoint } from '../types.js';
 import type { Message } from '../../core/types.js';
-import { HarnessError } from '../../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../../core/errors.js';
 
 const msg = (role: string, content: string): Message =>
   ({ role, content }) as unknown as Message;
@@ -42,7 +42,7 @@ describe('createCheckpointManager', () => {
     try {
       mgr.restore('nonexistent');
     } catch (e) {
-      expect((e as HarnessError).code).toBe('CHECKPOINT_NOT_FOUND');
+      expect((e as HarnessError).code).toBe(HarnessErrorCode.CONTEXT_CHECKPOINT_NOT_FOUND);
     }
   });
 
@@ -141,7 +141,7 @@ describe('createCheckpointManager', () => {
     try {
       createCheckpointManager({ maxCheckpoints: 0 });
     } catch (e) {
-      expect((e as HarnessError).code).toBe('INVALID_CONFIG');
+      expect((e as HarnessError).code).toBe(HarnessErrorCode.CORE_INVALID_CONFIG);
     }
   });
 

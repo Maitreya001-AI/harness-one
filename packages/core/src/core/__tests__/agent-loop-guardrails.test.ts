@@ -21,7 +21,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { createAgentLoop } from '../agent-loop.js';
 import type { AgentAdapter, ChatParams, ChatResponse, StreamChunk, TokenUsage } from '../types.js';
 import type { AgentEvent } from '../events.js';
-import { HarnessError } from '../errors.js';
+import { HarnessError, HarnessErrorCode} from '../errors.js';
 import { categorizeAdapterError } from '../error-classifier.js';
 import {
   createPipeline,
@@ -118,7 +118,7 @@ describe('T10 AgentLoop guardrail integration', () => {
 
     const err = events.find((e): e is Extract<AgentEvent, { type: 'error' }> => e.type === 'error');
     expect(err).toBeDefined();
-    expect((err!.error as HarnessError).code).toBe('GUARDRAIL_VIOLATION');
+    expect((err!.error as HarnessError).code).toBe(HarnessErrorCode.GUARD_VIOLATION);
 
     const done = events.find((e): e is Extract<AgentEvent, { type: 'done' }> => e.type === 'done');
     expect(done?.reason).toBe('error');
@@ -155,7 +155,7 @@ describe('T10 AgentLoop guardrail integration', () => {
     const secondCallMsgs = calls[1].messages;
     const toolResult = secondCallMsgs.find((m) => m.role === 'tool');
     expect(toolResult).toBeDefined();
-    expect(toolResult!.content).toContain('GUARDRAIL_VIOLATION');
+    expect(toolResult!.content).toContain(HarnessErrorCode.GUARD_VIOLATION);
     expect(toolResult!.content).toContain('tool-guard');
     expect(toolResult!.content).not.toContain(marker);
 
@@ -191,7 +191,7 @@ describe('T10 AgentLoop guardrail integration', () => {
 
     const err = events.find((e): e is Extract<AgentEvent, { type: 'error' }> => e.type === 'error');
     expect(err).toBeDefined();
-    expect((err!.error as HarnessError).code).toBe('GUARDRAIL_VIOLATION');
+    expect((err!.error as HarnessError).code).toBe(HarnessErrorCode.GUARD_VIOLATION);
 
     const done = events.find((e): e is Extract<AgentEvent, { type: 'done' }> => e.type === 'done');
     expect(done?.reason).toBe('error');
@@ -220,11 +220,11 @@ describe('T10 AgentLoop guardrail integration', () => {
   it('[TECH-10-06] categorizeAdapterError returns a category for GUARDRAIL_VIOLATION that is not retryable by default', () => {
     const err = new HarnessError(
       'guardrail blocked',
-      'GUARDRAIL_VIOLATION',
+      HarnessErrorCode.GUARD_VIOLATION,
       'inspect the input',
     );
     const category = categorizeAdapterError(err);
-    expect(category).toBe('GUARDRAIL_VIOLATION');
+    expect(category).toBe(HarnessErrorCode.GUARD_VIOLATION);
     // The default retryableErrors is ['ADAPTER_RATE_LIMIT'], so this category
     // is NOT in that set — confirms non-retryable-by-default.
     const defaultRetryable = ['ADAPTER_RATE_LIMIT'];

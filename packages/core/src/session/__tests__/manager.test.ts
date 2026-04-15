@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createSessionManager } from '../manager.js';
-import { HarnessError } from '../../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../../core/errors.js';
 import type { SessionEvent } from '../types.js';
 
 describe('createSessionManager', () => {
@@ -58,7 +58,7 @@ describe('createSessionManager', () => {
       try {
         sm.access(session.id);
       } catch (e) {
-        expect((e as HarnessError).code).toBe('SESSION_LOCKED');
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.SESSION_LOCKED);
       }
       sm.dispose();
     });
@@ -72,7 +72,7 @@ describe('createSessionManager', () => {
       try {
         sm.access(session.id);
       } catch (e) {
-        expect((e as HarnessError).code).toBe('SESSION_EXPIRED');
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.SESSION_EXPIRED);
       }
       sm.dispose();
     });
@@ -255,7 +255,7 @@ describe('createSessionManager', () => {
       try {
         sm.create();
       } catch (e) {
-        expect((e as HarnessError).code).toBe('SESSION_LIMIT');
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.SESSION_LIMIT);
       }
 
       // The locked session must still exist
@@ -392,7 +392,7 @@ describe('createSessionManager', () => {
       try {
         unlock();
       } catch (e) {
-        expect((e as HarnessError).code).toBe('SESSION_NOT_FOUND');
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.SESSION_NOT_FOUND);
       }
       sm.dispose();
     });
@@ -590,7 +590,7 @@ describe('createSessionManager', () => {
       try {
         sm.access(session.id);
       } catch (e) {
-        expect((e as HarnessError).code).toBe('SESSION_LOCKED');
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.SESSION_LOCKED);
       }
       sm.dispose();
     });
@@ -604,7 +604,7 @@ describe('createSessionManager', () => {
       try {
         unlock();
       } catch (e) {
-        expect((e as HarnessError).code).toBe('SESSION_NOT_FOUND');
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.SESSION_NOT_FOUND);
       }
       sm.dispose();
     });
@@ -645,7 +645,7 @@ describe('createSessionManager', () => {
       try {
         sm.access(session.id);
       } catch (e) {
-        expect((e as HarnessError).code).toBe('SESSION_EXPIRED');
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.SESSION_EXPIRED);
       }
       sm.dispose();
     });

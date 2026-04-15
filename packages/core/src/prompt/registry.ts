@@ -4,7 +4,7 @@
  * @module
  */
 
-import { HarnessError } from '../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import type { PromptTemplate, PromptBackend } from './types.js';
 
 /** Numeric version pattern: one or more dot-separated numeric segments (e.g. "1.0", "1.2.3"). */
@@ -31,7 +31,7 @@ function resolveTemplateVariables(
     if (!(varName in variables)) {
       throw new HarnessError(
         `Missing required variable: ${varName} for template ${template.id}`,
-        'MISSING_VARIABLE',
+        HarnessErrorCode.PROMPT_MISSING_VARIABLE,
         `Provide a value for "{{${varName}}}"`,
       );
     }
@@ -51,7 +51,7 @@ function validateSemver(version: string): void {
   if (!SEMVER_RE.test(version)) {
     throw new HarnessError(
       `Invalid semver version: "${version}". Expected format: "major.minor.patch" (numeric segments only)`,
-      'INVALID_CONFIG',
+      HarnessErrorCode.CORE_INVALID_CONFIG,
     );
   }
 }
@@ -187,7 +187,7 @@ export function createPromptRegistry(config?: PromptRegistryConfig): PromptRegis
       if (!template) {
         throw new HarnessError(
           `Template not found: ${id}${version ? `@${version}` : ''}`,
-          'TEMPLATE_NOT_FOUND',
+          HarnessErrorCode.PROMPT_TEMPLATE_NOT_FOUND,
           'Register the template before resolving',
         );
       }
@@ -318,7 +318,7 @@ export function createAsyncPromptRegistry(backend: PromptBackend): AsyncPromptRe
       if (!template) {
         throw new HarnessError(
           `Template not found: ${id}${version ? `@${version}` : ''}`,
-          'TEMPLATE_NOT_FOUND',
+          HarnessErrorCode.PROMPT_TEMPLATE_NOT_FOUND,
           'Register the template or ensure the backend can provide it',
         );
       }

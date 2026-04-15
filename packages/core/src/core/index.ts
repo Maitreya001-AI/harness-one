@@ -27,6 +27,7 @@ export type {
 // Errors
 export {
   HarnessError,
+  HarnessErrorCode,
   MaxIterationsError,
   AbortedError,
   GuardrailBlockedError,

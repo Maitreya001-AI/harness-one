@@ -13,7 +13,7 @@
  * @module
  */
 
-import { HarnessError } from '../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import type { MemoryEntry, MemoryGrade, RelayState } from './types.js';
 import type { Index } from './fs-io.js';
 
@@ -76,7 +76,7 @@ function fail(path: string, reason: string, source: string): never {
   // but the memory subsystem now emits `MEMORY_CORRUPT` specifically.
   throw new HarnessError(
     `Corrupted ${source}: ${reason} at ${path}`,
-    'MEMORY_CORRUPT',
+    HarnessErrorCode.MEMORY_CORRUPT,
     'Inspect the backing store for manual edits, partial writes, or schema drift. ' +
       'If the data is recoverable, re-serialize it; otherwise delete the affected entry.',
   );

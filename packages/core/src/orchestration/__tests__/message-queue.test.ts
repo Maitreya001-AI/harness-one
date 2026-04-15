@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { MessageQueue } from '../message-queue.js';
-import { HarnessError } from '../../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../../core/errors.js';
 import type { AgentMessage } from '../types.js';
 
 function makeMessage(overrides: Partial<AgentMessage> = {}): AgentMessage {
@@ -466,7 +466,7 @@ describe('MessageQueue', () => {
       try {
         mq.push('a1', makeMessage({ content: 'third' }));
       } catch (e) {
-        expect((e as HarnessError).code).toBe('QUEUE_FULL');
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.ORCH_QUEUE_FULL);
       }
 
       // Queue should still have original 2 messages

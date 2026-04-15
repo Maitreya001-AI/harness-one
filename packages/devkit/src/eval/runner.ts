@@ -4,7 +4,7 @@
  * @module
  */
 
-import { HarnessError } from 'harness-one';
+import { HarnessError, HarnessErrorCode} from 'harness-one';
 import type { EvalCase, EvalResult, EvalReport, EvalConfig } from './types.js';
 
 /** Interface for running evaluations. */
@@ -32,7 +32,7 @@ export function createEvalRunner(config: EvalConfig): EvalRunner {
   if (scorers.length === 0) {
     throw new HarnessError(
       'At least one scorer is required',
-      'EVAL_CONFIG',
+      HarnessErrorCode.EVAL_CONFIG,
       'Add at least one scorer to the eval config',
     );
   }
@@ -88,7 +88,7 @@ export function createEvalRunner(config: EvalConfig): EvalRunner {
       if (cases.length === 0) {
         throw new HarnessError(
           'No eval cases provided',
-          'EVAL_EMPTY',
+          HarnessErrorCode.EVAL_EMPTY,
           'Provide at least one eval case',
         );
       }
@@ -142,14 +142,14 @@ export function createEvalRunner(config: EvalConfig): EvalRunner {
           if (batchScoreResults.length !== cases.length) {
             throw new HarnessError(
               `Scorer "${scorer.name}" scoreBatch() returned ${batchScoreResults.length} results but expected ${cases.length}`,
-              'SCORER_MISMATCH',
+              HarnessErrorCode.EVAL_SCORER_MISMATCH,
               'Ensure scoreBatch() returns exactly one result per case',
             );
           }
           batchResults.set(scorer.name, batchScoreResults);
         } catch (err: unknown) {
           // Fix 1: Catch batch scorer errors
-          if (err instanceof HarnessError && err.code === 'SCORER_MISMATCH') {
+          if (err instanceof HarnessError && err.code === HarnessErrorCode.EVAL_SCORER_MISMATCH) {
             throw err; // Re-throw mismatch errors
           }
           const message = err instanceof Error ? err.message : String(err);

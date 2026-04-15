@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createTraceManager, createConsoleExporter, createNoOpExporter } from '../trace-manager.js';
-import { HarnessError } from '../../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../../core/errors.js';
 import type { TraceExporter } from '../types.js';
 
 describe('createTraceManager', () => {
@@ -654,7 +654,7 @@ describe('parentId validation', () => {
     try {
       tm.startSpan(traceId, 'child', 'non-existent-parent');
     } catch (e) {
-      expect((e as HarnessError).code).toBe('SPAN_NOT_FOUND');
+      expect((e as HarnessError).code).toBe(HarnessErrorCode.TRACE_SPAN_NOT_FOUND);
     }
   });
 

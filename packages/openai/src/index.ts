@@ -20,7 +20,7 @@ import type {
   TokenUsage,
   ToolSchema,
 } from 'harness-one/core';
-import { HarnessError } from 'harness-one/core';
+import { HarnessError, HarnessErrorCode} from 'harness-one/core';
 import type { Logger } from 'harness-one/observe';
 import { safeWarn } from 'harness-one/observe';
 
@@ -117,7 +117,7 @@ function filterExtra(
   if (strict) {
     throw new HarnessError(
       `OpenAI adapter: LLMConfig.extra contained keys not in the allow-list: ${rejected.join(', ')}`,
-      'ADAPTER_INVALID_EXTRA',
+      HarnessErrorCode.ADAPTER_INVALID_EXTRA,
       'Remove the offending keys, add them to OPENAI_EXTRA_ALLOW_LIST via a PR, or disable strictExtraAllowList.',
     );
   }
@@ -178,7 +178,7 @@ export function registerProvider(
   if (_providersSealed) {
     throw new HarnessError(
       `cannot register provider "${name}" — provider registry is sealed`,
-      'PROVIDER_REGISTRY_SEALED',
+      HarnessErrorCode.PROVIDER_REGISTRY_SEALED,
       'Call sealProviders() only after all providers are registered (typically at the end of bootstrap / inside createSecurePreset). Registering a new provider after seal requires restarting the process.',
     );
   }
@@ -186,7 +186,7 @@ export function registerProvider(
   if (typeof name !== 'string' || name.length === 0) {
     throw new HarnessError(
       'registerProvider: name must be a non-empty string',
-      'INVALID_CONFIG',
+      HarnessErrorCode.CORE_INVALID_CONFIG,
       'Pass a non-empty provider name as the first argument.',
     );
   }
@@ -197,7 +197,7 @@ export function registerProvider(
   } catch (err) {
     throw new HarnessError(
       `registerProvider: baseURL "${config.baseURL}" is not a valid URL`,
-      'INVALID_CONFIG',
+      HarnessErrorCode.CORE_INVALID_CONFIG,
       'Pass a fully qualified absolute URL (including scheme), e.g. "https://api.example.com/v1".',
       err instanceof Error ? err : undefined,
     );
@@ -207,7 +207,7 @@ export function registerProvider(
   if (parsed.protocol !== 'https:' && !isLocalDev) {
     throw new HarnessError(
       `registerProvider: refusing non-HTTPS baseURL "${config.baseURL}"`,
-      'INVALID_CONFIG',
+      HarnessErrorCode.CORE_INVALID_CONFIG,
       'Use an https:// URL. Plain http:// is only allowed for localhost / 127.0.0.1 development endpoints.',
     );
   }
@@ -215,7 +215,7 @@ export function registerProvider(
   if (BUILT_IN_PROVIDER_NAMES.has(name) && !options?.force) {
     throw new HarnessError(
       `registerProvider: "${name}" is a reserved built-in provider name`,
-      'INVALID_CONFIG',
+      HarnessErrorCode.CORE_INVALID_CONFIG,
       'Pick a different name, or pass { force: true } as the third argument to explicitly override the built-in.',
     );
   }
@@ -291,7 +291,7 @@ export interface OpenAIAdapterConfig {
   readonly logger?: Pick<Logger, 'warn' | 'error'>;
   /**
    * When true, any key in `LLMConfig.extra` that is not in the adapter's
-   * allow-list raises `HarnessError { code: 'ADAPTER_INVALID_EXTRA' }` instead
+   * allow-list raises `HarnessError { code: HarnessErrorCode.ADAPTER_INVALID_EXTRA }` instead
    * of being silently filtered-with-warn. Intended for prod builds that want
    * provider-parameter drift to fail loudly in CI. Defaults to `false`.
    */
@@ -489,7 +489,7 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
 
       const choice = response.choices[0];
       if (!choice) {
-        throw new HarnessError('OpenAI returned no choices', 'PROVIDER_ERROR', 'Check if the model and API key are valid');
+        throw new HarnessError('OpenAI returned no choices', HarnessErrorCode.ADAPTER_ERROR, 'Check if the model and API key are valid');
       }
 
       // SPEC-015: warn once per model when non-stream usage data is missing.

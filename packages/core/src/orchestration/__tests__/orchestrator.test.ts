@@ -5,7 +5,7 @@ import {
   createRandomStrategy,
   createFirstAvailableStrategy,
 } from '../strategies.js';
-import { HarnessError } from '../../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../../core/errors.js';
 import type { OrchestratorEvent, DelegationStrategy, AgentRegistration, DelegationTask } from '../types.js';
 
 describe('createOrchestrator', () => {
@@ -44,7 +44,7 @@ describe('createOrchestrator', () => {
       try {
         orch.register('a1', 'Another');
       } catch (e) {
-        expect((e as HarnessError).code).toBe('DUPLICATE_AGENT');
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.ORCH_DUPLICATE_AGENT);
       }
     });
 
@@ -56,7 +56,7 @@ describe('createOrchestrator', () => {
       try {
         orch.register('a3', 'Worker3');
       } catch (e) {
-        expect((e as HarnessError).code).toBe('MAX_AGENTS');
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.ORCH_MAX_AGENTS);
       }
     });
 
@@ -66,7 +66,7 @@ describe('createOrchestrator', () => {
       try {
         orch.register('child', 'Worker', { parentId: 'nonexistent' });
       } catch (e) {
-        expect((e as HarnessError).code).toBe('AGENT_NOT_FOUND');
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.ORCH_AGENT_NOT_FOUND);
       }
     });
 
@@ -195,7 +195,7 @@ describe('createOrchestrator', () => {
       try {
         orch.setStatus('nope', 'running');
       } catch (e) {
-        expect((e as HarnessError).code).toBe('AGENT_NOT_FOUND');
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.ORCH_AGENT_NOT_FOUND);
       }
     });
 
@@ -263,7 +263,7 @@ describe('createOrchestrator', () => {
       try {
         orch.send({ from: 'nope', to: 'a2', type: 'request', content: 'hi' });
       } catch (e) {
-        expect((e as HarnessError).code).toBe('AGENT_NOT_FOUND');
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.ORCH_AGENT_NOT_FOUND);
       }
     });
 
@@ -274,7 +274,7 @@ describe('createOrchestrator', () => {
       try {
         orch.send({ from: 'a1', to: 'nope', type: 'request', content: 'hi' });
       } catch (e) {
-        expect((e as HarnessError).code).toBe('AGENT_NOT_FOUND');
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.ORCH_AGENT_NOT_FOUND);
       }
     });
 
@@ -930,7 +930,7 @@ describe('delegation cycle detection (Fix 23)', () => {
     expect(rejections.length).toBe(2);
     for (const r of rejections) {
       expect((r as PromiseRejectedResult).reason).toBeInstanceOf(HarnessError);
-      expect(((r as PromiseRejectedResult).reason as HarnessError).code).toBe('DELEGATION_CYCLE');
+      expect(((r as PromiseRejectedResult).reason as HarnessError).code).toBe(HarnessErrorCode.ORCH_DELEGATION_CYCLE);
     }
   });
 });
@@ -967,7 +967,7 @@ describe('onHandlerError wrapping (Fix 34)', () => {
       try {
         orch.context.set('__proto__', {});
       } catch (e) {
-        expect((e as HarnessError).code).toBe('INVALID_KEY');
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.CORE_INVALID_KEY);
       }
       // Object.prototype must NOT have been polluted
       expect(({} as Record<string, unknown>)['polluted']).toBeUndefined();

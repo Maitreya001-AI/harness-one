@@ -3,7 +3,7 @@ import { createOrchestrator } from '../orchestrator.js';
 import { createHandoff } from '../handoff.js';
 import { createAgentPool } from '../agent-pool.js';
 import { AgentLoop } from '../../core/agent-loop.js';
-import { HarnessError } from '../../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../../core/errors.js';
 import type {
   OrchestratorEvent,
   DelegationStrategy,
@@ -117,7 +117,7 @@ describe('Multi-agent orchestration integration', () => {
           metadata: { targetAgent: 'a1', delegatedFrom: 'a2' },
         });
       } catch (e) {
-        expect((e as HarnessError).code).toBe('DELEGATION_CYCLE');
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.ORCH_DELEGATION_CYCLE);
       }
 
       orch.dispose();
@@ -218,7 +218,7 @@ describe('Multi-agent orchestration integration', () => {
       try {
         pool.acquire();
       } catch (e) {
-        expect((e as HarnessError).code).toBe('POOL_EXHAUSTED');
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.POOL_EXHAUSTED);
       }
 
       pool.dispose();
@@ -427,7 +427,7 @@ describe('Multi-agent orchestration integration', () => {
       try {
         orch.send({ from: 'a1', to: 'a2', type: 'request', content: 'hello' });
       } catch (e) {
-        expect((e as HarnessError).code).toBe('AGENT_NOT_FOUND');
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.ORCH_AGENT_NOT_FOUND);
       }
 
       orch.dispose();

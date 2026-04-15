@@ -5,7 +5,7 @@
  */
 
 import type { Guardrail, GuardrailContext, GuardrailEvent, PipelineResult } from './types.js';
-import { HarnessError } from '../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 
 /**
  * Branded pipeline type — an opaque token returned by {@link createPipeline}.
@@ -45,7 +45,7 @@ const internalRegistry: WeakMap<GuardrailPipeline, PipelineInternalData> = new W
 function getInternal(pipeline: GuardrailPipeline): PipelineInternalData {
   const data = internalRegistry.get(pipeline);
   if (!data) {
-    throw new HarnessError('Invalid GuardrailPipeline instance', 'INVALID_PIPELINE', 'Use createPipeline() to create pipelines');
+    throw new HarnessError('Invalid GuardrailPipeline instance', HarnessErrorCode.GUARD_INVALID_PIPELINE, 'Use createPipeline() to create pipelines');
   }
   return data;
 }

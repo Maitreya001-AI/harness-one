@@ -13,7 +13,7 @@ import type { CostTracker, ModelPricing, Logger } from 'harness-one/observe';
 import type { TokenUsageRecord, CostAlert } from 'harness-one/observe';
 import { KahanSum, lruStrategy } from 'harness-one/observe';
 import type { EvictionStrategy } from 'harness-one/observe';
-import { HarnessError } from 'harness-one/core';
+import { HarnessError, HarnessErrorCode} from 'harness-one/core';
 
 // ---------------------------------------------------------------------------
 // SEC-A01 (T04) · Default sanitize for exported span attributes
@@ -304,7 +304,7 @@ export function createLangfusePromptBackend(config: LangfusePromptBackendConfig)
     lfPrompt: { prompt: unknown; version: number },
   ): PromptTemplate {
     if (typeof lfPrompt.prompt !== 'string') {
-      throw new HarnessError(`Langfuse prompt "${name}" is not a string type`, 'PROVIDER_ERROR', 'Ensure the Langfuse prompt is configured as a text type');
+      throw new HarnessError(`Langfuse prompt "${name}" is not a string type`, HarnessErrorCode.ADAPTER_ERROR, 'Ensure the Langfuse prompt is configured as a text type');
     }
     const content = lfPrompt.prompt;
     const variableMatches = content.match(/\{\{(\w+)\}\}/g) ?? [];
@@ -360,7 +360,7 @@ export function createLangfusePromptBackend(config: LangfusePromptBackendConfig)
     async push(): Promise<void> {
       throw new HarnessError(
         'Langfuse SDK does not support pushing prompts programmatically',
-        'UNSUPPORTED_OPERATION',
+        HarnessErrorCode.CORE_UNSUPPORTED_OPERATION,
         'Use the Langfuse UI or REST API to create prompts',
       );
     },
@@ -441,7 +441,7 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): La
   const { client, onExportError, logger } = config;
   const maxRecords = config.maxRecords ?? 10_000;
   if (config.maxRecords !== undefined && config.maxRecords < 1) {
-    throw new HarnessError('maxRecords must be >= 1', 'INVALID_CONFIG', 'Provide a positive maxRecords value');
+    throw new HarnessError('maxRecords must be >= 1', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide a positive maxRecords value');
   }
   const pricing = new Map<string, ModelPricing>();
   const records: TokenUsageRecord[] = [];

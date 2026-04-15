@@ -6,7 +6,7 @@
 
 import type { RelayState } from './types.js';
 import type { MemoryStore } from './store.js';
-import { HarnessError } from '../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import { validateRelayState, parseJsonSafe } from './_schemas.js';
 
 /** Interface for cross-context relay operations. */
@@ -134,7 +134,7 @@ export function createRelay(config: {
       if (expectedVersion > 0 && existing.version !== expectedVersion) {
         throw new HarnessError(
           `Relay state conflict: expected version ${expectedVersion} but found ${existing.version}`,
-          'RELAY_CONFLICT',
+          HarnessErrorCode.MEMORY_RELAY_CONFLICT,
           'Retry the save operation — another write occurred concurrently',
         );
       }
@@ -230,7 +230,7 @@ export function createRelay(config: {
           lastError = err;
           if (
             err instanceof HarnessError &&
-            err.code === 'RELAY_CONFLICT' &&
+            err.code === HarnessErrorCode.MEMORY_RELAY_CONFLICT &&
             attempt < maxRetries
           ) {
             // Exponential backoff: backoffMs * 2^attempt

@@ -17,14 +17,14 @@ import type {
   TokenUsage,
   ToolSchema,
 } from 'harness-one/core';
-import { HarnessError } from 'harness-one/core';
+import { HarnessError, HarnessErrorCode} from 'harness-one/core';
 import { safeWarn, type Logger } from 'harness-one/observe';
 
 /**
  * T05 (Wave-5A): Allow-list of `LLMConfig.extra` keys that are safe to forward
  * verbatim to the Anthropic Messages API. Any key outside this set is filtered
  * out (with a single `safeWarn` emission) in non-strict mode, or rejected with
- * a `HarnessError('ADAPTER_INVALID_EXTRA')` when `strictExtraAllowList: true`.
+ * a `HarnessError(HarnessErrorCode.ADAPTER_INVALID_EXTRA)` when `strictExtraAllowList: true`.
  *
  * Rationale: prior to T05, `extra` was spread into the request body unchecked,
  * which made it trivial for callers (or upstream preset chains) to leak vendor
@@ -57,7 +57,7 @@ export interface AnthropicAdapterConfig {
   readonly logger?: Pick<Logger, 'warn' | 'error'>;
   /**
    * T05 (Wave-5A): when `true`, unknown keys in `LLMConfig.extra` cause
-   * `chat()`/`stream()` to throw `HarnessError('ADAPTER_INVALID_EXTRA')`
+   * `chat()`/`stream()` to throw `HarnessError(HarnessErrorCode.ADAPTER_INVALID_EXTRA)`
    * before contacting the provider. Defaults to `false` — unknown keys are
    * silently filtered and reported via a single `safeWarn` emission so the
    * caller can notice without breaking their pipeline.
@@ -72,7 +72,7 @@ export interface AnthropicAdapterConfig {
  *   zero side effects).
  * - Returns the filtered subset plus a single `safeWarn` emission when keys
  *   are rejected and `strict === false`.
- * - Throws `HarnessError('ADAPTER_INVALID_EXTRA')` when keys are rejected
+ * - Throws `HarnessError(HarnessErrorCode.ADAPTER_INVALID_EXTRA)` when keys are rejected
  *   and `strict === true`.
  *
  * The `logger` parameter is structurally compatible with `safeWarn`'s
@@ -99,7 +99,7 @@ function filterExtra(
   if (strict) {
     throw new HarnessError(
       `Anthropic adapter: extra contains keys outside the allow-list: ${rejected.join(', ')}`,
-      'ADAPTER_INVALID_EXTRA',
+      HarnessErrorCode.ADAPTER_INVALID_EXTRA,
       'Remove the listed keys from LLMConfig.extra, or set strictExtraAllowList=false to filter-and-warn instead of throwing.',
     );
   }
@@ -319,7 +319,7 @@ export function createAnthropicAdapter(config: AnthropicAdapterConfig): AgentAda
       }, { signal: params.signal });
 
       if (!response.content || response.content.length === 0) {
-        throw new HarnessError('Anthropic API returned empty content', 'PROVIDER_ERROR', 'Check if the model and API key are valid');
+        throw new HarnessError('Anthropic API returned empty content', HarnessErrorCode.ADAPTER_ERROR, 'Check if the model and API key are valid');
       }
 
       return {
@@ -405,7 +405,7 @@ export function createAnthropicAdapter(config: AnthropicAdapterConfig): AgentAda
         }
         throw new HarnessError(
           'Anthropic stream failed before finalMessage() resolved',
-          'PROVIDER_ERROR',
+          HarnessErrorCode.ADAPTER_ERROR,
           'The provider stream ended abnormally. Check network connectivity and provider status; retry if transient.',
           err instanceof Error ? err : undefined,
         );

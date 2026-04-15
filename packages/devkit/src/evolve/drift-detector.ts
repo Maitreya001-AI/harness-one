@@ -4,7 +4,7 @@
  * @module
  */
 
-import { HarnessError } from 'harness-one';
+import { HarnessError, HarnessErrorCode} from 'harness-one';
 import type { DriftReport, DriftDeviation } from './types.js';
 
 /** Interface for detecting drift from baselines. */
@@ -87,7 +87,7 @@ export function createDriftDetector(config?: DriftDetectorConfig): DriftDetector
       if (!baseline) {
         throw new HarnessError(
           `No baseline set for component "${componentId}"`,
-          'NO_BASELINE',
+          HarnessErrorCode.EVOLVE_NO_BASELINE,
           'Call setBaseline() before check()',
         );
       }

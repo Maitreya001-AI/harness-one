@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createTasteCodingRegistry } from '../taste-coding.js';
-import { HarnessError } from 'harness-one';
+import { HarnessError, HarnessErrorCode} from 'harness-one';
 import type { TasteCodingRule } from '../types.js';
 
 const makeRule = (overrides: Partial<TasteCodingRule> = {}): TasteCodingRule => ({
@@ -301,7 +301,7 @@ describe('createTasteCodingRegistry', () => {
           enforcement: 'lint',
         }));
       } catch (e) {
-        expect((e as HarnessError).code).toBe('INVALID_PATTERN');
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.CORE_INVALID_PATTERN);
       }
     });
 

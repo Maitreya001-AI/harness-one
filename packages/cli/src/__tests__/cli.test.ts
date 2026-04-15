@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { parseArgs, getTemplate, auditProject, ALL_MODULES, MODULE_DESCRIPTIONS, FILE_NAMES, c, SUPPORTS_COLOR, writeModuleFiles, runInit, runAudit, showHelp } from '../index.js';
 import { scanFiles, maturityLabel } from '../audit.js';
 import type { ModuleName, ParsedArgs } from '../index.js';
-import { HarnessError } from 'harness-one';
+import { HarnessError, HarnessErrorCode} from 'harness-one';
 import { mkdirSync, writeFileSync, rmSync, existsSync, symlinkSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -76,7 +76,7 @@ describe('CLI argument parser', () => {
       throw new Error('expected throw');
     } catch (err) {
       expect(err).toBeInstanceOf(HarnessError);
-      expect((err as HarnessError).code).toBe('CLI_PARSE_ERROR');
+      expect((err as HarnessError).code).toBe(HarnessErrorCode.CLI_PARSE_ERROR);
     }
   });
 

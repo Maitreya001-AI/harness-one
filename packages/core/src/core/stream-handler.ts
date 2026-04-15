@@ -18,7 +18,7 @@
 
 import type { AgentAdapter, Message, TokenUsage, ToolSchema } from './types.js';
 import type { AgentEvent } from './events.js';
-import { HarnessError } from './errors.js';
+import { HarnessError, HarnessErrorCode } from './errors.js';
 import { categorizeAdapterError } from './error-classifier.js';
 import { StreamAggregator } from './stream-aggregator.js';
 
@@ -38,7 +38,7 @@ export type StreamResult =
   | {
       readonly ok: false;
       readonly error: HarnessError | Error;
-      readonly errorCategory: string;
+      readonly errorCategory: HarnessErrorCode;
     };
 
 /**

@@ -7,7 +7,7 @@
 import type { JsonSchema } from '../core/types.js';
 import type { ToolDefinition, ToolResult, ToolCapabilityValue } from './types.js';
 import { toolError } from './types.js';
-import { HarnessError } from '../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 
 /** Supported JSON Schema types for tool parameters. */
 const VALID_TYPES: Set<string> = new Set<string>([
@@ -22,14 +22,14 @@ function validateParametersSchema(schema: JsonSchema, path = 'parameters'): void
   if (!schema || typeof schema !== 'object') {
     throw new HarnessError(
       `Invalid schema at ${path}: schema must be an object`,
-      'INVALID_TOOL_SCHEMA',
+      HarnessErrorCode.TOOL_INVALID_SCHEMA,
       'Provide a valid JSON Schema object for tool parameters',
     );
   }
   if (schema.type !== undefined && !VALID_TYPES.has(schema.type as string)) {
     throw new HarnessError(
       `Invalid schema type "${schema.type}" at ${path}: must be one of ${[...VALID_TYPES].join(', ')}`,
-      'INVALID_TOOL_SCHEMA',
+      HarnessErrorCode.TOOL_INVALID_SCHEMA,
       'Use a supported JSON Schema type',
     );
   }
@@ -37,7 +37,7 @@ function validateParametersSchema(schema: JsonSchema, path = 'parameters'): void
     if (typeof schema.properties !== 'object' || Array.isArray(schema.properties)) {
       throw new HarnessError(
         `Invalid schema at ${path}.properties: must be a plain object`,
-        'INVALID_TOOL_SCHEMA',
+        HarnessErrorCode.TOOL_INVALID_SCHEMA,
         'Define properties as a map of property names to schemas',
       );
     }
@@ -51,7 +51,7 @@ function validateParametersSchema(schema: JsonSchema, path = 'parameters'): void
   if (schema.required !== undefined && !Array.isArray(schema.required)) {
     throw new HarnessError(
       `Invalid schema at ${path}.required: must be an array of strings`,
-      'INVALID_TOOL_SCHEMA',
+      HarnessErrorCode.TOOL_INVALID_SCHEMA,
       'Provide required as an array of property name strings',
     );
   }

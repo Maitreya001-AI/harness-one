@@ -4,7 +4,7 @@
  * @module
  */
 
-import { HarnessError } from '../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import { asSpanId, asTraceId } from '../infra/ids.js';
 import type { SpanId, TraceId } from '../core/types.js';
 import {
@@ -149,12 +149,12 @@ export function createTraceManager(config?: {
       : createRedactor(config?.redact ?? undefined);
 
   if (maxTraces < 1) {
-    throw new HarnessError('maxTraces must be >= 1', 'INVALID_CONFIG', 'Provide a positive maxTraces value');
+    throw new HarnessError('maxTraces must be >= 1', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide a positive maxTraces value');
   }
   if (!Number.isFinite(samplingRate) || samplingRate < 0 || samplingRate > 1) {
     throw new HarnessError(
       'defaultSamplingRate must be a finite number in [0, 1]',
-      'INVALID_CONFIG',
+      HarnessErrorCode.CORE_INVALID_CONFIG,
       'Provide a rate between 0 and 1 inclusive',
     );
   }
@@ -585,7 +585,7 @@ export function createTraceManager(config?: {
       if (!trace) {
         throw new HarnessError(
           `Trace not found: ${traceId}`,
-          'TRACE_NOT_FOUND',
+          HarnessErrorCode.TRACE_NOT_FOUND,
           'Start a trace before creating spans',
         );
       }
@@ -597,7 +597,7 @@ export function createTraceManager(config?: {
         if (!parentSpan || parentSpan.traceId !== traceId) {
           throw new HarnessError(
             `Parent span not found: ${parentId} in trace ${traceId}`,
-            'SPAN_NOT_FOUND',
+            HarnessErrorCode.TRACE_SPAN_NOT_FOUND,
             'Start the parent span before creating child spans',
           );
         }
@@ -624,7 +624,7 @@ export function createTraceManager(config?: {
       if (!span) {
         throw new HarnessError(
           `Span not found: ${spanId}`,
-          'SPAN_NOT_FOUND',
+          HarnessErrorCode.TRACE_SPAN_NOT_FOUND,
           'Start a span before adding events',
         );
       }
@@ -656,7 +656,7 @@ export function createTraceManager(config?: {
       if (!span) {
         throw new HarnessError(
           `Span not found: ${spanId}`,
-          'SPAN_NOT_FOUND',
+          HarnessErrorCode.TRACE_SPAN_NOT_FOUND,
           'Start a span before setting attributes',
         );
       }
@@ -679,7 +679,7 @@ export function createTraceManager(config?: {
       if (!trace) {
         throw new HarnessError(
           `Trace not found: ${traceId}`,
-          'TRACE_NOT_FOUND',
+          HarnessErrorCode.TRACE_NOT_FOUND,
           'Start a trace before setting system metadata',
         );
       }
@@ -702,7 +702,7 @@ export function createTraceManager(config?: {
       if (!span) {
         throw new HarnessError(
           `Span not found: ${spanId}`,
-          'SPAN_NOT_FOUND',
+          HarnessErrorCode.TRACE_SPAN_NOT_FOUND,
           'Start a span before ending it',
         );
       }
@@ -756,7 +756,7 @@ export function createTraceManager(config?: {
       if (!trace) {
         throw new HarnessError(
           `Trace not found: ${traceId}`,
-          'TRACE_NOT_FOUND',
+          HarnessErrorCode.TRACE_NOT_FOUND,
           'Start a trace before ending it',
         );
       }
@@ -820,7 +820,7 @@ export function createTraceManager(config?: {
       if (!Number.isFinite(rate) || rate < 0 || rate > 1) {
         throw new HarnessError(
           'samplingRate must be a finite number in [0, 1]',
-          'INVALID_CONFIG',
+          HarnessErrorCode.CORE_INVALID_CONFIG,
           'Provide a rate between 0 and 1 inclusive',
         );
       }

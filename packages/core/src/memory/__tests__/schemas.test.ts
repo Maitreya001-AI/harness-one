@@ -9,7 +9,7 @@ import {
   validateRelayState,
   parseJsonSafe,
 } from '../_schemas.js';
-import { HarnessError } from '../../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../../core/errors.js';
 
 describe('parseJsonSafe', () => {
   it('returns { ok: true, value } for valid JSON', () => {
@@ -68,7 +68,7 @@ describe('validateMemoryEntry', () => {
       validateMemoryEntry({ ...good, grade: 'invalid' });
     } catch (err) {
       expect(err).toBeInstanceOf(HarnessError);
-      expect((err as HarnessError).code).toBe('MEMORY_CORRUPT');
+      expect((err as HarnessError).code).toBe(HarnessErrorCode.MEMORY_CORRUPT);
       expect((err as HarnessError).suggestion).toContain('backing store');
       return;
     }

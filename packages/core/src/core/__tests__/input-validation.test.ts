@@ -2,12 +2,12 @@
  * Input validation tests for production audit hardening.
  *
  * Verifies that constructors and factory functions reject invalid configs
- * with HarnessError (code 'INVALID_CONFIG').
+ * with HarnessError (code HarnessErrorCode.CORE_INVALID_CONFIG).
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
 import { AgentLoop } from '../agent-loop.js';
-import { HarnessError } from '../errors.js';
+import { HarnessError, HarnessErrorCode} from '../errors.js';
 import type { AgentAdapter, ChatResponse } from '../types.js';
 import { compress } from '../../context/compress.js';
 import { createSessionManager } from '../../session/manager.js';
@@ -37,7 +37,7 @@ function expectInvalidConfig(fn: () => unknown, messagePart?: string): void {
     expect.fail('Expected HarnessError with code INVALID_CONFIG to be thrown');
   } catch (err) {
     expect(err).toBeInstanceOf(HarnessError);
-    expect((err as HarnessError).code).toBe('INVALID_CONFIG');
+    expect((err as HarnessError).code).toBe(HarnessErrorCode.CORE_INVALID_CONFIG);
     if (messagePart) {
       expect((err as HarnessError).message).toContain(messagePart);
     }
@@ -50,7 +50,7 @@ async function expectInvalidConfigAsync(fn: () => Promise<unknown>, messagePart?
     expect.fail('Expected HarnessError with code INVALID_CONFIG to be thrown');
   } catch (err) {
     expect(err).toBeInstanceOf(HarnessError);
-    expect((err as HarnessError).code).toBe('INVALID_CONFIG');
+    expect((err as HarnessError).code).toBe(HarnessErrorCode.CORE_INVALID_CONFIG);
     if (messagePart) {
       expect((err as HarnessError).message).toContain(messagePart);
     }

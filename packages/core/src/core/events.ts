@@ -5,7 +5,7 @@
  */
 
 import type { Message, TokenUsage, ToolCallRequest } from './types.js';
-import { HarnessError } from './errors.js';
+import { HarnessError, HarnessErrorCode} from './errors.js';
 
 /** Reason the agent loop terminated. */
 export type DoneReason = 'end_turn' | 'max_iterations' | 'token_budget' | 'aborted' | 'error';
@@ -56,5 +56,5 @@ export type AgentEvent =
  * ```
  */
 export function assertNever(x: never): never {
-  throw new HarnessError(`Unexpected value: ${x}`, 'UNEXPECTED_VALUE', 'This is a bug in harness-one');
+  throw new HarnessError(`Unexpected value: ${x}`, HarnessErrorCode.CORE_UNEXPECTED_VALUE, 'This is a bug in harness-one');
 }

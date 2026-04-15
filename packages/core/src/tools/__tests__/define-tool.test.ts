@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { defineTool } from '../define-tool.js';
 import { toolSuccess, toolError } from '../types.js';
-import { HarnessError } from '../../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../../core/errors.js';
 
 describe('toolSuccess', () => {
   it('returns a success result', () => {
@@ -210,7 +210,7 @@ describe('defineTool', () => {
           execute: async () => toolSuccess(null),
         });
       } catch (err) {
-        expect((err as HarnessError).code).toBe('INVALID_TOOL_SCHEMA');
+        expect((err as HarnessError).code).toBe(HarnessErrorCode.TOOL_INVALID_SCHEMA);
       }
     });
 

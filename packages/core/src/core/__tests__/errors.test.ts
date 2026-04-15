@@ -5,8 +5,7 @@ import {
   AbortedError,
   GuardrailBlockedError,
   ToolValidationError,
-  TokenBudgetExceededError,
-} from '../errors.js';
+  TokenBudgetExceededError, HarnessErrorCode} from '../errors.js';
 
 describe('HarnessError', () => {
   it('sets message, code, and suggestion', () => {
@@ -33,7 +32,7 @@ describe('HarnessError', () => {
 describe('MaxIterationsError', () => {
   it('has correct code and iterations', () => {
     const err = new MaxIterationsError(25);
-    expect(err.code).toBe('MAX_ITERATIONS');
+    expect(err.code).toBe(HarnessErrorCode.CORE_MAX_ITERATIONS);
     expect(err.iterations).toBe(25);
     expect(err.name).toBe('MaxIterationsError');
     expect(err).toBeInstanceOf(HarnessError);
@@ -44,7 +43,7 @@ describe('MaxIterationsError', () => {
 describe('AbortedError', () => {
   it('has correct code', () => {
     const err = new AbortedError();
-    expect(err.code).toBe('ABORTED');
+    expect(err.code).toBe(HarnessErrorCode.CORE_ABORTED);
     expect(err.name).toBe('AbortedError');
     expect(err).toBeInstanceOf(HarnessError);
   });
@@ -53,7 +52,7 @@ describe('AbortedError', () => {
 describe('GuardrailBlockedError', () => {
   it('includes reason in message', () => {
     const err = new GuardrailBlockedError('toxic content');
-    expect(err.code).toBe('GUARDRAIL_BLOCKED');
+    expect(err.code).toBe(HarnessErrorCode.GUARD_BLOCKED);
     expect(err.message).toContain('toxic content');
     expect(err).toBeInstanceOf(HarnessError);
   });
@@ -62,7 +61,7 @@ describe('GuardrailBlockedError', () => {
 describe('ToolValidationError', () => {
   it('has correct code', () => {
     const err = new ToolValidationError('bad params');
-    expect(err.code).toBe('TOOL_VALIDATION');
+    expect(err.code).toBe(HarnessErrorCode.TOOL_VALIDATION);
     expect(err.message).toBe('bad params');
     expect(err).toBeInstanceOf(HarnessError);
   });
@@ -71,7 +70,7 @@ describe('ToolValidationError', () => {
 describe('TokenBudgetExceededError', () => {
   it('has correct code, used, and budget', () => {
     const err = new TokenBudgetExceededError(50000, 100000);
-    expect(err.code).toBe('TOKEN_BUDGET_EXCEEDED');
+    expect(err.code).toBe(HarnessErrorCode.CORE_TOKEN_BUDGET_EXCEEDED);
     expect(err.used).toBe(50000);
     expect(err.budget).toBe(100000);
     expect(err.message).toContain('50000');
@@ -84,29 +83,29 @@ describe('Wave-5 error codes', () => {
   it('accepts ADAPTER_INVALID_EXTRA as a typed code', () => {
     const err = new HarnessError(
       'unknown extra key "foo"',
-      'ADAPTER_INVALID_EXTRA',
+      HarnessErrorCode.ADAPTER_INVALID_EXTRA,
       'Remove the key or disable strict mode',
     );
-    expect(err.code).toBe('ADAPTER_INVALID_EXTRA');
+    expect(err.code).toBe(HarnessErrorCode.ADAPTER_INVALID_EXTRA);
     expect(err).toBeInstanceOf(HarnessError);
   });
 
   it('accepts TOOL_CAPABILITY_DENIED as a typed code', () => {
     const err = new HarnessError(
       'tool capability "network" not in registry allow-list',
-      'TOOL_CAPABILITY_DENIED',
+      HarnessErrorCode.TOOL_CAPABILITY_DENIED,
     );
-    expect(err.code).toBe('TOOL_CAPABILITY_DENIED');
+    expect(err.code).toBe(HarnessErrorCode.TOOL_CAPABILITY_DENIED);
     expect(err).toBeInstanceOf(HarnessError);
   });
 
   it('accepts PROVIDER_REGISTRY_SEALED as a typed code', () => {
     const err = new HarnessError(
       'provider registry is sealed; cannot register "openai"',
-      'PROVIDER_REGISTRY_SEALED',
+      HarnessErrorCode.PROVIDER_REGISTRY_SEALED,
       'Register providers before sealing the registry',
     );
-    expect(err.code).toBe('PROVIDER_REGISTRY_SEALED');
+    expect(err.code).toBe(HarnessErrorCode.PROVIDER_REGISTRY_SEALED);
     expect(err).toBeInstanceOf(HarnessError);
   });
 });

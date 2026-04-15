@@ -4,7 +4,7 @@
  * @module
  */
 
-import { HarnessError } from '../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import { secureId } from '../infra/ids.js';
 import type {
   MemoryEntry,
@@ -115,7 +115,7 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
     if (a.length !== b.length) {
       throw new HarnessError(
         `Embedding dimension mismatch: ${a.length} vs ${b.length}`,
-        'INVALID_INPUT',
+        HarnessErrorCode.CORE_INVALID_INPUT,
         'Ensure all embeddings use the same model and dimensionality',
       );
     }
@@ -206,7 +206,7 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
         if (existingDim !== undefined && inputEmbedding.length !== existingDim) {
           throw new HarnessError(
             `Embedding dimension mismatch: new entry has ${inputEmbedding.length} dimensions but store contains embeddings with ${existingDim} dimensions`,
-            'INVALID_INPUT',
+            HarnessErrorCode.CORE_INVALID_INPUT,
             'Ensure all embeddings use the same model and dimensionality',
           );
         }
@@ -265,7 +265,7 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
           if (existingDim !== undefined && inputEmbedding.length !== existingDim) {
             throw new HarnessError(
               `Embedding dimension mismatch: entry has ${inputEmbedding.length} dimensions but store contains embeddings with ${existingDim} dimensions`,
-              'INVALID_INPUT',
+              HarnessErrorCode.CORE_INVALID_INPUT,
               'Ensure all embeddings use the same model and dimensionality',
             );
           }
@@ -371,7 +371,7 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
       if (!existing) {
         throw new HarnessError(
           `Memory entry not found: ${id}`,
-          'MEMORY_NOT_FOUND',
+          HarnessErrorCode.MEMORY_NOT_FOUND,
           'Check that the entry ID is correct',
         );
       }

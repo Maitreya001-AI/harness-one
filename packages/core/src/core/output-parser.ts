@@ -8,7 +8,7 @@
  */
 
 import type { JsonSchema } from './types.js';
-import { HarnessError } from './errors.js';
+import { HarnessError, HarnessErrorCode} from './errors.js';
 
 /** Parses raw LLM text into a typed value. */
 export interface OutputParser<T = unknown> {
@@ -72,7 +72,7 @@ function stringifySchemaCached(schema: unknown): string {
 
 /**
  * Wrapper for JSON.parse that converts native SyntaxError into
- * `HarnessError('PARSE_INVALID_JSON')` with a contextual hint and the
+ * `HarnessError(HarnessErrorCode.CORE_PARSE_INVALID_JSON)` with a contextual hint and the
  * original error as `cause`. Keeps upstream callers' retry loops informative
  * instead of seeing a bare "Unexpected token" message.
  */
@@ -83,7 +83,7 @@ function parseJsonOrThrow<T>(input: string, source: string): T {
     if (err instanceof SyntaxError) {
       throw new HarnessError(
         `Failed to parse JSON in ${source}: ${err.message}`,
-        'PARSE_INVALID_JSON',
+        HarnessErrorCode.CORE_PARSE_INVALID_JSON,
         'The LLM produced invalid JSON. Regenerate with explicit format instructions, or tighten the response schema.',
         err,
       );
@@ -112,7 +112,7 @@ export function createJsonOutputParser<T = unknown>(schema?: JsonSchema): Output
       if (text.trim() === '') {
         throw new HarnessError(
           'Cannot parse empty string as JSON',
-          'PARSE_EMPTY_INPUT',
+          HarnessErrorCode.CORE_PARSE_EMPTY_INPUT,
           'Provide a non-empty string containing valid JSON',
         );
       }
@@ -124,7 +124,7 @@ export function createJsonOutputParser<T = unknown>(schema?: JsonSchema): Output
         if (inner === '') {
           throw new HarnessError(
             'Empty code block contains no JSON',
-            'PARSE_EMPTY_CODEBLOCK',
+            HarnessErrorCode.CORE_PARSE_EMPTY_CODEBLOCK,
             'Provide valid JSON inside the code block',
           );
         }
@@ -135,7 +135,7 @@ export function createJsonOutputParser<T = unknown>(schema?: JsonSchema): Output
       if (/```(?:json)?\s*[\s\S]+/.test(text) && !/```[\s\S]*```/.test(text)) {
         throw new HarnessError(
           'Unclosed markdown code block',
-          'PARSE_UNCLOSED_CODEBLOCK',
+          HarnessErrorCode.CORE_PARSE_UNCLOSED_CODEBLOCK,
           'Ensure the code block is properly closed with ```',
         );
       }
@@ -211,7 +211,7 @@ export async function parseWithRetry<T>(
   /* istanbul ignore next -- unreachable after for-loop */
   throw new HarnessError(
     'Unreachable state in output-parser',
-    'INTERNAL_ERROR',
+    HarnessErrorCode.CORE_INTERNAL_ERROR,
     'This indicates a bug — please file an issue',
   );
 }

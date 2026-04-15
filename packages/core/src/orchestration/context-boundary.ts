@@ -11,7 +11,7 @@
  * @module
  */
 
-import { HarnessError } from '../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import { normalizeContextKey } from './orchestrator.js';
 import type {
   BoundaryPolicy,
@@ -118,7 +118,7 @@ export function createContextBoundary(
           if (strictMode) {
             throw new HarnessError(
               `Agent "${agentId}" denied read access to key "${key}"`,
-              'BOUNDARY_READ_DENIED',
+              HarnessErrorCode.ORCH_BOUNDARY_READ_DENIED,
               'Check the BoundaryPolicy for this agent',
             );
           }
@@ -132,7 +132,7 @@ export function createContextBoundary(
           recordViolation({ type: 'write_denied', agentId, key, timestamp: Date.now() });
           throw new HarnessError(
             `Agent "${agentId}" denied write access to key "${key}"`,
-            'BOUNDARY_WRITE_DENIED',
+            HarnessErrorCode.ORCH_BOUNDARY_WRITE_DENIED,
             'Check the BoundaryPolicy for this agent',
           );
         }

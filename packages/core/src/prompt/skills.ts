@@ -4,7 +4,7 @@
  * @module
  */
 
-import { HarnessError } from '../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import type {
   SkillDefinition,
   SkillStage,
@@ -113,13 +113,13 @@ export function createSkillEngine(config?: SkillEngineConfig): SkillEngine {
 
   function getStage(stageId: string): SkillStage {
     if (!activeSkill || !activeStageMap) {
-      throw new HarnessError('No active skill', 'NO_ACTIVE_SKILL', 'Call startSkill() first');
+      throw new HarnessError('No active skill', HarnessErrorCode.PROMPT_NO_ACTIVE_SKILL, 'Call startSkill() first');
     }
     const stage = activeStageMap.get(stageId);
     if (!stage) {
       throw new HarnessError(
         `Stage not found: ${stageId}`,
-        'STAGE_NOT_FOUND',
+        HarnessErrorCode.ORCH_STAGE_NOT_FOUND,
         `Valid stages: ${activeSkill.stages.map(s => s.id).join(', ')}`,
       );
     }
@@ -128,7 +128,7 @@ export function createSkillEngine(config?: SkillEngineConfig): SkillEngine {
 
   function requireActiveStage(): SkillStage {
     if (!activeSkill || !currentStageId) {
-      throw new HarnessError('No active skill', 'NO_ACTIVE_SKILL', 'Call startSkill() first');
+      throw new HarnessError('No active skill', HarnessErrorCode.PROMPT_NO_ACTIVE_SKILL, 'Call startSkill() first');
     }
     return getStage(currentStageId);
   }
@@ -162,7 +162,7 @@ export function createSkillEngine(config?: SkillEngineConfig): SkillEngine {
             if (typeof condition.count !== 'number') {
               throw new HarnessError(
                 `Stage "${stage.id}" transition to "${transition.to}": turn_count condition requires numeric "count" field`,
-                'INVALID_TRANSITION',
+                HarnessErrorCode.ORCH_INVALID_TRANSITION,
                 'Add a "count" field to the turn_count condition',
               );
             }
@@ -170,7 +170,7 @@ export function createSkillEngine(config?: SkillEngineConfig): SkillEngine {
             if (!Array.isArray(condition.keywords) || condition.keywords.length === 0) {
               throw new HarnessError(
                 `Stage "${stage.id}" transition to "${transition.to}": keyword condition requires non-empty "keywords" array`,
-                'INVALID_TRANSITION',
+                HarnessErrorCode.ORCH_INVALID_TRANSITION,
                 'Add a "keywords" array to the keyword condition',
               );
             }
@@ -178,7 +178,7 @@ export function createSkillEngine(config?: SkillEngineConfig): SkillEngine {
             if (typeof condition.check !== 'function') {
               throw new HarnessError(
                 `Stage "${stage.id}" transition to "${transition.to}": custom condition requires "check" function`,
-                'INVALID_TRANSITION',
+                HarnessErrorCode.ORCH_INVALID_TRANSITION,
                 'Add a "check" function to the custom condition',
               );
             }
@@ -188,7 +188,7 @@ export function createSkillEngine(config?: SkillEngineConfig): SkillEngine {
             // Exhaustive check — condition is `never` here if all types are handled
             throw new HarnessError(
               `Stage "${stage.id}" transition to "${transition.to}": unknown condition type "${(condition as { type: string }).type}"`,
-              'INVALID_TRANSITION',
+              HarnessErrorCode.ORCH_INVALID_TRANSITION,
               'Use one of: turn_count, keyword, custom, manual',
             );
           }
@@ -208,7 +208,7 @@ export function createSkillEngine(config?: SkillEngineConfig): SkillEngine {
           if (!stageIds.has(transition.to)) {
             throw new HarnessError(
               `Stage "${stage.id}" transition targets non-existent stage "${transition.to}"`,
-              'INVALID_TRANSITION_TARGET',
+              HarnessErrorCode.ORCH_INVALID_TRANSITION_TARGET,
               `Valid stages: ${[...stageIds].join(', ')}`,
             );
           }
@@ -225,7 +225,7 @@ export function createSkillEngine(config?: SkillEngineConfig): SkillEngine {
       if (!skill) {
         throw new HarnessError(
           `Skill not found: ${skillId}`,
-          'SKILL_NOT_FOUND',
+          HarnessErrorCode.PROMPT_SKILL_NOT_FOUND,
           'Register the skill before starting it',
         );
       }
@@ -339,7 +339,7 @@ export function createSkillEngine(config?: SkillEngineConfig): SkillEngine {
 
     reset(): void {
       if (!activeSkill) {
-        throw new HarnessError('No active skill', 'NO_ACTIVE_SKILL', 'Call startSkill() first');
+        throw new HarnessError('No active skill', HarnessErrorCode.PROMPT_NO_ACTIVE_SKILL, 'Call startSkill() first');
       }
       currentStageId = activeSkill.initialStage;
       turnCount = 0;

@@ -5,7 +5,7 @@
  */
 
 import type { Guardrail } from './types.js';
-import { HarnessError } from '../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 
 /** Escape special regex characters so a literal string can be used inside a RegExp. */
 function escapeRegExp(s: string): string {
@@ -90,7 +90,7 @@ function hasOverlappingAlternatives(body: string): boolean {
  * **ReDoS protection:** Every user-supplied `blockedPatterns` entry is
  * validated at construction time for catastrophic-backtracking risk (nested
  * quantifiers, overlapping alternation with a repeat, etc.). Unsafe patterns
- * throw `HarnessError('REDOS_PATTERN')`.
+ * throw `HarnessError(HarnessErrorCode.CORE_REDOS_PATTERN)`.
  *
  * @example
  * ```ts
@@ -122,7 +122,7 @@ export function createContentFilter(config: {
     if (isReDoSCandidate(pat.source)) {
       throw new HarnessError(
         `Blocked pattern /${pat.source}/ is a potential ReDoS candidate (contains nested or adjacent quantifiers)`,
-        'REDOS_PATTERN',
+        HarnessErrorCode.CORE_REDOS_PATTERN,
         'Simplify the pattern to avoid nested quantifiers like (a+)+ or (\\w+)*',
       );
     }

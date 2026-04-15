@@ -9,7 +9,7 @@
 
 import type { AgentAdapter, ExecutionStrategy, Message, TokenUsage, ToolCallRequest, ToolSchema } from './types.js';
 import type { AgentEvent, DoneReason } from './events.js';
-import { AbortedError, HarnessError, MaxIterationsError, TokenBudgetExceededError } from './errors.js';
+import { AbortedError, HarnessError, MaxIterationsError, TokenBudgetExceededError, HarnessErrorCode} from './errors.js';
 import { createSequentialStrategy, createParallelStrategy } from './execution-strategies.js';
 import { createAdapterCaller, type AdapterCaller } from './adapter-caller.js';
 import { createStreamHandler } from './stream-handler.js';
@@ -176,7 +176,7 @@ export interface AgentLoopConfig {
    * T10 (Wave-5A): optional guardrail pipeline applied to the latest user
    * message before every adapter call. A hard-block (`action: 'block'`)
    * terminates the loop with a `guardrail_blocked` AgentEvent followed by an
-   * `error` carrying `HarnessErrorCode.GUARDRAIL_VIOLATION` (non-retryable),
+   * `error` carrying `HarnessErrorCode.GUARD_VIOLATION` (non-retryable),
    * and aborts the internal AbortController so any in-flight adapter call is
    * torn down. Omitting both pipelines emits a one-time `safeWarn` on the
    * first `run()` — security-relevant configurations should use
@@ -304,19 +304,19 @@ export class AgentLoop {
     if (config.outputPipeline !== undefined) this.outputPipeline = config.outputPipeline;
 
     if (this.maxIterations < 1) {
-      throw new HarnessError('maxIterations must be >= 1', 'INVALID_CONFIG', 'Provide a positive maxIterations value');
+      throw new HarnessError('maxIterations must be >= 1', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide a positive maxIterations value');
     }
     if (this.maxTotalTokens <= 0) {
-      throw new HarnessError('maxTotalTokens must be > 0', 'INVALID_CONFIG', 'Provide a positive maxTotalTokens value');
+      throw new HarnessError('maxTotalTokens must be > 0', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide a positive maxTotalTokens value');
     }
     if (this.maxStreamBytes <= 0) {
-      throw new HarnessError('maxStreamBytes must be > 0', 'INVALID_CONFIG', 'Provide a positive maxStreamBytes value');
+      throw new HarnessError('maxStreamBytes must be > 0', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide a positive maxStreamBytes value');
     }
     if (this.maxToolArgBytes <= 0) {
-      throw new HarnessError('maxToolArgBytes must be > 0', 'INVALID_CONFIG', 'Provide a positive maxToolArgBytes value');
+      throw new HarnessError('maxToolArgBytes must be > 0', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide a positive maxToolArgBytes value');
     }
     if (this.toolTimeoutMs !== undefined && this.toolTimeoutMs <= 0) {
-      throw new HarnessError('toolTimeoutMs must be > 0', 'INVALID_CONFIG', 'Provide a positive toolTimeoutMs value');
+      throw new HarnessError('toolTimeoutMs must be > 0', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide a positive toolTimeoutMs value');
     }
 
     if (config.executionStrategy) {
@@ -504,7 +504,7 @@ export class AgentLoop {
     if (this._status === 'running') {
       throw new HarnessError(
         'AgentLoop.run() is already running — re-entrancy is not supported',
-        'INVALID_STATE',
+        HarnessErrorCode.CORE_INVALID_STATE,
         'Await the first run() before calling again, or use separate AgentLoop instances for parallel execution',
       );
     }

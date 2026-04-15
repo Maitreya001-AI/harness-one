@@ -9,7 +9,7 @@
 import type { Message, AgentAdapter } from '../core/types.js';
 import type { CompressionStrategy } from './types.js';
 import { estimateTokens } from '../infra/token-estimator.js';
-import { HarnessError } from '../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 
 /** Estimate token count for a single message using the default model heuristic. */
 function msgTokens(msg: Message): number {
@@ -72,7 +72,7 @@ export async function compress(
   options: CompressOptions,
 ): Promise<CompressResult> {
   if (options.budget <= 0) {
-    throw new HarnessError('budget must be > 0', 'INVALID_CONFIG', 'Provide a positive token budget');
+    throw new HarnessError('budget must be > 0', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide a positive token budget');
   }
   const originalTokens = messages.reduce((sum, m) => sum + msgTokens(m), 0);
 
@@ -122,7 +122,7 @@ function getBuiltinStrategy(
     default:
       throw new HarnessError(
         `Unknown compression strategy: "${name}"`,
-        'UNKNOWN_STRATEGY',
+        HarnessErrorCode.ORCH_UNKNOWN_STRATEGY,
         'Use one of: truncate, sliding-window, summarize, preserve-failures',
       );
   }
@@ -241,7 +241,7 @@ function createSummarizeStrategy(
       if (!summarizer) {
         throw new HarnessError(
           'summarize strategy requires a summarizer callback',
-          'MISSING_SUMMARIZER',
+          HarnessErrorCode.CONTEXT_MISSING_SUMMARIZER,
           'Pass a summarizer function in CompressOptions',
         );
       }

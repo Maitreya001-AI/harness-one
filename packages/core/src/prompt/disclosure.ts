@@ -4,7 +4,7 @@
  * @module
  */
 
-import { HarnessError } from '../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 
 /** A single disclosure level for a topic. */
 export interface DisclosureLevel {
@@ -54,7 +54,7 @@ export function createDisclosureManager(): DisclosureManager {
     if (!levels) {
       throw new HarnessError(
         `Topic not found: ${topic}`,
-        'TOPIC_NOT_FOUND',
+        HarnessErrorCode.ORCH_TOPIC_NOT_FOUND,
         'Register the topic before accessing it',
       );
     }

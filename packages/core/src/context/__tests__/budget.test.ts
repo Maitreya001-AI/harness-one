@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createBudget } from '../budget.js';
-import { HarnessError } from '../../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../../core/errors.js';
 
 describe('createBudget', () => {
   const config = {
@@ -329,7 +329,7 @@ describe('createBudget', () => {
       try {
         createBudget({ totalTokens: 0, segments: [{ name: 'a', maxTokens: 100 }] });
       } catch (e) {
-        expect((e as HarnessError).code).toBe('INVALID_BUDGET');
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.CORE_INVALID_BUDGET);
       }
     });
 
@@ -352,7 +352,7 @@ describe('createBudget', () => {
       try {
         createBudget({ totalTokens: 1000, segments: [{ name: 'a', maxTokens: 0 }] });
       } catch (e) {
-        expect((e as HarnessError).code).toBe('INVALID_BUDGET');
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.CORE_INVALID_BUDGET);
       }
     });
 

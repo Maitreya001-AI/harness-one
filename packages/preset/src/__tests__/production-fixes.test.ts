@@ -5,6 +5,7 @@
  * - Issue 3: Tool call argument guardrail validation
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { HarnessErrorCode } from 'harness-one';
 
 // ---------------------------------------------------------------------------
 // Mocks — must be hoisted
@@ -542,6 +543,6 @@ describe('Issue 3: Tool call argument guardrail validation', () => {
       | { type: string; error: { code?: string } }
       | undefined;
     expect(errorEvent).toBeDefined();
-    expect(errorEvent!.error.code).toBe('GUARDRAIL_BLOCKED');
+    expect(errorEvent!.error.code).toBe(HarnessErrorCode.GUARD_BLOCKED);
   });
 });

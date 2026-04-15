@@ -5,7 +5,7 @@
  */
 
 import type { TokenUsageRecord, CostAlert } from './types.js';
-import { HarnessError } from '../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import {
   type EvictionStrategy,
   type EvictionStrategyName,
@@ -386,14 +386,14 @@ export function createCostTracker(config?: {
         if (!usage.model || typeof usage.model !== 'string' || usage.model.length === 0) {
           throw new HarnessError(
             'CostTracker.recordUsage: usage.model is required in strict mode',
-            'INVALID_INPUT',
+            HarnessErrorCode.CORE_INVALID_INPUT,
             'Provide a non-empty model identifier, or disable strictMode',
           );
         }
         if (!Number.isFinite(usage.inputTokens) || !Number.isFinite(usage.outputTokens)) {
           throw new HarnessError(
             'CostTracker.recordUsage: inputTokens/outputTokens must be finite numbers in strict mode',
-            'INVALID_INPUT',
+            HarnessErrorCode.CORE_INVALID_INPUT,
             'Ensure adapter populates usage, or disable strictMode',
           );
         }

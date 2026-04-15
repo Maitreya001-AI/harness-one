@@ -3,7 +3,7 @@ import { createRelay } from '../relay.js';
 import { createInMemoryStore } from '../store.js';
 import type { ContextRelay } from '../relay.js';
 import type { MemoryStore } from '../store.js';
-import { HarnessError } from '../../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../../core/errors.js';
 
 describe('createRelay', () => {
   let store: MemoryStore;
@@ -446,7 +446,7 @@ describe('createRelay', () => {
         expect.fail('Should have thrown');
       } catch (err) {
         expect(err).toBeInstanceOf(HarnessError);
-        expect((err as HarnessError).code).toBe('RELAY_CONFLICT');
+        expect((err as HarnessError).code).toBe(HarnessErrorCode.MEMORY_RELAY_CONFLICT);
       }
     });
 
@@ -734,7 +734,7 @@ describe('createRelay', () => {
 
       // Original relay has stale cached version — checkpoint must throw
       await expect(relay.checkpoint({ step: 3 })).rejects.toMatchObject({
-        code: 'RELAY_CONFLICT',
+        code: HarnessErrorCode.MEMORY_RELAY_CONFLICT,
       });
     });
 
@@ -746,7 +746,7 @@ describe('createRelay', () => {
       await relay2.addArtifact('b.txt');
 
       await expect(relay.addArtifact('c.txt')).rejects.toMatchObject({
-        code: 'RELAY_CONFLICT',
+        code: HarnessErrorCode.MEMORY_RELAY_CONFLICT,
       });
     });
 

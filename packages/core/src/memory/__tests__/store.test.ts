@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { createInMemoryStore } from '../store.js';
 import type { MemoryStore } from '../store.js';
-import { HarnessError } from '../../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../../core/errors.js';
 
 describe('createInMemoryStore', () => {
   let store: MemoryStore;
@@ -430,7 +430,7 @@ describe('createInMemoryStore', () => {
         await store.searchByVector!({ embedding: [0, 0, 1], minScore: 0 });
         expect.fail('Expected HarnessError to be thrown');
       } catch (err) {
-        expect((err as HarnessError).code).toBe('INVALID_INPUT');
+        expect((err as HarnessError).code).toBe(HarnessErrorCode.CORE_INVALID_INPUT);
         expect((err as HarnessError).message).toContain('Embedding dimension mismatch');
         // query is 3-dim, stored entry is 2-dim => cosineSimilarity receives (query=3, stored=2)
         expect((err as HarnessError).message).toContain('3 vs 2');
@@ -461,7 +461,7 @@ describe('createInMemoryStore', () => {
         await store.write({ key: 'k2', content: 'b', grade: 'useful', metadata: { embedding: [0, 1] } });
         expect.fail('Expected HarnessError');
       } catch (err) {
-        expect((err as HarnessError).code).toBe('INVALID_INPUT');
+        expect((err as HarnessError).code).toBe(HarnessErrorCode.CORE_INVALID_INPUT);
         expect((err as HarnessError).message).toContain('dimension mismatch');
       }
     });

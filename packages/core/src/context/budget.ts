@@ -5,7 +5,7 @@
  */
 
 import type { TokenBudget, BudgetConfig } from './types.js';
-import { HarnessError } from '../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 
 /**
  * Create a token budget tracker with named segments.
@@ -28,7 +28,7 @@ export function createBudget(config: BudgetConfig): TokenBudget {
   if (config.totalTokens <= 0) {
     throw new HarnessError(
       `totalTokens must be positive, got ${config.totalTokens}`,
-      'INVALID_BUDGET',
+      HarnessErrorCode.CORE_INVALID_BUDGET,
       'Provide a totalTokens value greater than 0',
     );
   }
@@ -44,7 +44,7 @@ export function createBudget(config: BudgetConfig): TokenBudget {
     if (seg.maxTokens <= 0) {
       throw new HarnessError(
         `Segment "${seg.name}" maxTokens must be positive, got ${seg.maxTokens}`,
-        'INVALID_BUDGET',
+        HarnessErrorCode.CORE_INVALID_BUDGET,
         'Provide a maxTokens value greater than 0 for each segment',
       );
     }
@@ -61,7 +61,7 @@ export function createBudget(config: BudgetConfig): TokenBudget {
     if (!seg) {
       throw new HarnessError(
         `Unknown segment: "${name}"`,
-        'UNKNOWN_SEGMENT',
+        HarnessErrorCode.CONTEXT_UNKNOWN_SEGMENT,
         `Available segments: ${[...segmentState.keys()].join(', ')}`,
       );
     }
@@ -83,7 +83,7 @@ export function createBudget(config: BudgetConfig): TokenBudget {
       if (seg.used + tokens > seg.maxTokens) {
         throw new HarnessError(
           `Allocation of ${tokens} tokens would exceed segment "${segmentName}" maxTokens (${seg.maxTokens}). Current usage: ${seg.used}`,
-          'SEGMENT_OVERFLOW',
+          HarnessErrorCode.CONTEXT_SEGMENT_OVERFLOW,
           `Remaining capacity: ${seg.maxTokens - seg.used}`,
         );
       }

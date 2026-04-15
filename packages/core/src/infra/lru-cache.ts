@@ -9,7 +9,7 @@
  * @module
  */
 
-import { HarnessError } from '../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 
 export class LRUCache<K, V> {
   private readonly map = new Map<K, V>();
@@ -20,7 +20,7 @@ export class LRUCache<K, V> {
       // instead of string-matching the message.
       throw new HarnessError(
         'LRUCache maxSize must be >= 1',
-        'INVALID_CONFIG',
+        HarnessErrorCode.CORE_INVALID_CONFIG,
         'Use a value >= 1',
       );
     }

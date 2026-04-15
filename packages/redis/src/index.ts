@@ -16,7 +16,7 @@ import type {
   CompactionPolicy,
 } from 'harness-one/memory';
 import { validateMemoryEntry, parseJsonSafe } from 'harness-one/memory';
-import { HarnessError } from 'harness-one/core';
+import { HarnessError, HarnessErrorCode} from 'harness-one/core';
 
 /**
  * Minimal structured logger accepted by the Redis store. Falls back to
@@ -113,10 +113,10 @@ export function createRedisStore(config: RedisStoreConfig): RedisMemoryStore {
   };
 
   if (!client) {
-    throw new HarnessError('Redis client is required', 'INVALID_CONFIG', 'Provide a valid ioredis client instance');
+    throw new HarnessError('Redis client is required', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide a valid ioredis client instance');
   }
   if (defaultTTL !== undefined && defaultTTL <= 0) {
-    throw new HarnessError('defaultTTL must be > 0', 'INVALID_CONFIG', 'Provide a positive TTL value in seconds');
+    throw new HarnessError('defaultTTL must be > 0', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide a positive TTL value in seconds');
   }
 
   function entryKey(id: string): string {
@@ -242,13 +242,13 @@ export function createRedisStore(config: RedisStoreConfig): RedisMemoryStore {
     async update(id: string, updates: Partial<Pick<MemoryEntry, 'content' | 'grade' | 'metadata' | 'tags'>>) {
       const raw = await client.get(entryKey(id));
       if (!raw) {
-        throw new HarnessError(`Memory entry not found: ${id}`, 'NOT_FOUND');
+        throw new HarnessError(`Memory entry not found: ${id}`, HarnessErrorCode.MEMORY_NOT_FOUND);
       }
       const existing = parseEntryFromRedis(raw, id, logger);
       if (!existing) {
         throw new HarnessError(
           `Corrupted memory entry: ${id}`,
-          'DATA_CORRUPTION',
+          HarnessErrorCode.MEMORY_DATA_CORRUPTION,
           'Delete and recreate the entry',
         );
       }

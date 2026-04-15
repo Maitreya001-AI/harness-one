@@ -5,7 +5,7 @@
  */
 
 import type { AgentLoop } from '../core/agent-loop.js';
-import { HarnessError } from '../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import type { AgentPool, PoolConfig, PooledAgent, PoolStats } from './types.js';
 
 interface PoolEntry {
@@ -216,7 +216,7 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
 
   function acquireSync(role?: string): PooledAgent {
     if (disposed) {
-      throw new HarnessError('Agent pool is disposed', 'POOL_DISPOSED');
+      throw new HarnessError('Agent pool is disposed', HarnessErrorCode.POOL_DISPOSED);
     }
     warmUp(role);
     for (const entry of entries.values()) {
@@ -234,7 +234,7 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
     if (entries.size >= max) {
       throw new HarnessError(
         `Agent pool exhausted (max=${max})`,
-        'POOL_EXHAUSTED',
+        HarnessErrorCode.POOL_EXHAUSTED,
         'Release agents or increase pool max',
       );
     }
@@ -254,7 +254,7 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
     // Fix 24 + CQ-017: Async acquire with queuing, timeout, and abort support
     async acquireAsync(optsOrTimeout?: number | AcquireAsyncOptions): Promise<PooledAgent> {
       if (disposed) {
-        throw new HarnessError('Agent pool is disposed', 'POOL_DISPOSED');
+        throw new HarnessError('Agent pool is disposed', HarnessErrorCode.POOL_DISPOSED);
       }
       const opts: AcquireAsyncOptions =
         typeof optsOrTimeout === 'number'
@@ -266,14 +266,14 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
 
       // CQ-017: If the signal is already aborted, fail fast without queuing.
       if (signal?.aborted) {
-        throw new HarnessError('Acquire aborted', 'POOL_ABORTED', 'The AbortSignal was already aborted when acquireAsync was called');
+        throw new HarnessError('Acquire aborted', HarnessErrorCode.POOL_ABORTED, 'The AbortSignal was already aborted when acquireAsync was called');
       }
 
       // Try synchronous acquire first
       try {
         return acquireSync(opts.role);
       } catch (err: unknown) {
-        if (err instanceof HarnessError && err.code === 'POOL_EXHAUSTED') {
+        if (err instanceof HarnessError && err.code === HarnessErrorCode.POOL_EXHAUSTED) {
           // Queue the request
           return new Promise<PooledAgent>((resolve, reject) => {
             // Declared first so `cleanup` can safely reference it before assignment.
@@ -292,7 +292,7 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
                 pending.cleanup();
                 reject(new HarnessError(
                   `Timed out waiting for agent (${timeoutMs}ms)`,
-                  'POOL_TIMEOUT',
+                  HarnessErrorCode.POOL_TIMEOUT,
                   'Release agents or increase pool max',
                 ));
               }
@@ -310,7 +310,7 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
                 pending.cleanup();
                 reject(new HarnessError(
                   'Acquire aborted',
-                  'POOL_ABORTED',
+                  HarnessErrorCode.POOL_ABORTED,
                   'The AbortSignal fired before an agent became available',
                 ));
               }
@@ -428,7 +428,7 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
         while (pendingQueue.length > 0) {
           const pending = pendingQueue.shift() as PendingAcquire;
           pending.cleanup();
-          pending.reject(new HarnessError('Pool disposed while waiting', 'POOL_DISPOSED'));
+          pending.reject(new HarnessError('Pool disposed while waiting', HarnessErrorCode.POOL_DISPOSED));
         }
         // Sequentially await each entry's dispose so file/socket handles on
         // the underlying loop settle before we claim the pool is torn down.

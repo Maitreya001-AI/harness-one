@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createInjectionDetector } from '../injection-detector.js';
-import { HarnessError } from '../../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../../core/errors.js';
 
 describe('createInjectionDetector', () => {
   // ---- SQL injection pattern detection ----
@@ -566,7 +566,7 @@ describe('createInjectionDetector', () => {
       try {
         createInjectionDetector({ extraPatterns: [/(a+)+/] });
       } catch (err) {
-        expect((err as HarnessError).code).toBe('INVALID_CONFIG');
+        expect((err as HarnessError).code).toBe(HarnessErrorCode.CORE_INVALID_CONFIG);
         expect((err as HarnessError).message).toContain('ReDoS');
       }
     });

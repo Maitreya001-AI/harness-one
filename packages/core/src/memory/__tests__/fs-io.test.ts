@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { existsSync } from 'node:fs';
 import { createFileIO, validateEntryId } from '../fs-io.js';
 import type { MemoryEntry } from '../types.js';
-import { HarnessError } from '../../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../../core/errors.js';
 
 describe('createFileIO', () => {
   let dir: string;
@@ -316,7 +316,7 @@ describe('createFileIO', () => {
         throw new Error('expected throw');
       } catch (err) {
         expect(err).toBeInstanceOf(HarnessError);
-        expect((err as HarnessError).code).toBe('INVALID_ID');
+        expect((err as HarnessError).code).toBe(HarnessErrorCode.CORE_INVALID_ID);
       }
     });
 

@@ -8,7 +8,7 @@
  */
 
 import type { AgentAdapter, ChatParams, ChatResponse, StreamChunk } from './types.js';
-import { HarnessError } from './errors.js';
+import { HarnessError, HarnessErrorCode} from './errors.js';
 import { createAsyncLock } from '../infra/async-lock.js';
 
 /** Configuration for the fallback adapter. */
@@ -103,7 +103,7 @@ export function createFallbackAdapter(config: FallbackAdapterConfig): AgentAdapt
       // because either we return on success or throw on last adapter failure).
       throw lastErr ?? new HarnessError(
         'All fallback adapters exhausted',
-        'FALLBACK_EXHAUSTED',
+        HarnessErrorCode.CORE_FALLBACK_EXHAUSTED,
         'Increase maxFailures or provide additional adapters',
       );
     },
@@ -119,7 +119,7 @@ export function createFallbackAdapter(config: FallbackAdapterConfig): AgentAdapt
           // can advance to the next adapter (or throw if this is the only one).
           const noStreamErr = new HarnessError(
             'Current adapter does not support streaming',
-            'STREAM_NOT_SUPPORTED',
+            HarnessErrorCode.CORE_STREAM_NOT_SUPPORTED,
             'Use an adapter that implements stream()',
           );
           if (adapters.length === 1) {
@@ -154,7 +154,7 @@ export function createFallbackAdapter(config: FallbackAdapterConfig): AgentAdapt
       }
       throw lastErr ?? new HarnessError(
         'All fallback adapters exhausted',
-        'FALLBACK_EXHAUSTED',
+        HarnessErrorCode.CORE_FALLBACK_EXHAUSTED,
         'Increase maxFailures or provide additional adapters',
       );
     },

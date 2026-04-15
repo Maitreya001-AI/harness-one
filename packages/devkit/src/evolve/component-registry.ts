@@ -4,7 +4,7 @@
  * @module
  */
 
-import { HarnessError } from 'harness-one';
+import { HarnessError, HarnessErrorCode} from 'harness-one';
 import type { ComponentMeta } from './types.js';
 
 /** Registry for managing component metadata. */
@@ -53,7 +53,7 @@ export function createComponentRegistry(): ComponentRegistry {
       if (components.has(meta.id)) {
         throw new HarnessError(
           `Component already registered: ${meta.id}`,
-          'COMPONENT_DUPLICATE',
+          HarnessErrorCode.EVOLVE_COMPONENT_DUPLICATE,
           'Use a unique component ID',
         );
       }
@@ -87,7 +87,7 @@ export function createComponentRegistry(): ComponentRegistry {
       if (!component) {
         throw new HarnessError(
           `Component not found: ${id}`,
-          'COMPONENT_NOT_FOUND',
+          HarnessErrorCode.EVOLVE_COMPONENT_NOT_FOUND,
           'Register the component before validating',
         );
       }
@@ -117,7 +117,7 @@ export function createComponentRegistry(): ComponentRegistry {
       if (!component) {
         throw new HarnessError(
           `Component not found: ${id}`,
-          'COMPONENT_NOT_FOUND',
+          HarnessErrorCode.EVOLVE_COMPONENT_NOT_FOUND,
           'Register the component before marking as validated',
         );
       }

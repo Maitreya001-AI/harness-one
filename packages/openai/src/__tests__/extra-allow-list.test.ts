@@ -6,7 +6,7 @@
  *  - Keys outside the allow-list are filtered out by default, with a single
  *    warn-level log entry enumerating the rejected keys.
  *  - With `strictExtraAllowList: true`, an unknown key raises
- *    `HarnessError { code: 'ADAPTER_INVALID_EXTRA' }`.
+ *    `HarnessError { code: HarnessErrorCode.ADAPTER_INVALID_EXTRA }`.
  *  - `extra: undefined` / missing produces no warning and no extra keys.
  *  - Mixed payloads forward allowed keys and warn about the rejected subset.
  */
@@ -32,7 +32,7 @@ vi.mock('openai', () => ({
 
 import { createOpenAIAdapter } from '../index.js';
 import type { OpenAIAdapterConfig } from '../index.js';
-import { HarnessError } from 'harness-one/core';
+import { HarnessError, HarnessErrorCode} from 'harness-one/core';
 
 function createMockOpenAIClient() {
   const createFn = vi.fn();
@@ -138,7 +138,7 @@ describe('OpenAI adapter — LLMConfig.extra allow-list (T06)', () => {
       }),
     ).rejects.toMatchObject({
       name: 'HarnessError',
-      code: 'ADAPTER_INVALID_EXTRA',
+      code: HarnessErrorCode.ADAPTER_INVALID_EXTRA,
     });
 
     // The provider MUST NOT be called when strict mode rejects the payload.
@@ -162,7 +162,7 @@ describe('OpenAI adapter — LLMConfig.extra allow-list (T06)', () => {
       );
 
     expect(err).toBeInstanceOf(HarnessError);
-    expect((err as HarnessError).code).toBe('ADAPTER_INVALID_EXTRA');
+    expect((err as HarnessError).code).toBe(HarnessErrorCode.ADAPTER_INVALID_EXTRA);
   });
 
   it('is a no-op when extra is undefined — no warn and no injected keys', async () => {

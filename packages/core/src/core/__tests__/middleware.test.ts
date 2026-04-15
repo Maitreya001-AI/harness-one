@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createMiddlewareChain } from '../middleware.js';
 import type { MiddlewareContext } from '../middleware.js';
-import { HarnessError } from '../errors.js';
+import { HarnessError, HarnessErrorCode} from '../errors.js';
 
 describe('createMiddlewareChain', () => {
   it('executes handler directly with no middleware', async () => {
@@ -304,7 +304,7 @@ describe('createMiddlewareChain', () => {
         expect.fail('Should have thrown');
       } catch (err) {
         expect(err).toBeInstanceOf(HarnessError);
-        expect((err as HarnessError).code).toBe('MIDDLEWARE_ERROR');
+        expect((err as HarnessError).code).toBe(HarnessErrorCode.CORE_MIDDLEWARE_ERROR);
         expect((err as HarnessError).message).toBe('middleware broke');
         expect((err as HarnessError).cause).toBeInstanceOf(Error);
       }
@@ -373,7 +373,7 @@ describe('createMiddlewareChain', () => {
         expect.fail('Should have thrown');
       } catch (err) {
         expect(err).toBeInstanceOf(HarnessError);
-        expect((err as HarnessError).code).toBe('MIDDLEWARE_ERROR');
+        expect((err as HarnessError).code).toBe(HarnessErrorCode.CORE_MIDDLEWARE_ERROR);
         expect((err as HarnessError).message).toBe('string error');
       }
     });

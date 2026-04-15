@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createSkillEngine } from '../skills.js';
 import type { SkillEngineConfig } from '../skills.js';
-import { HarnessError } from '../../core/errors.js';
+import { HarnessError, HarnessErrorCode} from '../../core/errors.js';
 import type { SkillDefinition, TransitionCondition } from '../types.js';
 
 const twoStageSkill: SkillDefinition = {
@@ -331,7 +331,7 @@ describe('createSkillEngine', () => {
       try {
         engine.registerSkill(skill);
       } catch (e) {
-        expect((e as HarnessError).code).toBe('INVALID_TRANSITION_TARGET');
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.ORCH_INVALID_TRANSITION_TARGET);
         expect((e as HarnessError).message).toContain('nonexistent');
       }
     });
@@ -364,7 +364,7 @@ describe('createSkillEngine', () => {
         engine.registerSkill(skill);
         expect.unreachable('should have thrown');
       } catch (e) {
-        expect((e as HarnessError).code).toBe('INVALID_TRANSITION_TARGET');
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.ORCH_INVALID_TRANSITION_TARGET);
         expect((e as HarnessError).suggestion).toContain('start');
         expect((e as HarnessError).suggestion).toContain('end');
       }
