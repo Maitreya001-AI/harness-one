@@ -1,0 +1,24 @@
+{
+  "name": "@harness-one/examples",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Integration examples for harness-one (not published)",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "harness-one": "workspace:*",
+    "@harness-one/openai": "workspace:*",
+    "@harness-one/anthropic": "workspace:*",
+    "@harness-one/langfuse": "workspace:*",
+    "@harness-one/redis": "workspace:*",
+    "@harness-one/opentelemetry": "workspace:*",
+    "@harness-one/tiktoken": "workspace:*",
+    "@harness-one/ajv": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0"
+  },
+  "license": "MIT"
+}

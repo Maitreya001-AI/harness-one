@@ -48,6 +48,37 @@ importers:
         specifier: ^2.0.0
         version: 2.1.9(@types/node@22.19.17)
 
+  examples:
+    dependencies:
+      '@harness-one/ajv':
+        specifier: workspace:*
+        version: link:../packages/ajv
+      '@harness-one/anthropic':
+        specifier: workspace:*
+        version: link:../packages/anthropic
+      '@harness-one/langfuse':
+        specifier: workspace:*
+        version: link:../packages/langfuse
+      '@harness-one/openai':
+        specifier: workspace:*
+        version: link:../packages/openai
+      '@harness-one/opentelemetry':
+        specifier: workspace:*
+        version: link:../packages/opentelemetry
+      '@harness-one/redis':
+        specifier: workspace:*
+        version: link:../packages/redis
+      '@harness-one/tiktoken':
+        specifier: workspace:*
+        version: link:../packages/tiktoken
+      harness-one:
+        specifier: workspace:*
+        version: link:../packages/core
+    devDependencies:
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+
   packages/ajv:
     dependencies:
       harness-one:
@@ -89,8 +120,39 @@ importers:
         specifier: ^2.0.0
         version: 2.1.9(@types/node@22.19.17)
 
+  packages/cli:
+    dependencies:
+      harness-one:
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      tsup:
+        specifier: ^8.0.0
+        version: 8.5.1(@microsoft/api-extractor@7.58.2(@types/node@22.19.17))(postcss@8.5.8)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.0.0
+        version: 2.1.9(@types/node@22.19.17)
+
   packages/core:
     devDependencies:
+      tsup:
+        specifier: ^8.0.0
+        version: 8.5.1(@microsoft/api-extractor@7.58.2(@types/node@22.19.17))(postcss@8.5.8)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.0.0
+        version: 2.1.9(@types/node@22.19.17)
+
+  packages/devkit:
+    devDependencies:
+      harness-one:
+        specifier: workspace:*
+        version: link:../core
       tsup:
         specifier: ^8.0.0
         version: 8.5.1(@microsoft/api-extractor@7.58.2(@types/node@22.19.17))(postcss@8.5.8)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
@@ -166,6 +228,9 @@ importers:
       '@harness-one/anthropic':
         specifier: workspace:*
         version: link:../anthropic
+      '@harness-one/devkit':
+        specifier: workspace:*
+        version: link:../devkit
       '@harness-one/openai':
         specifier: workspace:*
         version: link:../openai

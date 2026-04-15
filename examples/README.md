@@ -51,7 +51,7 @@ npx tsx examples/adapters/anthropic-adapter.ts
 | `TraceExporter` | `harness-one/observe` | `createTraceManager({ exporters: [...] })` |
 | `Tokenizer` | `harness-one/context` | `registerTokenizer(model, tokenizer)` |
 | `MemoryStore` | `harness-one/memory` | `createRelay({ store })`, direct usage |
-| `Scorer` | `harness-one/eval` | `createEvalRunner({ scorers: [...] })` |
+| `Scorer` | `@harness-one/devkit` | `createEvalRunner({ scorers: [...] })` |
 | `Guardrail` | `harness-one/guardrails` | `createPipeline({ input: [...] })` |
 | `SchemaValidator` | `harness-one/tools` | `createRegistry({ validator })` |
 | `PromptBackend` | `harness-one/prompt` | `createAsyncPromptRegistry(backend)` |

@@ -5,7 +5,7 @@
 // a 0-1 score with an explanation.
 
 import Anthropic from '@anthropic-ai/sdk';
-import type { Scorer, EvalCase } from 'harness-one/eval';
+import type { Scorer, EvalCase } from '@harness-one/devkit';
 
 // ---------------------------------------------------------------------------
 // LLM Judge Scorer
@@ -116,7 +116,7 @@ export function createDimensionJudge(
 // ---------------------------------------------------------------------------
 
 // Note: importing here for the demo — in real code you'd import at the top
-import { createEvalRunner } from 'harness-one/eval';
+import { createEvalRunner } from '@harness-one/devkit';
 
 async function demo() {
   // Create multiple judge dimensions

@@ -12,12 +12,12 @@ import { encoding_for_model } from 'tiktoken';
 // harness-one imports — all from subpath exports
 import type { AgentAdapter, ChatParams, ChatResponse, StreamChunk, Message, ToolSchema } from 'harness-one/core';
 import type { TraceExporter, Trace, Span } from 'harness-one/observe';
-import type { Scorer } from 'harness-one/eval';
+import type { Scorer } from '@harness-one/devkit';
 import type { Guardrail, GuardrailContext, GuardrailVerdict } from 'harness-one/guardrails';
 import { createTraceManager } from 'harness-one/observe';
 import { createCostTracker } from 'harness-one/observe';
 import { registerTokenizer, countTokens } from 'harness-one/context';
-import { createEvalRunner } from 'harness-one/eval';
+import { createEvalRunner } from '@harness-one/devkit';
 import { createPipeline, runInput, createInjectionDetector } from 'harness-one/guardrails';
 import { createRegistry } from 'harness-one/tools';
 import { toolSuccess } from 'harness-one/tools';
