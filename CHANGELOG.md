@@ -6,6 +6,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased]
+
+### Changed (Internal)
+
+- **Wave-5B — AgentLoop decomposition** (2026-04-15). `AgentLoop` 拆为
+  `AgentLoop` + `IterationRunner` + `AdapterCaller` + `StreamHandler` +
+  `guardrail-helpers`。`run()` 从 ~600 LOC god-method 收缩为 65 LOC 编排骨架。
+  `AdapterCaller` 成为唯一重试 + 指数退避所有者；`StreamHandler` 以
+  `StreamResult` 判别联合承载错误类别，`AgentLoop._lastStreamErrorCategory`
+  实例侧信道删除。`ExecutionStrategy.execute()` 的 `options` 收紧为
+  `Readonly<>`。纯内部重构——公共 API（`AgentLoop` / `createAgentLoop` /
+  `AgentLoopConfig` / `AgentEvent`）保持行为与签名不变。设计见
+  `docs/forge-fix/wave-5/wave-5b-adr-v2.md`。
+
+---
+
 ## [1.0.0-rc.1] — 2026-04-14 (Wave-5A)
 
 **Wave-5A — Security defaults flip.** Closes 6 P0 blockers from the

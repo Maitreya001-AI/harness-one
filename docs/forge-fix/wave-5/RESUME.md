@@ -1,29 +1,31 @@
 # Wave-5 恢复入口
 
-**当前状态**（2026-04-14）:
+**当前状态**（2026-04-15）:
 - ✅ **Wave-5A 完成**，分支 `wave-5/production-grade` 已 push 到 origin
-- ⏳ Wave-5B ~ 5F 待启动
+- ✅ **Wave-5B 完成**（AgentLoop 3-module decomposition），commits `aa2ce18`（ADR）→ `c94a0e6`（review must-fix）
+- ⏳ Wave-5C ~ 5F 待启动
 
 ## 分支与 commits
 
 分支: `wave-5/production-grade`
-commit 范围: `a6c717b`（main, 0.4.0）→ `HEAD`（含 Wave-5A 全部 18 commits + CHANGELOG/README 更新）
+commit 范围: `a6c717b`（main, 0.4.0）→ `HEAD`
+- Wave-5A: 18 commits（含 CHANGELOG/README 更新）
+- Wave-5B: 6 commits `aa2ce18..c94a0e6`（B0 ADR → B1 callOnce → B2 StreamHandler+AdapterCaller → B3 IterationRunner → B4 run() shrink → B5b review must-fix）
 
 ## 待办 Waves（按序执行）
 
-| 顺序 | Wave | 简报 | 估时 | 需要决策 |
-|---|---|---|---|---|
-| 1 | **5B** AgentLoop decomposition | `wave-5b-brief.md` | 2-3 天 | 仅 mini-ADR |
-| 2 | **5C** 包边界 + API 1.0-rc | `wave-5c-brief.md` | 2-3 周 | PRD + ADR + 包发布决策 |
-| 3 | **5D** Observability canonical | `wave-5d-brief.md` | 2-3 周 | PRD + ADR + cost 账本归属 |
-| 4 | **5E** 信任边界类型化 | `wave-5e-brief.md` | 1 周 | Light ADR + 多租户迁移 |
-| 5 | **5F** Cleanup | `wave-5f-brief.md` | 1 天 | 无 |
+| 顺序 | Wave | 状态 | 简报 | 估时 | 需要决策 |
+|---|---|---|---|---|---|
+| 1 | **5B** AgentLoop decomposition | ✅ 完成（2026-04-15） | `wave-5b-brief.md` / `wave-5b-adr-v2.md` | — | — |
+| 2 | **5C** 包边界 + API 1.0-rc | ⏳ 待启动 | `wave-5c-brief.md` | 2-3 周 | PRD + ADR + 包发布决策 |
+| 3 | **5D** Observability canonical | ⏳ 待启动 | `wave-5d-brief.md` | 2-3 周 | PRD + ADR + cost 账本归属 |
+| 4 | **5E** 信任边界类型化 | ⏳ 待启动 | `wave-5e-brief.md` | 1 周 | Light ADR + 多租户迁移 |
+| 5 | **5F** Cleanup | ⏳ 待启动 | `wave-5f-brief.md` | 1 天 | 无 |
 
 ## 继续工作的命令
 
 ```
-"继续 Wave-5B"                    # 启动下一个 wave（mini-ADR + 拆分）
-"Wave-5C 从 PRD 阶段开始"          # 跳过 5B（不推荐）
+"继续 Wave-5C"                    # 启动下一个 wave（PRD + ADR + 包发布）
 "先把 Wave-5F 的 T12/T13 补了"     # 清理 Wave-5A 残留
 ```
 

@@ -13,9 +13,38 @@ core 模块定义了 harness-one 的共享类型契约（Message、TokenUsage、
 | `src/core/types.ts` | 共享类型定义：Message、AgentAdapter、ToolSchema、ExecutionStrategy 等 | ~130 |
 | `src/core/errors.ts` | HarnessError 基类 + 5 个子类 | ~135 |
 | `src/core/events.ts` | AgentEvent 判别联合 + DoneReason | ~30 |
-| `src/core/agent-loop.ts` | AgentLoop 类——核心执行循环（支持并行工具执行、流式响应） | ~440 |
+| `src/core/agent-loop.ts` | AgentLoop 类——生命周期/状态/指标所有者；`run()` 现为 65 行协调骨架（见 Wave-5B 分解） | ~845 |
+| `src/core/iteration-runner.ts` | 单轮迭代编排：adapter 调用 → 工具分发 → 护栏钩子；`bailOut` 判别联合统一终止分支 | ~660 |
+| `src/core/adapter-caller.ts` | 唯一的重试 + 指数退避所有者；按 `streaming` 分支走 `adapter.stream()` 或 `adapter.chat()`；每次调用接受 `onRetry` 回调 | ~400 |
+| `src/core/stream-handler.ts` | 将 `adapter.stream()` 翻译为 `AgentEvent` 流；返回 `StreamResult` 判别联合（承载错误类别，消除原 `_lastStreamErrorCategory` 侧信道） | ~161 |
+| `src/core/guardrail-helpers.ts` | `findLatestUserMessage` + `pickBlockingGuardName` 纯函数 | ~52 |
 | `src/core/execution-strategies.ts` | 工具执行策略：顺序 + 并行（worker pool 并发控制） | ~100 |
+| `src/core/error-classifier.ts` | `categorizeAdapterError` — 错误到类别字符串的纯函数分类（AdapterCaller 与 StreamHandler 共用） | — |
 | `src/core/index.ts` | 公共导出桶文件 | ~38 |
+
+### Wave-5B AgentLoop 模块分解（2026-04-15）
+
+`agent-loop.ts` 原为 1268 LOC，`run()` 方法约 600 LOC 同时承担迭代控制、adapter 调用、流式翻译、重试退避、护栏钩子、span 埋点与钩子派发。Wave-5B 将其拆为 4 个协作模块，`run()` 收缩为 65 行编排骨架，实例上的 `_lastStreamErrorCategory` 侧信道被删除。
+
+| 模块 | 职责 | 所有状态 | 对外导出 |
+|------|------|---------|---------|
+| `AgentLoop`（`agent-loop.ts`） | 实例生命周期、`status` / `usage` / `getMetrics()`、`run()` 编排、外部 signal 桥接、non-reentrancy 保护 | `_status` / `_iteration` / `cumulativeUsage` / `_totalToolCalls` / `abortController` | `AgentLoop` 类、`createAgentLoop` 工厂、`AgentLoopConfig` / `AgentLoopHook` / `AgentLoopTraceManager` 类型 |
+| `IterationRunner`（`iteration-runner.ts`） | 单轮迭代：pre-iteration 预检（abort / max-iterations / token budget 由 orchestrator 处理后调用）、输入护栏、adapter 调用、工具分发、输出护栏、`bailOut` 终止事件合流 | **无**——每次运行由 orchestrator 分配 `IterationContext`；runner 本身是无状态工厂产物 | `createIterationRunner`、`IterationContext`、`IterationRunnerConfig`、`IterationOutcome`、`IterationRunner` 类型 |
+| `AdapterCaller`（`adapter-caller.ts`） | 一次 adapter turn（`chat` 或 `stream`），内部实现重试 + 指数退避；将错误归一为 `AdapterCallResult` 判别联合 | 无（每次 `call()` 内部闭包） | `createAdapterCaller`、`AdapterCallOk` / `AdapterCallFail` / `AdapterCallResult`、`AdapterRetryInfo`、`AdapterCallerConfig`；`callOnce` 单次非重试入口保留 |
+| `StreamHandler`（`stream-handler.ts`） | 消费 `adapter.stream()`、逐块 yield `text_delta` / `tool_call_delta` / `warning` / `error`、在失败前 yield `error` 事件再返回 `{ ok: false, errorCategory }` | 跨 `handle()` 无状态；每次 `handle()` 内新建 `StreamAggregator` | `createStreamHandler`、`StreamResult` 判别联合、`StreamHandlerConfig`、`StreamHandler` 类型 |
+| `guardrail-helpers.ts` | 纯辅助：从消息数组取最新用户消息、从 `GuardrailResult` 选出导致阻塞的 guard 名称 | 无 | `findLatestUserMessage` / `pickBlockingGuardName` 函数 |
+
+**设计约束（来自 ADR）**：
+
+- `AdapterCaller` 是唯一重试所有者——`IterationRunner` 不再内联重试循环。
+- `StreamHandler` 的 `StreamResult` 判别联合承载 `errorCategory` 字段，直接替代过去写到 `AgentLoop._lastStreamErrorCategory` 的实例侧信道；路径上恰好 yield 一次 `{ type: 'error' }` 事件（`AdapterCaller` 不再重复 yield）。
+- `IterationRunner` 接收 orchestrator 分配的 `IterationContext`（conversation、iteration counter、cumulativeUsage、cumulativeStreamBytes、toolCallCounter 等可变 box），每次 `runIteration()` 后 `AgentLoop.run()` 把 context 字段回写到实例字段，保证 `getMetrics()` / `usage` getter 行为不变。
+- `ExecutionStrategy.execute()` 的 `options` 收紧为 `Readonly<>`，允许 `AgentLoop` 在构造期冻结一次、每轮复用同一引用（PERF-025）。
+- 原静态方法 `AgentLoop.categorizeAdapterError` 删除；`categorizeAdapterError` 作为具名导出由 `error-classifier.ts` 提供（`harness-one/core` 继续导出此符号）。
+
+**公共 API 变更**：无。所有模块拆分对 `AgentLoop` / `createAgentLoop` / `AgentLoopConfig` / `AgentEvent` 等消费侧导出保持行为与签名不变；纯内部重构。
+
+**设计文档**：`docs/forge-fix/wave-5/wave-5b-adr-v2.md`（设计决策与边界论证）、`wave-5b-adr-critique.md` / `wave-5b-review-redteam.md` / `wave-5b-review-synthesis.md`（评审记录）。
 
 ## 公共 API
 
@@ -95,13 +124,20 @@ function createAgentLoop(config: AgentLoopConfig): AgentLoop;
 
 ### 循环机制
 
-AgentLoop.run() 是一个 AsyncGenerator，每次迭代：
-1. 检查 abort 信号（单一 AbortController.signal 作为唯一真实来源）
-2. 检查 maxIterations
-3. 检查累计 token 预算（inputTokens + outputTokens 之和，非负 clamp）
-4. 调用 adapter.chat()
-5. 若无 toolCalls → yield `message` + `done(end_turn)` 并返回
-6. 若有 toolCalls → yield 所有 `tool_call` 事件，通过 ExecutionStrategy 执行（顺序或并行），yield 所有 `tool_result` 事件（保持原始调用顺序），将结果追加到 conversation，继续循环
+`AgentLoop.run()` 是一个 AsyncGenerator。Wave-5B 后 `run()` 自身仅负责编排（~65 行）：状态翻转、pre-iteration 预检、调用 `IterationRunner.runIteration(ctx)`、根据返回的 `IterationOutcome` 决定 `continue` 还是 yield `done` 终止。每轮迭代内部（`IterationRunner` 负责）按以下顺序：
+
+1. （orchestrator 负责）检查 abort 信号（单一 AbortController.signal 作为唯一真实来源）
+2. （orchestrator 负责）检查 maxIterations
+3. （orchestrator 负责）检查累计 token 预算（inputTokens + outputTokens 之和，非负 clamp）
+4. （runner）运行输入护栏（`inputPipeline`），若硬阻则通过 `bailOut` yield `guardrail_blocked` + `error` 并 abort
+5. （runner）经 `AdapterCaller.call()` 调用 adapter（按 `streaming` 分支 `stream()` 或 `chat()`）；`AdapterCaller` 内部实现重试 + 指数退避，并在每次重试时回调 `onRetry` 以富化当前迭代 span
+6. （runner）运行输出护栏（`outputPipeline`），若硬阻则 bailOut
+7. （runner）若无 toolCalls → yield `message`，返回 `{ kind: 'terminated', reason: 'end_turn', totalUsage }`
+8. （runner）若有 toolCalls → yield 所有 `tool_call` 事件，通过 `ExecutionStrategy` 执行（顺序或并行），运行 tool_output 护栏，yield 所有 `tool_result` 事件（保持原始调用顺序），将结果追加到 conversation，返回 `{ kind: 'continue' }`
+
+`IterationRunner` 使用 `bailOut` 判别联合（`ErrorBail` / `GuardrailBail` / `BudgetBail` / `EndTurnBail`）统一所有终止分支的事件合流，取代过去 `run()` 中重复的 abort/span/done 三元组。
+
+流式错误路径的错误类别（过去写到 `AgentLoop._lastStreamErrorCategory`）现由 `StreamHandler` 的 `StreamResult` 判别联合直接承载，`AdapterCaller` 将其包装进 `AdapterCallFail.errorCategory` 返回给 runner，不再有跨方法的实例侧信道。
 
 ### 并行工具执行
 
