@@ -16,11 +16,15 @@ import { createStreamHandler } from './stream-handler.js';
 import { pruneConversation } from './conversation-pruner.js';
 import type { AgentLoopTraceManager } from './trace-interface.js';
 // T10 (Wave-5A): guardrail pipeline integration. Types-only import for the
-// opaque pipeline token; runtime helpers (`runInput`, `runOutput`,
-// `runToolOutput`) are called through named imports below.
+// opaque pipeline token; the runtime helpers now live inside
+// `iteration-runner.ts` (Wave-5B Step 3) and `guardrail-helpers.ts`.
 import type { GuardrailPipeline } from '../guardrails/pipeline.js';
-import type { PipelineResult } from '../guardrails/types.js';
-import { runInput, runOutput, runToolOutput } from '../guardrails/pipeline.js';
+// Wave-5B Step 3: per-iteration choreography lives in IterationRunner.
+import {
+  createIterationRunner,
+  type IterationContext,
+  type IterationRunner,
+} from './iteration-runner.js';
 import { safeWarn } from '../_internal/safe-log.js';
 
 // ARCH-002: `AgentLoopTraceManager` lives in `./trace-interface.js`. Re-export
@@ -227,6 +231,8 @@ export class AgentLoop {
   private readonly baseRetryDelayMs: number;
   private readonly retryableErrors: readonly string[];
   private readonly adapterCaller: AdapterCaller;
+  /** Wave-5B Step 3: per-iteration choreography runner. Stateless across runs. */
+  private readonly iterationRunner: IterationRunner;
   /** ARCH-006: registered iteration-level hooks. Empty array when none. */
   private readonly hooks: readonly AgentLoopHook[];
   private readonly logger?: { warn: (msg: string, meta?: Record<string, unknown>) => void };
@@ -370,35 +376,30 @@ export class AgentLoop {
       baseRetryDelayMs: this.baseRetryDelayMs,
       retryableErrors: this.retryableErrors,
       streamHandler,
-      // onRetry closes over `this._currentIterationSpanId` so the callback
-      // can record the retry as a span event on whichever iteration is
-      // active. `run()` updates this field as iterations advance; Step 3
-      // will move this plumbing onto IterationContext.
-      onRetry: ({ attempt, errorCategory, path, errorPreview }) => {
-        const tm = this.traceManager;
-        const spanId = this._currentIterationSpanId;
-        if (!tm || !spanId) return;
-        tm.addSpanEvent(spanId, {
-          name: 'adapter_retry',
-          attributes: {
-            attempt,
-            errorCategory,
-            path,
-            ...(errorPreview !== undefined ? { error: errorPreview } : {}),
-          },
-        });
-      },
+      // Wave-5B Step 3: onRetry is now provided per-call by IterationRunner
+      // so the active iteration span id is captured cleanly via the
+      // freshly-allocated IterationContext (no instance side-channel).
       ...(this.tools !== undefined && { tools: this.tools }),
     });
-  }
 
-  /**
-   * Wave-5B Step 2: holder for the active iteration span id so the
-   * `onRetry` callback wired at construction can target the right span.
-   * `run()` writes this as iterations advance. Step 3 migrates it onto
-   * `IterationContext`.
-   */
-  private _currentIterationSpanId: string | undefined;
+    // Wave-5B Step 3: build the IterationRunner once. The runner is stateless
+    // across runs (ADR §2.3 / R8 / R9); all per-run mutable state lives on the
+    // IterationContext we hand it inside `run()`.
+    this.iterationRunner = createIterationRunner({
+      adapterCaller: this.adapterCaller,
+      executionStrategy: this.executionStrategy,
+      strategyOptions: this._strategyOptions,
+      abortController: this.abortController,
+      maxTotalTokens: this.maxTotalTokens,
+      hooks: this.hooks,
+      ...(this.onToolCall !== undefined && { onToolCall: this.onToolCall }),
+      ...(this.toolTimeoutMs !== undefined && { toolTimeoutMs: this.toolTimeoutMs }),
+      ...(this.inputPipeline !== undefined && { inputPipeline: this.inputPipeline }),
+      ...(this.outputPipeline !== undefined && { outputPipeline: this.outputPipeline }),
+      ...(this.traceManager !== undefined && { traceManager: this.traceManager }),
+      ...(this.logger !== undefined && { logger: this.logger }),
+    });
+  }
 
   /** Get cumulative token usage across all iterations. */
   get usage(): TokenUsage {
@@ -553,584 +554,183 @@ export class AgentLoop {
     // Auto-tracing: create a trace for this run when a traceManager is wired.
     const tm = this.traceManager;
     const traceId = tm ? tm.startTrace('agent-loop-run', { messageCount: messages.length }) : undefined;
-    let iterationSpanId: string | undefined;
-    // Cumulative stream byte counter across all iterations for DoS protection.
-    // The cap (maxIterations * maxStreamBytes) is enforced inside StreamHandler
-    // via the config wired in the constructor; AdapterCaller forwards the
-    // running total on every turn.
-    let cumulativeStreamBytes = 0;
+
+    // Wave-5B Step 3: per-run mutable state lives on the IterationContext.
+    // Freshly allocated per `run()` so IterationRunner can stay stateless
+    // across runs (ADR §2.3 / §9 R8 / R9). The orchestrator reads back
+    // `iterationSpanId` from the same context in the outer `finally`
+    // (R5 mitigation) and forwards `cumulativeUsage` / `toolCallCounter`
+    // to instance fields after each iteration so `getMetrics()` and the
+    // `usage` getter remain accurate.
+    const ctx: IterationContext = {
+      conversation,
+      iteration: 0,
+      cumulativeStreamBytes: { value: 0 },
+      iterationSpanId: undefined,
+      traceId,
+      cumulativeUsage: { inputTokens: 0, outputTokens: 0 },
+      toolCallCounter: { value: 0 },
+      iterationEndFired: { value: false },
+    };
+
+    // Tiny helper for the three pre-iteration terminal sites (abort,
+    // max_iterations, pre-call token budget). These happen BEFORE any
+    // iteration_start / hook firing, so they don't go through bailOut —
+    // they don't need to fire onIterationEnd and they skip the guardrail
+    // event channel.
+    const emitTerminal = function* (
+      this: AgentLoop,
+      reason: DoneReason,
+      errorEvent: Extract<AgentEvent, { type: 'error' }>,
+    ): Generator<AgentEvent> {
+      if (ctx.iterationSpanId && tm) {
+        try { tm.endSpan(ctx.iterationSpanId, 'error'); } catch { /* defensive */ }
+        ctx.iterationSpanId = undefined;
+      }
+      yield errorEvent;
+      this._status = 'completed';
+      yield { type: 'done', reason, totalUsage: this.usage };
+    }.bind(this);
 
     try {
       while (true) {
-        // Check abort
+        // Pre-iteration check 1: external/internal abort.
         if (this.isAborted()) {
-          if (iterationSpanId && tm) { tm.endSpan(iterationSpanId, 'error'); iterationSpanId = undefined; }
-          yield { type: 'error', error: new AbortedError() };
           finalEventEmitted = true;
-          yield this.doneEvent('aborted');
+          yield* emitTerminal('aborted', { type: 'error', error: new AbortedError() });
           return;
         }
 
-        // Check max iterations
+        // Pre-iteration check 2: max iterations (post-increment to match today).
         iteration++;
         this._iteration = iteration;
         if (iteration > this.maxIterations) {
-          if (iterationSpanId && tm) { tm.endSpan(iterationSpanId, 'error'); iterationSpanId = undefined; }
-          const err = new MaxIterationsError(this.maxIterations);
-          yield { type: 'error', error: err };
           finalEventEmitted = true;
-          yield this.doneEvent('max_iterations');
+          yield* emitTerminal('max_iterations', {
+            type: 'error',
+            error: new MaxIterationsError(this.maxIterations),
+          });
           return;
         }
 
-        // Check token budget before calling LLM
-        const totalTokens = this.cumulativeUsage.inputTokens + this.cumulativeUsage.outputTokens;
+        // Pre-iteration check 3: cumulative token budget.
+        const totalTokens =
+          ctx.cumulativeUsage.inputTokens + ctx.cumulativeUsage.outputTokens;
         if (totalTokens > this.maxTotalTokens) {
-          if (iterationSpanId && tm) { tm.endSpan(iterationSpanId, 'error'); iterationSpanId = undefined; }
-          const err = new TokenBudgetExceededError(totalTokens, this.maxTotalTokens);
-          yield { type: 'error', error: err };
           finalEventEmitted = true;
-          yield this.doneEvent('token_budget');
+          yield* emitTerminal('token_budget', {
+            type: 'error',
+            error: new TokenBudgetExceededError(totalTokens, this.maxTotalTokens),
+          });
           return;
         }
 
-        // H4: Check conversation length and prune if exceeded
-        if (this.maxConversationMessages !== undefined && conversation.length > this.maxConversationMessages) {
+        // H4: prune conversation if exceeded. PERF-010: in-place splice.
+        if (
+          this.maxConversationMessages !== undefined &&
+          conversation.length > this.maxConversationMessages
+        ) {
           const pruneResult = pruneConversation(conversation, this.maxConversationMessages);
           if (pruneResult.warning) {
             yield { type: 'warning', message: pruneResult.warning };
           }
-          // PERF-010: `length = 0` followed by `push(...)` causes V8 to
-          // deallocate then re-grow the backing store. `splice` replaces in
-          // place, reusing the existing buffer. Semantics are identical:
-          // same array identity, final contents equal `pruneResult.pruned`.
           conversation.splice(0, conversation.length, ...pruneResult.pruned);
         }
 
-        // End previous iteration span if one is still open
-        if (iterationSpanId && tm) { tm.endSpan(iterationSpanId); iterationSpanId = undefined; }
+        // End any iteration span left open from the previous turn.
+        if (ctx.iterationSpanId && tm) {
+          tm.endSpan(ctx.iterationSpanId);
+          ctx.iterationSpanId = undefined;
+        }
 
-        // Start a new span for this iteration.
-        // Attach diagnostic attributes so incident responders can filter by
-        // iteration index / model / context depth without parsing span names.
+        // Open a fresh iteration span; attach diagnostic attributes so
+        // incident responders can filter without parsing span names.
         if (tm && traceId) {
-          iterationSpanId = tm.startSpan(traceId, `iteration-${iteration}`);
-          tm.setSpanAttributes(iterationSpanId, {
+          ctx.iterationSpanId = tm.startSpan(traceId, `iteration-${iteration}`);
+          tm.setSpanAttributes(ctx.iterationSpanId, {
             iteration,
             adapter: this.adapter.name ?? 'unknown',
             conversationLength: conversation.length,
             streaming: this.streaming,
           });
         }
-        // Wave-5B Step 2: publish the active span id so AdapterCaller's
-        // onRetry callback (wired at construction) can target it.
-        this._currentIterationSpanId = iterationSpanId;
 
+        ctx.iteration = iteration;
+        ctx.iterationEndFired.value = false;
         yield { type: 'iteration_start', iteration };
-        // ARCH-006: notify hooks immediately after the public iteration_start
-        // event so observers can correlate hook callbacks with the visible
-        // event stream. `iterationEndFired` lets us guarantee a paired
-        // `onIterationEnd` even on every terminating early-return below.
+        // ARCH-006: fire onIterationStart in run() (not the runner) so a
+        // pre-iteration emitTerminal that happens BEFORE we get here would
+        // never observe a paired start/end.
         this.runHook('onIterationStart', { iteration });
-        let iterationEndFired = false;
-        const fireIterationEnd = (done: boolean): void => {
-          if (iterationEndFired) return;
-          iterationEndFired = true;
-          this.runHook('onIterationEnd', { iteration, done });
+
+        // Hand off to IterationRunner. The runner yields the same event
+        // sequence the consumer used to see and returns an outcome we use
+        // to decide whether to continue or terminate the run.
+        const outcome = yield* this.iterationRunner.runIteration(ctx);
+
+        // Forward per-iteration counters from context to instance fields
+        // (getMetrics / usage getter still read the instance side).
+        this._totalToolCalls = ctx.toolCallCounter.value;
+        this.cumulativeUsage = {
+          inputTokens: ctx.cumulativeUsage.inputTokens,
+          outputTokens: ctx.cumulativeUsage.outputTokens,
         };
 
-        // T10 (Wave-5A): input guardrail pipeline runs before the adapter call
-        // on the latest user-role message. A block tears the loop down hard:
-        //   - abort internal signal so in-flight adapter calls (if any) wind
-        //     down via their AbortSignal,
-        //   - yield `guardrail_blocked` (phase='input') + `error` + `done`,
-        //   - classifier tags the error as non-retryable.
-        if (this.inputPipeline) {
-          const latestUser = AgentLoop.findLatestUserMessage(conversation);
-          if (latestUser !== undefined) {
-            const result = await runInput(this.inputPipeline, { content: latestUser });
-            if (!result.passed && result.verdict.action === 'block') {
-              const guardName = AgentLoop.pickBlockingGuardName(result, 'input');
-              const reason = result.verdict.reason;
-              // Tear down upstream work and emit the hard-block triplet.
-              this.abortController.abort();
-              yield { type: 'guardrail_blocked', phase: 'input', guardName, details: { reason } };
-              yield {
-                type: 'error',
-                error: new HarnessError(
-                  `guardrail "${guardName}" blocked input — ${reason}`,
-                  'GUARDRAIL_VIOLATION',
-                  'Review the input pipeline configuration and sanitize the user message',
-                ),
-              };
-              if (iterationSpanId && tm) { tm.endSpan(iterationSpanId, 'error'); iterationSpanId = undefined; }
-              finalEventEmitted = true;
-              fireIterationEnd(true);
-              yield this.doneEvent('error');
-              return;
-            }
-          }
-        }
-
-        // Wave-5B Step 2: delegate the full adapter turn (retry loop + both
-        // paths) to AdapterCaller. On streaming path, StreamHandler yields
-        // the {type:'error'} event inline on failure; on chat path we yield
-        // it here after receiving the failed result. See ADR §9 R1.
-        const result = yield* this.adapterCaller.call(conversation, cumulativeStreamBytes);
-
-        if (!result.ok) {
-          const { error: err, errorCategory, path } = result;
-          if (iterationSpanId && tm) {
-            tm.setSpanAttributes(iterationSpanId, {
-              errorCategory,
-              path,
-              ...(path === 'chat'
-                ? { error: (err instanceof Error ? err.message : String(err)).slice(0, 500) }
-                : {}),
-            });
-            tm.endSpan(iterationSpanId, 'error');
-            iterationSpanId = undefined;
-            this._currentIterationSpanId = undefined;
-          }
-
-          if (errorCategory === 'ABORTED') {
-            // Abort fired during backoff — synthetic category from AdapterCaller.
-            // Mirror today's L632-L638 / L679-L682 abort-during-retry bail
-            // (and L711-L729 fallthrough to the abort check): yield an
-            // AbortedError and exit with done('aborted'). On the stream
-            // path StreamHandler did NOT yield (abort surfaces from backoff,
-            // not the stream), so we always yield here.
-            yield { type: 'error', error: new AbortedError() };
-            finalEventEmitted = true;
-            fireIterationEnd(true);
-            yield this.doneEvent('aborted');
-            return;
-          }
-
-          if (path === 'chat') {
-            // Chat path: AdapterCaller caught but did NOT yield. Wrap and
-            // yield the error event to preserve today's L725-L730 behaviour.
-            yield { type: 'error', error: err instanceof HarnessError ? err : new HarnessError(
-              err instanceof Error ? err.message : String(err),
-              errorCategory,
-              'Check adapter configuration and API credentials',
-              err instanceof Error ? err : undefined,
-            ) };
-          }
-          // Stream path: StreamHandler already yielded the {type:'error'}
-          // event inside handle(); re-yielding would double-emit (ADR §9 R1).
+        if (outcome.kind === 'terminated') {
+          this._status = 'completed';
           finalEventEmitted = true;
-          fireIterationEnd(true);
-          yield this.doneEvent('error');
-          return;
-        }
-
-        // Success: accumulate bytesRead (streaming path only — chat is 0)
-        // and unpack the adapter response. Preserves today's L644 inline
-        // cumulative increment and L687-L691 / L732-L733 unpacking.
-        cumulativeStreamBytes += result.bytesRead;
-        const assistantMsg = result.message;
-        const responseUsage = result.usage;
-
-        // Record usage + tool-count on the iteration span. toolCount is the
-        // basic signal for tool-loop and tool-call-explosion diagnostics.
-        if (iterationSpanId && tm) {
-          tm.setSpanAttributes(iterationSpanId, {
-            inputTokens: responseUsage.inputTokens,
-            outputTokens: responseUsage.outputTokens,
-            toolCount: assistantMsg.role === 'assistant' && assistantMsg.toolCalls
-              ? assistantMsg.toolCalls.length
-              : 0,
-            // Wave-5B Step 2: expose AdapterCaller's retry accounting on the
-            // iteration span so operators can audit path/attempts without
-            // cross-referencing adapter_retry events.
-            path: result.path,
-            attempts: result.attempts,
-          });
-        }
-
-        // Check abort after adapter call (abort() may have been called during in-flight request)
-        if (this.isAborted()) {
-          if (iterationSpanId && tm) { tm.endSpan(iterationSpanId, 'error'); iterationSpanId = undefined; }
-          yield { type: 'error', error: new AbortedError() };
-          finalEventEmitted = true;
-          fireIterationEnd(true);
-          yield this.doneEvent('aborted');
-          return;
-        }
-
-        // Accumulate usage (clamp to safe bounds to prevent underflow bypass or overflow from buggy adapters)
-        const safeInput = Math.min(Math.max(0, responseUsage.inputTokens), 1_000_000_000);
-        const safeOutput = Math.min(Math.max(0, responseUsage.outputTokens), 1_000_000_000);
-        this.cumulativeUsage.inputTokens += safeInput;
-        this.cumulativeUsage.outputTokens += safeOutput;
-        // ARCH-006: notify hooks about per-iteration token cost. Pass the
-        // adapter-reported usage (not cumulative) so observers can derive
-        // both per-iteration and cumulative metrics.
-        this.runHook('onCost', { iteration, usage: responseUsage });
-
-        // H2: Check token budget immediately after accumulating tokens
-        const postCallTokens = this.cumulativeUsage.inputTokens + this.cumulativeUsage.outputTokens;
-        if (postCallTokens > this.maxTotalTokens) {
-          // Budget exceeded after this response; emit message (for content) then stop
-          yield { type: 'message', message: assistantMsg, usage: responseUsage };
-          if (iterationSpanId && tm) { tm.endSpan(iterationSpanId, 'error'); iterationSpanId = undefined; }
-          const err = new TokenBudgetExceededError(postCallTokens, this.maxTotalTokens);
-          yield { type: 'error', error: err };
-          finalEventEmitted = true;
-          fireIterationEnd(true);
-          yield this.doneEvent('token_budget');
-          return;
-        }
-
-        const toolCalls = assistantMsg.role === 'assistant' ? assistantMsg.toolCalls : undefined;
-
-        // If no tool calls or empty tool calls -> end turn
-        if (!toolCalls || toolCalls.length === 0) {
-          // T10 (Wave-5A): run output guardrail on the final assistant answer
-          // BEFORE yielding the `message` event. A block terminates the loop
-          // hard — same triplet as the input path (guardrail_blocked + error
-          // + done('error')) — and aborts the internal signal to cancel any
-          // streaming still holding a reader open.
-          if (this.outputPipeline) {
-            const finalContent = assistantMsg.content ?? '';
-            const result = await runOutput(this.outputPipeline, { content: finalContent });
-            if (!result.passed && result.verdict.action === 'block') {
-              const guardName = AgentLoop.pickBlockingGuardName(result, 'output');
-              const reason = result.verdict.reason;
-              this.abortController.abort();
-              yield { type: 'guardrail_blocked', phase: 'output', guardName, details: { reason } };
-              yield {
-                type: 'error',
-                error: new HarnessError(
-                  `guardrail "${guardName}" blocked output — ${reason}`,
-                  'GUARDRAIL_VIOLATION',
-                  'Review the output pipeline configuration and the model response',
-                ),
-              };
-              if (iterationSpanId && tm) { tm.endSpan(iterationSpanId, 'error'); iterationSpanId = undefined; }
-              finalEventEmitted = true;
-              fireIterationEnd(true);
-              yield this.doneEvent('error');
-              return;
-            }
-          }
-          yield { type: 'message', message: assistantMsg, usage: responseUsage };
-          if (iterationSpanId && tm) { tm.endSpan(iterationSpanId); iterationSpanId = undefined; }
-          finalEventEmitted = true;
-          fireIterationEnd(true);
-          yield this.doneEvent('end_turn');
-          return;
-        }
-
-        // Process tool calls via execution strategy
-        conversation.push(assistantMsg);
-
-        // PERF-034: Yield tool_call events first (deterministic ordering).
-        // The earlier "two-pass" structure (yield, then schedule execution)
-        // was replaced with a single pass: the yield loop below + the
-        // executionStrategy.execute call form one linear sequence per
-        // iteration, with tool_result events yielded after execute resolves.
-        // Keeping yield-before-execute order is required so observers see the
-        // full tool_call batch before any result.
-        for (const toolCall of toolCalls) {
-          yield { type: 'tool_call', toolCall, iteration };
-          // ARCH-006: notify hooks once per tool call, after the public
-          // event yields so subscribers see the same ordering.
-          this.runHook('onToolCall', { iteration, toolCall });
-        }
-
-        // Execute via strategy, with optional per-tool-call tracing
-        const executionResults = await this.executionStrategy.execute(
-          toolCalls,
-          async (call) => {
-            // Create a child span for each tool call when tracing is enabled.
-            // Attach `toolName` as an attribute (not just span name) so trace
-            // backends can aggregate tool-error rates without parsing names.
-            const toolSpanId = (tm && traceId && iterationSpanId)
-              ? tm.startSpan(traceId, `tool:${call.name}`, iterationSpanId)
-              : undefined;
-            if (toolSpanId && tm) {
-              tm.setSpanAttributes(toolSpanId, {
-                toolName: call.name,
-                toolCallId: call.id,
-              });
-            }
-            try {
-              const toolPromise = this.onToolCall
-                ? this.onToolCall(call)
-                : Promise.resolve({ error: `No onToolCall handler registered for tool "${call.name}"` });
-
-              let result: unknown;
-              if (this.toolTimeoutMs !== undefined) {
-                // Race tool execution against a timeout.
-                // PERF-020: the timeout's setTimeout callback may fire after
-                // the tool has already resolved — particularly when the event
-                // loop is saturated. Without a `settled` guard the timeout
-                // would resolve a second time (harmless for Promise.race,
-                // but wasteful and keeps a phantom reference). We flip
-                // `settled` both on success and on timeout so each side is
-                // idempotent.
-                const timeoutMs = this.toolTimeoutMs;
-                let timer: ReturnType<typeof setTimeout> | undefined;
-                let settled = false;
-                try {
-                  const timeoutPromise = new Promise<{ error: string }>((resolve) => {
-                    timer = setTimeout(
-                      () => {
-                        if (settled) return; // tool already resolved; drop
-                        settled = true;
-                        resolve({ error: `Tool "${call.name}" timed out after ${timeoutMs}ms` });
-                      },
-                      timeoutMs,
-                    );
-                    // Ensure timer doesn't keep the process alive
-                    if (typeof timer === 'object' && 'unref' in timer) {
-                      (timer as NodeJS.Timeout).unref();
-                    }
-                  });
-                  const raced = await Promise.race([
-                    toolPromise.then((r) => {
-                      // Mark settled BEFORE clearTimeout so a racing timer
-                      // callback that happens to fire between resolve and
-                      // the finally block still short-circuits.
-                      settled = true;
-                      if (timer !== undefined) clearTimeout(timer);
-                      return r;
-                    }),
-                    timeoutPromise,
-                  ]);
-                  result = raced;
-                } finally {
-                  // Defensive: always clear the timer even if race threw.
-                  if (timer !== undefined) clearTimeout(timer);
-                }
-              } else {
-                result = await toolPromise;
-              }
-
-              if (toolSpanId && tm) { tm.endSpan(toolSpanId); }
-              return result;
-            } catch (toolErr) {
-              if (toolSpanId && tm) {
-                tm.setSpanAttributes(toolSpanId, {
-                  errorMessage: (toolErr instanceof Error ? toolErr.message : String(toolErr)).slice(0, 500),
-                  errorName: toolErr instanceof Error ? toolErr.name : 'Unknown',
-                });
-                tm.endSpan(toolSpanId, 'error');
-              }
-              throw toolErr;
-            }
-          },
-          // PERF-025: Reuse the frozen options bag hoisted in the constructor
-          // instead of allocating a fresh `Object.assign` on every batch.
-          this._strategyOptions,
-        );
-
-        // Yield all tool_result events in original order (deterministic)
-        for (const execResult of executionResults) {
-          yield { type: 'tool_result', toolCallId: execResult.toolCallId, result: execResult.result };
-          this._totalToolCalls++;
-
-          let resultContent: string;
-          try {
-            resultContent = typeof execResult.result === 'string'
-              ? execResult.result
-              : AgentLoop.safeStringifyToolResult(execResult.result);
-          } catch {
-            resultContent = '[Object could not be serialized]';
-          }
-
-          // T10 (Wave-5A): run the output pipeline on tool results. A block
-          // does NOT terminate the loop — instead we rewrite the tool result
-          // into a stub so the LLM still sees a tool_result for every
-          // tool_use (provider schemas reject mismatched pairs). The loop
-          // continues to the next iteration; a follow-up `output` block on
-          // the final assistant answer is still possible.
-          if (this.outputPipeline) {
-            const originTool = toolCalls.find((c) => c.id === execResult.toolCallId);
-            const result = await runToolOutput(
-              this.outputPipeline,
-              resultContent,
-              originTool?.name,
-            );
-            if (!result.passed && result.verdict.action === 'block') {
-              const guardName = AgentLoop.pickBlockingGuardName(result, 'output');
-              const reason = result.verdict.reason;
-              yield {
-                type: 'guardrail_blocked',
-                phase: 'tool_output',
-                guardName,
-                details: { toolCallId: execResult.toolCallId, toolName: originTool?.name, reason },
-              };
-              // Rewrite the content to a safe JSON-stringified error stub. The
-              // LLM sees a structured `{"error":"GUARDRAIL_VIOLATION: <name>"}`
-              // and typically recovers by summarizing or ending the turn.
-              resultContent = JSON.stringify({
-                error: `GUARDRAIL_VIOLATION: ${guardName}`,
-                reason,
-              });
-            }
-          }
-
-          const toolResultMsg: Message = {
-            role: 'tool',
-            content: resultContent,
-            toolCallId: execResult.toolCallId,
+          yield {
+            type: 'done',
+            reason: outcome.reason,
+            totalUsage: outcome.totalUsage,
           };
-          conversation.push(toolResultMsg);
-        }
-
-        // Check abort after tool calls
-        if (this.isAborted()) {
-          if (iterationSpanId && tm) { tm.endSpan(iterationSpanId, 'error'); iterationSpanId = undefined; }
-          yield { type: 'error', error: new AbortedError() };
-          finalEventEmitted = true;
-          fireIterationEnd(true);
-          yield this.doneEvent('aborted');
           return;
         }
-        // ARCH-006: iteration completed normally and the loop will continue
-        // for another iteration. Fire `done: false` so observers can build
-        // per-iteration metrics without filtering on the doneEvent reason.
-        fireIterationEnd(false);
+        // outcome.kind === 'continue' — loop into the next iteration.
       }
     } finally {
-      // Clean up external signal listener to prevent memory leaks even if
-      // dispose() is never called. This is the primary cleanup path.
-      // PERF-013: wrap removeEventListener in try/catch — if the signal
-      // implementation throws (e.g., mocked/polyfilled signals in tests, or
-      // detached after a host shutdown), swallow the error so we can still
-      // clear `_externalAbortHandler` and avoid keeping a stale reference.
+      // Clean up external signal listener (PERF-013). Defensive try/catch:
+      // mocked/polyfilled signals can throw on removeEventListener.
       if (this._externalAbortHandler && this.externalSignal) {
         try {
           this.externalSignal.removeEventListener('abort', this._externalAbortHandler);
         } catch {
-          // Listener removal failure is non-fatal — we still drop our
-          // reference so this AgentLoop can be garbage-collected.
+          // Non-fatal — we still drop our reference.
         }
         this._externalAbortHandler = undefined;
       }
-      // End any open iteration span
-      if (iterationSpanId && tm) {
-        try { tm.endSpan(iterationSpanId, 'error'); } catch { /* span may already be ended */ }
+      // R5: read iterationSpanId from the durable context, not a local
+      // `let`. The runner closes the span on the happy path; this catches
+      // the throw / generator-closed-externally cases.
+      if (ctx.iterationSpanId && tm) {
+        try { tm.endSpan(ctx.iterationSpanId, 'error'); } catch { /* may already be ended */ }
       }
-      // Wave-5B Step 2: drop the span-id side-reference so a stale id can
-      // never leak into the onRetry callback after this run exits.
-      this._currentIterationSpanId = undefined;
-      // End the trace
+      // End the trace.
       if (traceId && tm) {
-        try { tm.endTrace(traceId, finalEventEmitted ? 'completed' : 'error'); } catch { /* trace may already be ended */ }
+        try {
+          tm.endTrace(traceId, finalEventEmitted ? 'completed' : 'error');
+        } catch {
+          // Non-fatal — trace may already be ended.
+        }
       }
       if (!finalEventEmitted) {
-        // Generator was closed externally via .return() or .throw()
-        // Mark as aborted for cleanup
+        // Generator was closed externally via .return() / .throw()
         this.abortController.abort();
       }
     }
   }
 
-  /**
-   * Handle streaming response from adapter.stream().
-   * Yields text_delta and tool_call_delta events, accumulates the full response.
-   * Returns the accumulated message and usage, or null on error.
-   */
   /** Maximum accumulated stream content size (10 MB) to prevent memory exhaustion. */
   static readonly MAX_STREAM_BYTES = 10 * 1024 * 1024;
   /** Maximum size per tool-call argument (5 MB) to prevent oversized payloads. */
   private static readonly MAX_TOOL_ARG_BYTES = 5 * 1024 * 1024;
-  /** Maximum serialized tool result size (1 MiB). Oversized results are replaced with a placeholder. */
-  private static readonly MAX_TOOL_RESULT_BYTES = 1 * 1024 * 1024;
-  /** Maximum object nesting depth for tool-result serialization. */
-  private static readonly MAX_TOOL_RESULT_DEPTH = 10;
 
-  /**
-   * PERF-004: Serialize a tool-call result defensively. A naive
-   * `JSON.stringify(result)` will happily follow a deeply nested object or
-   * a multi-megabyte payload and freeze the event loop, or OOM the process.
-   * Instead we:
-   *   - apply a depth-limited replacer that truncates beyond depth 10 with a
-   *     "[max depth exceeded]" sentinel,
-   *   - then check the resulting string against a 1 MiB cap and return a
-   *     "[result too large]" placeholder when exceeded.
-   * Depth tracking uses a WeakSet-based stack so we also catch cycles.
-   */
-  private static safeStringifyToolResult(value: unknown): string {
-    const maxDepth = AgentLoop.MAX_TOOL_RESULT_DEPTH;
-    const maxBytes = AgentLoop.MAX_TOOL_RESULT_BYTES;
-    const stack: Array<object> = [];
-
-    const replacer = function (this: unknown, _key: string, val: unknown): unknown {
-      if (val === null || typeof val !== 'object') return val;
-      // Measure depth by how many enclosing containers we're currently inside.
-      // Trim the stack whenever we pop back to an ancestor (detected by `this`).
-      if (this && typeof this === 'object') {
-        const parentIdx = stack.lastIndexOf(this as object);
-        if (parentIdx >= 0) stack.length = parentIdx + 1;
-      }
-      if (stack.includes(val as object)) {
-        // Cycle — replace with a sentinel rather than infinite-recurse.
-        return '[circular]';
-      }
-      if (stack.length >= maxDepth) {
-        return '[max depth exceeded]';
-      }
-      stack.push(val as object);
-      return val;
-    };
-
-    let serialized: string;
-    try {
-      serialized = JSON.stringify(value, replacer);
-    } catch {
-      return '[Object could not be serialized]';
-    }
-    if (serialized === undefined) {
-      // JSON.stringify returns undefined for functions/symbols at the root
-      return '[result not serializable]';
-    }
-    if (serialized.length > maxBytes) {
-      return '[result too large]';
-    }
-    return serialized;
-  }
-
-  /**
-   * T10 (Wave-5A): walk the conversation from the tail until we find a user
-   * message. Returns its `content` string, or `undefined` when no user message
-   * exists (e.g., a pure system-only seed — we skip the input pipeline rather
-   * than running it on empty content).
-   */
-  private static findLatestUserMessage(messages: readonly Message[]): string | undefined {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const m = messages[i];
-      if (m.role === 'user') return m.content;
-    }
-    return undefined;
-  }
-
-  /**
-   * T10 (Wave-5A): derive a human-readable guard name from a blocking
-   * `PipelineResult`. Prefer the last event (the guard that actually blocked);
-   * fall back to a direction-qualified sentinel so logs and events always
-   * carry something renderable.
-   */
-  private static pickBlockingGuardName(
-    result: PipelineResult,
-    direction: 'input' | 'output',
-  ): string {
-    const last = result.results[result.results.length - 1];
-    if (last && last.verdict.action === 'block') return last.guardrail;
-    return `${direction}-guardrail`;
-  }
+  // Wave-5B Step 3: `findLatestUserMessage` + `pickBlockingGuardName` moved
+  // to `./guardrail-helpers.ts`; `safeStringifyToolResult` (PERF-004) moved
+  // into `iteration-runner.ts`; `doneEvent` inlined into `run()`.
 
   private isAborted(): boolean {
     return this.abortController.signal.aborted;
-  }
-
-  private doneEvent(reason: DoneReason): AgentEvent {
-    this._status = 'completed';
-    return { type: 'done', reason, totalUsage: this.usage };
   }
 }
 

@@ -123,10 +123,16 @@ export interface AdapterCaller {
    * on stream failure; AdapterCaller does NOT re-yield. On chat
    * failure, AdapterCaller also does NOT yield — the caller wraps and
    * yields. Net: exactly one `{type:'error'}` event per failed turn.
+   *
+   * Wave-5B Step 3: optional per-call `onRetry` overrides the
+   * constructor-level callback when provided. This lets `IterationRunner`
+   * capture the active iteration span id at call time without leaking
+   * mutable state onto AdapterCaller's closure.
    */
   call(
     conversation: readonly Message[],
     cumulativeStreamBytesSoFar: number,
+    onRetry?: (info: AdapterRetryInfo) => void,
   ): AsyncGenerator<AgentEvent, AdapterCallResult>;
 
   /**
@@ -216,8 +222,12 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
     async *call(
       conversation: readonly Message[],
       cumulativeStreamBytesSoFar: number,
+      onRetry?: (info: AdapterRetryInfo) => void,
     ): AsyncGenerator<AgentEvent, AdapterCallResult> {
       const path: 'chat' | 'stream' = config.streaming ? 'stream' : 'chat';
+      // Per-call onRetry overrides the constructor default; falls back to
+      // the config-level callback when the caller passes nothing.
+      const fireRetry = onRetry ?? config.onRetry;
 
       for (let attempt = 0; attempt <= config.maxAdapterRetries; attempt++) {
         // Check abort before each retry attempt. On attempt 0 the top-of-loop
@@ -276,7 +286,7 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
                 // should see only the FINAL terminal error, not one per
                 // failed attempt.
                 pendingError = undefined;
-                config.onRetry?.({ attempt, errorCategory, path: 'stream' });
+                fireRetry?.({ attempt, errorCategory, path: 'stream' });
                 try {
                   await backoff(attempt);
                 } catch {
@@ -328,7 +338,7 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
           && attempt < config.maxAdapterRetries
         ) {
           const errorPreview = (err instanceof Error ? err.message : String(err)).slice(0, 500);
-          config.onRetry?.({ attempt, errorCategory, path: 'chat', errorPreview });
+          fireRetry?.({ attempt, errorCategory, path: 'chat', errorPreview });
           try {
             await backoff(attempt);
           } catch {

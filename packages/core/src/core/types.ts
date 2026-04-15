@@ -235,13 +235,21 @@ export interface ToolExecutionResult {
 
 /** Strategy for executing a batch of tool calls. */
 export interface ExecutionStrategy {
+  /**
+   * Execute a batch of tool calls.
+   *
+   * Wave-5B Step 3 (M-5): `options` is `Readonly<>` so the AgentLoop can hoist
+   * one frozen options bag at construction time and reuse the reference across
+   * iterations without paying for an `Object.assign` per batch (PERF-025) and
+   * without risk of a strategy mutating shared state.
+   */
   execute(
     calls: readonly ToolCallRequest[],
     handler: (call: ToolCallRequest) => Promise<unknown>,
-    options?: {
+    options?: Readonly<{
       getToolMeta?: (name: string) => { sequential?: boolean } | undefined;
       signal?: AbortSignal;
-    },
+    }>,
   ): Promise<readonly ToolExecutionResult[]>;
 }
 
