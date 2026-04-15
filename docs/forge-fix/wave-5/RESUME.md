@@ -4,7 +4,9 @@
 - ✅ **Wave-5A 完成**，分支 `wave-5/production-grade` 已 push 到 origin
 - ✅ **Wave-5B 完成**（AgentLoop 3-module decomposition），commits `aa2ce18`（ADR）→ `c94a0e6`（review must-fix）
 - ✅ **Wave-5C 主路径完成**（PR-1/PR-2/PR-3 全部 land），commits `18aa594`（PR-1a）→ `f49ff28`（PR-3b）。**T-3.4 placeholder npm publishes 延后至 org-admin token 到位后补一个 PR-3c commit**（R-3.C）。
-- ⏳ Wave-5D ~ 5F 待启动
+- ✅ **Wave-5F 完成**（cleanup batch：adapter safeWarn 迁移 + 安全随机 ID + unref timers + preset pricing NaN）。commit `b0b8726`。
+- ✅ **Wave-5E 完成**（信任边界类型化 E1-E8）。commit `fa2e0e8`。
+- ✅ **Wave-5D 首批完成**（MetricsPort + HarnessLifecycle + in-process AdmissionController）。commit `f5890fc`。**5D.1 延后**：CostTracker 合并、conversation reconciler、Redis-backed TokenBucket、Langfuse 降级为辅 TraceExporter——这四项需要 PRD + ADR 竞争。
 
 ## 分支与 commits
 
@@ -19,9 +21,9 @@ commit 范围: `a6c717b`（main, 0.4.0）→ `HEAD`
 |---|---|---|---|---|---|
 | 1 | **5B** AgentLoop decomposition | ✅ 完成（2026-04-15） | `wave-5b-brief.md` / `wave-5b-adr-v2.md` | — | — |
 | 2 | **5C** 包边界 + API 1.0-rc | ✅ 主路径完成（2026-04-15），T-3.4 延后 | `wave-5c-brief.md` / `wave-5c-task-plan.md` | 2-3 周 | PRD + ADR + 包发布决策 |
-| 3 | **5D** Observability canonical | ⏳ 待启动 | `wave-5d-brief.md` | 2-3 周 | PRD + ADR + cost 账本归属 |
-| 4 | **5E** 信任边界类型化 | ⏳ 待启动 | `wave-5e-brief.md` | 1 周 | Light ADR + 多租户迁移 |
-| 5 | **5F** Cleanup | ⏳ 待启动 | `wave-5f-brief.md` | 1 天 | 无 |
+| 3 | **5D** Observability canonical | ⏳ 待启动 / 部分完成见状态段落 | `wave-5d-brief.md` | 2-3 周 | PRD + ADR + cost 账本归属 |
+| 4 | **5E** 信任边界类型化 | ⏳ 待启动 / 部分完成见状态段落 | `wave-5e-brief.md` | 1 周 | Light ADR + 多租户迁移 |
+| 5 | **5F** Cleanup | ⏳ 待启动 / 部分完成见状态段落 | `wave-5f-brief.md` | 1 天 | 无 |
 
 ## 继续工作的命令
 

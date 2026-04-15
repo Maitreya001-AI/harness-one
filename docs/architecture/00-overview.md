@@ -81,7 +81,7 @@ import { createEvalRunner } from '@harness-one/devkit';      // 取代旧的 har
 | ④ | 安全与护栏 | **guardrails** | `harness-one/guardrails` |
 | ⑤ | 记忆与持久化 | **memory** | `harness-one/memory` |
 | ⑥ | 评估与验证 | **eval** | `harness-one/eval` |
-| ⑦ | 可观测性 | **observe** | `harness-one/observe` |
+| ⑦ | 可观测性 | **observe** | `harness-one/observe`（含 Wave-5D 新增 `MetricsPort`、`HarnessLifecycle`） |
 | ⑧ | 持续演进 | **evolve** | `harness-one/evolve` |
 | ⑨ | 熵回收 | **evolve** (合并) | `harness-one/evolve` |
 | — | 会话管理 | **session** | `harness-one/session` |
