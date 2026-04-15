@@ -4,7 +4,6 @@ export default defineConfig([
   {
     entry: {
       index: 'src/index.ts',
-      essentials: 'src/essentials.ts',
       'core/index': 'src/core/index.ts',
       'context/index': 'src/context/index.ts',
       'tools/index': 'src/tools/index.ts',
@@ -32,7 +31,6 @@ export default defineConfig([
   {
     entry: {
       index: 'src/index.ts',
-      essentials: 'src/essentials.ts',
       'core/index': 'src/core/index.ts',
       'context/index': 'src/context/index.ts',
       'tools/index': 'src/tools/index.ts',

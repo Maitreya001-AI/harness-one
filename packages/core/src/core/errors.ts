@@ -7,73 +7,98 @@
  */
 
 /**
- * Documented `HarnessError.code` values. Not an exhaustive closed enum —
- * `HarnessError.code` is typed as `string` to preserve ABI stability for
- * third-party subclasses — but consumers doing `switch (err.code)` against
- * this union get IDE autocomplete and an up-to-date list of the codes the
- * library itself emits.
+ * Enumerated `HarnessError.code` values emitted by harness-one core.
  *
- * Recently added (Wave 4d):
- * - `INTERNAL_ERROR` — unreachable / invariant-violation sites.
- * - `CLI_PARSE_ERROR` — malformed CLI invocations.
- * - `MEMORY_CORRUPT` — persisted memory blobs failed runtime shape validation.
+ * Wave-5C (T-1.3): converted from a string-literal union to a string enum.
+ * Values are unchanged from the previous union (value-equivalence step per
+ * Gap #3). PR-3 (T-3.2) will rename members to prefixed form (e.g.,
+ * `UNKNOWN` → `CORE_UNKNOWN`); this PR only introduces the enum shape so
+ * `Object.values(HarnessErrorCode)` becomes usable for runtime introspection
+ * and consumers can migrate away from bare string literals.
  *
- * Added in Wave 5:
- * - `ADAPTER_INVALID_EXTRA` — adapter `extra` config contained a key outside
- *   the allow-list while strict mode is enabled.
- * - `TOOL_CAPABILITY_DENIED` — a tool declared a capability that is not in
- *   the registry allow-list.
- * - `PROVIDER_REGISTRY_SEALED` — an attempt was made to register a provider
- *   after the registry was sealed.
- * - `GUARDRAIL_VIOLATION` — hard-block from input/output/tool_output guardrail
- *   (non-retryable, emitted as guardrail_blocked AgentEvent).
+ * Subclass escape hatch (ADR §5.2): adapter subclasses that need to surface
+ * vendor-specific codes should throw `HarnessError` with code
+ * {@link HarnessErrorCode.ADAPTER_CUSTOM} and set
+ * `details.adapterCode` to a string containing the vendor taxonomy.
+ *
+ * Back-compat note: `HarnessError.code` remains widened to
+ * `HarnessErrorCode | (string & {})` in this PR so ecosystem throw sites
+ * using bare literals outside this set (e.g., `'PROVIDER_ERROR'`,
+ * `'NOT_FOUND'`) still compile. The type narrows to `HarnessErrorCode`
+ * in PR-3 once the codemod has migrated those sites to enum members.
  */
-export type HarnessErrorCode =
-  | 'UNKNOWN'
-  | 'INVALID_CONFIG'
-  | 'INVALID_STATE'
-  | 'INTERNAL_ERROR'
-  | 'CLI_PARSE_ERROR'
-  | 'MEMORY_CORRUPT'
-  | 'STORE_CORRUPTION'
-  | 'MAX_ITERATIONS'
-  | 'ABORTED'
-  | 'GUARDRAIL_BLOCKED'
-  | 'GUARDRAIL_VIOLATION'
-  | 'INVALID_PIPELINE'
-  | 'ADAPTER_INVALID_EXTRA'
-  | 'TOOL_VALIDATION'
-  | 'INVALID_TOOL_SCHEMA'
-  | 'TOOL_CAPABILITY_DENIED'
-  | 'TOKEN_BUDGET_EXCEEDED'
-  | 'SESSION_NOT_FOUND'
-  | 'SESSION_LIMIT'
-  | 'SESSION_LOCKED'
-  | 'SESSION_EXPIRED'
-  | 'TRACE_NOT_FOUND'
-  | 'SPAN_NOT_FOUND'
-  | 'PROVIDER_REGISTRY_SEALED';
+export enum HarnessErrorCode {
+  UNKNOWN = 'UNKNOWN',
+  INVALID_CONFIG = 'INVALID_CONFIG',
+  INVALID_STATE = 'INVALID_STATE',
+  INTERNAL_ERROR = 'INTERNAL_ERROR',
+  CLI_PARSE_ERROR = 'CLI_PARSE_ERROR',
+  MEMORY_CORRUPT = 'MEMORY_CORRUPT',
+  STORE_CORRUPTION = 'STORE_CORRUPTION',
+  MAX_ITERATIONS = 'MAX_ITERATIONS',
+  ABORTED = 'ABORTED',
+  GUARDRAIL_BLOCKED = 'GUARDRAIL_BLOCKED',
+  GUARDRAIL_VIOLATION = 'GUARDRAIL_VIOLATION',
+  INVALID_PIPELINE = 'INVALID_PIPELINE',
+  ADAPTER_INVALID_EXTRA = 'ADAPTER_INVALID_EXTRA',
+  ADAPTER_CUSTOM = 'ADAPTER_CUSTOM',
+  TOOL_VALIDATION = 'TOOL_VALIDATION',
+  INVALID_TOOL_SCHEMA = 'INVALID_TOOL_SCHEMA',
+  TOOL_CAPABILITY_DENIED = 'TOOL_CAPABILITY_DENIED',
+  TOKEN_BUDGET_EXCEEDED = 'TOKEN_BUDGET_EXCEEDED',
+  SESSION_NOT_FOUND = 'SESSION_NOT_FOUND',
+  SESSION_LIMIT = 'SESSION_LIMIT',
+  SESSION_LOCKED = 'SESSION_LOCKED',
+  SESSION_EXPIRED = 'SESSION_EXPIRED',
+  TRACE_NOT_FOUND = 'TRACE_NOT_FOUND',
+  SPAN_NOT_FOUND = 'SPAN_NOT_FOUND',
+  PROVIDER_REGISTRY_SEALED = 'PROVIDER_REGISTRY_SEALED',
+}
+
+/**
+ * Optional structured details attached to a {@link HarnessError}.
+ *
+ * Adapter subclasses surfacing vendor codes should use the
+ * {@link HarnessErrorCode.ADAPTER_CUSTOM} enum member together with
+ * `adapterCode` so consumers can branch on provider taxonomies without
+ * polluting the main {@link HarnessErrorCode} enum (ADR §5.2).
+ */
+export interface HarnessErrorDetails {
+  /**
+   * Vendor-specific code carried alongside {@link HarnessErrorCode.ADAPTER_CUSTOM}.
+   * Open-ended by contract — third-party adapters publish their own taxonomies.
+   */
+  readonly adapterCode?: string;
+  readonly [k: string]: unknown;
+}
 
 /**
  * Base error for all harness-one errors.
  *
  * @example
  * ```ts
- * throw new HarnessError('Something went wrong', 'UNKNOWN', 'Check your config');
+ * throw new HarnessError('Something went wrong', HarnessErrorCode.UNKNOWN, 'Check your config');
  * ```
  */
 export class HarnessError extends Error {
+  public readonly details?: Readonly<HarnessErrorDetails>;
+
   constructor(
     message: string,
-    // `code` accepts any string for forward compatibility, but callers are
-    // encouraged to use values from {@link HarnessErrorCode}. New codes added
-    // in this audit: INTERNAL_ERROR, CLI_PARSE_ERROR, MEMORY_CORRUPT.
+    // `code` accepts any string for forward compatibility (PR-1
+    // value-equivalence step per Gap #3). The widened `(string & {})`
+    // arm is removed in PR-3 once the ecosystem codemod has migrated
+    // every throw site to a `HarnessErrorCode` enum member.
     public readonly code: HarnessErrorCode | (string & {}),
     public readonly suggestion?: string,
     public override readonly cause?: Error,
+    details?: HarnessErrorDetails,
   ) {
     super(message);
     this.name = 'HarnessError';
+    if (details !== undefined) {
+      this.details = Object.freeze({ ...details });
+    }
   }
 }
 
@@ -92,7 +117,7 @@ export class MaxIterationsError extends HarnessError {
   ) {
     super(
       `Agent loop exceeded maximum iterations (${iterations})`,
-      'MAX_ITERATIONS',
+      HarnessErrorCode.MAX_ITERATIONS,
       'Increase maxIterations or simplify the task',
       cause,
     );
@@ -112,7 +137,7 @@ export class AbortedError extends HarnessError {
   constructor(cause?: Error) {
     super(
       'Agent loop was aborted',
-      'ABORTED',
+      HarnessErrorCode.ABORTED,
       'Check if the abort was intentional',
       cause,
     );
@@ -132,7 +157,7 @@ export class GuardrailBlockedError extends HarnessError {
   constructor(reason: string, cause?: Error) {
     super(
       `Guardrail blocked: ${reason}`,
-      'GUARDRAIL_BLOCKED',
+      HarnessErrorCode.GUARDRAIL_BLOCKED,
       'Review the guardrail configuration and input',
       cause,
     );
@@ -152,7 +177,7 @@ export class ToolValidationError extends HarnessError {
   constructor(message: string, cause?: Error) {
     super(
       message,
-      'TOOL_VALIDATION',
+      HarnessErrorCode.TOOL_VALIDATION,
       'Check the tool parameters against the schema',
       cause,
     );
@@ -176,7 +201,7 @@ export class TokenBudgetExceededError extends HarnessError {
   ) {
     super(
       `Token budget exceeded: used ${used} of ${budget}`,
-      'TOKEN_BUDGET_EXCEEDED',
+      HarnessErrorCode.TOKEN_BUDGET_EXCEEDED,
       'Increase maxTotalTokens or reduce the conversation length',
       cause,
     );

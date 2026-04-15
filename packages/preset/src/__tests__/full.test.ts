@@ -136,7 +136,7 @@ describe('createHarness', () => {
 
   it('creates a harness with new infrastructure fields', () => {
     const harness = createHarness(baseConfig);
-    expect(harness.eventBus).toBeDefined();
+    // Wave-5C T-1.6: `eventBus` field removed (ARCH-010 deprecation fully landed).
     expect(harness.logger).toBeDefined();
     expect(harness.conversations).toBeDefined();
     expect(harness.middleware).toBeDefined();

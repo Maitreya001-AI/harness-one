@@ -212,5 +212,5 @@ export { createComponentRegistry } from './evolve/index.js';
 export { createRAGPipeline } from './rag/index.js';
 
 // Lifecycle primitives (ARCH-005): codified Disposable contract + helpers.
-export type { Disposable } from './_internal/disposable.js';
-export { disposeAll, DisposeAggregateError } from './_internal/disposable.js';
+export type { Disposable } from './infra/disposable.js';
+export { disposeAll, DisposeAggregateError } from './infra/disposable.js';

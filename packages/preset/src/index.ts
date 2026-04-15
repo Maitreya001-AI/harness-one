@@ -8,7 +8,7 @@
  */
 
 import { AgentLoop, HarnessError, createMiddlewareChain } from 'harness-one/core';
-import type { AgentAdapter, Message, AgentEvent, EventBus, MiddlewareChain } from 'harness-one/core';
+import type { AgentAdapter, Message, AgentEvent, MiddlewareChain } from 'harness-one/core';
 import { createTraceManager, createConsoleExporter, createCostTracker, createLogger } from 'harness-one/observe';
 import type { TraceExporter, TraceManager, CostTracker, ModelPricing, Logger } from 'harness-one/observe';
 import { createPromptBuilder } from 'harness-one/prompt';
@@ -169,18 +169,6 @@ export interface Harness {
   readonly memory: MemoryStore;
   readonly prompts: PromptBuilder;
   readonly eval: EvalRunner;
-  /**
-   * @deprecated ARCH-010: The global event bus is not used by any module.
-   * Each module (sessions, orchestrator, etc.) exposes its own `onEvent()`
-   * subscription. Prefer per-module event subscriptions instead.
-   *
-   * As of 0.4.x the property is a **dead stub**: the factory no longer
-   * constructs a real bus, a one-time warning is logged on first access,
-   * and any method call throws `HarnessError('DEPRECATED_EVENT_BUS', ...)`.
-   *
-   * **This property will be REMOVED in 0.5.0.**
-   */
-  readonly eventBus: EventBus;
   readonly logger: Logger;
   readonly conversations: ConversationStore;
   readonly middleware: MiddlewareChain;
@@ -368,42 +356,10 @@ export function createHarness(config: HarnessConfig): Harness {
   // 12. Eval runner (default relevance scorer)
   const evalRunner = createEvalRunner({ scorers: [createRelevanceScorer()] });
 
-  // 14. Logger (moved up: the dead-stub eventBus below needs `logger` in
-  // scope to emit the first-access warning).
+  // 13. Logger — no longer depends on the deleted eventBus stub.
   const logger = config.logger ?? createLogger();
 
-  // 13. Event bus — ARCH-010: DEAD STUB, to be REMOVED in 0.5.0.
-  // The global event bus is no longer constructed. Accessing the `eventBus`
-  // property logs a one-time warning; invoking any method throws
-  // `HarnessError('DEPRECATED_EVENT_BUS', ...)`. Callers migrating off this
-  // API should subscribe directly to the module that owns the event.
-  let eventBusWarnEmitted = false;
-  function denyEventBusMethod(method: string): never {
-    throw new HarnessError(
-      `Harness.eventBus.${method} is deprecated and no longer functional (ARCH-010). Subscribe via the owning module's onEvent() API instead.`,
-      'DEPRECATED_EVENT_BUS',
-      'Remove the eventBus call. This property will be removed in 0.5.0.',
-    );
-  }
-  const eventBus: EventBus = new Proxy({} as EventBus, {
-    get(_target, prop: string | symbol): unknown {
-      if (!eventBusWarnEmitted) {
-        eventBusWarnEmitted = true;
-        logger.warn(
-          '[harness-one/preset] Harness.eventBus is deprecated and will be REMOVED in 0.5.0 (ARCH-010). Subscribe via the owning module\'s onEvent() API instead.',
-        );
-      }
-      // String-keyed access to event-bus methods becomes a throwing stub.
-      // Symbol-keyed access (e.g. util.inspect.custom) returns undefined so
-      // console.logging the harness doesn't blow up in dev.
-      if (typeof prop === 'symbol') return undefined;
-      // Return a thrower for any method call. Non-method property reads
-      // (e.g. `.constructor`) also throw to surface the dead state loudly.
-      return () => denyEventBusMethod(String(prop));
-    },
-  });
-
-  // 15. Conversation store
+  // 14. Conversation store
   const conversations = createInMemoryConversationStore();
 
   // 16. Middleware chain
@@ -471,7 +427,6 @@ export function createHarness(config: HarnessConfig): Harness {
     memory,
     prompts,
     eval: evalRunner,
-    eventBus,
     logger,
     conversations,
     middleware,

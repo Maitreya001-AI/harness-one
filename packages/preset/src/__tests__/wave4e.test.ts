@@ -1,13 +1,15 @@
 /**
  * Wave 4e fixes for the preset package:
  *  - ARCH-007: Harness.initialize() eager boot hook.
- *  - ARCH-010: Harness.eventBus deprecation (dead stub).
+ *  - ARCH-010: Harness.eventBus deprecation (dead stub) — REMOVED in Wave-5C.
+ *    The eventBus property is no longer part of the Harness surface; the
+ *    earlier deprecation-warning and DEPRECATED_EVENT_BUS tests were deleted
+ *    along with the stub.
  */
 
 import { describe, it, expect, vi } from 'vitest';
 import { createHarness } from '../index.js';
 import type { AgentAdapter } from 'harness-one/core';
-import { HarnessError } from 'harness-one/core';
 
 function stubAdapter(): AgentAdapter {
   return {
@@ -50,41 +52,7 @@ describe('Harness.initialize() (ARCH-007)', () => {
   });
 });
 
-describe('Harness.eventBus deprecation (ARCH-010)', () => {
-  it('first property access on eventBus logs a one-time warning', () => {
-    const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
-    const harness = createHarness({ adapter: stubAdapter(), logger });
-    // Sanity: no eventBus warning has fired yet.
-    let eventBusWarns = logger.warn.mock.calls.filter((c) =>
-      String(c[0]).includes('eventBus'),
-    );
-    expect(eventBusWarns.length).toBe(0);
-    // Access a property on the stub — this traps through the Proxy and
-    // fires the deprecation warning.
-    const bus = harness.eventBus as unknown as { subscribe?: unknown };
-    void bus.subscribe;
-    void bus.subscribe; // second access — no additional warning.
-    eventBusWarns = logger.warn.mock.calls.filter((c) =>
-      String(c[0]).includes('eventBus'),
-    );
-    expect(eventBusWarns.length).toBe(1);
-    expect(String(eventBusWarns[0][0])).toContain('Harness.eventBus is deprecated');
-  });
-
-  it('invoking any method on the dead stub throws DEPRECATED_EVENT_BUS', () => {
-    const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
-    const harness = createHarness({ adapter: stubAdapter(), logger });
-    const bus = harness.eventBus as unknown as {
-      publish: (e: unknown) => void;
-      subscribe: (h: (e: unknown) => void) => () => void;
-    };
-    expect(() => bus.publish({ type: 'x' })).toThrow(HarnessError);
-    try {
-      bus.publish({ type: 'x' });
-    } catch (err) {
-      expect(err).toBeInstanceOf(HarnessError);
-      expect((err as HarnessError).code).toBe('DEPRECATED_EVENT_BUS');
-    }
-    expect(() => bus.subscribe(() => undefined)).toThrow(/DEPRECATED/i);
-  });
-});
+// Wave-5C T-1.6: Harness.eventBus deprecation (ARCH-010) — the dead-stub
+// Proxy, DEPRECATED_EVENT_BUS error code, and all associated tests were
+// removed. Preset no longer exposes an `eventBus` field. Per-module
+// `onEvent()` subscriptions replace the global bus.
