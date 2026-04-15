@@ -54,3 +54,23 @@ export { createDatasetExporter } from './dataset-exporter.js';
 
 // Safe-log primitive (fallback logger + safeWarn/safeError helpers)
 export { createDefaultLogger, safeWarn, safeError } from '../infra/safe-log.js';
+
+// Wave-5D ARCH-5: MetricsPort (vendor-neutral metric interface).
+export type {
+  MetricsPort,
+  MetricAttributes,
+  MetricCounter,
+  MetricGauge,
+  MetricHistogram,
+} from './metrics-port.js';
+export { createNoopMetricsPort } from './metrics-port.js';
+
+// Wave-5D ARCH-6: lifecycle state machine + aggregated health.
+export type {
+  HarnessLifecycle,
+  HarnessLifecycleState,
+  HarnessHealth,
+  HarnessComponentHealth,
+  HarnessHealthCheck,
+} from './lifecycle.js';
+export { createHarnessLifecycle } from './lifecycle.js';
