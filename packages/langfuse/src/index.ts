@@ -11,7 +11,7 @@ import type { TraceExporter, Trace, Span } from 'harness-one/observe';
 import type { PromptBackend, PromptTemplate } from 'harness-one/prompt';
 import type { CostTracker, ModelPricing, Logger } from 'harness-one/observe';
 import type { TokenUsageRecord, CostAlert } from 'harness-one/observe';
-import { KahanSum, lruStrategy } from 'harness-one/observe';
+import { KahanSum, lruStrategy, safeWarn } from 'harness-one/observe';
 import type { EvictionStrategy } from 'harness-one/observe';
 import { HarnessError, HarnessErrorCode} from 'harness-one/core';
 
@@ -265,12 +265,9 @@ export function createLangfuseExporter(config: LangfuseExporterConfig): TraceExp
           ),
         ]);
       } catch (err) {
-        if (typeof console !== 'undefined') {
-          console.warn(
-            '[harness-one/langfuse] flushAsync during shutdown failed:',
-            err instanceof Error ? err.message : err,
-          );
-        }
+        safeWarn(undefined, '[harness-one/langfuse] flushAsync during shutdown failed', {
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
       traceMap.clear();
       traceTimestamps.clear();
@@ -330,9 +327,9 @@ export function createLangfusePromptBackend(config: LangfusePromptBackendConfig)
         return toPromptTemplate(id, lfPrompt as { prompt: unknown; version: number });
       } catch (err) {
         // Log warning instead of silently swallowing — network/auth failures should be visible
-        if (typeof console !== 'undefined') {
-          console.warn(`[harness-one/langfuse] Failed to fetch prompt "${id}":`, err instanceof Error ? err.message : err);
-        }
+        safeWarn(undefined, `[harness-one/langfuse] Failed to fetch prompt "${id}"`, {
+          error: err instanceof Error ? err.message : String(err),
+        });
         return undefined;
       }
     },
@@ -344,9 +341,9 @@ export function createLangfusePromptBackend(config: LangfusePromptBackendConfig)
           const lfPrompt = await client.getPrompt(name);
           templates.push(toPromptTemplate(name, lfPrompt as { prompt: unknown; version: number }));
         } catch (err) {
-          if (typeof console !== 'undefined') {
-            console.warn(`[harness-one/langfuse] Failed to fetch prompt "${name}" during list:`, err instanceof Error ? err.message : err);
-          }
+          safeWarn(undefined, `[harness-one/langfuse] Failed to fetch prompt "${name}" during list`, {
+            error: err instanceof Error ? err.message : String(err),
+          });
           knownPromptNames.delete(name);
         }
       }
@@ -493,9 +490,10 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): La
       });
       return;
     }
-    // Fallback preserves legacy behavior so callers that depend on the
-    // console.warn contract keep observing errors.
-    console.warn(`[harness-one/langfuse] ${op} error:`, err);
+    // Wave-5F T13: route final fallback through safeWarn (redaction-enabled).
+    safeWarn(undefined, `[harness-one/langfuse] ${op} error`, {
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 
   function computeCost(usage: Omit<TokenUsageRecord, 'estimatedCost' | 'timestamp'>): number {
@@ -503,7 +501,7 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): La
     if (!p) {
       if (!warnedModels.has(usage.model)) {
         warnedModels.add(usage.model);
-        console.warn(`[harness-one/langfuse] No pricing configured for model "${usage.model}" — cost will be reported as $0`);
+        safeWarn(undefined, `[harness-one/langfuse] No pricing configured for model "${usage.model}" — cost will be reported as $0`);
       }
       return 0;
     }

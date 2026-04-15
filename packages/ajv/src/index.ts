@@ -16,6 +16,7 @@ import { Ajv, type ValidateFunction } from 'ajv';
 import type { JsonSchema } from 'harness-one/core';
 import type { SchemaValidator, ValidationError } from 'harness-one/tools';
 import type { Logger } from 'harness-one/observe';
+import { createDefaultLogger } from 'harness-one/observe';
 
 /** Options for the Ajv validator. */
 export interface AjvValidatorOptions {
@@ -149,20 +150,8 @@ export function createAjvValidator(options?: AjvValidatorOptions): AjvSchemaVali
   });
 
   const maxCacheSize = Math.max(1, options?.maxCacheSize ?? 256);
-  const logger: Pick<Logger, 'warn' | 'error'> = options?.logger ?? {
-    warn: (msg, meta) => {
-      if (meta && Object.keys(meta).length > 0) console.warn(msg, meta);
-      else console.warn(msg);
-    },
-    error: (msg, meta) => {
-      // Fallback logger routes to console.error by design — callers inject a
-      // Logger to redirect library errors into structured logging.
-      // eslint-disable-next-line no-console
-      if (meta && Object.keys(meta).length > 0) console.error(msg, meta);
-      // eslint-disable-next-line no-console
-      else console.error(msg);
-    },
-  };
+  // Wave-5F T13: delegate default logger to core's redaction-enabled singleton.
+  const logger: Pick<Logger, 'warn' | 'error'> = options?.logger ?? createDefaultLogger();
 
   /**
    * LRU cache of compiled validators. Map iteration order is insertion order,

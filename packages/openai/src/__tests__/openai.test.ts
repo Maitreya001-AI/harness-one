@@ -999,7 +999,7 @@ describe('createOpenAIAdapter', () => {
     });
 
     it('logs a warning when stream ends without usage data', async () => {
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const warnSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
       const asyncIter = {
         async *[Symbol.asyncIterator]() {
           yield { choices: [{ delta: { content: 'Hello' } }] };
@@ -1447,7 +1447,7 @@ describe('createOpenAIAdapter', () => {
     });
 
     it('warns once per model when chat response lacks prompt/completion tokens', async () => {
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const warnSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
       mock.mocks.create.mockResolvedValue({
         choices: [{ message: { role: 'assistant', content: 'OK' } }],
         usage: undefined,
@@ -1466,7 +1466,7 @@ describe('createOpenAIAdapter', () => {
     });
 
     it('warns separately for each distinct model', async () => {
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const warnSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
       mock.mocks.create.mockResolvedValue({
         choices: [{ message: { role: 'assistant', content: 'OK' } }],
         usage: { prompt_tokens: null, completion_tokens: null },
@@ -1486,7 +1486,7 @@ describe('createOpenAIAdapter', () => {
     });
 
     it('does NOT warn when usage fully populated', async () => {
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const warnSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
       mock.mocks.create.mockResolvedValue({
         choices: [{ message: { role: 'assistant', content: 'OK' } }],
         usage: { prompt_tokens: 10, completion_tokens: 5 },
@@ -1512,7 +1512,7 @@ describe('createOpenAIAdapter', () => {
     });
 
     it('routes stream-missing-usage warning through custom logger, not console', async () => {
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const warnSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
       const fakeLogger = { warn: vi.fn(), error: vi.fn() };
 
       const asyncIter = {

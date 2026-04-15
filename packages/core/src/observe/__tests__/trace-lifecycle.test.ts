@@ -84,28 +84,34 @@ describe('TraceExporter lifecycle hooks', () => {
   });
 
   it('applies defaultSamplingRate when no per-exporter shouldExport is provided', async () => {
-    const exportTrace = vi.fn(async () => {});
-    const exporter = makeExporter({ exportTrace });
+    // Wave-5F SEC-A15: sampling now uses `crypto.randomInt` which is not
+    // spyable via vi.spyOn(Math, 'random'). Exercise boundary rates
+    // (0 = always drop, 1 = always keep) instead of a mid-rate with a
+    // mocked RNG — the mid-rate path is now a statistical property.
 
-    // Force deterministic sampling by stubbing Math.random
-    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0.9);
-
-    // Rate 0.5 means sample when random < 0.5 — 0.9 will be dropped
-    const tm = createTraceManager({ exporters: [exporter], defaultSamplingRate: 0.5 });
-    const traceId = tm.startTrace('t1');
-    tm.endTrace(traceId);
+    const exportDrop = vi.fn(async () => {});
+    const tmDrop = createTraceManager({
+      exporters: [makeExporter({ exportTrace: exportDrop })],
+      defaultSamplingRate: 0,
+    });
+    for (let i = 0; i < 10; i++) {
+      const id = tmDrop.startTrace(`t-drop-${i}`);
+      tmDrop.endTrace(id);
+    }
     await new Promise((r) => setImmediate(r));
-    expect(exportTrace).not.toHaveBeenCalled();
+    expect(exportDrop).not.toHaveBeenCalled();
+    await tmDrop.dispose();
 
-    // Now 0.1 < 0.5 — should sample through
-    randomSpy.mockReturnValue(0.1);
-    const traceId2 = tm.startTrace('t2');
-    tm.endTrace(traceId2);
+    const exportKeep = vi.fn(async () => {});
+    const tmKeep = createTraceManager({
+      exporters: [makeExporter({ exportTrace: exportKeep })],
+      defaultSamplingRate: 1,
+    });
+    const id = tmKeep.startTrace('t-keep');
+    tmKeep.endTrace(id);
     await new Promise((r) => setImmediate(r));
-    expect(exportTrace).toHaveBeenCalledTimes(1);
-
-    randomSpy.mockRestore();
-    await tm.dispose();
+    expect(exportKeep).toHaveBeenCalledTimes(1);
+    await tmKeep.dispose();
   });
 
   it('setSamplingRate updates rate at runtime', async () => {

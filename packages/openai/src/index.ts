@@ -22,7 +22,7 @@ import type {
 } from 'harness-one/core';
 import { HarnessError, HarnessErrorCode} from 'harness-one/core';
 import type { Logger } from 'harness-one/observe';
-import { safeWarn } from 'harness-one/observe';
+import { safeWarn, createDefaultLogger } from 'harness-one/observe';
 
 const _providers: Record<string, { baseURL: string }> = {
   openrouter: { baseURL: 'https://openrouter.ai/api/v1' },
@@ -440,23 +440,9 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
   });
   const model = config.model ?? 'gpt-4o';
   const strictExtra = config.strictExtraAllowList === true;
-  const logger: Pick<Logger, 'warn' | 'error'> = config.logger ?? {
-    warn: (msg: string, meta?: Record<string, unknown>): void => {
-      if (meta && Object.keys(meta).length > 0) {
-        console.warn(msg, meta);
-      } else {
-        console.warn(msg);
-      }
-    },
-    error: (msg: string, meta?: Record<string, unknown>): void => {
-      // Fallback logger routes to console.error by design — callers inject a
-      // Logger to redirect library errors into structured logging.
-      // eslint-disable-next-line no-console
-      if (meta && Object.keys(meta).length > 0) console.error(msg, meta);
-      // eslint-disable-next-line no-console
-      else console.error(msg);
-    },
-  };
+  // Wave-5F T12: delegate default logger to core's redaction-enabled
+  // singleton instead of a hand-rolled console.warn/error fallback.
+  const logger: Pick<Logger, 'warn' | 'error'> = config.logger ?? createDefaultLogger();
 
   return {
     name: `openai:${model}`,

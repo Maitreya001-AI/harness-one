@@ -379,7 +379,7 @@ describe('createRedisStore', () => {
 
   it('returns null and warns for corrupted JSON — but does NOT auto-delete (SEC-014)', async () => {
     const store = createRedisStore({ client: redis, prefix: 'test' });
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     // Write a valid entry, then corrupt it
     const entry = await store.write({ key: 'k', content: 'original', grade: 'useful' });
@@ -416,7 +416,7 @@ describe('createRedisStore', () => {
 
   it('warns for each corrupt read but leaves valid entries untouched (SEC-014)', async () => {
     const store = createRedisStore({ client: redis, prefix: 'test' });
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     // Write two entries and corrupt only one
     const entry1 = await store.write({ key: 'a', content: 'good', grade: 'useful' });
@@ -441,7 +441,7 @@ describe('createRedisStore', () => {
 
   it('repair() removes corrupted entries and returns the count (SEC-014)', async () => {
     const store = createRedisStore({ client: redis, prefix: 'test' });
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     // Two valid entries, one corrupt payload, one dangling index (string gone).
     const good = await store.write({ key: 'a', content: 'good', grade: 'useful' });

@@ -145,15 +145,15 @@ describe('createCheckpointManager', () => {
     }
   });
 
-  it('generates IDs with random suffix to avoid collisions', () => {
+  it('generates crypto-backed unique IDs (Wave-5F SEC-A14)', () => {
     const mgr = createCheckpointManager();
     const cp1 = mgr.save(messages, 'a');
     const cp2 = mgr.save(messages, 'b');
     // IDs should be unique
     expect(cp1.id).not.toBe(cp2.id);
-    // IDs should contain random suffix (4 chars after last underscore)
-    expect(cp1.id).toMatch(/^cp_\d+_\d+_[a-z0-9]{4}$/);
-    expect(cp2.id).toMatch(/^cp_\d+_\d+_[a-z0-9]{4}$/);
+    // IDs use crypto-random suffix via prefixedSecureId('cp').
+    expect(cp1.id).toMatch(/^cp-[a-f0-9]+$/);
+    expect(cp2.id).toMatch(/^cp-[a-f0-9]+$/);
   });
 
   it('uses custom storage backend when provided', () => {

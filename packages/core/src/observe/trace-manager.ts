@@ -4,6 +4,7 @@
  * @module
  */
 
+import { randomInt } from 'node:crypto';
 import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import { asSpanId, asTraceId } from '../infra/ids.js';
 import type { SpanId, TraceId } from '../core/types.js';
@@ -287,7 +288,12 @@ export function createTraceManager(config?: {
     // `setSamplingRate()` calls must not change the verdict for traces that
     // have already begun — otherwise ops can silently drop traces the
     // application has already decided to keep.
-    if (!exporter.shouldExport && sampleRate < 1 && Math.random() >= sampleRate) return;
+    // Wave-5F SEC-A15: use crypto.randomInt for sampling so an attacker who
+    // can observe trace output cannot predict which traces will be dropped.
+    // randomInt(2**30) / 2**30 gives a uniform float in [0, 1) at ~30 bits
+    // of precision — sufficient for sampling decisions without importing
+    // additional crypto primitives.
+    if (!exporter.shouldExport && sampleRate < 1 && randomInt(0, 1 << 30) / (1 << 30) >= sampleRate) return;
     const p = ensureInitialized(exporter)
       .then(() => exporter.exportTrace(trace))
       .catch(reportExportError);

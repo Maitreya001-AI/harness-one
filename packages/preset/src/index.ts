@@ -266,14 +266,19 @@ export function createHarness(config: HarnessConfig): Harness {
     }
   }
 
-  // Validate pricing values
+  // Validate pricing values. Wave-5F m-4: reject NaN/Infinity alongside
+  // negatives — otherwise `p.inputPer1kTokens = NaN` would silently produce
+  // NaN cost attributions downstream that break budget enforcement.
   if (config.pricing) {
     for (const p of config.pricing) {
-      if (p.inputPer1kTokens < 0 || p.outputPer1kTokens < 0) {
+      const invalid = (n: number): boolean => !Number.isFinite(n) || n < 0;
+      if (invalid(p.inputPer1kTokens) || invalid(p.outputPer1kTokens) ||
+        (p.cacheReadPer1kTokens !== undefined && invalid(p.cacheReadPer1kTokens)) ||
+        (p.cacheWritePer1kTokens !== undefined && invalid(p.cacheWritePer1kTokens))) {
         throw new HarnessError(
-          `Pricing for model "${p.model}" has negative values`,
+          `Pricing for model "${p.model}" has non-finite or negative values`,
           HarnessErrorCode.CORE_INVALID_CONFIG,
-          'All pricing values must be >= 0',
+          'All pricing values must be finite numbers >= 0',
         );
       }
     }

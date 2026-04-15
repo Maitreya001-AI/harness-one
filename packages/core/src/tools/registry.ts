@@ -15,6 +15,7 @@ import { toolError, ALL_TOOL_CAPABILITIES } from './types.js';
 import { validateToolCall } from './validate.js';
 import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import { safeWarn } from '../infra/safe-log.js';
+import { unrefTimeout } from '../infra/timers.js';
 import type { Logger } from '../observe/logger.js';
 
 /**
@@ -293,7 +294,9 @@ export function createRegistry(config?: CreateRegistryConfig): ToolRegistry {
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         const timeoutPromise = new Promise<ToolResult>((resolve) => {
-          timer = setTimeout(() => {
+          // Wave-5F m-2: unref so an abandoned Promise.race doesn't hold the
+          // event loop open past the caller's expected process lifetime.
+          timer = unrefTimeout(() => {
             ac.abort();
             resolve(
               toolError(

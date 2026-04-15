@@ -18,7 +18,7 @@ import type {
   ToolSchema,
 } from 'harness-one/core';
 import { HarnessError, HarnessErrorCode} from 'harness-one/core';
-import { safeWarn, type Logger } from 'harness-one/observe';
+import { safeWarn, createDefaultLogger, type Logger } from 'harness-one/observe';
 
 /**
  * T05 (Wave-5A): Allow-list of `LLMConfig.extra` keys that are safe to forward
@@ -110,26 +110,9 @@ function filterExtra(
   return filtered;
 }
 
-/** Default logger used when no custom logger is injected. Routes to the global console. */
-function defaultLogger(): Pick<Logger, 'warn' | 'error'> {
-  return {
-    warn: (msg: string, meta?: Record<string, unknown>): void => {
-      if (meta && Object.keys(meta).length > 0) {
-        console.warn(msg, meta);
-      } else {
-        console.warn(msg);
-      }
-    },
-    error: (msg: string, meta?: Record<string, unknown>): void => {
-      // Fallback logger routes to console.error by design — callers inject a
-      // Logger to redirect library errors into structured logging.
-      // eslint-disable-next-line no-console
-      if (meta && Object.keys(meta).length > 0) console.error(msg, meta);
-      // eslint-disable-next-line no-console
-      else console.error(msg);
-    },
-  };
-}
+// Default logger now delegates to core's `createDefaultLogger()` singleton,
+// which redacts secret keys and writes a structured `{level, msg, meta}` line
+// to stdout. Replaces the hand-rolled console.warn/error fallback (Wave-5F T12).
 
 /** Convert a harness-one Message to the Anthropic message format. */
 function toAnthropicMessage(
@@ -291,7 +274,7 @@ function toHarnessMessage(response: Anthropic.Message): Message {
 export function createAnthropicAdapter(config: AnthropicAdapterConfig): AgentAdapter {
   const { client } = config;
   const model = config.model ?? 'claude-sonnet-4-20250514';
-  const logger: Pick<Logger, 'warn' | 'error'> = config.logger ?? defaultLogger();
+  const logger: Pick<Logger, 'warn' | 'error'> = config.logger ?? createDefaultLogger();
   const strictExtra = config.strictExtraAllowList ?? false;
 
   return {

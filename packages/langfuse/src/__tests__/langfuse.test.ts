@@ -730,7 +730,7 @@ describe('createLangfuseExporter', () => {
         getPrompt: vi.fn(),
       } as unknown as LangfuseExporterConfig['client'];
 
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const warnSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
       const exporter = createLangfuseExporter({ client });
       await exporter.exportTrace({
         id: 't1',
@@ -794,13 +794,14 @@ describe('createLangfusePromptBackend', () => {
     const backend = createLangfusePromptBackend({ client: mock.client });
     // The non-string prompt should cause fetch to return undefined
     // because the error is caught by the outer try/catch
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const result = await backend.fetch('chat-prompt');
     expect(result).toBeUndefined();
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('Failed to fetch prompt'),
-      expect.stringContaining('not a string type'),
-    );
+    // Wave-5F T13: default logger renders a JSON line; assert both phrases
+    // appear in the single formatted argument.
+    const line = (warnSpy.mock.calls[0]?.[0] ?? '') as string;
+    expect(line).toContain('Failed to fetch prompt');
+    expect(line).toContain('not a string type');
     warnSpy.mockRestore();
   });
 
@@ -815,23 +816,20 @@ describe('createLangfusePromptBackend', () => {
       version: 7,
     });
 
-    // Intercept console.warn so we can validate the propagated error message.
-    const warnCalls: Array<{ prefix: string; payload: unknown }> = [];
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(
-      (prefix: string, payload: unknown) => {
-        warnCalls.push({ prefix, payload });
-      },
-    );
+    // Wave-5F T13: default logger emits a single JSON line via console.log.
+    // Assert both the prefix and the propagated error.message appear.
+    const warnLines: string[] = [];
+    const warnSpy = vi.spyOn(console, 'log').mockImplementation((line: string) => {
+      warnLines.push(line);
+    });
 
     const backend = createLangfusePromptBackend({ client: mock.client });
     await backend.fetch('structured-prompt');
 
-    expect(warnCalls).toHaveLength(1);
-    // The warn payload is err.message (string) — verify the HarnessError
-    // message shape produced by the PROVIDER_ERROR path.
-    expect(warnCalls[0]!.payload).toBe(
-      'Langfuse prompt "structured-prompt" is not a string type',
-    );
+    expect(warnLines).toHaveLength(1);
+    const line = warnLines[0]!;
+    expect(line).toContain('Failed to fetch prompt');
+    expect(line).toContain('Langfuse prompt \\"structured-prompt\\" is not a string type');
     warnSpy.mockRestore();
   });
 
@@ -1185,7 +1183,7 @@ describe('createLangfuseCostTracker', () => {
 
   // FIX 5: Empty pricing map warns once per model
   it('warns once per unknown model when no pricing is configured', () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const tracker = createLangfuseCostTracker({ client: mock.client });
     // No pricing set -- record multiple usages for the same unknown model
     tracker.recordUsage({ traceId: 't1', model: 'unknown-model', inputTokens: 1000, outputTokens: 0 });
@@ -1204,7 +1202,7 @@ describe('createLangfuseCostTracker', () => {
   it('logs flush errors via console.warn instead of silently swallowing', () => {
     const flushError = new Error('flush network error');
     mock.mocks.flushAsync.mockRejectedValue(flushError);
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     const tracker = createLangfuseCostTracker({ client: mock.client });
     tracker.setPricing([{ model: 'a', inputPer1kTokens: 0.001, outputPer1kTokens: 0 }]);
@@ -1624,7 +1622,7 @@ describe('createLangfuseCostTracker', () => {
     it('falls back to console.warn when neither onExportError nor logger is configured', async () => {
       const flushError = new Error('legacy path');
       mock.mocks.flushAsync.mockRejectedValue(flushError);
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const warnSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
       const tracker = createLangfuseCostTracker({ client: mock.client });
       tracker.setPricing([{ model: 'a', inputPer1kTokens: 0.001, outputPer1kTokens: 0 }]);

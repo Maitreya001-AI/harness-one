@@ -17,6 +17,7 @@ import type {
 } from 'harness-one/memory';
 import { validateMemoryEntry, parseJsonSafe } from 'harness-one/memory';
 import { HarnessError, HarnessErrorCode} from 'harness-one/core';
+import { createDefaultLogger } from 'harness-one/observe';
 
 /**
  * Minimal structured logger accepted by the Redis store. Falls back to
@@ -106,11 +107,9 @@ export function createRedisStore(config: RedisStoreConfig): RedisMemoryStore {
   const { client } = config;
   const prefix = config.prefix ?? 'harness:memory';
   const defaultTTL = config.defaultTTL;
-  // Default logger delegates to console.warn so existing callers keep their
-  // diagnostic output. Operators who want structured logs can inject one.
-  const logger: RedisStoreLogger = config.logger ?? {
-    warn: (message) => console.warn(message),
-  };
+  // Wave-5F T13: delegate default logger to core's redaction-enabled singleton.
+  // `RedisStoreLogger` only needs `.warn`, which the core Logger satisfies.
+  const logger: RedisStoreLogger = config.logger ?? createDefaultLogger();
 
   if (!client) {
     throw new HarnessError('Redis client is required', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide a valid ioredis client instance');

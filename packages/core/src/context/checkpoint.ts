@@ -12,6 +12,7 @@ import type {
   CheckpointStorage,
 } from './types.js';
 import { HarnessError, HarnessErrorCode} from '../core/errors.js';
+import { prefixedSecureId } from '../infra/ids.js';
 
 /** Default token heuristic: ~4 characters per token. */
 function defaultCountTokens(messages: readonly Message[]): number {
@@ -57,10 +58,11 @@ function createInMemoryStorage(): CheckpointStorage {
 export function createCheckpointManager(
   config?: CheckpointManagerConfig,
 ): CheckpointManager {
-  let counter = 0;
-
+  // Wave-5F SEC-A14: use crypto-backed IDs so checkpoint handles cannot be
+  // guessed by an attacker who can see timestamps. `prefixedSecureId` uses
+  // `crypto.randomBytes` and returns a URL-safe suffix.
   function generateId(): string {
-    return `cp_${Date.now()}_${++counter}_${Math.random().toString(36).slice(2, 6)}`;
+    return prefixedSecureId('cp');
   }
   const maxCheckpoints = config?.maxCheckpoints ?? 5;
   if (maxCheckpoints < 1) {
