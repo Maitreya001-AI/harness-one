@@ -12,6 +12,7 @@ import type { AgentEvent, DoneReason } from './events.js';
 import { AbortedError, HarnessError, MaxIterationsError, TokenBudgetExceededError } from './errors.js';
 import { createSequentialStrategy, createParallelStrategy } from './execution-strategies.js';
 import { categorizeAdapterError } from './error-classifier.js';
+import { createAdapterCaller, type AdapterCaller } from './adapter-caller.js';
 import { pruneConversation } from './conversation-pruner.js';
 import { StreamAggregator } from './stream-aggregator.js';
 import type { AgentLoopTraceManager } from './trace-interface.js';
@@ -226,6 +227,7 @@ export class AgentLoop {
   private readonly maxAdapterRetries: number;
   private readonly baseRetryDelayMs: number;
   private readonly retryableErrors: readonly string[];
+  private readonly adapterCaller: AdapterCaller;
   /** ARCH-006: registered iteration-level hooks. Empty array when none. */
   private readonly hooks: readonly AgentLoopHook[];
   private readonly logger?: { warn: (msg: string, meta?: Record<string, unknown>) => void };
@@ -342,6 +344,12 @@ export class AgentLoop {
           }
         : { signal: this.abortController.signal },
     );
+
+    this.adapterCaller = createAdapterCaller({
+      adapter: this.adapter,
+      signal: this.abortController.signal,
+      ...(this.tools !== undefined && { tools: this.tools }),
+    });
   }
 
   /** Get cumulative token usage across all iterations. */
@@ -673,19 +681,15 @@ export class AgentLoop {
               return;
             }
           } else {
-            // Non-streaming path: use adapter.chat()
-            try {
-              const response = await this.adapter.chat({
-                messages: conversation,
-                signal: this.abortController.signal,
-                ...(this.tools !== undefined && { tools: this.tools }),
-              });
-              assistantMsg = response.message;
-              responseUsage = response.usage;
+            // Non-streaming path: delegate a single attempt to AdapterCaller.
+            const r = await this.adapterCaller.callOnce(conversation);
+            if (r.ok) {
+              assistantMsg = r.message;
+              responseUsage = r.usage;
               adapterCallSucceeded = true;
               break;
-            } catch (err) {
-              const errorCategory = AgentLoop.categorizeAdapterError(err);
+            } else {
+              const { error: err, errorCategory } = r;
               const isRetryable = this.retryableErrors.includes(errorCategory);
 
               if (isRetryable && attempt < this.maxAdapterRetries) {
