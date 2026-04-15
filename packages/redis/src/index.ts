@@ -67,6 +67,15 @@ export interface RedisStoreConfig {
   /** Default TTL in seconds for entries. Undefined = no expiry. */
   readonly defaultTTL?: number;
   /**
+   * Wave-5E (SEC-A08) — tenant isolation key segment. Inserted between
+   * `prefix` and the entry id so multi-tenant deployments cannot leak
+   * memory across tenants via a shared Redis instance. Defaults to the
+   * string `'default'`; a one-time warning fires on start-up when the
+   * default is used so single-tenant deployments stay explicit rather
+   * than implicit.
+   */
+  readonly tenantId?: string;
+  /**
    * Optional logger for diagnostic warnings (e.g., corrupt entries).
    * Defaults to a `console.warn`-backed shim so warnings remain visible.
    */
@@ -118,11 +127,29 @@ export function createRedisStore(config: RedisStoreConfig): RedisMemoryStore {
     throw new HarnessError('defaultTTL must be > 0', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide a positive TTL value in seconds');
   }
 
-  function entryKey(id: string): string {
-    return `${prefix}:${id}`;
+  // Wave-5E (SEC-A08) — tenant-isolated keys. `prefix:{tenantId}:id` and
+  // `prefix:{tenantId}:__keys__` keep each tenant's namespace disjoint.
+  // Warn once if the caller leaves it at the default — single-tenant use
+  // should still be explicit.
+  const tenantId = config.tenantId ?? 'default';
+  if (config.tenantId === undefined) {
+    logger.warn(
+      '[harness-one/redis] createRedisStore() invoked without tenantId; defaulting to "default". Multi-tenant deployments MUST set RedisStoreConfig.tenantId per tenant to prevent cross-tenant reads.',
+    );
+  }
+  if (tenantId.includes(':')) {
+    throw new HarnessError(
+      `Invalid tenantId "${tenantId}": colon is the key separator and is reserved`,
+      HarnessErrorCode.CORE_INVALID_CONFIG,
+      'Use URL-safe characters only',
+    );
   }
 
-  const indexKey = `${prefix}:__keys__`;
+  function entryKey(id: string): string {
+    return `${prefix}:${tenantId}:${id}`;
+  }
+
+  const indexKey = `${prefix}:${tenantId}:__keys__`;
 
   function generateId(): string {
     return `mem_${randomUUID()}`;

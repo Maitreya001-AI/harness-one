@@ -299,7 +299,7 @@ describe('createRedisStore', () => {
     const entry1 = await store.write({ key: 'a', content: 'old', grade: 'useful' });
     // Adjust the timestamp of the first entry to simulate an old entry
     const mockRedis = redis as unknown as { _store: Map<string, string> };
-    const key1 = `test:${entry1.id}`;
+    const key1 = `test:default:${entry1.id}`;
     const storedEntry = JSON.parse(mockRedis._store.get(key1)!);
     storedEntry.updatedAt = Date.now() - 100000;
     mockRedis._store.set(key1, JSON.stringify(storedEntry));
@@ -321,7 +321,7 @@ describe('createRedisStore', () => {
     // Make first two entries old
     const mockRedis = redis as unknown as { _store: Map<string, string> };
     for (const entry of [entry1, entry2]) {
-      const key = `test:${entry.id}`;
+      const key = `test:default:${entry.id}`;
       const stored = JSON.parse(mockRedis._store.get(key)!);
       stored.createdAt = Date.now() - 200000;
       mockRedis._store.set(key, JSON.stringify(stored));
@@ -339,7 +339,7 @@ describe('createRedisStore', () => {
 
     // Make it old
     const mockRedis = redis as unknown as { _store: Map<string, string> };
-    const key = `test:${entry1.id}`;
+    const key = `test:default:${entry1.id}`;
     const stored = JSON.parse(mockRedis._store.get(key)!);
     stored.createdAt = Date.now() - 200000;
     mockRedis._store.set(key, JSON.stringify(stored));
@@ -384,7 +384,7 @@ describe('createRedisStore', () => {
     // Write a valid entry, then corrupt it
     const entry = await store.write({ key: 'k', content: 'original', grade: 'useful' });
     const mockRedis = redis as unknown as { _store: Map<string, string>; del: ReturnType<typeof vi.fn>; srem: ReturnType<typeof vi.fn> };
-    const key = `test:${entry.id}`;
+    const key = `test:default:${entry.id}`;
     mockRedis._store.set(key, '{corrupted json!!!');
 
     // Reset mock call counts from the write pathway
@@ -423,7 +423,7 @@ describe('createRedisStore', () => {
     const entry2 = await store.write({ key: 'b', content: 'bad', grade: 'useful' });
 
     const mockRedis = redis as unknown as { _store: Map<string, string> };
-    mockRedis._store.set(`test:${entry2.id}`, 'not valid json');
+    mockRedis._store.set(`test:default:${entry2.id}`, 'not valid json');
 
     // Corrupted → null + one warning (identifying the entry)
     const corruptResult = await store.read(entry2.id);
@@ -451,9 +451,9 @@ describe('createRedisStore', () => {
       _store: Map<string, string>;
       _sets: Map<string, Set<string>>;
     };
-    mockRedis._store.set(`test:${badJson.id}`, 'not valid json');
+    mockRedis._store.set(`test:default:${badJson.id}`, 'not valid json');
     // simulate dangling index entry: id exists in set but no STRING
-    mockRedis._sets.get('test:__keys__')!.add(danglingId);
+    mockRedis._sets.get('test:default:__keys__')!.add(danglingId);
 
     // repair() is the ONLY supported way to evict corrupt payloads.
     const result = await store.repair();
@@ -465,9 +465,9 @@ describe('createRedisStore', () => {
     expect(stillThere!.content).toBe('good');
 
     // The corrupted entry is gone from the STRING bucket and the index.
-    expect(mockRedis._store.get(`test:${badJson.id}`)).toBeUndefined();
-    expect(mockRedis._sets.get('test:__keys__')!.has(badJson.id)).toBe(false);
-    expect(mockRedis._sets.get('test:__keys__')!.has(danglingId)).toBe(false);
+    expect(mockRedis._store.get(`test:default:${badJson.id}`)).toBeUndefined();
+    expect(mockRedis._sets.get('test:default:__keys__')!.has(badJson.id)).toBe(false);
+    expect(mockRedis._sets.get('test:default:__keys__')!.has(danglingId)).toBe(false);
 
     warnSpy.mockRestore();
   });
@@ -489,7 +489,7 @@ describe('createRedisStore', () => {
 
     const entry = await store.write({ key: 'k', content: 'original', grade: 'useful' });
     const mockRedis = redis as unknown as { _store: Map<string, string> };
-    mockRedis._store.set(`test:${entry.id}`, '{corrupted!!!');
+    mockRedis._store.set(`test:default:${entry.id}`, '{corrupted!!!');
 
     const result = await store.read(entry.id);
     expect(result).toBeNull();
@@ -554,7 +554,7 @@ describe('createRedisStore', () => {
     };
     expect(pipeline.srem).toHaveBeenCalledTimes(1);
     const sremCall = pipeline.srem.mock.calls[0];
-    expect(sremCall[0]).toBe('test:__keys__');
+    expect(sremCall[0]).toBe('test:default:__keys__');
     expect(sremCall.slice(1)).toHaveLength(10);
     // One DEL per victim is fine — they all travel on the same pipeline.
     expect(pipeline.del).toHaveBeenCalledTimes(10);
@@ -664,7 +664,7 @@ describe('createRedisStore', () => {
     };
 
     // Create 150 entries directly in the store to span 2 batches
-    const indexKey = 'test:__keys__';
+    const indexKey = 'test:default:__keys__';
     const keySet = new Set<string>();
     for (let i = 0; i < 150; i++) {
       const id = `entry_${i}`;
@@ -676,7 +676,7 @@ describe('createRedisStore', () => {
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
-      mockRedis._store.set(`test:${id}`, JSON.stringify(entry));
+      mockRedis._store.set(`test:default:${id}`, JSON.stringify(entry));
       keySet.add(id);
     }
     mockRedis._sets.set(indexKey, keySet);
@@ -708,7 +708,7 @@ describe('createRedisStore', () => {
     };
 
     // Create 50 entries
-    const indexKey = 'test:__keys__';
+    const indexKey = 'test:default:__keys__';
     const keySet = new Set<string>();
     for (let i = 0; i < 50; i++) {
       const id = `entry_${i}`;
@@ -720,7 +720,7 @@ describe('createRedisStore', () => {
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
-      mockRedis._store.set(`test:${id}`, JSON.stringify(entry));
+      mockRedis._store.set(`test:default:${id}`, JSON.stringify(entry));
       keySet.add(id);
     }
     mockRedis._sets.set(indexKey, keySet);
@@ -745,7 +745,7 @@ describe('createRedisStore', () => {
     };
 
     // Create 150 entries to span 2 batches
-    const indexKey = 'test:__keys__';
+    const indexKey = 'test:default:__keys__';
     const keySet = new Set<string>();
     for (let i = 0; i < 150; i++) {
       const id = `entry_${i}`;
@@ -757,7 +757,7 @@ describe('createRedisStore', () => {
         createdAt: Date.now() - 200000, // old entries
         updatedAt: Date.now() - 200000,
       };
-      mockRedis._store.set(`test:${id}`, JSON.stringify(entry));
+      mockRedis._store.set(`test:default:${id}`, JSON.stringify(entry));
       keySet.add(id);
     }
     mockRedis._sets.set(indexKey, keySet);

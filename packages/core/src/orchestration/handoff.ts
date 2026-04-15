@@ -26,6 +26,31 @@ export interface HandoffConfig {
   readonly maxReceipts?: number;
   /** Maximum inbox size per agent. Default: 1000. */
   readonly maxInboxPerAgent?: number;
+  /**
+   * Wave-5E SEC-A11: maximum serialised payload size in bytes. Default
+   * 64 KiB. Exceeding this throws `ORCH_HANDOFF_SERIALIZATION_ERROR`.
+   */
+  readonly maxPayloadBytes?: number;
+  /**
+   * Wave-5E SEC-A11: maximum nested depth of a handoff payload. Default
+   * 16. Exceeding this throws `ORCH_HANDOFF_SERIALIZATION_ERROR` before
+   * JSON.stringify runs, so pathological recursive objects cannot exhaust
+   * the call stack.
+   */
+  readonly maxPayloadDepth?: number;
+}
+
+/**
+ * Wave-5E SEC-A10: sealed handle binding a `from` agent identity. Created
+ * via {@link HandoffManager.createSendHandle}; issuing code passes the
+ * handle to the sender instead of letting the sender supply its own `from`
+ * string. Prevents agents from forging turn-of-origin on outbound handoffs.
+ */
+export interface SendHandle {
+  /** @internal — read-only identifier for debug/telemetry only. */
+  readonly from: string;
+  /** Send a payload to another agent. Returns the handoff receipt. */
+  send(to: string, payload: HandoffPayload): HandoffReceipt;
 }
 
 /**
@@ -69,9 +94,38 @@ export function createHandoff(transport: MessageTransport, handoffConfig?: Hando
   const maxReceipts = handoffConfig?.maxReceipts ?? DEFAULT_MAX_RECEIPTS;
   const maxInboxPerAgent = handoffConfig?.maxInboxPerAgent ?? DEFAULT_MAX_INBOX_PER_AGENT;
 
+  // Wave-5E SEC-A11: cap payload size + depth to prevent runaway memory and
+  // stack growth from an untrusted peer. 64 KiB is ~10× the median tool-result
+  // size we see in practice; depth 16 is comfortably beyond nested-JSON
+  // convention (~5 levels) but rejects pathological recursive structures.
+  const MAX_HANDOFF_PAYLOAD_BYTES = handoffConfig?.maxPayloadBytes ?? 64 * 1024;
+  const MAX_HANDOFF_PAYLOAD_DEPTH = handoffConfig?.maxPayloadDepth ?? 16;
+
+  function checkPayloadDepth(value: unknown, depth: number, path: string): void {
+    if (depth > MAX_HANDOFF_PAYLOAD_DEPTH) {
+      throw new HarnessError(
+        `Failed to serialize handoff payload: depth exceeds ${MAX_HANDOFF_PAYLOAD_DEPTH} at ${path}`,
+        HarnessErrorCode.ORCH_HANDOFF_SERIALIZATION_ERROR,
+        'Flatten nested structures before handing off',
+      );
+    }
+    if (value === null || typeof value !== 'object') return;
+    if (Array.isArray(value)) {
+      for (let i = 0; i < value.length; i++) {
+        checkPayloadDepth(value[i], depth + 1, `${path}[${i}]`);
+      }
+      return;
+    }
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      checkPayloadDepth(v, depth + 1, `${path}.${k}`);
+    }
+  }
+
   function serializePayload(payload: HandoffPayload): string {
+    checkPayloadDepth(payload, 0, '$');
+    let body: string;
     try {
-      return HANDOFF_PREFIX + JSON.stringify(payload);
+      body = JSON.stringify(payload);
     } catch (err) {
       throw new HarnessError(
         `Failed to serialize handoff payload: ${err instanceof Error ? err.message : String(err)}`,
@@ -79,6 +133,15 @@ export function createHandoff(transport: MessageTransport, handoffConfig?: Hando
         'Ensure all values in the handoff payload are JSON-serializable',
       );
     }
+    const bytes = Buffer.byteLength(body, 'utf8');
+    if (bytes > MAX_HANDOFF_PAYLOAD_BYTES) {
+      throw new HarnessError(
+        `Handoff payload is ${bytes} bytes; exceeds cap of ${MAX_HANDOFF_PAYLOAD_BYTES}`,
+        HarnessErrorCode.ORCH_HANDOFF_SERIALIZATION_ERROR,
+        'Reduce payload size or reference large data via a handle instead',
+      );
+    }
+    return HANDOFF_PREFIX + body;
   }
 
   // Fix 28: Evict receipts by TTL
@@ -93,6 +156,27 @@ export function createHandoff(transport: MessageTransport, handoffConfig?: Hando
   }
 
   const manager: HandoffManager = {
+    createSendHandle(from: string): SendHandle {
+      if (!from || typeof from !== 'string') {
+        throw new HarnessError(
+          'createSendHandle: from agent ID must be a non-empty string',
+          HarnessErrorCode.CORE_INVALID_CONFIG,
+          'Provide a valid agent ID',
+        );
+      }
+      // Closure-captured `from` — the returned object exposes it only
+      // read-only; `send(to, payload)` always routes through manager.send
+      // with the bound identity.
+      const boundFrom = from;
+      const handle: SendHandle = Object.freeze({
+        get from() { return boundFrom; },
+        send(to: string, payload: HandoffPayload): HandoffReceipt {
+          return manager.send(boundFrom, to, payload);
+        },
+      });
+      return handle;
+    },
+
     send(from: string, to: string, payload: HandoffPayload): HandoffReceipt {
       if (!from || typeof from !== 'string') {
         throw new HarnessError('from agent ID must be a non-empty string', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide a valid agent ID for the sender');

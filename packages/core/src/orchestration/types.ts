@@ -197,8 +197,19 @@ export interface HandoffVerificationResult {
 
 /** Structured handoff protocol layered on the orchestrator. */
 export interface HandoffManager {
-  /** Send a structured handoff from one agent to another. */
+  /**
+   * Send a structured handoff from one agent to another.
+   *
+   * Wave-5E SEC-A10 recommends {@link createSendHandle} for multi-agent
+   * deployments so the `from` identity cannot be forged by an untrusted
+   * sender; the 3-arg form remains for single-agent setups and tests.
+   */
   send(from: string, to: string, payload: HandoffPayload): HandoffReceipt;
+  /**
+   * Wave-5E SEC-A10: mint a sealed sender handle bound to `from`. Hand
+   * this to the originating agent instead of its raw identity string.
+   */
+  createSendHandle(from: string): import('./handoff.js').SendHandle;
   /** Receive the next pending handoff payload for an agent (FIFO). */
   receive(agentId: string): HandoffPayload | undefined;
   /** Get handoff history involving an agent (as sender or receiver). */

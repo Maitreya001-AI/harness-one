@@ -300,3 +300,36 @@ export async function runToolOutput(
   };
   return runGuardrails(p, p.output, 'output', ctx);
 }
+
+/**
+ * Wave-5E SEC-A16: run input guardrails across retrieved RAG chunks.
+ * Each chunk is scanned independently; any chunk that produces a verdict
+ * other than `allow` short-circuits and returns that verdict — one
+ * poisoned chunk poisons the whole retrieval set. Callers (AgentLoop or
+ * RAG pipeline integrations) MUST invoke this before concatenating
+ * chunks into the prompt context; otherwise an injection in a retrieved
+ * document would bypass the input guardrail entirely.
+ */
+export async function runRagContext(
+  pipeline: GuardrailPipeline,
+  chunks: readonly string[],
+  meta?: GuardrailContext['meta'],
+): Promise<PipelineResult> {
+  const p = getInternal(pipeline);
+  let lastResult: PipelineResult = {
+    passed: true,
+    verdict: { action: 'allow' },
+    results: [],
+  };
+  for (let i = 0; i < chunks.length; i++) {
+    const ctx: GuardrailContext = {
+      content: chunks[i]!,
+      meta: { ...(meta ?? {}), ragChunkIndex: i },
+    };
+    const result = await runGuardrails(p, p.input, 'input', ctx);
+    lastResult = result;
+    // Any verdict other than `allow` poisons the whole retrieval set.
+    if (result.verdict.action !== 'allow') return result;
+  }
+  return lastResult;
+}

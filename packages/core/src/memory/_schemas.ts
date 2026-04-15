@@ -19,6 +19,74 @@ import type { Index } from './fs-io.js';
 
 const GRADES: readonly MemoryGrade[] = ['critical', 'useful', 'ephemeral'];
 
+/**
+ * Default maximum byte-length of a MemoryEntry `content` field (1 MiB).
+ * Wave-5E (SEC-A08). Stores enforce this on the WRITE path — callers
+ * that legitimately need to persist larger payloads should chunk or use
+ * a separate blob store.
+ */
+export const DEFAULT_MAX_CONTENT_BYTES = 1024 * 1024;
+
+/**
+ * Default maximum byte-length of a MemoryEntry `metadata` JSON encoding
+ * (16 KiB). Metadata is an arbitrary object but should not grow without
+ * bound — bulk data belongs in `content` or an external store.
+ */
+export const DEFAULT_MAX_METADATA_BYTES = 16 * 1024;
+
+/**
+ * Reserved metadata keys managed by the harness itself. Stores must
+ * reject writes that include any reserved key under `metadata` so these
+ * system-only names stay under harness control. Names prefixed with `_`
+ * are harness-internal version/trust markers that must not collide with
+ * user payload fields. `tenantId` / `sessionId` are NOT reserved at the
+ * metadata level — they are legitimate filter-dimension keys for
+ * consumers. Tenant isolation happens at the storage-key level (see
+ * `RedisStoreConfig.tenantId`), not here.
+ */
+export const RESERVED_METADATA_KEYS: readonly string[] = ['_version', '_trust'];
+
+/**
+ * Throws {@link HarnessError} with {@link HarnessErrorCode.CORE_INVALID_INPUT}
+ * when the entry's `content` exceeds `maxContentBytes` or the serialised
+ * `metadata` exceeds `maxMetadataBytes`, or when the metadata contains any
+ * {@link RESERVED_METADATA_KEYS}.
+ */
+export function assertMemoryEntrySize(
+  entry: { readonly content: string; readonly metadata?: Record<string, unknown> },
+  caps?: { readonly maxContentBytes?: number; readonly maxMetadataBytes?: number },
+): void {
+  const maxContent = caps?.maxContentBytes ?? DEFAULT_MAX_CONTENT_BYTES;
+  const maxMeta = caps?.maxMetadataBytes ?? DEFAULT_MAX_METADATA_BYTES;
+  const contentBytes = Buffer.byteLength(entry.content, 'utf8');
+  if (contentBytes > maxContent) {
+    throw new HarnessError(
+      `Memory entry content is ${contentBytes} bytes; exceeds cap of ${maxContent}`,
+      HarnessErrorCode.CORE_INVALID_INPUT,
+      'Chunk the content or store large payloads in a dedicated blob backend',
+    );
+  }
+  if (entry.metadata !== undefined) {
+    for (const key of RESERVED_METADATA_KEYS) {
+      if (Object.prototype.hasOwnProperty.call(entry.metadata, key)) {
+        throw new HarnessError(
+          `Memory entry metadata uses reserved key "${key}"`,
+          HarnessErrorCode.CORE_INVALID_INPUT,
+          'Reserved keys are managed by the harness; rename your field',
+        );
+      }
+    }
+    const metaBytes = Buffer.byteLength(JSON.stringify(entry.metadata), 'utf8');
+    if (metaBytes > maxMeta) {
+      throw new HarnessError(
+        `Memory entry metadata is ${metaBytes} bytes; exceeds cap of ${maxMeta}`,
+        HarnessErrorCode.CORE_INVALID_INPUT,
+        'Move bulk data out of metadata or increase the store cap',
+      );
+    }
+  }
+}
+
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }

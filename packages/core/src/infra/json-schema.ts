@@ -274,6 +274,26 @@ function validate(
         }
       }
     }
+    // Wave-5E SEC-A05: honour `additionalProperties: false`. When declared,
+    // every own key of the payload that is not in `schema.properties` is a
+    // validation error. Other values (true / schema object) are not yet
+    // supported by this minimal validator; they're treated as the default
+    // permissive behaviour.
+    if ((schema as { additionalProperties?: unknown }).additionalProperties === false) {
+      const declared = new Set<string>(
+        schema.properties ? Object.keys(schema.properties) : [],
+      );
+      for (const key of Object.keys(obj)) {
+        if (!hasOwn(obj, key)) continue;
+        if (DANGEROUS_PROP_NAMES.has(key)) continue;
+        if (!declared.has(key)) {
+          errors.push({
+            path: `${path}.${key}`,
+            message: `Unexpected property "${key}" (additionalProperties is false)`,
+          });
+        }
+      }
+    }
   }
 
   // Array constraints

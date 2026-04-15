@@ -38,13 +38,18 @@ describe('createContextBoundary', () => {
   });
 
   it('denyRead takes precedence over allowRead', () => {
+    // Wave-5E SEC-A09: prefixes must end with a segment separator. Use
+    // `'shared.b.'` so only `shared.b.*` is denied and `shared.a` still
+    // resolves via the allowRead `'shared.'` prefix. The previous
+    // non-segment `'shared.b'` would have leaked to `'shared.banana'`.
+    context.set('shared.b.x', 42);
     boundary = createContextBoundary(context, [
-      { agent: 'worker', allowRead: ['shared.'], denyRead: ['shared.b'] },
+      { agent: 'worker', allowRead: ['shared.'], denyRead: ['shared.b.'] },
     ]);
     const view = boundary.forAgent('worker');
 
     expect(view.get('shared.a')).toBe(1);
-    expect(view.get('shared.b')).toBeUndefined();
+    expect(view.get('shared.b.x')).toBeUndefined();
   });
 
   it('allowWrite prefix filters writes correctly', () => {

@@ -53,10 +53,26 @@ interface BaseMessage {
   readonly meta?: MessageMeta;
 }
 
-/** A system message. */
+/**
+ * A system message. Wave-5E (SEC-A07) adds an opaque `_trust` brand
+ * recognised on the session-restore path — host code mints trusted
+ * instances via {@link createTrustedSystemMessage}; restored messages
+ * lacking the brand are downgraded to `user` role so an attacker who
+ * can write to the session store cannot elevate a user turn into a
+ * system prompt. Fresh construction accepts either shape.
+ */
 export interface SystemMessage extends BaseMessage {
   readonly role: 'system';
+  readonly _trust?: TrustedSystemBrand;
 }
+
+/**
+ * Opaque brand proving a `SystemMessage` was minted by trusted host code
+ * (boot-time factory authenticated by {@link HOST_SECRET}). Opaqueness
+ * prevents consumers from forging the brand at construction time — the
+ * only exported mint surface is {@link createTrustedSystemMessage}.
+ */
+export type TrustedSystemBrand = Brand<symbol, 'TrustedSystemBrand'>;
 
 /** A user message. */
 export interface UserMessage extends BaseMessage {

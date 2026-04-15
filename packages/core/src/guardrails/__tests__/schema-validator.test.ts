@@ -407,17 +407,17 @@ describe('createSchemaValidator', () => {
     });
   });
 
-  describe('additionalProperties (unsupported — documents pass-through behavior)', () => {
-    it('allows additional properties even when additionalProperties is false', () => {
+  describe('additionalProperties (Wave-5E SEC-A05 — enforced)', () => {
+    it('rejects additional properties when additionalProperties is false', () => {
       const { guard } = createSchemaValidator({
         type: 'object',
         properties: { name: { type: 'string' } },
         additionalProperties: false,
       });
 
-      // Has 'extra' property — additionalProperties: false would block, but validator ignores it
+      // Wave-5E SEC-A05: additionalProperties: false now enforces.
       const result = guard({ content: '{"name":"Alice","extra":123}' });
-      expect(result.action).toBe('allow');
+      expect(result.action).toBe('block');
     });
 
     it('allows additional properties when additionalProperties is a schema (pass-through)', () => {

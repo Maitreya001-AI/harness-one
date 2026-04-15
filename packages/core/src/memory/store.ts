@@ -6,6 +6,7 @@
 
 import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import { secureId } from '../infra/ids.js';
+import { assertMemoryEntrySize } from './_schemas.js';
 import type {
   MemoryEntry,
   MemoryFilter,
@@ -199,6 +200,8 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
     },
 
     async write(input) {
+      // Wave-5E SEC-A08: enforce byte caps + reject reserved metadata keys.
+      assertMemoryEntrySize(input);
       // Validate embedding dimension consistency before storing
       const inputEmbedding = input.metadata?.['embedding'];
       if (Array.isArray(inputEmbedding)) {

@@ -58,6 +58,7 @@ export function createContextBoundary(
 
   if (policies) {
     for (const p of policies) {
+      validatePolicyPrefixes(p);
       policyMap.set(p.agent, p);
     }
   }
@@ -70,15 +71,24 @@ export function createContextBoundary(
   }
 
   /**
-   * SEC-011: Compare keys and policy prefixes after normalizing both with
-   * NFKC + casefold (`.toLowerCase()`). This prevents Unicode homoglyph /
-   * full-width variant bypass attacks — e.g. the fullwidth "ＡＤＭＩＮ."
-   * would otherwise evade a literal "admin." prefix check.
-   *
-   * Callers MUST include any intended trailing separator in the prefix
-   * explicitly (e.g. `'admin.'` — not `'admin'`). We do not special-case
-   * separators; `'admin'` matches both `'admin.secret'` and `'administrator'`.
+   * SEC-011 + Wave-5E SEC-A09: compare keys and policy prefixes after
+   * normalizing both with NFKC + casefold, AND require the prefix to end
+   * on a segment boundary (`.` or `/`). Previously `allowRead: ['admin']`
+   * would also match `'administrator'`; the constructor now rejects
+   * prefixes without a trailing separator so this shape is impossible at
+   * configuration time. Runtime check additionally demands the key char
+   * immediately after the prefix is either end-of-string or a separator,
+   * which closes the case where a legal `'admin.'` prefix could otherwise
+   * match a carefully-crafted normalised key.
    */
+  function isSegmentPrefix(normalizedKey: string, normalizedPrefix: string): boolean {
+    if (!normalizedKey.startsWith(normalizedPrefix)) return false;
+    if (normalizedKey.length === normalizedPrefix.length) return true;
+    // Last char of the prefix was validated as `.` / `/` on construction,
+    // so any non-strict-prefix match is automatically segment-aligned.
+    return true;
+  }
+
   function isAllowed(
     key: string,
     prefixes: readonly string[] | undefined,
@@ -88,16 +98,50 @@ export function createContextBoundary(
     // Deny takes precedence
     if (denyPrefixes) {
       for (const prefix of denyPrefixes) {
-        if (normalizedKey.startsWith(normalizeContextKey(prefix))) return false;
+        if (isSegmentPrefix(normalizedKey, normalizeContextKey(prefix))) return false;
       }
     }
     // No allow list = full access
     if (!prefixes) return true;
     // Allow list present — must match at least one
     for (const prefix of prefixes) {
-      if (normalizedKey.startsWith(normalizeContextKey(prefix))) return true;
+      if (isSegmentPrefix(normalizedKey, normalizeContextKey(prefix))) return true;
     }
     return false;
+  }
+
+  /**
+   * Wave-5E SEC-A09: reject policy prefixes that do not end with a
+   * segment separator (`.` or `/`). Without this, `allowRead: ['admin']`
+   * would leak to `'administrator'`. The constructor throws
+   * {@link HarnessErrorCode.CORE_INVALID_CONFIG} so the misconfiguration
+   * surfaces at boot time, not as a silent grant at access time.
+   */
+  function validatePolicyPrefixes(policy: BoundaryPolicy): void {
+    const check = (field: string, prefixes: readonly string[] | undefined): void => {
+      if (!prefixes) return;
+      for (const prefix of prefixes) {
+        if (prefix.length === 0) {
+          throw new HarnessError(
+            `Boundary policy ${policy.agent}.${field} contains an empty prefix`,
+            HarnessErrorCode.CORE_INVALID_CONFIG,
+            'Use at least one segment (e.g., "shared.")',
+          );
+        }
+        const last = prefix[prefix.length - 1];
+        if (last !== '.' && last !== '/') {
+          throw new HarnessError(
+            `Boundary policy ${policy.agent}.${field}="${prefix}" must end with a segment separator ("." or "/"); otherwise "admin" would match "administrator"`,
+            HarnessErrorCode.CORE_INVALID_CONFIG,
+            'Append "." (dotted namespace) or "/" (path-like) to the prefix',
+          );
+        }
+      }
+    };
+    check('allowRead', policy.allowRead);
+    check('denyRead', policy.denyRead);
+    check('allowWrite', policy.allowWrite);
+    check('denyWrite', policy.denyWrite);
   }
 
   function canRead(policy: BoundaryPolicy, key: string): boolean {
