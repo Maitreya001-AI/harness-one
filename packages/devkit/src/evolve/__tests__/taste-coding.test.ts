@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createTasteCodingRegistry } from '../taste-coding.js';
-import { HarnessError } from '../../core/errors.js';
+import { HarnessError } from 'harness-one';
 import type { TasteCodingRule } from '../types.js';
 
 const makeRule = (overrides: Partial<TasteCodingRule> = {}): TasteCodingRule => ({

@@ -30,8 +30,7 @@ export default defineConfig({
       'harness-one/context': path.join(coreSrc, 'context/index.ts'),
       'harness-one/session': path.join(coreSrc, 'session/index.ts'),
       'harness-one/memory': path.join(coreSrc, 'memory/index.ts'),
-      'harness-one/eval': path.join(coreSrc, 'eval/index.ts'),
-      'harness-one/evolve': path.join(coreSrc, 'evolve/index.ts'),
+      'harness-one/evolve-check': path.join(coreSrc, 'evolve-check/index.ts'),
       // Integration packages
       '@harness-one/anthropic': path.join(pkgs, 'anthropic/src/index.ts'),
       '@harness-one/openai': path.join(pkgs, 'openai/src/index.ts'),
@@ -40,6 +39,7 @@ export default defineConfig({
       '@harness-one/ajv': path.join(pkgs, 'ajv/src/index.ts'),
       '@harness-one/tiktoken': path.join(pkgs, 'tiktoken/src/index.ts'),
       '@harness-one/opentelemetry': path.join(pkgs, 'opentelemetry/src/index.ts'),
+      '@harness-one/devkit': path.join(pkgs, 'devkit/src/index.ts'),
     },
   },
 });

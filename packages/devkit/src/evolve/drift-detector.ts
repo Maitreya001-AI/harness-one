@@ -4,7 +4,7 @@
  * @module
  */
 
-import { HarnessError } from '../core/errors.js';
+import { HarnessError } from 'harness-one';
 import type { DriftReport, DriftDeviation } from './types.js';
 
 /** Interface for detecting drift from baselines. */

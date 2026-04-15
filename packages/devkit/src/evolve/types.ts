@@ -1,6 +1,9 @@
 /**
- * Types for the evolve module — component metadata, drift detection,
- * architecture rules, and taste-coding.
+ * Types for the devkit evolve surface — component metadata, drift detection,
+ * taste-coding.
+ *
+ * Architecture rule types (`ArchitectureRule`, `RuleContext`, `RuleResult`)
+ * moved to `harness-one/evolve-check` along with the checker implementation.
  *
  * @module
  */
@@ -47,30 +50,6 @@ export interface DriftDeviation {
   readonly expected: unknown;
   readonly actual: unknown;
   readonly severity: 'low' | 'medium' | 'high';
-}
-
-/** A rule that checks architectural constraints. */
-export interface ArchitectureRule {
-  readonly id: string;
-  readonly name: string;
-  readonly description: string;
-  readonly check: (context: RuleContext) => RuleResult;
-}
-
-/** Context provided to architecture rule checks. */
-export interface RuleContext {
-  readonly files: string[];
-  readonly imports: Record<string, string[]>;
-}
-
-/** Result of an architecture rule check. */
-export interface RuleResult {
-  readonly passed: boolean;
-  readonly violations: Array<{
-    file: string;
-    message: string;
-    suggestion: string;
-  }>;
 }
 
 /** A taste-coding rule derived from an incident or PR. */

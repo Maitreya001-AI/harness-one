@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { runGeneratorEvaluator } from '../generator-evaluator.js';
-import { HarnessError } from '../../core/errors.js';
+import { HarnessError } from 'harness-one';
 
 describe('runGeneratorEvaluator', () => {
   it('returns on first pass', async () => {

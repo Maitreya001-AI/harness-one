@@ -7,7 +7,7 @@
  * @module
  */
 
-import { HarnessError } from '../core/errors.js';
+import { HarnessError } from 'harness-one';
 import type { GeneratorEvaluatorConfig } from './types.js';
 
 /**

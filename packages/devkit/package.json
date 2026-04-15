@@ -1,7 +1,7 @@
 {
-  "name": "@harness-one/preset",
-  "version": "0.1.0",
-  "description": "Batteries-included harness-one preset with all integrations",
+  "name": "@harness-one/devkit",
+  "version": "1.0.0-rc.1",
+  "description": "Developer-time toolkit for harness-one: evaluation runners, scorers, component registry, drift detection",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -13,7 +13,9 @@
       "require": "./dist/index.cjs"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "engines": { "node": ">=18" },
   "sideEffects": false,
   "scripts": {
@@ -22,34 +24,31 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/"
   },
-  "dependencies": {
-    "harness-one": "workspace:*",
-    "@harness-one/anthropic": "workspace:*",
-    "@harness-one/openai": "workspace:*",
-    "@harness-one/ajv": "workspace:*",
-    "@harness-one/devkit": "workspace:*"
-  },
-  "optionalDependencies": {
-    "@harness-one/redis": "workspace:*",
-    "@harness-one/langfuse": "workspace:*",
-    "@harness-one/opentelemetry": "workspace:*",
-    "@harness-one/tiktoken": "workspace:*"
+  "peerDependencies": {
+    "harness-one": "workspace:*"
   },
   "devDependencies": {
+    "harness-one": "workspace:*",
     "tsup": "^8.0.0",
     "typescript": "^5.5.0",
     "vitest": "^2.0.0"
   },
   "license": "MIT",
   "author": "harness-one contributors",
-  "keywords": ["ai", "agent", "harness", "preset", "full", "batteries-included"],
+  "keywords": [
+    "harness-one",
+    "devkit",
+    "eval",
+    "evolve",
+    "dev-tools"
+  ],
   "publishConfig": {
     "access": "public"
   },
   "repository": {
     "type": "git",
     "url": "https://github.com/Maitreya001-AI/harness-one",
-    "directory": "packages/preset"
+    "directory": "packages/devkit"
   },
   "bugs": {
     "url": "https://github.com/Maitreya001-AI/harness-one/issues"

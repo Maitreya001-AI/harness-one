@@ -4,7 +4,7 @@
  * @module
  */
 
-import { HarnessError } from '../core/errors.js';
+import { HarnessError } from 'harness-one';
 import type { EvalCase, EvalResult, EvalReport, EvalConfig } from './types.js';
 
 /** Interface for running evaluations. */

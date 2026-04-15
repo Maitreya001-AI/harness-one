@@ -22,8 +22,8 @@ import { createSessionManager, createInMemoryConversationStore } from 'harness-o
 import type { SessionManager, ConversationStore } from 'harness-one/session';
 import { createInMemoryStore } from 'harness-one/memory';
 import type { MemoryStore } from 'harness-one/memory';
-import { createEvalRunner, createRelevanceScorer } from 'harness-one/eval';
-import type { EvalRunner } from 'harness-one/eval';
+import { createEvalRunner, createRelevanceScorer } from '@harness-one/devkit';
+import type { EvalRunner } from '@harness-one/devkit';
 
 import { createAnthropicAdapter } from '@harness-one/anthropic';
 import type { AnthropicAdapterConfig } from '@harness-one/anthropic';

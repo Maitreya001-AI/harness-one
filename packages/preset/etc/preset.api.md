@@ -10,7 +10,7 @@ import { AgentLoop } from 'harness-one/core';
 import { AnthropicAdapterConfig } from '@harness-one/anthropic';
 import { ConversationStore } from 'harness-one/session';
 import { CostTracker } from 'harness-one/observe';
-import { EvalRunner } from 'harness-one/eval';
+import { EvalRunner } from '@harness-one/devkit';
 import { GuardrailPipeline } from 'harness-one/guardrails';
 import { LangfuseExporterConfig } from '@harness-one/langfuse';
 import { Logger } from 'harness-one/observe';

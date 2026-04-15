@@ -4,7 +4,7 @@
  * @module
  */
 
-import { HarnessError } from '../core/errors.js';
+import { HarnessError } from 'harness-one';
 import type { ComponentMeta } from './types.js';
 
 /** Registry for managing component metadata. */

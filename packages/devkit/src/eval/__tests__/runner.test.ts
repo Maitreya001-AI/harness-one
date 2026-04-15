@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createEvalRunner } from '../runner.js';
-import { HarnessError } from '../../core/errors.js';
+import { HarnessError } from 'harness-one';
 import type { Scorer } from '../types.js';
 
 const alwaysPassScorer: Scorer = {

@@ -4,7 +4,7 @@
  * @module
  */
 
-import { HarnessError } from '../core/errors.js';
+import { HarnessError } from 'harness-one';
 import type { TasteCodingRule } from './types.js';
 
 /** Maximum allowed pattern length. Patterns exceeding this are rejected. */

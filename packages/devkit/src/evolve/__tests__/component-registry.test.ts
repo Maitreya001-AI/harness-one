@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createComponentRegistry } from '../component-registry.js';
-import { HarnessError } from '../../core/errors.js';
+import { HarnessError } from 'harness-one';
 import type { ComponentMeta } from '../types.js';
 
 const makeMeta = (overrides: Partial<ComponentMeta> = {}): ComponentMeta => ({
