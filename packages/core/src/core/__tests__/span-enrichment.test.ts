@@ -119,6 +119,62 @@ describe('AgentLoop span enrichment', () => {
     await tm.dispose();
   });
 
+  // Wave-5B Step 2 gating test (ADR §7 Step 2 / critic §3 / edit #3):
+  // the chat-path `adapter_retry` span event must carry the original
+  // throw's message as an `error` attribute, sliced to ≤500 chars. This
+  // guards the contract at docs/architecture/01-core.md:161 — operators
+  // rely on the preview for triage without needing to enable logger
+  // capture. The asymmetry with the streaming path is intentional
+  // (ADR §2.1): StreamResult only carries the already-wrapped error,
+  // so `errorPreview` is omitted on stream retries.
+  it('adapter retry event on CHAT path carries `error` attribute (string, ≤500 chars)', async () => {
+    let calls = 0;
+    // A deliberately long message so we can verify the 500-char slice.
+    const longMessage = 'rate limited: ' + 'x'.repeat(800);
+    const adapter = makeAdapter({
+      async chat() {
+        calls++;
+        if (calls === 1) {
+          const err: Error & { status?: number } = new Error(longMessage);
+          err.status = 429;
+          throw err;
+        }
+        return {
+          message: { role: 'assistant', content: 'ok' },
+          usage: { inputTokens: 1, outputTokens: 1 },
+        };
+      },
+    });
+    const spans: Array<{ name: string; events: Array<{ name: string; attributes?: Record<string, unknown> }> }> = [];
+    const tm = createTraceManager({
+      exporters: [{
+        name: 'capture',
+        exportTrace: async () => {},
+        exportSpan: async (span) => { spans.push({ name: span.name, events: [...span.events] }); },
+        flush: async () => {},
+      }],
+    });
+
+    const loop = new AgentLoop({ adapter, traceManager: tm, maxAdapterRetries: 1 });
+    await drain(loop.run([{ role: 'user', content: 'hi' }]));
+    await tm.flush();
+
+    const iterSpan = spans.find(s => s.name === 'iteration-1');
+    expect(iterSpan).toBeDefined();
+    const retry = iterSpan!.events.find(e => e.name === 'adapter_retry');
+    expect(retry).toBeDefined();
+    expect(retry!.attributes?.path).toBe('chat');
+
+    const errAttr = retry!.attributes?.error;
+    expect(errAttr).toBeDefined();
+    expect(typeof errAttr).toBe('string');
+    // Preview must be sliced to ≤500 chars regardless of source length.
+    expect((errAttr as string).length).toBeLessThanOrEqual(500);
+    // And must preserve the leading content so operators can recognise it.
+    expect(errAttr as string).toContain('rate limited');
+    await tm.dispose();
+  });
+
   it('tool span carries toolName + toolCallId attributes and errorMessage on failure', async () => {
     const adapter: AgentAdapter = {
       name: 'test-adapter',

@@ -11,10 +11,9 @@ import type { AgentAdapter, ExecutionStrategy, Message, TokenUsage, ToolCallRequ
 import type { AgentEvent, DoneReason } from './events.js';
 import { AbortedError, HarnessError, MaxIterationsError, TokenBudgetExceededError } from './errors.js';
 import { createSequentialStrategy, createParallelStrategy } from './execution-strategies.js';
-import { categorizeAdapterError } from './error-classifier.js';
 import { createAdapterCaller, type AdapterCaller } from './adapter-caller.js';
+import { createStreamHandler } from './stream-handler.js';
 import { pruneConversation } from './conversation-pruner.js';
-import { StreamAggregator } from './stream-aggregator.js';
 import type { AgentLoopTraceManager } from './trace-interface.js';
 // T10 (Wave-5A): guardrail pipeline integration. Types-only import for the
 // opaque pipeline token; runtime helpers (`runInput`, `runOutput`,
@@ -244,8 +243,6 @@ export class AgentLoop {
 
   private abortController: AbortController;
   private _externalAbortHandler: (() => void) | undefined;
-  /** Tracks the error category from the last failed handleStream call for retry decisions. */
-  private _lastStreamErrorCategory: string | undefined;
   /**
    * PERF-025: Pre-built options bag handed to `executionStrategy.execute()`
    * for every tool-call batch. Previously this object was re-constructed with
@@ -345,12 +342,63 @@ export class AgentLoop {
         : { signal: this.abortController.signal },
     );
 
+    // Wave-5B Step 2: build the StreamHandler once; AdapterCaller delegates
+    // to it on the streaming path. `maxCumulativeStreamBytes` matches
+    // run()'s local derivation (`maxIterations * maxStreamBytes`) so per-run
+    // and per-instance limits stay in lockstep.
+    const streamHandler = createStreamHandler({
+      adapter: this.adapter,
+      signal: this.abortController.signal,
+      maxStreamBytes: this.maxStreamBytes,
+      maxToolArgBytes: this.maxToolArgBytes,
+      maxCumulativeStreamBytes: this.maxIterations * this.maxStreamBytes,
+      ...(this.tools !== undefined && { tools: this.tools }),
+    });
+
+    // Streaming is only effective when the adapter actually exposes
+    // `stream`. Today's run() had `if (this.streaming && this.adapter.stream)`
+    // guarding the streaming branch; we mirror that here so an adapter
+    // without `stream` transparently falls back to chat. (Matches
+    // pre-Wave-5B agent-loop.ts L685.)
+    const effectiveStreaming = this.streaming && typeof this.adapter.stream === 'function';
+
     this.adapterCaller = createAdapterCaller({
       adapter: this.adapter,
       signal: this.abortController.signal,
+      streaming: effectiveStreaming,
+      maxAdapterRetries: this.maxAdapterRetries,
+      baseRetryDelayMs: this.baseRetryDelayMs,
+      retryableErrors: this.retryableErrors,
+      streamHandler,
+      // onRetry closes over `this._currentIterationSpanId` so the callback
+      // can record the retry as a span event on whichever iteration is
+      // active. `run()` updates this field as iterations advance; Step 3
+      // will move this plumbing onto IterationContext.
+      onRetry: ({ attempt, errorCategory, path, errorPreview }) => {
+        const tm = this.traceManager;
+        const spanId = this._currentIterationSpanId;
+        if (!tm || !spanId) return;
+        tm.addSpanEvent(spanId, {
+          name: 'adapter_retry',
+          attributes: {
+            attempt,
+            errorCategory,
+            path,
+            ...(errorPreview !== undefined ? { error: errorPreview } : {}),
+          },
+        });
+      },
       ...(this.tools !== undefined && { tools: this.tools }),
     });
   }
+
+  /**
+   * Wave-5B Step 2: holder for the active iteration span id so the
+   * `onRetry` callback wired at construction can target the right span.
+   * `run()` writes this as iterations advance. Step 3 migrates it onto
+   * `IterationContext`.
+   */
+  private _currentIterationSpanId: string | undefined;
 
   /** Get cumulative token usage across all iterations. */
   get usage(): TokenUsage {
@@ -506,9 +554,11 @@ export class AgentLoop {
     const tm = this.traceManager;
     const traceId = tm ? tm.startTrace('agent-loop-run', { messageCount: messages.length }) : undefined;
     let iterationSpanId: string | undefined;
-    // Cumulative stream byte counter across all iterations for DoS protection
+    // Cumulative stream byte counter across all iterations for DoS protection.
+    // The cap (maxIterations * maxStreamBytes) is enforced inside StreamHandler
+    // via the config wired in the constructor; AdapterCaller forwards the
+    // running total on every turn.
     let cumulativeStreamBytes = 0;
-    const maxCumulativeStreamBytes = this.maxIterations * this.maxStreamBytes;
 
     try {
       while (true) {
@@ -572,6 +622,9 @@ export class AgentLoop {
             streaming: this.streaming,
           });
         }
+        // Wave-5B Step 2: publish the active span id so AdapterCaller's
+        // onRetry callback (wired at construction) can target it.
+        this._currentIterationSpanId = iterationSpanId;
 
         yield { type: 'iteration_start', iteration };
         // ARCH-006: notify hooks immediately after the public iteration_start
@@ -619,131 +672,65 @@ export class AgentLoop {
           }
         }
 
-        // C5: Wrap adapter call in try-catch to handle exceptions gracefully
-        // With retry logic for retryable errors (e.g. rate-limit, network)
-        // These are guaranteed to be assigned when adapterCallSucceeded is true.
-        // The definite assignment assertion (!) tells TypeScript to trust us.
-        let assistantMsg!: Message;
-        let responseUsage!: TokenUsage;
-        let adapterCallSucceeded = false;
+        // Wave-5B Step 2: delegate the full adapter turn (retry loop + both
+        // paths) to AdapterCaller. On streaming path, StreamHandler yields
+        // the {type:'error'} event inline on failure; on chat path we yield
+        // it here after receiving the failed result. See ADR §9 R1.
+        const result = yield* this.adapterCaller.call(conversation, cumulativeStreamBytes);
 
-        for (let attempt = 0; attempt <= this.maxAdapterRetries; attempt++) {
-          // Check abort before each retry attempt
-          if (attempt > 0 && this.isAborted()) {
-            if (iterationSpanId && tm) { tm.endSpan(iterationSpanId, 'error'); iterationSpanId = undefined; }
+        if (!result.ok) {
+          const { error: err, errorCategory, path } = result;
+          if (iterationSpanId && tm) {
+            tm.setSpanAttributes(iterationSpanId, {
+              errorCategory,
+              path,
+              ...(path === 'chat'
+                ? { error: (err instanceof Error ? err.message : String(err)).slice(0, 500) }
+                : {}),
+            });
+            tm.endSpan(iterationSpanId, 'error');
+            iterationSpanId = undefined;
+            this._currentIterationSpanId = undefined;
+          }
+
+          if (errorCategory === 'ABORTED') {
+            // Abort fired during backoff — synthetic category from AdapterCaller.
+            // Mirror today's L632-L638 / L679-L682 abort-during-retry bail
+            // (and L711-L729 fallthrough to the abort check): yield an
+            // AbortedError and exit with done('aborted'). On the stream
+            // path StreamHandler did NOT yield (abort surfaces from backoff,
+            // not the stream), so we always yield here.
             yield { type: 'error', error: new AbortedError() };
             finalEventEmitted = true;
+            fireIterationEnd(true);
             yield this.doneEvent('aborted');
             return;
           }
 
-          if (this.streaming && this.adapter.stream) {
-            // Streaming path: use adapter.stream()
-            const streamResult = yield* this.handleStream(conversation, cumulativeStreamBytes, maxCumulativeStreamBytes);
-            if (streamResult) {
-              cumulativeStreamBytes += streamResult.bytesRead;
-              assistantMsg = streamResult.message;
-              responseUsage = streamResult.usage;
-              adapterCallSucceeded = true;
-              break;
-            } else {
-              // handleStream returned null — check if the error is retryable
-              const errorCategory = this._lastStreamErrorCategory;
-              this._lastStreamErrorCategory = undefined;
-
-              if (errorCategory && this.retryableErrors.includes(errorCategory) && attempt < this.maxAdapterRetries) {
-                if (iterationSpanId && tm) {
-                  tm.addSpanEvent(iterationSpanId, {
-                    name: 'adapter_retry',
-                    attributes: { attempt, errorCategory, path: 'stream' },
-                  });
-                }
-                try {
-                  await this.backoff(attempt);
-                } catch {
-                  // Abort fired during backoff — fall through to abort check at retry loop top
-                }
-                continue;
-              }
-
-              // Not retryable or retries exhausted — annotate span before closing.
-              if (iterationSpanId && tm) {
-                tm.setSpanAttributes(iterationSpanId, {
-                  errorCategory: errorCategory ?? 'unknown',
-                  path: 'stream',
-                });
-                tm.endSpan(iterationSpanId, 'error');
-                iterationSpanId = undefined;
-              }
-              finalEventEmitted = true;
-              fireIterationEnd(true);
-              yield this.doneEvent('error');
-              return;
-            }
-          } else {
-            // Non-streaming path: delegate a single attempt to AdapterCaller.
-            const r = await this.adapterCaller.callOnce(conversation);
-            if (r.ok) {
-              assistantMsg = r.message;
-              responseUsage = r.usage;
-              adapterCallSucceeded = true;
-              break;
-            } else {
-              const { error: err, errorCategory } = r;
-              const isRetryable = this.retryableErrors.includes(errorCategory);
-
-              if (isRetryable && attempt < this.maxAdapterRetries) {
-                if (iterationSpanId && tm) {
-                  tm.addSpanEvent(iterationSpanId, {
-                    name: 'adapter_retry',
-                    attributes: {
-                      attempt,
-                      errorCategory,
-                      error: (err instanceof Error ? err.message : String(err)).slice(0, 500),
-                      path: 'chat',
-                    },
-                  });
-                }
-                try {
-                  await this.backoff(attempt);
-                } catch {
-                  // Abort fired during backoff — fall through to abort check at retry loop top
-                }
-                continue;
-              }
-
-              // Not retryable or retries exhausted — annotate span, then emit error.
-              if (iterationSpanId && tm) {
-                tm.setSpanAttributes(iterationSpanId, {
-                  errorCategory,
-                  error: (err instanceof Error ? err.message : String(err)).slice(0, 500),
-                  path: 'chat',
-                });
-                tm.endSpan(iterationSpanId, 'error');
-                iterationSpanId = undefined;
-              }
-              yield { type: 'error', error: err instanceof HarnessError ? err : new HarnessError(
-                err instanceof Error ? err.message : String(err),
-                errorCategory,
-                'Check adapter configuration and API credentials',
-                err instanceof Error ? err : undefined,
-              ) };
-              finalEventEmitted = true;
-              fireIterationEnd(true);
-              yield this.doneEvent('error');
-              return;
-            }
+          if (path === 'chat') {
+            // Chat path: AdapterCaller caught but did NOT yield. Wrap and
+            // yield the error event to preserve today's L725-L730 behaviour.
+            yield { type: 'error', error: err instanceof HarnessError ? err : new HarnessError(
+              err instanceof Error ? err.message : String(err),
+              errorCategory,
+              'Check adapter configuration and API credentials',
+              err instanceof Error ? err : undefined,
+            ) };
           }
-        }
-
-        if (!adapterCallSucceeded) {
-          // Safety: should not reach here, but guard against it
-          if (iterationSpanId && tm) { tm.endSpan(iterationSpanId, 'error'); iterationSpanId = undefined; }
+          // Stream path: StreamHandler already yielded the {type:'error'}
+          // event inside handle(); re-yielding would double-emit (ADR §9 R1).
           finalEventEmitted = true;
           fireIterationEnd(true);
           yield this.doneEvent('error');
           return;
         }
+
+        // Success: accumulate bytesRead (streaming path only — chat is 0)
+        // and unpack the adapter response. Preserves today's L644 inline
+        // cumulative increment and L687-L691 / L732-L733 unpacking.
+        cumulativeStreamBytes += result.bytesRead;
+        const assistantMsg = result.message;
+        const responseUsage = result.usage;
 
         // Record usage + tool-count on the iteration span. toolCount is the
         // basic signal for tool-loop and tool-call-explosion diagnostics.
@@ -754,6 +741,11 @@ export class AgentLoop {
             toolCount: assistantMsg.role === 'assistant' && assistantMsg.toolCalls
               ? assistantMsg.toolCalls.length
               : 0,
+            // Wave-5B Step 2: expose AdapterCaller's retry accounting on the
+            // iteration span so operators can audit path/attempts without
+            // cross-referencing adapter_retry events.
+            path: result.path,
+            attempts: result.attempts,
           });
         }
 
@@ -1023,6 +1015,9 @@ export class AgentLoop {
       if (iterationSpanId && tm) {
         try { tm.endSpan(iterationSpanId, 'error'); } catch { /* span may already be ended */ }
       }
+      // Wave-5B Step 2: drop the span-id side-reference so a stale id can
+      // never leak into the onRetry callback after this run exits.
+      this._currentIterationSpanId = undefined;
       // End the trace
       if (traceId && tm) {
         try { tm.endTrace(traceId, finalEventEmitted ? 'completed' : 'error'); } catch { /* trace may already be ended */ }
@@ -1101,74 +1096,6 @@ export class AgentLoop {
   }
 
   /**
-   * Handle streaming response from adapter.stream(). Thin wrapper around
-   * {@link StreamAggregator} (ARCH-001 extraction): the aggregator owns
-   * accumulation + size-limit semantics; this method owns the adapter
-   * iteration + AgentEvent translation. Behavior is preserved verbatim —
-   * see the original PERF-024 / PERF-032 notes on `StreamAggregator`.
-   */
-  private async *handleStream(
-    conversation: Message[],
-    cumulativeStreamBytes: number,
-    maxCumulativeStreamBytes: number,
-  ): AsyncGenerator<AgentEvent, { message: Message; usage: TokenUsage; bytesRead: number } | null> {
-    const aggregator = new StreamAggregator({
-      maxStreamBytes: this.maxStreamBytes,
-      maxToolArgBytes: this.maxToolArgBytes,
-      cumulativeStreamBytesSoFar: cumulativeStreamBytes,
-      maxCumulativeStreamBytes,
-    });
-    let usage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
-
-    try {
-      const stream = (this.adapter.stream as NonNullable<typeof this.adapter.stream>)({
-        messages: conversation,
-        signal: this.abortController.signal,
-        ...(this.tools !== undefined && { tools: this.tools }),
-      });
-
-      for await (const chunk of stream) {
-        // 'done' chunks carry usage but produce no consumer events.
-        if (chunk.type === 'done') {
-          if (chunk.usage) usage = chunk.usage;
-          continue;
-        }
-
-        // Delegate accumulation to the aggregator. It yields exactly the
-        // same {text_delta, tool_call_delta, warning, error} sequence that
-        // the previous inline implementation produced.
-        for (const evt of aggregator.handleChunk(chunk)) {
-          if (evt.type === 'error') {
-            yield { type: 'error', error: evt.error };
-            return null;
-          }
-          // text_delta / tool_call_delta / warning passthrough — types match
-          // the agent-event union by construction (StreamAggregatorEvent is
-          // a strict subset of AgentEvent for the non-error variants).
-          yield evt;
-        }
-      }
-    } catch (err) {
-      const errorCategory = AgentLoop.categorizeAdapterError(err);
-      this._lastStreamErrorCategory = errorCategory;
-      yield { type: 'error', error: err instanceof HarnessError ? err : new HarnessError(
-        err instanceof Error ? err.message : String(err),
-        errorCategory,
-        'Check adapter configuration and API credentials',
-        err instanceof Error ? err : undefined,
-      ) };
-      return null;
-    }
-
-    return aggregator.getMessage(usage);
-  }
-
-  /** @deprecated Use the standalone `categorizeAdapterError` from `error-classifier.js` instead. */
-  private static categorizeAdapterError(err: unknown): string {
-    return categorizeAdapterError(err);
-  }
-
-  /**
    * T10 (Wave-5A): walk the conversation from the tail until we find a user
    * message. Returns its `content` string, or `undefined` when no user message
    * exists (e.g., a pure system-only seed — we skip the input pipeline rather
@@ -1204,52 +1131,6 @@ export class AgentLoop {
   private doneEvent(reason: DoneReason): AgentEvent {
     this._status = 'completed';
     return { type: 'done', reason, totalUsage: this.usage };
-  }
-
-  /**
-   * Sleep for exponential backoff with jitter.
-   *
-   * Returns a promise that resolves after `baseRetryDelayMs * 2^attempt + jitter`.
-   * The timer is unref'd so it doesn't keep the process alive.
-   * Rejects with AbortedError if the abort signal fires during the wait.
-   */
-  private backoff(attempt: number): Promise<void> {
-    const base = this.baseRetryDelayMs * Math.pow(2, attempt);
-    // Add random jitter: 0-25% of the base delay
-    const jitter = Math.floor(Math.random() * base * 0.25);
-    const delay = base + jitter;
-
-    return new Promise<void>((resolve, reject) => {
-      if (this.isAborted()) {
-        reject(new AbortedError());
-        return;
-      }
-
-      let settled = false;
-
-      const onAbort = (): void => {
-        if (!settled) {
-          settled = true;
-          clearTimeout(timer);
-          reject(new AbortedError());
-        }
-      };
-
-      const timer = setTimeout(() => {
-        if (!settled) {
-          settled = true;
-          this.abortController.signal.removeEventListener('abort', onAbort);
-          resolve();
-        }
-      }, delay);
-
-      // Ensure timer doesn't keep the process alive
-      if (typeof timer === 'object' && 'unref' in timer) {
-        (timer as NodeJS.Timeout).unref();
-      }
-
-      this.abortController.signal.addEventListener('abort', onAbort, { once: true });
-    });
   }
 }
 

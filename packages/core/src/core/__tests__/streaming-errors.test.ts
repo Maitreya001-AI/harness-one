@@ -445,4 +445,57 @@ describe('AgentLoop streaming error scenarios', () => {
       })).toThrow('maxToolArgBytes must be > 0');
     });
   });
+
+  // Wave-5B Step 2 gating test (ADR §7 Step 2 / §9 R1):
+  //
+  // After the StreamHandler / AdapterCaller split, failures on the stream
+  // path have TWO candidate yield sites — StreamHandler yields the event
+  // inside `handle()` (ADR §2.2 JSDoc), and agent-loop's post-`call()`
+  // bail could yield again. The contract is: the consumer must see
+  // EXACTLY ONE `{type:'error'}` event per failed stream regardless of
+  // retries. A double-emit here would be a silent regression (consumers
+  // typically only assert the presence of an error, not the count).
+  describe('stream error yield-order asymmetry (ADR §9 R1)', () => {
+    it('emits exactly ONE {type:\"error\"} event per failed stream across all retries', async () => {
+      // Streaming adapter that always fails with a retryable category.
+      // `HTTP 429` routes through categorizeAdapterError to ADAPTER_RATE_LIMIT
+      // (the default retryable category), so maxAdapterRetries=2 means
+      // the loop sees 3 stream attempts total, all failing.
+      let attempts = 0;
+      const adapter: AgentAdapter = {
+        async chat() {
+          throw new Error('should not be called in streaming mode');
+        },
+        async *stream() {
+          attempts++;
+          // Message must contain a token the classifier maps to
+          // ADAPTER_RATE_LIMIT so the retry path is actually exercised.
+          const err: Error & { status?: number } = new Error(`rate limited: attempt #${attempts}`);
+          err.status = 429;
+          throw err;
+        },
+      };
+
+      const loop = new AgentLoop({
+        adapter,
+        streaming: true,
+        maxAdapterRetries: 2,
+        // Near-zero backoff keeps the test fast; default retryableErrors
+        // already includes ADAPTER_RATE_LIMIT.
+        baseRetryDelayMs: 1,
+      });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'Hi' }]));
+
+      // Retries actually exercised: more than one attempt hit the adapter.
+      expect(attempts).toBeGreaterThan(1);
+
+      // The core invariant: one and only one error event regardless of retries.
+      const errorEvents = events.filter((e) => e.type === 'error');
+      expect(errorEvents).toHaveLength(1);
+
+      // And the done event reports the error terminus.
+      const doneEvent = events.find((e) => e.type === 'done') as Extract<AgentEvent, { type: 'done' }>;
+      expect(doneEvent.reason).toBe('error');
+    });
+  });
 });
