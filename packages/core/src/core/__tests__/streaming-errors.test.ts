@@ -446,6 +446,64 @@ describe('AgentLoop streaming error scenarios', () => {
     });
   });
 
+  // Wave-5B MF-1 regression guard (wave-5b-review-redteam.md §M-1):
+  //
+  // Consumer-initiated `.return()` on the run() generator must forward
+  // iterator-close through AdapterCaller's manual pump into
+  // StreamHandler's `for await`, which in turn closes the underlying
+  // `adapter.stream()` generator. Without the `try/finally` around
+  // AdapterCaller's pump this chain breaks and the adapter generator
+  // leaks until the abort signal fires (which the test adapter ignores).
+  //
+  // Verification: this test was confirmed to FAIL before the try/finally
+  // fix (streamReturnCalled stayed false — only abort-propagation could
+  // close the generator, which the test adapter does not honour). It
+  // PASSES with the fix.
+  describe('adapter stream cleanup on consumer .return() (MF-1 regression)', () => {
+    it('closes adapter stream when consumer breaks mid-chunk', async () => {
+      let streamReturnCalled = false;
+      const adapter: AgentAdapter = {
+        async chat() {
+          throw new Error('chat() should not be called in streaming mode');
+        },
+        async *stream() {
+          try {
+            yield { type: 'text_delta' as const, text: 'a' };
+            // Suspend forever to simulate a slow adapter that does not
+            // cooperate with `config.signal`. Only JS iterator-close
+            // can surface the finally block here.
+            await new Promise(() => {
+              /* never resolves */
+            });
+            yield { type: 'done' as const, usage: USAGE };
+          } finally {
+            streamReturnCalled = true;
+          }
+        },
+      };
+
+      const loop = new AgentLoop({ adapter, streaming: true });
+      const it = loop.run([{ role: 'user', content: 'hi' }]);
+
+      // Advance: iteration_start, then the first text_delta chunk.
+      const first = await it.next();
+      expect(first.done).toBe(false);
+      expect((first.value as AgentEvent).type).toBe('iteration_start');
+      const second = await it.next();
+      expect(second.done).toBe(false);
+      expect((second.value as AgentEvent).type).toBe('text_delta');
+
+      // Consumer bails mid-stream. Iterator-close must propagate all the
+      // way down to the adapter generator's finally block.
+      await it.return(undefined);
+
+      // Yield once to let any scheduled microtasks flush.
+      await Promise.resolve();
+
+      expect(streamReturnCalled).toBe(true);
+    });
+  });
+
   // Wave-5B Step 2 gating test (ADR §7 Step 2 / §9 R1):
   //
   // After the StreamHandler / AdapterCaller split, failures on the stream

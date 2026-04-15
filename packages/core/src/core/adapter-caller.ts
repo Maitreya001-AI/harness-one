@@ -106,8 +106,6 @@ export interface AdapterCallerConfig {
    * path explicit — the caller always has one on hand).
    */
   readonly streamHandler: StreamHandler;
-  /** Invoked BEFORE the backoff sleep on every retry decision. */
-  readonly onRetry?: (info: AdapterRetryInfo) => void;
 }
 
 /** Public surface of the adapter caller. */
@@ -124,10 +122,9 @@ export interface AdapterCaller {
    * failure, AdapterCaller also does NOT yield — the caller wraps and
    * yields. Net: exactly one `{type:'error'}` event per failed turn.
    *
-   * Wave-5B Step 3: optional per-call `onRetry` overrides the
-   * constructor-level callback when provided. This lets `IterationRunner`
-   * capture the active iteration span id at call time without leaking
-   * mutable state onto AdapterCaller's closure.
+   * Wave-5B Step 3: per-call `onRetry` is supplied by `IterationRunner`
+   * so the active iteration span id is captured at call time without
+   * leaking mutable state onto AdapterCaller's closure.
    */
   call(
     conversation: readonly Message[],
@@ -225,9 +222,9 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
       onRetry?: (info: AdapterRetryInfo) => void,
     ): AsyncGenerator<AgentEvent, AdapterCallResult> {
       const path: 'chat' | 'stream' = config.streaming ? 'stream' : 'chat';
-      // Per-call onRetry overrides the constructor default; falls back to
-      // the config-level callback when the caller passes nothing.
-      const fireRetry = onRetry ?? config.onRetry;
+      // Per-call onRetry supplied by IterationRunner so the active iteration
+      // span id is captured at call time without a side-channel.
+      const fireRetry = onRetry;
 
       for (let attempt = 0; attempt <= config.maxAdapterRetries; attempt++) {
         // Check abort before each retry attempt. On attempt 0 the top-of-loop
@@ -257,64 +254,89 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
           );
           let pendingError: Extract<AgentEvent, { type: 'error' }> | undefined;
 
-          // Pump: pass through text_delta / tool_call_delta / warning
-          // unchanged; buffer the single terminal error event so we can
-          // decide whether to forward it AFTER we know if retry applies.
-          while (true) {
-            const step = await streamGen.next();
-            if (step.done) {
-              const streamResult = step.value;
-              if (streamResult.ok) {
-                // Success: drop any buffered error (there shouldn't be
-                // one — StreamHandler only yields error before ok:false).
+          // MF-1 (Wave-5B follow-up): wrap the manual pump in try/finally so
+          // consumer `.return()` on the outer `run()` generator forwards
+          // iterator-close into StreamHandler. Without this, the `for await`
+          // inside StreamHandler stays suspended on the adapter's chunk until
+          // the abort signal fires, leaking file handles/sockets/timers for
+          // adapters that don't cooperate promptly with `config.signal`.
+          // See wave-5b-review-redteam.md §M-1.
+          try {
+            // Pump: pass through text_delta / tool_call_delta / warning
+            // unchanged; buffer the single terminal error event so we can
+            // decide whether to forward it AFTER we know if retry applies.
+            while (true) {
+              const step = await streamGen.next();
+              if (step.done) {
+                const streamResult = step.value;
+                if (streamResult.ok) {
+                  // Success: drop any buffered error (there shouldn't be
+                  // one — StreamHandler only yields error before ok:false).
+                  return {
+                    ok: true,
+                    message: streamResult.message,
+                    usage: streamResult.usage,
+                    bytesRead: streamResult.bytesRead,
+                    path: 'stream',
+                    attempts: attempt,
+                  };
+                }
+                // Stream attempt failed — decide retry vs terminal.
+                const errorCategory = streamResult.errorCategory;
+                if (
+                  config.retryableErrors.includes(errorCategory)
+                  && attempt < config.maxAdapterRetries
+                ) {
+                  // Retry. Swallow the buffered error event: the consumer
+                  // should see only the FINAL terminal error, not one per
+                  // failed attempt.
+                  pendingError = undefined;
+                  fireRetry?.({ attempt, errorCategory, path: 'stream' });
+                  try {
+                    await backoff(attempt);
+                  } catch {
+                    // Abort fired during backoff — loop to top; attempt>0
+                    // abort check will convert to ABORTED on next iteration.
+                  }
+                  break; // exit pump-while; outer for-loop runs next attempt
+                }
+                // Terminal failure: forward the buffered error event
+                // verbatim so the observer-visible stream matches today's
+                // "yield then return" ordering (ADR §2.2 / §9 R1).
+                if (pendingError) yield pendingError;
                 return {
-                  ok: true,
-                  message: streamResult.message,
-                  usage: streamResult.usage,
-                  bytesRead: streamResult.bytesRead,
+                  ok: false,
+                  error: streamResult.error,
+                  errorCategory,
                   path: 'stream',
                   attempts: attempt,
                 };
               }
-              // Stream attempt failed — decide retry vs terminal.
-              const errorCategory = streamResult.errorCategory;
-              if (
-                config.retryableErrors.includes(errorCategory)
-                && attempt < config.maxAdapterRetries
-              ) {
-                // Retry. Swallow the buffered error event: the consumer
-                // should see only the FINAL terminal error, not one per
-                // failed attempt.
-                pendingError = undefined;
-                fireRetry?.({ attempt, errorCategory, path: 'stream' });
-                try {
-                  await backoff(attempt);
-                } catch {
-                  // Abort fired during backoff — loop to top; attempt>0
-                  // abort check will convert to ABORTED on next iteration.
-                }
-                break; // exit pump-while; outer for-loop runs next attempt
+              const evt = step.value;
+              if (evt.type === 'error') {
+                // Buffer: we forward or drop based on the terminal result.
+                pendingError = evt;
+                continue;
               }
-              // Terminal failure: forward the buffered error event
-              // verbatim so the observer-visible stream matches today's
-              // "yield then return" ordering (ADR §2.2 / §9 R1).
-              if (pendingError) yield pendingError;
-              return {
-                ok: false,
-                error: streamResult.error,
-                errorCategory,
-                path: 'stream',
-                attempts: attempt,
-              };
+              // text_delta / tool_call_delta / warning — pass through.
+              yield evt;
             }
-            const evt = step.value;
-            if (evt.type === 'error') {
-              // Buffer: we forward or drop based on the terminal result.
-              pendingError = evt;
-              continue;
-            }
-            // text_delta / tool_call_delta / warning — pass through.
-            yield evt;
+          } finally {
+            // Forward iterator-close into StreamHandler when the consumer
+            // called `.return()` on run() mid-stream. Calling `.return()`
+            // on an already-finished generator is a no-op or can throw —
+            // either way is fine; we just need close-propagation into the
+            // `for await` inside StreamHandler, which in turn propagates
+            // into `adapter.stream()`. The `StreamResult` we would pass
+            // here is discarded (the `try { while(true) }` either already
+            // returned the real result or we bailed early via consumer
+            // `.return()`, in which case the return value is ignored by
+            // the iterator-close protocol). Typed-view as the loose
+            // AsyncIterator interface so `.return()` accepts `undefined`.
+            const closable: AsyncIterator<AgentEvent> = streamGen;
+            await closable.return?.(undefined)?.catch(() => {
+              /* generator already done — fine */
+            });
           }
           // fell out of pump-while via `break` for retry; continue for-loop
           continue;

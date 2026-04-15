@@ -22,6 +22,7 @@
 
 import type { ExecutionStrategy, Message, TokenUsage, ToolCallRequest } from './types.js';
 import type { AgentEvent, DoneReason } from './events.js';
+import { assertNever } from './events.js';
 import { AbortedError, HarnessError, TokenBudgetExceededError } from './errors.js';
 import type { AgentLoopHook } from './agent-loop.js';
 import type { AdapterCaller } from './adapter-caller.js';
@@ -119,7 +120,13 @@ export interface IterationRunner {
 // ---------------------------------------------------------------------------
 
 type ErrorBail = {
-  readonly reason: 'error' | 'aborted' | 'max_iterations';
+  /**
+   * `'max_iterations'` is intentionally absent: per ADR-v2 §4, the
+   * max-iterations terminal is emitted by `AgentLoop`'s `emitTerminal`
+   * path, not through `bailOut`. Narrowing here prevents a future code
+   * path from accidentally routing it through the runner.
+   */
+  readonly reason: 'error' | 'aborted';
   readonly errorEvent?: Extract<AgentEvent, { type: 'error' }>;
   /**
    * Skip yielding errorEvent when the event is already on the wire
@@ -161,11 +168,9 @@ const MAX_TOOL_RESULT_BYTES = 1 * 1024 * 1024;
 const MAX_TOOL_RESULT_DEPTH = 10;
 
 /**
- * PERF-004: defensive serialization for tool-call results. Mirrors the
- * former `AgentLoop.safeStringifyToolResult` (private static, kept on
- * AgentLoop as well). Depth-limited replacer + 1 MiB byte cap + cycle
- * detection. We keep a copy here so IterationRunner has no dependency
- * on AgentLoop's internals.
+ * PERF-004: defensive serialization for tool-call results. Moved here
+ * from `AgentLoop.safeStringifyToolResult`; no copy remains on AgentLoop.
+ * Depth-limited replacer + 1 MiB byte cap + cycle detection.
  */
 function safeStringifyToolResult(value: unknown): string {
   const stack: Array<object> = [];
@@ -289,8 +294,9 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
           totalUsage: snapshotUsage(ctx.cumulativeUsage),
         };
       }
-      default: {
-        // 'error' | 'aborted' | 'max_iterations' — ErrorBail OR GuardrailBail
+      case 'error':
+      case 'aborted': {
+        // ErrorBail OR GuardrailBail (both discriminate on reason:'error').
         if ('abort' in input && input.abort) config.abortController.abort();
         if ('guardrailEvent' in input) yield input.guardrailEvent;
         const alreadyYielded =
@@ -304,6 +310,10 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
           totalUsage: snapshotUsage(ctx.cumulativeUsage),
         };
       }
+      default:
+        // Compile-time exhaustiveness: adding a new `reason` to
+        // {@link BailOutInput} without a matching case will fail here.
+        return assertNever(input);
     }
   }
 
