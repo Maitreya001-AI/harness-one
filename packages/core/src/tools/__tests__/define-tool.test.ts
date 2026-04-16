@@ -89,8 +89,10 @@ describe('defineTool', () => {
     expect(echoTool.parameters.type).toBe('object');
   });
 
-  it('returns a frozen object', () => {
-    expect(Object.isFrozen(echoTool)).toBe(true);
+  it('returns a well-formed tool definition', () => {
+    expect(echoTool.name).toBe('echo');
+    expect(echoTool.description).toBe('Echoes input');
+    expect(typeof echoTool.execute).toBe('function');
   });
 
   it('executes successfully', async () => {
@@ -165,7 +167,7 @@ describe('defineTool', () => {
     }
   });
 
-  it('preserves responseFormat on the frozen tool definition', () => {
+  it('preserves responseFormat on the tool definition', () => {
     const tool = defineTool<{ text: string }>({
       name: 'search',
       description: 'Search tool',
@@ -179,7 +181,6 @@ describe('defineTool', () => {
     });
 
     expect(tool.responseFormat).toBe('concise');
-    expect(Object.isFrozen(tool)).toBe(true);
   });
 
   it('defaults responseFormat to undefined when not provided', () => {
@@ -374,7 +375,7 @@ describe('defineTool', () => {
   });
 
   describe('edge cases', () => {
-    it('tool with responseFormat preserved on frozen definition', () => {
+    it('tool with responseFormat preserved on definition', () => {
       const tool = defineTool({
         name: 'detailed',
         description: 'Detailed tool',
@@ -383,11 +384,6 @@ describe('defineTool', () => {
         execute: async () => toolSuccess('data'),
       });
       expect(tool.responseFormat).toBe('detailed');
-      expect(Object.isFrozen(tool)).toBe(true);
-      // Verify it cannot be changed
-      expect(() => {
-        (tool as unknown as { responseFormat: string }).responseFormat = 'concise';
-      }).toThrow();
     });
 
     it('tool handler returning complex nested object', async () => {

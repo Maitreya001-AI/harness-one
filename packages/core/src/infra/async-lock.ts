@@ -71,7 +71,10 @@ export function createAsyncLock(): AsyncLock {
   const queue: Waiter[] = [];
 
   function handoff(): void {
-    // Called by `release()`. Hand the lock to the next waiter, or mark it free.
+    // Race-safe: both handoff (via queue.shift) and the abort handler (via
+    // queue.splice) are synchronous. If abort wins, the waiter is already
+    // removed from the queue by the time handoff runs. If handoff wins, it
+    // detaches the abort listener before resolving, so the listener never fires.
     while (queue.length > 0) {
       const next = queue.shift() as Waiter;
       // Detach abort listener — no longer needed once we're handing off.

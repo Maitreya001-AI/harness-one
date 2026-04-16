@@ -162,10 +162,12 @@ export function createTiktokenTokenizer(model: string): Tokenizer {
         },
       };
     }
-    // Heuristic fallback: ~4 chars/token with +4 for message framing.
+    // Heuristic fallback: ~4 chars/token.
     return {
       encode(text: string): { length: number } {
-        return { length: Math.ceil(text.length / 4) + 4 };
+        // No framing overhead here — message-level framing is handled by
+        // countMessageTokens() in core. Adding it here would double-count.
+        return { length: Math.max(1, Math.ceil(text.length / 4)) };
       },
     };
   })();

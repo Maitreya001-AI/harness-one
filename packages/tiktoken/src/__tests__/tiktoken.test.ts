@@ -90,8 +90,8 @@ describe('createTiktokenTokenizer', () => {
       throw new Error('Unknown model: totally-fake-model');
     });
     const tokenizer = mod.createTiktokenTokenizer('totally-fake-model');
-    // Fallback is a heuristic — ~len/4 + 4 framing overhead.
-    expect(tokenizer.encode('hello world').length).toBe(Math.ceil('hello world'.length / 4) + 4);
+    // Fallback is a heuristic — ~len/4, no framing overhead (handled at message level).
+    expect(tokenizer.encode('hello world').length).toBe(Math.max(1, Math.ceil('hello world'.length / 4)));
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledWith('Tokenizer fallback for unknown model', 'totally-fake-model');
   });

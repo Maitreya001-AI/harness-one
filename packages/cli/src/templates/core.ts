@@ -40,6 +40,7 @@ const messages: Message[] = [
   { role: 'user', content: 'Hello!' },
 ];
 
+// Tip: in production, use createLogger() from the observe module for structured logging.
 for await (const event of loop.run(messages)) {
   if (event.type === 'message') console.log('Assistant:', event.message.content);
   if (event.type === 'tool_call') console.log('Tool call:', event.toolCall.name);

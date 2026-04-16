@@ -104,5 +104,5 @@ export function defineTool<TParams = unknown>(def: {
       }
     },
   };
-  return Object.freeze(tool);
+  return tool;
 }

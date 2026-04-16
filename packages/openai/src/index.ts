@@ -212,6 +212,17 @@ export function registerProvider(
     );
   }
 
+  // L4: Warn on private network URLs that may indicate misconfiguration.
+  // Not blocked because internal networks legitimately use private IPs,
+  // but surfacing it helps catch copy-paste errors from dev configs.
+  if (!isLocalDev) {
+    const host = parsed.hostname;
+    const isPrivate = /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/.test(host);
+    if (isPrivate) {
+      safeWarn(undefined, `[harness-one/openai] registerProvider: baseURL "${config.baseURL}" points to a private IP range. Verify this is intentional for production use.`);
+    }
+  }
+
   if (BUILT_IN_PROVIDER_NAMES.has(name) && !options?.force) {
     throw new HarnessError(
       `registerProvider: "${name}" is a reserved built-in provider name`,

@@ -180,6 +180,7 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
         if (!settled) {
           settled = true;
           clearTimeout(timer);
+          // Listener auto-removed by { once: true } — no removeEventListener needed
           reject(new AbortedError());
         }
       };

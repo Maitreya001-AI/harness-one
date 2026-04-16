@@ -283,17 +283,25 @@ export function createFileSystemStore(config: {
       await withIndexLock(async () => {
         const all = await allEntries();
         const result = await io.batchUnlink(all.map(e => io.entryPath(e.id)));
-        // If some deletions failed, keep those entries in the index
+        // Build index from entries that failed to delete
+        const newIndex: { keys: Record<string, string> } = { keys: {} };
         if (result.failed.length > 0) {
           const failedPaths = new Set(result.failed.map(f => f.path));
-          const survivingEntries = all.filter(e => failedPaths.has(io.entryPath(e.id)));
-          const newIndex = { keys: {} as Record<string, string> };
-          for (const entry of survivingEntries) {
-            newIndex.keys[entry.key] = entry.id;
+          for (const entry of all) {
+            if (failedPaths.has(io.entryPath(entry.id))) {
+              newIndex.keys[entry.key] = entry.id;
+            }
           }
+        }
+        try {
           await io.writeIndex(newIndex);
-        } else {
-          await io.writeIndex({ keys: {} });
+        } catch (err) {
+          throw new HarnessError(
+            'Failed to write index after clearing entries — store may be in an inconsistent state',
+            HarnessErrorCode.MEMORY_STORE_CORRUPTION,
+            'Re-run clear() or manually delete the index file to rebuild',
+            err instanceof Error ? err : undefined,
+          );
         }
       });
     },

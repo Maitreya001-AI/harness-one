@@ -134,6 +134,9 @@ async function promiseAllSettledWithConcurrency<T>(
   limit: number,
 ): Promise<PromiseSettledResult<T>[]> {
   const results: PromiseSettledResult<T>[] = new Array(factories.length);
+  // Shared by all workers. The read-modify-write `nextIndex++` is safe because
+  // JS is single-threaded: the `await` on the next line is the only preemption
+  // point, and by that time the increment has already completed synchronously.
   let nextIndex = 0;
 
   async function runNext(): Promise<void> {
