@@ -113,8 +113,8 @@ export function validateHarnessConfig(config: Record<string, unknown>): void {
   const KNOWN_KEYS = new Set([
     'provider', 'client', 'model', 'adapter', 'langfuse', 'redis',
     'exporters', 'memoryStore', 'schemaValidator', 'tokenizer',
-    'maxIterations', 'maxTotalTokens', 'guardrails', 'budget', 'pricing',
-    'logger',
+    'maxIterations', 'maxTotalTokens', 'maxAdapterRetries', 'baseRetryDelayMs',
+    'retryableErrors', 'guardrails', 'budget', 'pricing', 'logger',
     // SecurePresetOptions
     'guardrailLevel', 'skipProviderSeal',
   ]);

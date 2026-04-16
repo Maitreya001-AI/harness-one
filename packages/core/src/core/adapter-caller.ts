@@ -261,6 +261,21 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
           };
         }
 
+        // Circuit breaker check — applies to BOTH streaming and chat paths.
+        // Fast-fail before reaching the adapter when the circuit is OPEN.
+        if (config.circuitBreaker) {
+          const cbState = config.circuitBreaker.state();
+          if (cbState === 'open') {
+            return {
+              ok: false,
+              error: new CircuitOpenError(),
+              errorCategory: HarnessErrorCode.ADAPTER_CIRCUIT_OPEN,
+              path,
+              attempts: attempt,
+            };
+          }
+        }
+
         if (config.streaming) {
           // Streaming branch — delegate to StreamHandler. We iterate its
           // generator manually (rather than `yield*`) so we can SWALLOW
@@ -294,6 +309,7 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
                 if (streamResult.ok) {
                   // Success: drop any buffered error (there shouldn't be
                   // one — StreamHandler only yields error before ok:false).
+                  config.circuitBreaker?.recordSuccess();
                   return {
                     ok: true,
                     message: streamResult.message,
@@ -325,6 +341,7 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
                 // Terminal failure: forward the buffered error event
                 // verbatim so the observer-visible stream matches today's
                 // "yield then return" ordering (ADR §2.2 / §9 R1).
+                config.circuitBreaker?.recordFailure();
                 if (pendingError) yield pendingError;
                 return {
                   ok: false,

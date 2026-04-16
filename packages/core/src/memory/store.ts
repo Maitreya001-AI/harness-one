@@ -287,6 +287,25 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
         entries.set(entry.id, entry);
         addToIndexes(entry);
       }
+      // Apply grade-aware eviction after batch commit (same logic as write()).
+      // addToIndexes already maintains gradeIndex, so we just walk the
+      // eviction order until we're back under the cap.
+      if (maxEntries !== undefined) {
+        while (entries.size > maxEntries) {
+          let victimId: string | undefined;
+          for (const grade of GRADE_EVICTION_ORDER) {
+            const bucket = gradeIndex.get(grade);
+            if (bucket && bucket.size > 0) {
+              victimId = bucket.keys().next().value;
+              break;
+            }
+          }
+          if (victimId === undefined) break;
+          const victimEntry = entries.get(victimId);
+          if (victimEntry) removeFromIndexes(victimEntry);
+          entries.delete(victimId);
+        }
+      }
       return prepared;
     },
 

@@ -84,6 +84,12 @@ interface HarnessConfigBase {
   readonly maxIterations?: number;
   /** Maximum total tokens across all iterations. */
   readonly maxTotalTokens?: number;
+  /** Maximum adapter retry attempts on retryable errors (default: 0 = no retries). */
+  readonly maxAdapterRetries?: number;
+  /** Base delay in ms for exponential backoff between retries (default: 1000). */
+  readonly baseRetryDelayMs?: number;
+  /** Error categories eligible for retry (default: ['ADAPTER_RATE_LIMIT']). */
+  readonly retryableErrors?: readonly string[];
 
   /** Guardrail config. */
   readonly guardrails?: {
@@ -377,6 +383,9 @@ export function createHarness(config: HarnessConfig): Harness {
     traceManager: traces,
     ...(config.maxIterations !== undefined && { maxIterations: config.maxIterations }),
     ...(config.maxTotalTokens !== undefined && { maxTotalTokens: config.maxTotalTokens }),
+    ...(config.maxAdapterRetries !== undefined && { maxAdapterRetries: config.maxAdapterRetries }),
+    ...(config.baseRetryDelayMs !== undefined && { baseRetryDelayMs: config.baseRetryDelayMs }),
+    ...(config.retryableErrors !== undefined && { retryableErrors: config.retryableErrors }),
     onToolCall: async (call) => {
       return tools.execute(call);
     },
