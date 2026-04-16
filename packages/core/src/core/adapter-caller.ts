@@ -114,6 +114,20 @@ export interface AdapterCallerConfig {
    * provider, preventing cascade failures during sustained outages.
    */
   readonly circuitBreaker?: CircuitBreaker;
+  /**
+   * Wave-12 P1-4: optional per-adapter-invocation timeout in milliseconds
+   * applied to the non-streaming `adapter.chat()` path.
+   *
+   * Default: `undefined` — **unlimited** (matches pre-Wave-12 behaviour).
+   * Callers that want the non-streaming adapter promise to be bounded
+   * should set a positive value; when exceeded, the chat is aborted via
+   * an internal `AbortController` chained with `config.signal`, and the
+   * call resolves with `HarnessErrorCode.CORE_TIMEOUT`.
+   *
+   * Streaming has its own size-based safeguards in `StreamAggregator`
+   * and is intentionally out of scope for this timeout.
+   */
+  readonly adapterTimeoutMs?: number;
 }
 
 /** Public surface of the adapter caller. */
@@ -158,6 +172,15 @@ export interface AdapterCaller {
  */
 export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): AdapterCaller {
   /**
+   * Wave-12 P1-17: precompute a `Set<string>` for O(1) `retryableErrors`
+   * membership checks on the hot retry path. Replaces two `includes()`
+   * linear scans per retry decision (one per call path — chat and stream).
+   * The public API keeps accepting `readonly string[]` so callers remain
+   * source-compatible.
+   */
+  const retryableErrorSet = new Set<string>(config.retryableErrors);
+
+  /**
    * Sleep for exponential backoff with jitter. Rejects with AbortedError
    * if `config.signal` fires during the wait. Extracted from former
    * `AgentLoop.backoff` (L1216-L1253).
@@ -175,17 +198,27 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
       }
 
       let settled = false;
+      // Wave-12 P2-1: hoist the timer handle so the abort listener can
+      // reference it BEFORE the timer is armed. Previously the listener
+      // was registered AFTER `setTimeout` returned, leaving a micro-race
+      // where a synchronously-fired abort between the two statements would
+      // not cancel the timer; the abort listener is now installed first.
+      // eslint-disable-next-line prefer-const -- late-bound; onAbort closes over it before assignment
+      let timer: ReturnType<typeof setTimeout> | undefined;
 
       const onAbort = (): void => {
         if (!settled) {
           settled = true;
-          clearTimeout(timer);
+          if (timer !== undefined) clearTimeout(timer);
           // Listener auto-removed by { once: true } — no removeEventListener needed
           reject(new AbortedError());
         }
       };
 
-      const timer = setTimeout(() => {
+      // Register abort listener BEFORE arming the timer (P2-1).
+      config.signal.addEventListener('abort', onAbort, { once: true });
+
+      timer = setTimeout(() => {
         if (!settled) {
           settled = true;
           config.signal.removeEventListener('abort', onAbort);
@@ -197,8 +230,6 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
       if (typeof timer === 'object' && 'unref' in timer) {
         (timer as NodeJS.Timeout).unref();
       }
-
-      config.signal.addEventListener('abort', onAbort, { once: true });
     });
   }
 
@@ -206,6 +237,76 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
     conversation: readonly Message[],
   ): Promise<AdapterCallOnceResult> {
     const chatFn = async (): Promise<AdapterCallOnceResult> => {
+      // Wave-12 P1-4: when `adapterTimeoutMs` is set, chain an internal
+      // AbortController with `config.signal` and race `adapter.chat` against
+      // an abortable timeout. Unset = unlimited (pre-Wave-12 semantics).
+      if (config.adapterTimeoutMs !== undefined && config.adapterTimeoutMs > 0) {
+        const timeoutMs = config.adapterTimeoutMs;
+        const internalAbort = new AbortController();
+        // Chain: any external abort cancels the adapter request too.
+        const forwardAbort = (): void => {
+          try {
+            internalAbort.abort();
+          } catch {
+            /* already aborted — fine */
+          }
+        };
+        if (config.signal.aborted) {
+          internalAbort.abort();
+        } else {
+          config.signal.addEventListener('abort', forwardAbort, { once: true });
+        }
+
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        let timedOut = false;
+        const chatPromise = config.adapter.chat({
+          messages: conversation as Message[],
+          signal: internalAbort.signal,
+          ...(config.tools !== undefined && { tools: config.tools as ToolSchema[] }),
+        });
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            timedOut = true;
+            try {
+              internalAbort.abort();
+            } catch {
+              /* */
+            }
+            reject(
+              new HarnessError(
+                `Adapter chat timed out after ${timeoutMs}ms`,
+                HarnessErrorCode.CORE_TIMEOUT,
+                'Increase adapterTimeoutMs or investigate provider latency',
+              ),
+            );
+          }, timeoutMs);
+          if (typeof timer === 'object' && 'unref' in timer) {
+            (timer as NodeJS.Timeout).unref();
+          }
+        });
+
+        try {
+          const response = await Promise.race([chatPromise, timeoutPromise]);
+          return { ok: true, message: response.message, usage: response.usage };
+        } finally {
+          if (timer !== undefined) clearTimeout(timer);
+          try {
+            config.signal.removeEventListener('abort', forwardAbort);
+          } catch {
+            /* */
+          }
+          // Swallow any rejection from the now-orphaned chatPromise on
+          // timeout; without this the Node process prints an
+          // UnhandledPromiseRejection when the adapter finally throws
+          // its own AbortError after we've already resolved/rejected.
+          if (timedOut) {
+            chatPromise.catch(() => {
+              /* orphaned post-timeout adapter rejection */
+            });
+          }
+        }
+      }
+
       const response = await config.adapter.chat({
         messages: conversation as Message[],
         signal: config.signal,
@@ -225,6 +326,16 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
           ok: false,
           error: err,
           errorCategory: HarnessErrorCode.ADAPTER_CIRCUIT_OPEN,
+        };
+      }
+      // Wave-12 P1-4: preserve CORE_TIMEOUT classification when the timeout
+      // path rejected — `categorizeAdapterError` would otherwise coerce it
+      // back to ADAPTER_UNKNOWN.
+      if (err instanceof HarnessError && err.code === HarnessErrorCode.CORE_TIMEOUT) {
+        return {
+          ok: false,
+          error: err,
+          errorCategory: HarnessErrorCode.CORE_TIMEOUT,
         };
       }
       const error = err instanceof Error ? err : new Error(String(err));
@@ -323,7 +434,7 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
                 // Stream attempt failed — decide retry vs terminal.
                 const errorCategory = streamResult.errorCategory;
                 if (
-                  config.retryableErrors.includes(errorCategory)
+                  retryableErrorSet.has(errorCategory)
                   && attempt < config.maxAdapterRetries
                 ) {
                   // Retry. Swallow the buffered error event: the consumer
@@ -396,7 +507,7 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
         }
         const { error: err, errorCategory } = r;
         if (
-          config.retryableErrors.includes(errorCategory)
+          retryableErrorSet.has(errorCategory)
           && attempt < config.maxAdapterRetries
         ) {
           const errorPreview = (err instanceof Error ? err.message : String(err)).slice(0, 500);

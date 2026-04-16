@@ -90,6 +90,28 @@ describe('createJsonOutputParser', () => {
       expect(() => parser.parse(input)).toThrow(HarnessError);
       expect(() => parser.parse(input)).toThrow('Empty code block contains no JSON');
     });
+
+    describe('Wave-12 P2-21: CRLF + nested-whitespace edge cases', () => {
+      it('throws "Empty code block" for CRLF-only empty code block', () => {
+        const parser = createJsonOutputParser();
+        const input = '```json\r\n\r\n```';
+        expect(() => parser.parse(input)).toThrow(HarnessError);
+        expect(() => parser.parse(input)).toThrow('Empty code block contains no JSON');
+      });
+
+      it('parses valid JSON inside a CRLF-delimited code block', () => {
+        const parser = createJsonOutputParser();
+        const input = '```json\r\n{"k":1}\r\n```';
+        expect(parser.parse(input)).toEqual({ k: 1 });
+      });
+
+      it('throws "Unclosed markdown code block" when CRLF content has no closing fence', () => {
+        const parser = createJsonOutputParser();
+        const input = '```json\r\n{"incomplete": true';
+        expect(() => parser.parse(input)).toThrow(HarnessError);
+        expect(() => parser.parse(input)).toThrow('Unclosed markdown code block');
+      });
+    });
   });
 
   describe('getFormatInstructions', () => {

@@ -116,6 +116,24 @@ export interface ToolDefinition<TParams = unknown> {
   readonly responseFormat?: 'concise' | 'detailed';
   /** Force sequential execution even in parallel mode. Default: false. */
   readonly sequential?: boolean;
+  /**
+   * Executes the tool.
+   *
+   * **AbortSignal contract (Wave-12 P1-18):** when the registry enforces a
+   * timeout, it fires `signal` via an internal `AbortController` *before*
+   * rejecting with a timeout error. Implementations **MUST** respect the
+   * signal — propagate it to `fetch`, subprocess spawn, or any socket-owning
+   * primitive so those external resources are released promptly. Tools that
+   * ignore the signal will still have their return value superseded by the
+   * timeout error, but they leak the underlying socket/subprocess until the
+   * upstream operation completes naturally.
+   *
+   * A warning is logged by the registry when a tool keeps running for a long
+   * period after the abort has fired (non-responsive tool detection).
+   *
+   * @param params - Validated parameters matching `parameters`.
+   * @param signal - AbortSignal tied to the registry timeout + outer abort.
+   */
   readonly execute: (params: TParams, signal?: AbortSignal) => Promise<ToolResult>;
   /**
    * Optional middleware chain applied around this tool's `execute`. Earlier
@@ -141,8 +159,33 @@ export interface ToolDefinition<TParams = unknown> {
 export interface ToolCall {
   readonly id: string;
   readonly name: string;
+  /**
+   * Parsed JSON object representing the tool's arguments.
+   *
+   * **Wave-12 P1-22 contract:** adapters guarantee this is a plain object
+   * even when the model emits malformed JSON — on parse failure the adapter
+   * logs a warning and substitutes `{}` (empty object) so downstream code
+   * never has to defend against `undefined` or a raw string here. Consumers
+   * wanting to distinguish "adapter parse succeeded" from "adapter fell back
+   * to empty" should consult {@link ParsedToolArgumentsMeta} if the adapter
+   * publishes it on a sibling field.
+   *
+   * Type kept as `Record<string, unknown>` for backward compatibility.
+   */
   readonly arguments: Record<string, unknown>;
 }
+
+/**
+ * Optional metadata adapters may publish alongside a parsed {@link ToolCall}
+ * so consumers can tell a clean parse apart from the "adapter fell back to
+ * `{}` on malformed JSON" case. Adapters that do not surface this metadata
+ * leave it undefined — callers should treat absence as `kind: 'success'`.
+ *
+ * @see ToolCall.arguments
+ */
+export type ParsedToolArgumentsMeta =
+  | { readonly kind: 'success' }
+  | { readonly kind: 'parse_error'; readonly raw: string; readonly error: string };
 
 /** A single validation error with path and message. */
 export interface ValidationError {

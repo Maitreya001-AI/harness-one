@@ -104,6 +104,12 @@ export enum HarnessErrorCode {
   ADAPTER_NETWORK = 'ADAPTER_NETWORK',
   ADAPTER_PARSE = 'ADAPTER_PARSE',
   ADAPTER_RATE_LIMIT = 'ADAPTER_RATE_LIMIT',
+  /**
+   * Adapter upstream is temporarily unavailable — HTTP 502/503/504, "bad
+   * gateway", "service unavailable", "gateway timeout". Canonical "back off
+   * and retry" signal; included in default retry allow-lists.
+   */
+  ADAPTER_UNAVAILABLE = 'ADAPTER_UNAVAILABLE',
   /** Circuit breaker is OPEN — fast-failing to prevent cascade failures. */
   ADAPTER_CIRCUIT_OPEN = 'ADAPTER_CIRCUIT_OPEN',
   /**
@@ -124,6 +130,7 @@ export enum HarnessErrorCode {
   POOL_EXHAUSTED = 'POOL_EXHAUSTED',
   POOL_ABORTED = 'POOL_ABORTED',
   POOL_TIMEOUT = 'POOL_TIMEOUT',
+  POOL_QUEUE_FULL = 'POOL_QUEUE_FULL',
 
   // ── ORCH_* — orchestrator / queue / handoff / boundary ──────────────────
   ORCH_QUEUE_FULL = 'ORCH_QUEUE_FULL',

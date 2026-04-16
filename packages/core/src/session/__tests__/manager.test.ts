@@ -940,4 +940,86 @@ describe('createSessionManager', () => {
       expect(typeof sm.droppedEvents).toBe('number');
     });
   });
+
+  describe('Wave-12 P1-16: deep-clone metadata in toReadonly', () => {
+    it('mutating nested metadata on the returned view does not affect internal state', () => {
+      const sm = createSessionManager({ gcIntervalMs: 0 });
+      const created = sm.create({ profile: { name: 'alice', prefs: { theme: 'dark' } }, tags: ['a', 'b'] });
+
+      // Mutate nested fields on the returned view.
+      (created.metadata as { profile: { prefs: { theme: string } } }).profile.prefs.theme = 'light';
+      (created.metadata as { tags: string[] }).tags.push('tampered');
+
+      const fresh = sm.get(created.id)!;
+      // Internal state must be untouched.
+      expect((fresh.metadata as { profile: { prefs: { theme: string } } }).profile.prefs.theme).toBe('dark');
+      expect((fresh.metadata as { tags: string[] }).tags).toEqual(['a', 'b']);
+
+      sm.dispose();
+    });
+
+    it('subsequent get() calls also return independent deep clones', () => {
+      const sm = createSessionManager({ gcIntervalMs: 0 });
+      const created = sm.create({ nested: { list: [1, 2] } });
+
+      const a = sm.get(created.id)!;
+      const b = sm.get(created.id)!;
+      // Mutating a must not leak to b.
+      (a.metadata as { nested: { list: number[] } }).nested.list.push(999);
+      expect((b.metadata as { nested: { list: number[] } }).nested.list).toEqual([1, 2]);
+
+      sm.dispose();
+    });
+  });
+
+  describe('Wave-12 P1-10: priority-aware event drop', () => {
+    it('evicts queued low-priority events to admit high-priority events when full', () => {
+      const warns: Array<{ msg: string; meta?: Record<string, unknown> }> = [];
+      const logger = {
+        warn: (msg: string, meta?: Record<string, unknown>) => warns.push({ msg, meta }),
+      };
+      // maxSessions large so we can access many times.
+      const sm = createSessionManager({ maxSessions: 5000, logger, gcIntervalMs: 0 });
+      // Seed sessions we will access repeatedly.
+      const ids = Array.from({ length: 5 }, () => sm.create().id);
+      // Clear the "created" events from the log via a simple drain no-op —
+      // since we haven't registered a handler yet, events weren't queued.
+
+      const seen: SessionEvent[] = [];
+      // During the first event dispatch, synchronously emit many `accessed` and
+      // then a `destroyed` event by invoking the manager reentrantly.
+      let firstFire = true;
+      sm.onEvent((ev) => {
+        seen.push(ev);
+        if (firstFire) {
+          firstFire = false;
+          // Fill the queue with 1000+ `accessed` events (low priority).
+          for (let i = 0; i < 1100; i++) {
+            // Each access triggers a queued 'accessed' event
+            // (we're reentrant so they queue rather than fire synchronously).
+            sm.access(ids[i % ids.length]);
+          }
+          // Now queue is at cap and saturated with `accessed` events.
+          // Destroy a session — 'destroyed' is high priority and must survive.
+          sm.destroy(ids[0]);
+        }
+      });
+
+      // Trigger the initial emit via a fresh access.
+      sm.access(ids[1]);
+
+      // After emission settles we should see at least one 'destroyed' event,
+      // proving the high-priority event survived despite the saturated queue.
+      const destroyedEvents = seen.filter(e => e.type === 'destroyed');
+      expect(destroyedEvents.length).toBeGreaterThan(0);
+      // We should also see a priority-eviction warn.
+      const evictionWarns = warns.filter(w => w.msg.includes('low-priority event evicted'));
+      expect(evictionWarns.length).toBeGreaterThan(0);
+      // The droppedEvents counter should have incremented (evicting a low-pri
+      // event counts as a drop).
+      expect(sm.droppedEvents).toBeGreaterThan(0);
+
+      sm.dispose();
+    });
+  });
 });

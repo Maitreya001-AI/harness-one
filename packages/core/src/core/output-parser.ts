@@ -117,8 +117,15 @@ export function createJsonOutputParser<T = unknown>(schema?: JsonSchema): Output
         );
       }
 
+      // Wave-12 P2-21: normalize CRLF → LF so code-block detection is stable
+      // across clients that preserve Windows line endings (Anthropic SSE
+      // proxies on some runtimes, clipboard-pasted markdown, etc.). Without
+      // normalization, `"```json\r\n\r\n```"` would leave only `\r` inside
+      // the capture group and evade the "empty code block" check.
+      const normalized = text.replace(/\r\n/g, '\n');
+
       // Try to extract JSON from markdown code blocks first
-      const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+      const jsonMatch = normalized.match(/```(?:json)?\s*([\s\S]*?)```/);
       if (jsonMatch) {
         const inner = jsonMatch[1].trim();
         if (inner === '') {
@@ -132,7 +139,7 @@ export function createJsonOutputParser<T = unknown>(schema?: JsonSchema): Output
       }
 
       // Check for unclosed code block (``` without closing ```)
-      if (/```(?:json)?\s*[\s\S]+/.test(text) && !/```[\s\S]*```/.test(text)) {
+      if (/```(?:json)?\s*[\s\S]+/.test(normalized) && !/```[\s\S]*```/.test(normalized)) {
         throw new HarnessError(
           'Unclosed markdown code block',
           HarnessErrorCode.CORE_PARSE_UNCLOSED_CODEBLOCK,
@@ -140,7 +147,7 @@ export function createJsonOutputParser<T = unknown>(schema?: JsonSchema): Output
         );
       }
 
-      return parseJsonOrThrow<T>(text.trim(), 'response text');
+      return parseJsonOrThrow<T>(normalized.trim(), 'response text');
     },
     getFormatInstructions(): string {
       // PERF-18: cache the JSON string keyed on the schema identity so repeated

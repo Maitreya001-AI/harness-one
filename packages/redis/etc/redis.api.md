@@ -23,6 +23,7 @@ export interface RedisStoreConfig {
     readonly defaultTTL?: number;
     readonly logger?: RedisStoreLogger;
     readonly prefix?: string;
+    readonly tenantId?: string;
 }
 
 // @public

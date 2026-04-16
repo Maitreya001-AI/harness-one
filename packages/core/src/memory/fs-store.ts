@@ -31,8 +31,41 @@ import type { MemoryStore } from './store.js';
 export function createFileSystemStore(config: {
   directory: string;
   indexFile?: string;
+  /**
+   * Wave-12 P1-5: optional structured logger. When set, partial failures
+   * from batched deletes (compact / clear) emit a `warn` with the failure
+   * count and a small sample of error strings so operators can investigate
+   * stale-entry drift instead of silently corrupting the store.
+   */
+  logger?: { warn: (msg: string, meta?: Record<string, unknown>) => void };
 }): MemoryStore {
   const io = createFileIO(config);
+  const logger = config.logger;
+
+  /**
+   * Wave-12 P1-5: log a `warn` when a batched unlink produced any failures.
+   * We only sample the first three errors so the log line stays bounded,
+   * regardless of how many deletes failed.
+   */
+  function logBatchUnlinkFailures(
+    source: string,
+    failed: Array<{ path: string; error: string }>,
+  ): void {
+    if (failed.length === 0 || !logger) return;
+    try {
+      logger.warn(
+        `[harness-one/fs-store] ${source}: ${failed.length} entry delete(s) failed`,
+        {
+          source,
+          failedCount: failed.length,
+          sampleErrors: failed.slice(0, 3).map(f => f.error),
+        },
+      );
+    } catch {
+      // Logger failure is non-fatal — we must never let a logging hiccup
+      // break the store operation.
+    }
+  }
 
   // Simple in-process mutex for index operations.
   // Prevents concurrent read-modify-write corruption of the index file.
@@ -220,6 +253,9 @@ export function createFileSystemStore(config: {
               }
             }
           }
+          // Wave-12 P1-5: surface partial-failure to the logger so operators
+          // notice silent stale-entry accumulation.
+          logBatchUnlinkFailures('compact.maxAge', result.failed);
           all = survivors;
         }
 
@@ -253,6 +289,8 @@ export function createFileSystemStore(config: {
               freed.push(entryId);
             }
           }
+          // Wave-12 P1-5: warn operators about partial-failure drift.
+          logBatchUnlinkFailures('compact.maxEntries', result.failed);
           // Fix 20: Keep failed entries in the list (they were not deleted)
           all = all.filter((e) => !actuallyRemoved.has(e.id));
         }
@@ -293,6 +331,9 @@ export function createFileSystemStore(config: {
             }
           }
         }
+        // Wave-12 P1-5: surface partial-failure to the logger — `clear()` is a
+        // blunt operation and a silent partial-success is especially hazardous.
+        logBatchUnlinkFailures('clear', result.failed);
         try {
           await io.writeIndex(newIndex);
         } catch (err) {

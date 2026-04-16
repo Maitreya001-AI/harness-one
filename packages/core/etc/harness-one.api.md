@@ -109,6 +109,7 @@ export interface AgentLoopConfig {
     readonly signal?: AbortSignal;
     // (undocumented)
     readonly streaming?: boolean;
+    readonly strictHooks?: boolean;
     // (undocumented)
     readonly tools?: ToolSchema[];
     readonly toolTimeoutMs?: number;
@@ -280,6 +281,7 @@ export interface ContextRelay {
     addArtifact(path: string): Promise<void>;
     // (undocumented)
     checkpoint(progress: Record<string, unknown>): Promise<void>;
+    dispose(): void;
     // (undocumented)
     load(): Promise<RelayState | null>;
     // (undocumented)
@@ -288,12 +290,14 @@ export interface ContextRelay {
         maxRetries?: number;
         backoffMs?: number;
     }): Promise<void>;
+    readonly version: number;
 }
 
 // @public (undocumented)
 export interface ConversationStore {
     append(sessionId: string, message: Message): Promise<void>;
     readonly capabilities?: ConversationStoreCapabilities;
+    clear?(): Promise<void>;
     delete(sessionId: string): Promise<boolean>;
     list(): Promise<string[]>;
     load(sessionId: string): Promise<Message[]>;
@@ -334,7 +338,9 @@ export interface CostTracker {
     onAlert(handler: (alert: CostAlert) => void): () => void;
     recordUsage(usage: Omit<TokenUsageRecord, 'estimatedCost' | 'timestamp'>): TokenUsageRecord;
     reset(): void;
+    // @deprecated
     setBudget(budget: number): void;
+    // @deprecated
     setPricing(pricing: ModelPricing[]): void;
     shouldStop(): boolean;
     updateUsage(traceId: string, usage: Partial<Omit<TokenUsageRecord, 'estimatedCost' | 'timestamp' | 'traceId' | 'model'>>): TokenUsageRecord | undefined;
@@ -362,6 +368,8 @@ export function createCostTracker(config?: {
         capacity: number;
         rejectedKey: string;
     }) => void;
+    logger?: Logger;
+    alertDedupeWindowMs?: number;
 }): CostTracker;
 
 // Warning: (ae-forgotten-export) The symbol "LoggerConfig" needs to be exported by the entry point index.d.ts
@@ -376,19 +384,20 @@ export function createMiddlewareChain<TExtra extends Record<string, unknown> = R
 
 // @public
 export function createPipeline(config: {
-    input?: Array<{
-        name: string;
+    input?: readonly {
+        readonly name: string;
         guard: Guardrail;
-        timeoutMs?: number;
-    }>;
-    output?: Array<{
-        name: string;
+        readonly timeoutMs?: number;
+    }[];
+    output?: readonly {
+        readonly name: string;
         guard: Guardrail;
-        timeoutMs?: number;
-    }>;
+        readonly timeoutMs?: number;
+    }[];
     failClosed?: boolean;
     onEvent?: (event: GuardrailEvent) => void;
     defaultTimeoutMs?: number;
+    totalTimeoutMs?: number;
     maxResults?: number;
 }): GuardrailPipeline;
 
@@ -421,6 +430,9 @@ export function createSessionManager(config?: {
     maxSessions?: number;
     ttlMs?: number;
     gcIntervalMs?: number;
+    logger?: {
+        warn: (msg: string, meta?: Record<string, unknown>) => void;
+    };
 }): SessionManager;
 
 // @public
@@ -432,6 +444,7 @@ export function createTraceManager(config?: {
         warn: (msg: string, meta?: Record<string, unknown>) => void;
     };
     defaultSamplingRate?: number;
+    flushTimeoutMs?: number;
     redact?: RedactConfig | false;
 }): TraceManager;
 
@@ -566,6 +579,7 @@ export interface GuardrailPipeline {
 // @public
 export type GuardrailVerdict = {
     action: 'allow';
+    reason?: string;
 } | {
     action: 'block';
     reason: string;
@@ -594,6 +608,7 @@ export class HarnessError extends Error {
 export enum HarnessErrorCode {
     // (undocumented)
     ADAPTER_AUTH = "ADAPTER_AUTH",
+    ADAPTER_CIRCUIT_OPEN = "ADAPTER_CIRCUIT_OPEN",
     ADAPTER_CUSTOM = "ADAPTER_CUSTOM",
     // (undocumented)
     ADAPTER_ERROR = "ADAPTER_ERROR",
@@ -605,6 +620,7 @@ export enum HarnessErrorCode {
     ADAPTER_PARSE = "ADAPTER_PARSE",
     // (undocumented)
     ADAPTER_RATE_LIMIT = "ADAPTER_RATE_LIMIT",
+    ADAPTER_UNAVAILABLE = "ADAPTER_UNAVAILABLE",
     // (undocumented)
     ADAPTER_UNKNOWN = "ADAPTER_UNKNOWN",
     // (undocumented)
@@ -653,6 +669,7 @@ export enum HarnessErrorCode {
     CORE_REDOS_PATTERN = "CORE_REDOS_PATTERN",
     // (undocumented)
     CORE_STREAM_NOT_SUPPORTED = "CORE_STREAM_NOT_SUPPORTED",
+    CORE_TIMEOUT = "CORE_TIMEOUT",
     // (undocumented)
     CORE_TOKEN_BUDGET_EXCEEDED = "CORE_TOKEN_BUDGET_EXCEEDED",
     // (undocumented)
@@ -729,6 +746,8 @@ export enum HarnessErrorCode {
     POOL_DISPOSED = "POOL_DISPOSED",
     // (undocumented)
     POOL_EXHAUSTED = "POOL_EXHAUSTED",
+    // (undocumented)
+    POOL_QUEUE_FULL = "POOL_QUEUE_FULL",
     // (undocumented)
     POOL_TIMEOUT = "POOL_TIMEOUT",
     // (undocumented)
@@ -852,24 +871,31 @@ export interface LLMConfig {
 
 // @public
 export interface Logger {
-    child(meta: Record<string, unknown>): Logger;
+    child(meta: Readonly<Record<string, unknown>>): Logger;
+    debug(message: string, meta?: Readonly<Record<string, unknown>>): void;
     // (undocumented)
-    debug(message: string, meta?: Record<string, unknown>): void;
+    error(message: string, meta?: Readonly<Record<string, unknown>>): void;
     // (undocumented)
-    error(message: string, meta?: Record<string, unknown>): void;
+    info(message: string, meta?: Readonly<Record<string, unknown>>): void;
     // (undocumented)
-    info(message: string, meta?: Record<string, unknown>): void;
-    // (undocumented)
-    warn(message: string, meta?: Record<string, unknown>): void;
+    warn(message: string, meta?: Readonly<Record<string, unknown>>): void;
 }
 
 // @public
 interface LoggerConfig {
     readonly correlationId?: string;
+    readonly getContext?: () => {
+        traceId?: string;
+        spanId?: string;
+    } | undefined;
     readonly json?: boolean;
     readonly level?: LogLevel;
     readonly output?: (line: string) => void;
     readonly redact?: RedactConfig | false;
+    readonly stackSanitizer?: {
+        readonly cwd?: string;
+        readonly disabled?: boolean;
+    };
 }
 
 // @public
@@ -1141,6 +1167,7 @@ export interface SessionManager {
     create(metadata?: Record<string, unknown>): Session;
     destroy(id: string): void;
     dispose(): void;
+    readonly droppedEvents: number;
     gc(): number;
     get(id: string): Session | undefined;
     list(): Session[];
@@ -1242,6 +1269,7 @@ export interface StreamAggregatorOptions {
     readonly maxCumulativeStreamBytes: number;
     readonly maxStreamBytes: number;
     readonly maxToolArgBytes: number;
+    readonly maxToolCalls?: number;
 }
 
 // @public
@@ -1309,7 +1337,6 @@ export interface TokenUsageRecord {
 
 // @public
 export interface ToolCall {
-    // (undocumented)
     readonly arguments: Record<string, unknown>;
     // (undocumented)
     readonly id: string;
@@ -1346,7 +1373,6 @@ export interface ToolDefinition<TParams = unknown> {
     readonly capabilities?: readonly ToolCapabilityValue[];
     // (undocumented)
     readonly description: string;
-    // (undocumented)
     readonly execute: (params: TParams, signal?: AbortSignal) => Promise<ToolResult>;
     readonly middleware?: readonly ToolMiddleware<TParams>[];
     // (undocumented)
@@ -1475,6 +1501,7 @@ export interface TraceExporter {
     // (undocumented)
     readonly name: string;
     shouldExport?(trace: Trace): boolean;
+    shouldSampleTrace?(trace: Readonly<Trace>): boolean;
     shutdown?(): Promise<void>;
 }
 
@@ -1483,10 +1510,10 @@ type TraceId = Brand<string, 'TraceId'>;
 
 // @public
 export interface TraceManager {
-    addSpanEvent(spanId: string, event: Omit<SpanEvent, 'timestamp'>): void;
+    addSpanEvent(spanId: SpanId | string, event: Omit<SpanEvent, 'timestamp'>): void;
     dispose(): Promise<void>;
-    endSpan(spanId: string, status?: 'completed' | 'error'): void;
-    endTrace(traceId: string, status?: 'completed' | 'error'): void;
+    endSpan(spanId: SpanId | string, status?: 'completed' | 'error'): void;
+    endTrace(traceId: TraceId | string, status?: 'completed' | 'error'): void;
     flush(): Promise<void>;
     getActiveSpans(olderThanMs?: number): Array<{
         id: string;
@@ -1496,13 +1523,14 @@ export interface TraceManager {
     }>;
     // Warning: (ae-forgotten-export) The symbol "RetryMetrics" needs to be exported by the entry point index.d.ts
     getRetryMetrics(): RetryMetrics;
-    getTrace(traceId: string): Trace | undefined;
+    getSamplingRate(): number;
+    getTrace(traceId: TraceId | string): Trace | undefined;
     initialize(): Promise<void>;
     setSamplingRate(rate: number): void;
-    setSpanAttributes(spanId: string, attributes: Record<string, unknown>): void;
-    setTraceSystemMetadata(traceId: string, metadata: Record<string, unknown>): void;
+    setSpanAttributes(spanId: SpanId | string, attributes: Record<string, unknown>): void;
+    setTraceSystemMetadata(traceId: TraceId | string, metadata: Record<string, unknown>): void;
     // Warning: (ae-forgotten-export) The symbol "SpanId" needs to be exported by the entry point index.d.ts
-    startSpan(traceId: string, name: string, parentId?: string): SpanId;
+    startSpan(traceId: TraceId | string, name: string, parentId?: string): SpanId;
     // Warning: (ae-forgotten-export) The symbol "TraceId" needs to be exported by the entry point index.d.ts
     startTrace(name: string, metadata?: Record<string, unknown>): TraceId;
 }
@@ -1535,11 +1563,11 @@ export interface VectorSearchOptions {
 
 // Warnings were encountered during analysis:
 //
-// dist/cost-tracker-DNlSgwqX.d.ts:345:5 - (ae-forgotten-export) The symbol "RedactConfig" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-DNlSgwqX.d.ts:617:5 - (ae-forgotten-export) The symbol "EvictionStrategyName" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-DNlSgwqX.d.ts:617:5 - (ae-forgotten-export) The symbol "EvictionStrategy" needs to be exported by the entry point index.d.ts
-// dist/pipeline-DBOT4Ivp.d.ts:94:5 - (ae-forgotten-export) The symbol "GuardrailEvent" needs to be exported by the entry point index.d.ts
-// dist/resilience-O0dWTF0g.d.ts:255:5 - (ae-forgotten-export) The symbol "MiddlewareContext" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-lzfbsGRC.d.ts:416:5 - (ae-forgotten-export) The symbol "RedactConfig" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-lzfbsGRC.d.ts:703:5 - (ae-forgotten-export) The symbol "EvictionStrategyName" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-lzfbsGRC.d.ts:703:5 - (ae-forgotten-export) The symbol "EvictionStrategy" needs to be exported by the entry point index.d.ts
+// dist/pipeline-CCesF6ow.d.ts:95:5 - (ae-forgotten-export) The symbol "GuardrailEvent" needs to be exported by the entry point index.d.ts
+// dist/resilience-D3CJ22bA.d.ts:253:5 - (ae-forgotten-export) The symbol "MiddlewareContext" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 

@@ -16,7 +16,24 @@ export interface SSEChunk {
 }
 
 /**
+ * Wave-12 P1-24: last-resort hardcoded SSE chunk returned when both the
+ * primary `JSON.stringify(event)` and the fallback error-envelope
+ * `JSON.stringify` throw. Kept as a module-level constant so the hot path
+ * doesn't allocate a new object on each double-failure.
+ */
+const SSE_SERIALIZATION_FAILURE_FALLBACK: SSEChunk = Object.freeze({
+  event: 'error',
+  data: '{"error":"Event serialization failed"}',
+});
+
+/**
  * Convert an async iterable of AgentEvents into SSE chunks.
+ *
+ * Wave-12 P1-24 / P2-6: `JSON.stringify(event)` is wrapped in try/catch
+ * so a single poisoned event (circular reference, throwing getter) cannot
+ * crash the whole stream. On first-level failure we emit an SSE `error`
+ * chunk carrying the failure reason; on double-failure (the fallback
+ * JSON also throws) we yield a pre-frozen minimal byte constant.
  *
  * @example
  * ```ts
@@ -27,9 +44,37 @@ export interface SSEChunk {
  */
 export async function* toSSEStream(events: AsyncIterable<AgentEvent>): AsyncGenerator<SSEChunk> {
   for await (const event of events) {
+    // P2-6: short-circuit when the consumer already pre-serialized the
+    // payload (e.g. a server-side middleware). We still allocate a
+    // per-chunk `SSEChunk` literal because it's part of the public shape,
+    // but we skip the JSON.stringify cost in that case.
+    if (typeof event === 'string') {
+      yield { event: 'message', data: event };
+      continue;
+    }
+    let data: string;
+    try {
+      data = JSON.stringify(event);
+    } catch (err) {
+      // Primary stringify failed — common for circular refs or throwing
+      // getters. Fall back to an `error` envelope. If the fallback also
+      // throws (exotic), yield the pre-computed hardcoded byte constant.
+      try {
+        yield {
+          event: 'error',
+          data: JSON.stringify({
+            error: 'Event serialization failed',
+            reason: String(err),
+          }),
+        };
+      } catch {
+        yield SSE_SERIALIZATION_FAILURE_FALLBACK;
+      }
+      continue;
+    }
     yield {
       event: event.type,
-      data: JSON.stringify(event),
+      data,
     };
   }
 }

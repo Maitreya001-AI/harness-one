@@ -522,15 +522,18 @@ describe('createOTelExporter', () => {
     });
   });
 
-  describe('evicted parent TTL expiration', () => {
-    it('evicted parent entries expire after the default TTL (5 minutes)', async () => {
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  describe('Wave-12 P1-9: evicted-parent retention is size-based only (no TTL)', () => {
+    it('retains evicted parent entries indefinitely until LRU evicts them', async () => {
+      // P1-9: TTL-based expiry removed. An evicted parent must remain
+      // available to link in-flight children regardless of elapsed time, up
+      // to the size limit. Previously a parent would silently expire after
+      // 5 minutes, orphaning any child that arrived later.
       const localMock = createMockTracer();
       const exporter = createOTelExporter({ tracer: localMock.tracer });
 
       // Export a parent span
       await exporter.exportSpan({
-        id: 'ttl-parent',
+        id: 'retained-parent',
         traceId: 'trace-1',
         name: 'parent-op',
         startTime: 1000,
@@ -543,16 +546,16 @@ describe('createOTelExporter', () => {
       // Flush to move to evictedParents
       await exporter.flush();
 
-      // Advance time past the default TTL (5 minutes = 300,000ms)
+      // Advance time well beyond the old 5-minute default TTL -- parents
+      // must still be reachable since retention is now purely size-based.
       vi.useFakeTimers();
-      vi.setSystemTime(Date.now() + 300_001);
+      vi.setSystemTime(Date.now() + 10 * 300_001);
 
-      // Child arriving after TTL should NOT link to the expired parent
       await exporter.exportSpan({
-        id: 'ttl-child',
+        id: 'late-child',
         traceId: 'trace-1',
-        parentId: 'ttl-parent',
-        name: 'child-after-ttl',
+        parentId: 'retained-parent',
+        name: 'child-long-after-flush',
         startTime: 2000,
         endTime: 3000,
         attributes: {},
@@ -562,27 +565,24 @@ describe('createOTelExporter', () => {
 
       const calls = localMock.mocks.startActiveSpan.mock.calls;
       const childCall = calls[calls.length - 1];
-      expect(childCall[0]).toBe('child-after-ttl');
-      // Expired parent -> fall back to trace-root context (4 args: name, options, context, cb).
-      // CQ-002: spans stay linked under the trace root even when their direct parent is lost.
+      expect(childCall[0]).toBe('child-long-after-flush');
+      // Parent is still in evictedParents -> explicit parent context (4 args).
       expect(childCall.length).toBe(4);
 
-      // Warning should be logged about the missing parent
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Parent span 'ttl-parent' not found"),
-      );
-
       vi.useRealTimers();
-      warnSpy.mockRestore();
     });
 
-    it('evicted parent entries are available within the TTL window', async () => {
+    it('evictedParentsTtlMs option is accepted but has no effect (deprecated no-op)', async () => {
+      // Callers that still pass the option must not see behavior regressions:
+      // it is additive-compatible and simply ignored.
       const localMock = createMockTracer();
-      const exporter = createOTelExporter({ tracer: localMock.tracer });
+      const exporter = createOTelExporter({
+        tracer: localMock.tracer,
+        evictedParentsTtlMs: 1, // would have expired immediately under the old TTL model
+      });
 
-      // Export a parent span
       await exporter.exportSpan({
-        id: 'ttl-parent-ok',
+        id: 'noop-parent',
         traceId: 'trace-1',
         name: 'parent-op',
         startTime: 1000,
@@ -591,20 +591,16 @@ describe('createOTelExporter', () => {
         events: [],
         status: 'completed',
       });
-
-      // Flush to move to evictedParents
       await exporter.flush();
 
-      // Advance time but stay within the default TTL (5 minutes)
       vi.useFakeTimers();
-      vi.setSystemTime(Date.now() + 299_999);
+      vi.setSystemTime(Date.now() + 10_000);
 
-      // Child arriving within TTL should still link to the parent
       await exporter.exportSpan({
-        id: 'ttl-child-ok',
+        id: 'noop-child',
         traceId: 'trace-1',
-        parentId: 'ttl-parent-ok',
-        name: 'child-within-ttl',
+        parentId: 'noop-parent',
+        name: 'child-ignored-ttl',
         startTime: 2000,
         endTime: 3000,
         attributes: {},
@@ -614,131 +610,75 @@ describe('createOTelExporter', () => {
 
       const calls = localMock.mocks.startActiveSpan.mock.calls;
       const childCall = calls[calls.length - 1];
-      expect(childCall[0]).toBe('child-within-ttl');
-      // Parent should still provide context -> 4 args
+      expect(childCall[0]).toBe('child-ignored-ttl');
+      // Parent is still present -> explicit parent context (4 args).
       expect(childCall.length).toBe(4);
 
       vi.useRealTimers();
     });
 
-    it('TTL is configurable via evictedParentsTtlMs option', async () => {
+    it('evicts oldest evictedParents entry only when size exceeds maxEvictedParents', async () => {
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
       const localMock = createMockTracer();
-      // Set a short TTL of 10 seconds
       const exporter = createOTelExporter({
         tracer: localMock.tracer,
-        evictedParentsTtlMs: 10_000,
+        maxEvictedParents: 2,
       });
 
-      // Export a parent span
-      await exporter.exportSpan({
-        id: 'short-ttl-parent',
-        traceId: 'trace-1',
-        name: 'parent-op',
-        startTime: 1000,
-        endTime: 2000,
-        attributes: {},
-        events: [],
-        status: 'completed',
-      });
-
-      // Flush to move to evictedParents
-      await exporter.flush();
-
-      // Advance time past the short TTL (10 seconds)
-      vi.useFakeTimers();
-      vi.setSystemTime(Date.now() + 10_001);
-
-      // Child arriving after the custom TTL should NOT link
-      await exporter.exportSpan({
-        id: 'short-ttl-child',
-        traceId: 'trace-1',
-        parentId: 'short-ttl-parent',
-        name: 'child-after-short-ttl',
-        startTime: 2000,
-        endTime: 3000,
-        attributes: {},
-        events: [],
-        status: 'completed',
-      });
-
-      const calls = localMock.mocks.startActiveSpan.mock.calls;
-      const childCall = calls[calls.length - 1];
-      expect(childCall[0]).toBe('child-after-short-ttl');
-      // Expired parent -> falls back to trace-root context (4 args).
-      expect(childCall.length).toBe(4);
-
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Parent span 'short-ttl-parent' not found"),
-      );
-
-      vi.useRealTimers();
-      warnSpy.mockRestore();
-    });
-
-    it('stale evicted parents are cleaned up on new insertions', async () => {
-      const localMock = createMockTracer();
-      // Small evicted parents pool and short TTL for easy testing
-      const exporter = createOTelExporter({
-        tracer: localMock.tracer,
-        maxEvictedParents: 5,
-        evictedParentsTtlMs: 1_000,
-      });
-
-      // Export 5 spans and flush to fill evictedParents
-      for (let i = 0; i < 5; i++) {
+      // Populate evictedParents with 3 entries via export-then-flush cycles;
+      // only the 2 most recent should survive.
+      for (let i = 0; i < 3; i++) {
         await exporter.exportSpan({
-          id: `stale-${i}`,
+          id: `lru-${i}`,
           traceId: 'trace-1',
           name: `op-${i}`,
-          startTime: 1000,
-          endTime: 2000,
+          startTime: 1000 + i,
+          endTime: 2000 + i,
           attributes: {},
           events: [],
           status: 'completed',
         });
+        await exporter.flush();
       }
-      await exporter.flush();
 
-      // Advance time past TTL so all entries are stale
-      vi.useFakeTimers();
-      vi.setSystemTime(Date.now() + 1_001);
-
-      // Export a new span and flush -- stale entries should be cleaned up,
-      // making room without hitting the size limit
+      // Oldest entry (lru-0) should be gone, latest (lru-2) should remain.
       await exporter.exportSpan({
-        id: 'fresh-span',
+        id: 'child-of-oldest',
         traceId: 'trace-1',
-        name: 'fresh-op',
+        parentId: 'lru-0',
+        name: 'child-of-evicted',
         startTime: 3000,
         endTime: 4000,
         attributes: {},
         events: [],
         status: 'completed',
       });
-      await exporter.flush();
+      let calls = localMock.mocks.startActiveSpan.mock.calls;
+      let childCall = calls[calls.length - 1];
+      expect(childCall[0]).toBe('child-of-evicted');
+      expect(childCall.length).toBe(4); // trace-root fallback
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Parent span 'lru-0' not found"),
+      );
 
-      // Now try to link to 'fresh-span' -- it should be in evictedParents
-      // (the stale ones were cleaned up, so fresh-span was not evicted from evictedParents)
+      // lru-2 should still be reachable.
       await exporter.exportSpan({
-        id: 'fresh-child',
+        id: 'child-of-latest',
         traceId: 'trace-1',
-        parentId: 'fresh-span',
-        name: 'fresh-child-op',
+        parentId: 'lru-2',
+        name: 'child-of-retained',
         startTime: 4000,
         endTime: 5000,
         attributes: {},
         events: [],
         status: 'completed',
       });
+      calls = localMock.mocks.startActiveSpan.mock.calls;
+      childCall = calls[calls.length - 1];
+      expect(childCall[0]).toBe('child-of-retained');
+      expect(childCall.length).toBe(4); // parent context available
 
-      const calls = localMock.mocks.startActiveSpan.mock.calls;
-      const childCall = calls[calls.length - 1];
-      expect(childCall[0]).toBe('fresh-child-op');
-      // Fresh entry is within TTL -> parent context available (4 args)
-      expect(childCall.length).toBe(4);
-
-      vi.useRealTimers();
+      warnSpy.mockRestore();
     });
   });
 
@@ -1071,6 +1011,141 @@ describe('createOTelExporter', () => {
       );
       debugSpy.mockRestore();
     });
+
+    describe('Wave-12 P2-12: stringifyComplexAttributes opt-in', () => {
+      it('JSON-stringifies object attributes when enabled', async () => {
+        const onDropped = vi.fn();
+        const localMock = createMockTracer();
+        const exporter = createOTelExporter({
+          tracer: localMock.tracer,
+          stringifyComplexAttributes: true,
+          onDroppedAttribute: onDropped,
+        });
+
+        await exporter.exportSpan({
+          id: 'span-stringify-obj',
+          traceId: 'trace-1',
+          name: 'op',
+          startTime: 1000,
+          attributes: { payload: { nested: { x: 1 } }, primitive: 'ok' },
+          events: [],
+          status: 'completed',
+        });
+
+        const calls = localMock.mocks.setAttribute.mock.calls as Array<[string, unknown]>;
+        const payloadCall = calls.find((c) => c[0] === 'payload');
+        expect(payloadCall).toBeDefined();
+        expect(payloadCall![1]).toBe(JSON.stringify({ nested: { x: 1 } }));
+        // Primitive is still set normally
+        expect(calls.some((c) => c[0] === 'primitive' && c[1] === 'ok')).toBe(true);
+        // Did not drop the object-valued attribute
+        expect(onDropped).not.toHaveBeenCalledWith(
+          expect.objectContaining({ key: 'payload' }),
+        );
+      });
+
+      it('JSON-stringifies array attributes when enabled', async () => {
+        const localMock = createMockTracer();
+        const exporter = createOTelExporter({
+          tracer: localMock.tracer,
+          stringifyComplexAttributes: true,
+        });
+
+        await exporter.exportSpan({
+          id: 'span-stringify-arr',
+          traceId: 'trace-1',
+          name: 'op',
+          startTime: 1000,
+          attributes: { items: [1, 'two', true] } as unknown as Record<string, unknown>,
+          events: [],
+          status: 'completed',
+        });
+
+        const calls = localMock.mocks.setAttribute.mock.calls as Array<[string, unknown]>;
+        const itemsCall = calls.find((c) => c[0] === 'items');
+        expect(itemsCall).toBeDefined();
+        expect(itemsCall![1]).toBe('[1,"two",true]');
+      });
+
+      it('drops functions even when stringifyComplexAttributes is enabled (cannot serialize)', async () => {
+        const onDropped = vi.fn();
+        const localMock = createMockTracer();
+        const exporter = createOTelExporter({
+          tracer: localMock.tracer,
+          stringifyComplexAttributes: true,
+          onDroppedAttribute: onDropped,
+        });
+
+        await exporter.exportSpan({
+          id: 'span-fn-strict',
+          traceId: 'trace-1',
+          name: 'op',
+          startTime: 1000,
+          attributes: { handler: () => 42 } as unknown as Record<string, unknown>,
+          events: [],
+          status: 'completed',
+        });
+
+        const calls = localMock.mocks.setAttribute.mock.calls as Array<[string, unknown]>;
+        expect(calls.some((c) => c[0] === 'handler')).toBe(false);
+        expect(onDropped).toHaveBeenCalledWith(
+          expect.objectContaining({ key: 'handler', type: 'function', where: 'attribute' }),
+        );
+      });
+
+      it('falls back to drop + debug log on JSON.stringify failure (circular ref)', async () => {
+        const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
+        const localMock = createMockTracer();
+        const exporter = createOTelExporter({
+          tracer: localMock.tracer,
+          stringifyComplexAttributes: true,
+        });
+        const circular: Record<string, unknown> = { a: 1 };
+        circular['self'] = circular;
+
+        await exporter.exportSpan({
+          id: 'span-circular',
+          traceId: 'trace-1',
+          name: 'op',
+          startTime: 1000,
+          attributes: { loop: circular },
+          events: [],
+          status: 'completed',
+        });
+
+        const calls = localMock.mocks.setAttribute.mock.calls as Array<[string, unknown]>;
+        expect(calls.some((c) => c[0] === 'loop')).toBe(false);
+        expect(debugSpy).toHaveBeenCalledWith(
+          expect.stringContaining("Dropping non-primitive attribute 'loop' of type 'object'"),
+        );
+        // Dropped-attribute counter is still incremented for observability
+        expect(exporter.getDroppedAttributeMetrics().droppedAttributes).toBeGreaterThan(0);
+        debugSpy.mockRestore();
+      });
+
+      it('default behavior (stringifyComplexAttributes unset) still drops objects', async () => {
+        const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
+        const localMock = createMockTracer();
+        const exporter = createOTelExporter({ tracer: localMock.tracer });
+
+        await exporter.exportSpan({
+          id: 'span-default-drop',
+          traceId: 'trace-1',
+          name: 'op',
+          startTime: 1000,
+          attributes: { payload: { a: 1 } },
+          events: [],
+          status: 'completed',
+        });
+
+        const calls = localMock.mocks.setAttribute.mock.calls as Array<[string, unknown]>;
+        expect(calls.some((c) => c[0] === 'payload')).toBe(false);
+        expect(debugSpy).toHaveBeenCalledWith(
+          expect.stringContaining("Dropping non-primitive attribute 'payload' of type 'object'"),
+        );
+        debugSpy.mockRestore();
+      });
+    });
   });
 
   describe('event attribute filtering', () => {
@@ -1271,44 +1346,39 @@ describe('createOTelExporter', () => {
       expect(pfcCall.length).toBe(4); // flush-4 preserved
     });
 
-    it('purgeStaleEvictedParents skips when under threshold', async () => {
-      // With the new purge, it should early-return when evictedParentsAccessTime.size
-      // is under maxEvictedParents. This is a behavioral test: no stale entries
-      // should be removed when under threshold.
+    it('Wave-12 P1-9: entries under the LRU threshold survive arbitrary elapsed time', async () => {
+      // Previously this verified the lazy-TTL path expired entries on read.
+      // With P1-9 the TTL was removed to eliminate the child-arrival race, so
+      // an entry under the size threshold must remain reachable no matter how
+      // much wall-clock time passes.
       const localMock = createMockTracer();
       const exporter = createOTelExporter({
         tracer: localMock.tracer,
         maxEvictedParents: 100,
-        evictedParentsTtlMs: 1,
+        evictedParentsTtlMs: 1, // deprecated no-op; must not cause expiry
       });
 
-      // Export 1 span, flush, wait past TTL
       await exporter.exportSpan({
-        id: 'purge-test', traceId: 't1', name: 'pt',
+        id: 'retention-test', traceId: 't1', name: 'rt',
         startTime: 1000, endTime: 2000, attributes: {}, events: [], status: 'completed',
       });
       await exporter.flush();
 
       vi.useFakeTimers();
-      vi.setSystemTime(Date.now() + 100);
+      vi.setSystemTime(Date.now() + 10_000_000);
 
-      // With the new purge (only triggers when over threshold), the stale entry
-      // is still in the map but lazy TTL check in getEvictedParent should handle it.
-      // A child referencing purge-test should get root span (expired by lazy TTL).
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
       await exporter.exportSpan({
-        id: 'purge-child', traceId: 't1', parentId: 'purge-test', name: 'pc',
+        id: 'retention-child', traceId: 't1', parentId: 'retention-test', name: 'rc',
         startTime: 2000, endTime: 3000, attributes: {}, events: [], status: 'completed',
       });
 
       const calls = localMock.mocks.startActiveSpan.mock.calls;
       const pcCall = calls[calls.length - 1];
-      expect(pcCall[0]).toBe('pc');
-      // Lazy TTL expiry should make the parent unavailable -> falls back to trace-root context (4 args).
+      expect(pcCall[0]).toBe('rc');
+      // Parent retained in evictedParents -> explicit parent context (4 args).
       expect(pcCall.length).toBe(4);
 
       vi.useRealTimers();
-      warnSpy.mockRestore();
     });
   });
 

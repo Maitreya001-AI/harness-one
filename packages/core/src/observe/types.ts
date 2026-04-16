@@ -142,6 +142,31 @@ export interface TraceExporter {
   isHealthy?(): boolean;
   /** Optional: Sampling — return false to skip this trace. */
   shouldExport?(trace: Trace): boolean;
+  /**
+   * P1-6 (tail-based sampling): Optional hook evaluated at `endTrace()` time
+   * — after every span has been attached — to gate per-exporter export based
+   * on the final trace shape. Return `false` to skip exporting this trace to
+   * this exporter; `true` (or `undefined` / missing) to keep the default
+   * head-based decision.
+   *
+   * Use this to implement "sample all errors" style tail strategies, e.g.:
+   * ```ts
+   * shouldSampleTrace: (trace) =>
+   *   trace.status === 'error' || trace.spans.some(s => s.status === 'error'),
+   * ```
+   *
+   * Important distinction vs. head-based sampling:
+   *   - Head-based sampling (`defaultSamplingRate` / `setSamplingRate`) still
+   *     applies for **in-memory retention / memory bounds** — a trace is
+   *     either admitted or not at `startTrace()` time.
+   *   - `shouldSampleTrace` is an **export-only gate**. The trace still lives
+   *     in the in-memory map; only the call to `exporter.exportTrace(...)` is
+   *     skipped.
+   *   - When both `shouldExport` (head-time) and `shouldSampleTrace`
+   *     (tail-time) are defined, both must return true for the export to
+   *     proceed.
+   */
+  shouldSampleTrace?(trace: Readonly<Trace>): boolean;
   /** Optional: Called when exporter is being shut down. */
   shutdown?(): Promise<void>;
 }

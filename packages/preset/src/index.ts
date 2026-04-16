@@ -92,12 +92,34 @@ interface HarnessConfigBase {
   /** Error categories eligible for retry (default: ['ADAPTER_RATE_LIMIT']). */
   readonly retryableErrors?: readonly string[];
 
-  /** Guardrail config. */
+  /**
+   * Guardrail config.
+   *
+   * P1-14 (Wave-12): all nested option bags and arrays are deeply `readonly` so
+   * the shape matches the runtime contract (config is consumed immutably).
+   * Attempting `config.guardrails.rateLimit.max = 0` or
+   * `config.guardrails.contentFilter.blocked.push(...)` is a TypeScript
+   * error, preventing accidental post-construction mutation that would
+   * otherwise bypass the integer / shape validation performed by
+   * `createHarness()`.
+   */
   readonly guardrails?: {
-    readonly injection?: boolean | { sensitivity?: 'low' | 'medium' | 'high' };
-    readonly rateLimit?: { max: number; windowMs: number };
-    readonly contentFilter?: { blocked?: string[] };
-    readonly pii?: boolean | { types?: Array<'email' | 'phone' | 'ssn' | 'creditCard' | 'apiKey' | 'ipv4' | 'privateKey'> };
+    readonly injection?: boolean | { readonly sensitivity?: 'low' | 'medium' | 'high' };
+    readonly rateLimit?: { readonly max: number; readonly windowMs: number };
+    readonly contentFilter?: { readonly blocked?: readonly string[] };
+    readonly pii?:
+      | boolean
+      | {
+          readonly types?: readonly (
+            | 'email'
+            | 'phone'
+            | 'ssn'
+            | 'creditCard'
+            | 'apiKey'
+            | 'ipv4'
+            | 'privateKey'
+          )[];
+        };
   };
 
   /** Cost budget. */
@@ -139,6 +161,15 @@ export interface OpenAIHarnessConfig extends HarnessConfigBase {
  * const adapter = createAnthropicAdapter({ client, model: 'claude-sonnet-4-20250514' });
  * const harness = createHarness({ adapter });
  * ```
+ *
+ * @internal
+ *
+ * P2-17 (Wave-12): `AdapterHarnessConfig` ships in the public barrel so the
+ * {@link HarnessConfig} union resolves cleanly, but the interface itself is
+ * considered internal — it exposes the {@link AgentAdapter} type directly and
+ * couples callers to a type that is subject to change. Prefer the
+ * `{ adapter }` literal form shown above; api-extractor will mark this shape
+ * as `@internal` in the report.
  */
 export interface AdapterHarnessConfig extends HarnessConfigBase {
   readonly adapter: AgentAdapter;
@@ -196,24 +227,49 @@ export interface Harness {
    * @param messages - The initial conversation. Must include at least one
    *   user message for input guardrails to run.
    * @param options.sessionId - Session identifier for the conversation store.
-   *   Defaults to `"default"`, which is unsafe for concurrent `run()` calls
-   *   in multi-request servers — a warning is logged the first time
-   *   `"default"` is used. Pass a per-request id (e.g., a user id) to isolate
-   *   conversation histories.
+   *   When omitted an auto-generated id of the form `session_<uuid>` is used
+   *   — see `options.onSessionId` to recover it. A warning is logged the
+   *   first time an auto-generated id is used; pass a per-request id
+   *   (e.g., a user id) to isolate conversation histories and enable resume.
+   * @param options.onSessionId - Optional callback invoked synchronously,
+   *   before the first event is yielded, with the effective session id
+   *   (either the caller-provided value or the auto-generated id). P1-20
+   *   (Wave-12): without this hook callers had no way to observe the
+   *   auto-generated id and therefore could not resume the conversation
+   *   on a subsequent call.  The callback is invoked exactly once per
+   *   `run()` invocation; any exception it throws is logged and swallowed
+   *   so the loop is not interrupted.
    */
-  run(messages: Message[], options?: { sessionId?: string }): AsyncGenerator<AgentEvent>;
+  run(
+    messages: Message[],
+    options?: {
+      sessionId?: string;
+      onSessionId?: (sessionId: string) => void;
+    },
+  ): AsyncGenerator<AgentEvent>;
 
   /**
-   * ARCH-007: Optional eager initialization.
+   * Eagerly warm trace exporters and tokenizer.
    *
-   * Awaits `initialize()` on every configured trace exporter (if they
-   * declare one) and warms the tokenizer when `config.tokenizer === 'tiktoken'`.
-   * Idempotent — subsequent calls return the same resolved promise.
+   * Optional; calling {@link Harness.run} before `initialize()` works
+   * (exporters initialize lazily on first export, and the tokenizer
+   * registers on first use). Useful for fail-fast startup where
+   * connection / registration failures should surface at boot rather
+   * than mid-request.
    *
-   * Calling `run()` before `initialize()` still works: exporters initialize
-   * lazily on first export and the tokenizer registers on first use. Eager
-   * initialization is useful in fail-fast startup paths where connection /
-   * registration failures should surface at boot, not mid-request.
+   * Idempotent: concurrent and repeat calls share a single in-flight
+   * promise via an internal latch, so exporters are only warmed once.
+   *
+   * Implementation details (ARCH-007): awaits `TraceManager.initialize()`,
+   * which fans out to every exporter that declares an `initialize()`
+   * hook; additionally forces the tiktoken WASM module to load when
+   * `config.tokenizer === 'tiktoken'` by encoding a dummy string. Failures
+   * at this step are non-fatal — the per-exporter `isHealthy` gate still
+   * governs subsequent exports.
+   *
+   * @returns A promise that resolves once all exporters and the tokenizer
+   *   have been warmed (or resolved to "warmed in the background" with a
+   *   logged warning on failure).
    */
   initialize?(): Promise<void>;
 
@@ -501,7 +557,10 @@ export function createHarness(config: HarnessConfig): Harness {
 
     async *run(
       messages: Message[],
-      options?: { sessionId?: string },
+      options?: {
+        sessionId?: string;
+        onSessionId?: (sessionId: string) => void;
+      },
     ): AsyncGenerator<AgentEvent> {
       // F14: Auto-generate a unique session ID when none is provided,
       // preventing accidental message interleaving across concurrent requests.
@@ -511,6 +570,22 @@ export function createHarness(config: HarnessConfig): Harness {
       } else {
         sessionId = `session_${randomUUID()}`;
         warnDefaultSessionOnce();
+      }
+
+      // P1-20 (Wave-12): surface the effective session id via callback so
+      // callers can persist / log / resume the auto-generated value.  The
+      // callback is invoked before any event is yielded and exceptions are
+      // logged-and-swallowed so a misbehaving observer cannot abort the
+      // generator.
+      if (options?.onSessionId) {
+        try {
+          options.onSessionId(sessionId);
+        } catch (err) {
+          logger.warn('[harness-one/preset] onSessionId callback threw; continuing', {
+            sessionId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
       }
 
       // Start a harness-level trace so pre-loop and per-event guardrail checks
@@ -862,7 +937,11 @@ function createGuardrails(config: HarnessConfig): GuardrailPipeline {
   }
 
   if (config.guardrails?.rateLimit) {
-    const limiter = createRateLimiter(config.guardrails.rateLimit);
+    // P1-14: config shape is deep-readonly; factory accepts mutable shape.
+    // Spread to a fresh mutable object so readonly→mutable conversion is
+    // explicit and contained to this boundary.
+    const { max, windowMs } = config.guardrails.rateLimit;
+    const limiter = createRateLimiter({ max, windowMs });
     entries.push({
       name: limiter.name,
       guard: limiter.guard,
@@ -871,7 +950,13 @@ function createGuardrails(config: HarnessConfig): GuardrailPipeline {
   }
 
   if (config.guardrails?.contentFilter) {
-    const filter = createContentFilter(config.guardrails.contentFilter);
+    // P1-14: clone the `blocked` array so the deep-readonly config-level
+    // array cannot alias the internal mutable representation used by the
+    // filter factory.
+    const cf = config.guardrails.contentFilter;
+    const filter = createContentFilter({
+      ...(cf.blocked !== undefined && { blocked: [...cf.blocked] }),
+    });
     entries.push({
       name: filter.name,
       guard: filter.guard,

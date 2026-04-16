@@ -1423,4 +1423,159 @@ describe('createHarness() factory', () => {
       expect(callArgs).not.toHaveProperty('model');
     });
   });
+
+  // -----------------------------------------------------------------------
+  // P1-14 (Wave-12): deep-readonly guardrail config types
+  // -----------------------------------------------------------------------
+  describe('P1-14: guardrails config is deeply readonly', () => {
+    it('rejects mutation of rateLimit fields at compile time', () => {
+      const config = {
+        ...anthropicConfig,
+        guardrails: {
+          rateLimit: { max: 10, windowMs: 1000 },
+        },
+      } satisfies AnthropicHarnessConfig;
+
+      // Runtime: creation succeeds
+      expect(() => createHarness(config)).not.toThrow();
+
+      // Compile-time: attempting to mutate must be rejected by TypeScript.
+      // The `@ts-expect-error` directive fails the build if the line is
+      // actually type-safe, pinning the readonly contract in place.
+      // @ts-expect-error readonly rateLimit.max cannot be reassigned
+      config.guardrails.rateLimit.max = 99;
+      // @ts-expect-error readonly rateLimit.windowMs cannot be reassigned
+      config.guardrails.rateLimit.windowMs = 2000;
+    });
+
+    it('rejects mutation of contentFilter.blocked array at compile time', () => {
+      const config = {
+        ...anthropicConfig,
+        guardrails: {
+          contentFilter: { blocked: ['secret'] },
+        },
+      } satisfies AnthropicHarnessConfig;
+
+      expect(() => createHarness(config)).not.toThrow();
+
+      // @ts-expect-error readonly string[] has no .push method
+      config.guardrails.contentFilter.blocked.push('newsecret');
+      // @ts-expect-error readonly string[] cannot be index-assigned
+      config.guardrails.contentFilter.blocked[0] = 'other';
+    });
+
+    it('rejects mutation of pii.types array at compile time', () => {
+      const config = {
+        ...anthropicConfig,
+        guardrails: {
+          pii: { types: ['email', 'phone'] },
+        },
+      } satisfies AnthropicHarnessConfig;
+
+      expect(() => createHarness(config)).not.toThrow();
+
+      // @ts-expect-error readonly PII type array cannot be mutated
+      config.guardrails.pii.types.push('ssn');
+    });
+
+    it('clones contentFilter.blocked so internal factory mutation cannot bleed into caller state', () => {
+      const blocked = ['secret'] as const;
+      // Cast the frozen literal tuple into a plain readonly array for the
+      // config; the preset should defensively clone it before handing off.
+      const config = {
+        ...anthropicConfig,
+        guardrails: {
+          contentFilter: { blocked: [...blocked] as readonly string[] },
+        },
+      } satisfies AnthropicHarnessConfig;
+      // createHarness must not throw even when given a frozen-ish array.
+      expect(() => createHarness(config)).not.toThrow();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // P1-20 (Wave-12): onSessionId callback surfaces auto-generated id
+  // -----------------------------------------------------------------------
+  describe('P1-20: onSessionId callback', () => {
+    it('invokes the callback with the caller-provided sessionId verbatim', async () => {
+      mocks.mockAgentLoopRun.mockImplementation(async function* () {
+        yield { type: 'done' as const, reason: 'end_turn' as const, totalUsage: { inputTokens: 0, outputTokens: 0 } };
+      });
+      const harness = createHarness(anthropicConfig);
+      const seen: string[] = [];
+      for await (const _ev of harness.run(
+        [{ role: 'user', content: 'hi' }],
+        { sessionId: 'custom-id-1', onSessionId: (id) => seen.push(id) },
+      )) {
+        void _ev;
+      }
+      expect(seen).toEqual(['custom-id-1']);
+    });
+
+    it('invokes the callback with the auto-generated session id when none is provided', async () => {
+      mocks.mockAgentLoopRun.mockImplementation(async function* () {
+        yield { type: 'done' as const, reason: 'end_turn' as const, totalUsage: { inputTokens: 0, outputTokens: 0 } };
+      });
+      const harness = createHarness(anthropicConfig);
+      const seen: string[] = [];
+      for await (const _ev of harness.run(
+        [{ role: 'user', content: 'hi' }],
+        { onSessionId: (id) => seen.push(id) },
+      )) {
+        void _ev;
+      }
+      expect(seen).toHaveLength(1);
+      // Auto-generated ids use the `session_<uuid>` shape; the UUID portion
+      // matches the RFC 4122 v4 hex/dash form produced by `crypto.randomUUID`.
+      expect(seen[0]).toMatch(
+        /^session_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+      );
+    });
+
+    it('invokes the callback exactly once per run() invocation', async () => {
+      mocks.mockAgentLoopRun.mockImplementation(async function* () {
+        yield { type: 'message' as const, message: { role: 'assistant' as const, content: 'hi' }, usage: { inputTokens: 1, outputTokens: 1 } };
+        yield { type: 'done' as const, reason: 'end_turn' as const, totalUsage: { inputTokens: 1, outputTokens: 1 } };
+      });
+      const harness = createHarness(anthropicConfig);
+      const spy = vi.fn();
+      for await (const _ev of harness.run([{ role: 'user', content: 'hi' }], { onSessionId: spy })) {
+        void _ev;
+      }
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    it('swallows exceptions thrown by onSessionId and continues the loop', async () => {
+      mocks.mockAgentLoopRun.mockImplementation(async function* () {
+        yield { type: 'done' as const, reason: 'end_turn' as const, totalUsage: { inputTokens: 0, outputTokens: 0 } };
+      });
+      const harness = createHarness(anthropicConfig);
+      const events: unknown[] = [];
+      // Callback throws; the generator must still yield the `done` event.
+      for await (const ev of harness.run(
+        [{ role: 'user', content: 'hi' }],
+        {
+          onSessionId: () => {
+            throw new Error('observer failure');
+          },
+        },
+      )) {
+        events.push(ev);
+      }
+      const done = events.find((e) => (e as { type: string }).type === 'done');
+      expect(done).toBeDefined();
+    });
+
+    it('works when onSessionId is omitted (backwards compatible)', async () => {
+      mocks.mockAgentLoopRun.mockImplementation(async function* () {
+        yield { type: 'done' as const, reason: 'end_turn' as const, totalUsage: { inputTokens: 0, outputTokens: 0 } };
+      });
+      const harness = createHarness(anthropicConfig);
+      const events: unknown[] = [];
+      for await (const ev of harness.run([{ role: 'user', content: 'hi' }])) {
+        events.push(ev);
+      }
+      expect(events.find((e) => (e as { type: string }).type === 'done')).toBeDefined();
+    });
+  });
 });

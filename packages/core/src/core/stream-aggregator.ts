@@ -83,17 +83,35 @@ export interface StreamAggregatorOptions {
  * Aborting / re-using: call `reset()` to discard accumulated state and
  * reuse the instance for another iteration.
  */
+/**
+ * Internal tool-call accumulator entry. Wave-12 P0-3 swaps the single
+ * `arguments: string` (concatenated per chunk) for a `string[]` buffer that
+ * is `join('')`-ed lazily inside `getMessage()`, avoiding the O(n²) cost of
+ * repeated string concatenation on the streaming hot path.
+ */
+interface ToolCallEntry {
+  id: string;
+  name: string;
+  readonly argsParts: string[];
+  /** Running total of `argsParts` byte length — kept in sync on each push. */
+  argsBytes: number;
+}
+
 export class StreamAggregator {
   private readonly options: StreamAggregatorOptions;
-  private accumulatedText = '';
+  /**
+   * Wave-12 P0-3: text deltas accumulate into a `string[]` buffer joined
+   * lazily inside `getMessage()`. Replaces the O(n²) `accumulatedText +=`.
+   */
+  private readonly textParts: string[] = [];
   private accumulatedBytes = 0;
   /** Map for O(1) id lookups. Mirrors `toolCallList` exactly. */
-  private readonly accumulatedToolCalls: Map<string, { id: string; name: string; arguments: string }> = new Map();
+  private readonly accumulatedToolCalls: Map<string, ToolCallEntry> = new Map();
   /**
    * Parallel array preserving insertion order so we never need to spread
    * `accumulatedToolCalls.values()` to build the final message (PERF-032).
    */
-  private readonly toolCallList: Array<{ id: string; name: string; arguments: string }> = [];
+  private readonly toolCallList: ToolCallEntry[] = [];
 
   constructor(options: StreamAggregatorOptions) {
     this.options = options;
@@ -130,7 +148,8 @@ export class StreamAggregator {
         yield { type: 'error', error: sizeErr };
         return;
       }
-      this.accumulatedText += chunk.text;
+      // Wave-12 P0-3: buffer; joined lazily in `getMessage()`.
+      this.textParts.push(chunk.text);
       yield { type: 'text_delta', text: chunk.text };
       return;
     }
@@ -152,8 +171,11 @@ export class StreamAggregator {
         const existing = this.accumulatedToolCalls.get(partial.id);
         if (existing) {
           if (partial.name) existing.name = partial.name;
-          if (partial.arguments) existing.arguments += partial.arguments;
-          if (existing.arguments.length > this.options.maxToolArgBytes) {
+          if (partial.arguments) {
+            existing.argsParts.push(partial.arguments);
+            existing.argsBytes += partial.arguments.length;
+          }
+          if (existing.argsBytes > this.options.maxToolArgBytes) {
             yield {
               type: 'error',
               error: new HarnessError(
@@ -165,7 +187,9 @@ export class StreamAggregator {
             return;
           }
         } else {
-          // Check tool call count limit before adding a new entry.
+          // Wave-12 P1-12: Check tool-call count limit BEFORE allocating the
+          // new entry — a rogue stream could otherwise allocate thousands of
+          // partial entries before the cap fires on the next iteration.
           const maxToolCalls = this.options.maxToolCalls ?? 128;
           if (this.accumulatedToolCalls.size >= maxToolCalls) {
             yield {
@@ -180,10 +204,11 @@ export class StreamAggregator {
           }
           // PERF-024: New tool call — push once into the parallel array so
           // subsequent deltas mutate in place via the map reference.
-          const entry = {
+          const entry: ToolCallEntry = {
             id: partial.id,
             name: partial.name ?? '',
-            arguments: partial.arguments ?? '',
+            argsParts: partial.arguments ? [partial.arguments] : [],
+            argsBytes: partial.arguments?.length ?? 0,
           };
           this.accumulatedToolCalls.set(partial.id, entry);
           this.toolCallList.push(entry);
@@ -196,8 +221,11 @@ export class StreamAggregator {
       if (this.toolCallList.length > 0) {
         const last = this.toolCallList[this.toolCallList.length - 1];
         if (partial.name) last.name = partial.name;
-        if (partial.arguments) last.arguments += partial.arguments;
-        if (last.arguments.length > this.options.maxToolArgBytes) {
+        if (partial.arguments) {
+          last.argsParts.push(partial.arguments);
+          last.argsBytes += partial.arguments.length;
+        }
+        if (last.argsBytes > this.options.maxToolArgBytes) {
           yield {
             type: 'error',
             error: new HarnessError(
@@ -227,11 +255,21 @@ export class StreamAggregator {
    * than `[]`, which downstream observers depend on).
    */
   getMessage(usage: TokenUsage): StreamAggregatorMessage {
-    // PERF-032: reuse the parallel array — no `[...map.values()]` spread.
-    const toolCalls: ToolCallRequest[] = this.toolCallList;
+    // Wave-12 P0-3: flatten the per-entry `argsParts` buffer into the final
+    // `arguments: string` the public `ToolCallRequest` shape mandates. This
+    // is the single join per tool call across the whole stream, replacing
+    // the O(n²) per-chunk concatenation loop.
+    const toolCalls: ToolCallRequest[] =
+      this.toolCallList.length === 0
+        ? []
+        : this.toolCallList.map((e) => ({
+            id: e.id,
+            name: e.name,
+            arguments: e.argsParts.length === 1 ? e.argsParts[0] : e.argsParts.join(''),
+          }));
     const message: Message = {
       role: 'assistant',
-      content: this.accumulatedText,
+      content: this.textParts.length === 1 ? this.textParts[0] : this.textParts.join(''),
       ...(toolCalls.length > 0 ? { toolCalls } : {}),
     };
     return { message, usage, bytesRead: this.accumulatedBytes };
@@ -239,7 +277,7 @@ export class StreamAggregator {
 
   /** Discard accumulated state; the instance is ready for reuse. */
   reset(): void {
-    this.accumulatedText = '';
+    this.textParts.length = 0;
     this.accumulatedBytes = 0;
     this.accumulatedToolCalls.clear();
     this.toolCallList.length = 0;

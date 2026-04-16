@@ -22,7 +22,9 @@ export interface OTelDroppedAttributeMetrics {
 
 // @public
 export interface OTelExporterConfig {
+    // @deprecated
     readonly evictedParentsTtlMs?: number;
+    readonly logger?: OTelExporterLogger;
     readonly maxEvictedParents?: number;
     readonly maxSpans?: number;
     readonly onDroppedAttribute?: (info: {
@@ -31,7 +33,14 @@ export interface OTelExporterConfig {
         where: 'attribute' | 'event';
     }) => void;
     readonly serviceName?: string;
+    readonly stringifyComplexAttributes?: boolean;
     readonly tracer?: Tracer;
+}
+
+// @public
+export interface OTelExporterLogger {
+    // (undocumented)
+    warn: (message: string, context?: Record<string, unknown>) => void;
 }
 
 // (No @packageDocumentation comment for this package)

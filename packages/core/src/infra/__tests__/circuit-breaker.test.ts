@@ -169,4 +169,86 @@ describe('createCircuitBreaker', () => {
     cb.recordFailure();
     expect(cb.state()).toBe('open');
   });
+
+  // P0-5 (Wave-12): Half-open probe mutex is atomic.
+  describe('P0-5 (Wave-12): half-open probe atomicity', () => {
+    it('serializes the probe slot so concurrent probes do not both win', async () => {
+      vi.useFakeTimers();
+      try {
+        const cb = createCircuitBreaker({ failureThreshold: 1, resetTimeoutMs: 1000 });
+        await expect(cb.execute(async () => { throw new Error('trip'); })).rejects.toThrow();
+        vi.advanceTimersByTime(1000);
+        expect(cb.state()).toBe('half_open');
+
+        // Kick off two probes in the same microtask tick — only one may
+        // acquire the slot; the other must fast-fail.
+        let resolveFirst!: (v: string) => void;
+        const firstProbe = cb.execute(() => new Promise<string>((r) => { resolveFirst = r; }));
+        const secondProbe = cb.execute(async () => 'second');
+
+        await expect(secondProbe).rejects.toBeInstanceOf(CircuitOpenError);
+
+        // First probe completes successfully → breaker closes.
+        resolveFirst('first');
+        expect(await firstProbe).toBe('first');
+        expect(cb.state()).toBe('closed');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('releases the probe slot on failure so a subsequent half_open cycle can probe', async () => {
+      vi.useFakeTimers();
+      try {
+        const cb = createCircuitBreaker({ failureThreshold: 1, resetTimeoutMs: 1000 });
+        await expect(cb.execute(async () => { throw new Error('trip'); })).rejects.toThrow();
+
+        // First half-open probe fails → breaker reopens.
+        vi.advanceTimersByTime(1000);
+        await expect(cb.execute(async () => { throw new Error('probe-fail'); })).rejects.toThrow('probe-fail');
+        expect(cb.state()).toBe('open');
+
+        // After another reset window, breaker must transition to half_open
+        // again AND accept a new probe — i.e. the slot was released on the
+        // prior failure (no wedged state).
+        vi.advanceTimersByTime(1000);
+        const result = await cb.execute(async () => 'recovered');
+        expect(result).toBe('recovered');
+        expect(cb.state()).toBe('closed');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('does not corrupt consecutiveFailures when races are prevented', async () => {
+      vi.useFakeTimers();
+      try {
+        const cb = createCircuitBreaker({ failureThreshold: 2, resetTimeoutMs: 1000 });
+        // Trip to open with two failures.
+        await expect(cb.execute(async () => { throw new Error('f1'); })).rejects.toThrow();
+        await expect(cb.execute(async () => { throw new Error('f2'); })).rejects.toThrow();
+        expect(cb.state()).toBe('open');
+
+        vi.advanceTimersByTime(1000);
+        // Fire three concurrent probes. Only one may claim the slot; the
+        // other two fast-fail. The winning probe's failure must be counted
+        // and reopen the breaker.
+        let reject!: (err: Error) => void;
+        const p1 = cb.execute(() => new Promise<string>((_, r) => { reject = r; }));
+        const p2 = cb.execute(async () => 'b');
+        const p3 = cb.execute(async () => 'c');
+
+        await expect(p2).rejects.toBeInstanceOf(CircuitOpenError);
+        await expect(p3).rejects.toBeInstanceOf(CircuitOpenError);
+
+        reject(new Error('probe-fail'));
+        await expect(p1).rejects.toThrow('probe-fail');
+
+        // After the single probe's failure, breaker must be open (not closed).
+        expect(cb.state()).toBe('open');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
 });

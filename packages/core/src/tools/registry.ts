@@ -231,14 +231,30 @@ export function createRegistry(config?: CreateRegistryConfig): ToolRegistry {
     }
     try {
       params = JSON.parse(call.arguments);
-    } catch {
+    } catch (err) {
       turnCalls--;
       sessionCalls--;
-      return toolError(
-        'Invalid JSON in tool call arguments',
+      // Wave-12 P1-2: preserve the SyntaxError on `cause` and include the
+      // position hint from the native parser so a retry loop / log line can
+      // surface the actual failure site instead of a bare "Invalid JSON".
+      const syntaxMessage = err instanceof SyntaxError ? err.message : String(err);
+      const result = toolError(
+        `Invalid JSON in tool call arguments (${syntaxMessage})`,
         'validation',
         'Ensure arguments is valid JSON',
       );
+      // Attach the structured cause via a non-enumerable field so
+      // `JSON.stringify(result)` is unchanged, but failure-inspection paths
+      // (debuggers, error wrappers) can pick it up.
+      if (err instanceof Error) {
+        Object.defineProperty(result, 'cause', {
+          value: err,
+          enumerable: false,
+          configurable: true,
+          writable: false,
+        });
+      }
+      return result;
     }
 
     // Validate (await in case validator is async, e.g., AjvSchemaValidator)
@@ -292,6 +308,34 @@ export function createRegistry(config?: CreateRegistryConfig): ToolRegistry {
       return chain;
     }
 
+    /**
+     * Wave-12 P2-24: runtime shape assertion for tool return values.
+     *
+     * Tool implementations are typed to return `ToolResult`, but JS callers
+     * (or buggy middleware) can still return a plain object, a string, `null`,
+     * or a Promise that resolves to garbage. We guard the handler path here so
+     * the rest of the registry (and downstream loop) always sees a valid
+     * `ToolResult` discriminated union.
+     */
+    function assertToolResult(value: unknown): ToolResult {
+      if (
+        value !== null &&
+        typeof value === 'object' &&
+        ('success' in value) &&
+        typeof (value as { success: unknown }).success === 'boolean' &&
+        // The `kind` tag is also required for new-style discriminated matching.
+        ('kind' in value) &&
+        ((value as { kind: unknown }).kind === 'success' || (value as { kind: unknown }).kind === 'error')
+      ) {
+        return value as ToolResult;
+      }
+      return toolError(
+        `Tool "${call.name}" returned unexpected type (not a ToolResult)`,
+        'internal',
+        'Ensure the tool returns toolSuccess()/toolError() or an equivalent ToolResult object',
+      );
+    }
+
     // Execute with optional timeout using a simple timer promise pattern
     // that avoids listener leaks by not attaching abort signal listeners.
     //
@@ -304,12 +348,40 @@ export function createRegistry(config?: CreateRegistryConfig): ToolRegistry {
     if (timeoutMs !== undefined) {
       const ac = new AbortController();
       let timer: ReturnType<typeof setTimeout> | undefined;
+      // Wave-12 P1-18: when a tool keeps running long after the signal has
+      // fired, warn so operators can identify tools that ignore the signal
+      // (see ToolDefinition.execute TSDoc). Threshold: 2× timeout.
+      let nonResponsiveTimer: ReturnType<typeof setTimeout> | undefined;
+      let timedOut = false;
+      // P2-24: wrap the raw chain in the shape assertion so garbage return
+      // values cannot propagate up through the Promise.race winner.
+      const chainPromise = buildChain(ac.signal)().then(assertToolResult);
       try {
         const timeoutPromise = new Promise<ToolResult>((resolve) => {
           // Wave-5F m-2: unref so an abandoned Promise.race doesn't hold the
           // event loop open past the caller's expected process lifetime.
           timer = unrefTimeout(() => {
+            timedOut = true;
             ac.abort();
+            // Arm the non-responsive-tool detector.
+            nonResponsiveTimer = unrefTimeout(() => {
+              safeWarn(
+                logger,
+                `tool "${call.name}" did not resolve within ${timeoutMs}ms after abort — possible signal-ignoring implementation`,
+                { tool: call.name, timeoutMs },
+              );
+            }, timeoutMs);
+            // Attach a best-effort cleanup so the non-responsive timer fires
+            // at most once per invocation.
+            chainPromise.finally(() => {
+              if (nonResponsiveTimer !== undefined) {
+                clearTimeout(nonResponsiveTimer);
+                nonResponsiveTimer = undefined;
+              }
+            }).catch(() => {
+              // Swallow — the chain promise's failure is handled by the
+              // Promise.race below; we only care about clearing the timer.
+            });
             resolve(
               toolError(
                 `Tool "${call.name}" timed out after ${timeoutMs}ms`,
@@ -321,9 +393,8 @@ export function createRegistry(config?: CreateRegistryConfig): ToolRegistry {
           }, timeoutMs);
         });
 
-        const chain = buildChain(ac.signal);
         try {
-          return await Promise.race([chain(), timeoutPromise]);
+          return await Promise.race([chainPromise, timeoutPromise]);
         } catch (err) {
           // CQ-008: Same error-to-toolError conversion as the non-timeout path.
           return toolError(
@@ -334,6 +405,7 @@ export function createRegistry(config?: CreateRegistryConfig): ToolRegistry {
         }
       } finally {
         if (timer !== undefined) clearTimeout(timer);
+        if (!timedOut && nonResponsiveTimer !== undefined) clearTimeout(nonResponsiveTimer);
         // Abort the controller to cancel any in-flight tool work
         ac.abort();
       }
@@ -342,7 +414,8 @@ export function createRegistry(config?: CreateRegistryConfig): ToolRegistry {
     // If tool.execute() throws (instead of returning a ToolResult error),
     // the pre-claimed turnCalls/sessionCalls counters would never be decremented.
     try {
-      return await buildChain()();
+      // P2-24: same shape assertion as the timeout branch.
+      return assertToolResult(await buildChain()());
     } catch (err) {
       return toolError(
         err instanceof Error ? err.message : String(err),
@@ -376,7 +449,17 @@ export function createRegistry(config?: CreateRegistryConfig): ToolRegistry {
     };
   }
 
-  return { register, get, list, schemas, execute, handler, resetTurn, resetSession, getConfig };
+  // Wave-12 P1-18: add a Symbol.toStringTag marker so Object.prototype.toString
+  // surfaces a descriptive tag (e.g. `[object HarnessToolRegistry]`) for
+  // debuggers and structured-logging pretty-printers.
+  const registry: ToolRegistry = { register, get, list, schemas, execute, handler, resetTurn, resetSession, getConfig };
+  Object.defineProperty(registry, Symbol.toStringTag, {
+    value: 'HarnessToolRegistry',
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
+  return registry;
 }
 
 /**

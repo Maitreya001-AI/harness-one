@@ -12,10 +12,12 @@ import { ConversationStore } from 'harness-one/session';
 import { CostTracker } from 'harness-one/observe';
 import { EvalRunner } from '@harness-one/devkit';
 import { GuardrailPipeline } from 'harness-one/guardrails';
+import { HarnessLifecycle } from 'harness-one/observe';
 import { LangfuseExporterConfig } from '@harness-one/langfuse';
 import { Logger } from 'harness-one/observe';
 import { MemoryStore } from 'harness-one/memory';
 import { Message } from 'harness-one/core';
+import { MetricsPort } from 'harness-one/observe';
 import { MiddlewareChain } from 'harness-one/core';
 import { ModelPricing } from 'harness-one/observe';
 import { OpenAIAdapterConfig } from '@harness-one/openai';
@@ -28,8 +30,9 @@ import { TraceExporter } from 'harness-one/observe';
 import { TraceManager } from 'harness-one/observe';
 
 // Warning: (ae-forgotten-export) The symbol "HarnessConfigBase" needs to be exported by the entry point index.d.ts
+// Warning: (ae-internal-missing-underscore) The name "AdapterHarnessConfig" should be prefixed with an underscore because the declaration is marked as @internal
 //
-// @public
+// @internal
 export interface AdapterHarnessConfig extends HarnessConfigBase {
     // (undocumented)
     readonly adapter: AgentAdapter;
@@ -51,8 +54,11 @@ export function createConfigFromEnv(env?: Record<string, string | undefined>): P
 // @public
 export function createHarness(config: HarnessConfig): Harness;
 
+// @public (undocumented)
+export function createSecurePreset(config: HarnessConfig & SecurePresetOptions): SecureHarness;
+
 // @public
-export function createSecurePreset(config: HarnessConfig & SecurePresetOptions): Harness;
+export function createShutdownHandler(harness: Pick<Harness, 'drain'>, options?: ShutdownHandlerOptions): () => void;
 
 // @public
 export interface Harness {
@@ -78,6 +84,7 @@ export interface Harness {
     readonly prompts: PromptBuilder;
     run(messages: Message[], options?: {
         sessionId?: string;
+        onSessionId?: (sessionId: string) => void;
     }): AsyncGenerator<AgentEvent>;
     // (undocumented)
     readonly sessions: SessionManager;
@@ -89,37 +96,42 @@ export interface Harness {
     readonly traces: TraceManager;
 }
 
+// Warning: (ae-incompatible-release-tags) The symbol "HarnessConfig" is marked as @public, but its signature references "AdapterHarnessConfig" which is marked as @internal
+//
 // @public
 export type HarnessConfig = AdapterHarnessConfig | AnthropicHarnessConfig | OpenAIHarnessConfig;
 
 // @public
 interface HarnessConfigBase {
     readonly adapter?: AgentAdapter;
+    readonly baseRetryDelayMs?: number;
     readonly budget?: number;
     readonly exporters?: TraceExporter[];
     readonly guardrails?: {
         readonly injection?: boolean | {
-            sensitivity?: 'low' | 'medium' | 'high';
+            readonly sensitivity?: 'low' | 'medium' | 'high';
         };
         readonly rateLimit?: {
-            max: number;
-            windowMs: number;
+            readonly max: number;
+            readonly windowMs: number;
         };
         readonly contentFilter?: {
-            blocked?: string[];
+            readonly blocked?: readonly string[];
         };
         readonly pii?: boolean | {
-            types?: Array<'email' | 'phone' | 'ssn' | 'creditCard' | 'apiKey' | 'ipv4' | 'privateKey'>;
+            readonly types?: readonly ('email' | 'phone' | 'ssn' | 'creditCard' | 'apiKey' | 'ipv4' | 'privateKey')[];
         };
     };
     readonly langfuse?: LangfuseExporterConfig['client'];
     readonly logger?: Logger;
+    readonly maxAdapterRetries?: number;
     readonly maxIterations?: number;
     readonly maxTotalTokens?: number;
     readonly memoryStore?: MemoryStore;
     readonly model?: string;
     readonly pricing?: ModelPricing[];
     readonly redis?: RedisStoreConfig['client'];
+    readonly retryableErrors?: readonly string[];
     readonly schemaValidator?: SchemaValidator;
     readonly tokenizer?: 'tiktoken' | ((text: string) => number) | {
         encode(text: string): {
@@ -136,6 +148,12 @@ export interface OpenAIHarnessConfig extends HarnessConfigBase {
 }
 
 // @public
+export interface SecureHarness extends Harness {
+    readonly lifecycle: HarnessLifecycle;
+    readonly metrics: MetricsPort;
+}
+
+// @public
 export type SecurePresetGuardrailLevel = 'minimal' | 'standard' | 'strict';
 
 // @public
@@ -145,11 +163,22 @@ export interface SecurePresetOptions {
 }
 
 // @public
+export interface ShutdownHandlerOptions {
+    readonly exit?: boolean;
+    readonly exitCode?: number;
+    readonly onEvent?: (message: string) => void;
+    readonly timeoutMs?: number;
+}
+
+// @public
 export type Tokenizer = ((text: string) => number) | {
     encode(text: string): {
         length: number;
     };
 };
+
+// @public
+export function validateHarnessConfig(config: Record<string, unknown>): void;
 
 // (No @packageDocumentation comment for this package)
 

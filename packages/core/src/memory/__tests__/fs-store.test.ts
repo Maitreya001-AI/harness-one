@@ -462,6 +462,78 @@ describe('createFileSystemStore', () => {
       await expect(store.write({ key: 'k2', content: 'test2', grade: 'useful' })).rejects.toThrow();
     });
   });
+
+  describe('Wave-12 P1-5: batchUnlink partial-failure logger', () => {
+    it('emits logger.warn when compact.maxAge cannot delete some entries', async () => {
+      // Simulate a partial-failure by making the storage directory read-only
+      // AFTER seeding an entry. The readEntry step (reads the file) still
+      // succeeds because we keep file read perms; unlink on a contained file
+      // fails with EACCES because the parent dir lost write permission.
+      const { chmod } = await import('node:fs/promises');
+      const warns: Array<{ msg: string; meta?: Record<string, unknown> }> = [];
+      const loggedDir = await mkdtemp(join(tmpdir(), 'harness-mem-p15-'));
+      const loggedStore = createFileSystemStore({
+        directory: loggedDir,
+        logger: {
+          warn: (msg, meta) => warns.push({ msg, meta }),
+        },
+      });
+      await loggedStore.write({ key: 'k1', content: 'v', grade: 'ephemeral' });
+      await new Promise(r => setTimeout(r, 5));
+
+      // Skip on platforms where chmod is a no-op (Windows); the test is still
+      // valuable as a cross-platform reachability check for POSIX-like envs.
+      const isPosix = process.platform === 'linux' || process.platform === 'darwin';
+      if (!isPosix) {
+        await rm(loggedDir, { recursive: true, force: true });
+        return;
+      }
+
+      // 0o555 = read+execute only; cannot unlink contained files.
+      await chmod(loggedDir, 0o555);
+      try {
+        // batchUnlink swallows errors per-path (Promise.allSettled) and the
+        // store's compact() also re-reads the index at the end which needs
+        // write perms. The partial-failure logger fires BEFORE that, so we
+        // tolerate the later writeIndex() failure.
+        try {
+          await loggedStore.compact({ maxAge: 0 });
+        } catch { /* writeIndex() failure is acceptable for this test */ }
+
+        const relevant = warns.find(w => w.msg.includes('compact.maxAge'));
+        expect(relevant).toBeDefined();
+        expect(relevant!.meta).toMatchObject({
+          source: 'compact.maxAge',
+          failedCount: expect.any(Number),
+        });
+        expect((relevant!.meta!.failedCount as number)).toBeGreaterThanOrEqual(1);
+        expect(Array.isArray(relevant!.meta!.sampleErrors)).toBe(true);
+        expect((relevant!.meta!.sampleErrors as unknown[]).length).toBeLessThanOrEqual(3);
+      } finally {
+        // Restore write perms so cleanup can delete the dir.
+        await chmod(loggedDir, 0o700);
+        await rm(loggedDir, { recursive: true, force: true });
+      }
+    });
+
+    it('does NOT log when all deletes succeed', async () => {
+      const warns: Array<{ msg: string; meta?: Record<string, unknown> }> = [];
+      const loggedDir = await mkdtemp(join(tmpdir(), 'harness-mem-p15-ok-'));
+      const loggedStore = createFileSystemStore({
+        directory: loggedDir,
+        logger: {
+          warn: (msg, meta) => warns.push({ msg, meta }),
+        },
+      });
+      await loggedStore.write({ key: 'k1', content: 'v', grade: 'ephemeral' });
+      await new Promise(r => setTimeout(r, 5));
+      await loggedStore.compact({ maxAge: 0 });
+      // Clean success path — no P1-5 warn expected.
+      const p15 = warns.filter(w => w.msg.includes('fs-store]'));
+      expect(p15).toHaveLength(0);
+      await rm(loggedDir, { recursive: true, force: true });
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -8,6 +8,74 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed — Wave-12 (deep architecture research — 62 production-grade fixes)
+
+Driven by a six-angle parallel audit (concurrency, error handling, API design,
+performance, observability, tests) — see `docs/forge-fix/wave-12/research-report.md`
+for full findings.
+
+**P0 — data loss / crash:**
+- `agent-pool` `pendingQueue` is now bounded (`maxPendingQueueSize`, default 1000); excess acquires fail fast with `POOL_QUEUE_FULL`.
+- `circuit-breaker` half-open probe guarded by a Promise-based single-slot mutex — concurrent probes no longer race on `consecutiveFailures`.
+- `stream-aggregator` text + tool-call argument accumulation switched from `+=` concatenation to `string[]` buffers (avoids O(n^2) on large streams).
+- `agent-loop.ts` conversation prune uses in-place overwrite instead of `splice(...spread)`.
+- OpenAI adapter stream controller cleanup: replaced unsafe `as unknown as T` double-cast with a guarded narrow.
+
+**P1 — resilience, observability, API hardening:**
+- 5xx status codes (502/503/504, gateway/unavailable) now classified as `ADAPTER_UNAVAILABLE` (previously fell through to generic `ADAPTER_ERROR`).
+- Tool-call JSON parse errors preserve the original `SyntaxError` as `cause` with position hint.
+- Anthropic malformed tool_use: new `onMalformedToolUse` option (`warn`/`throw`/custom handler); raw argument string preserved on warn.
+- `adapter.chat()` accepts an optional `adapterTimeoutMs` so non-streaming calls can no longer hang forever.
+- `batchUnlink` partial-failure now logged via `logger.warn` with bounded sample errors.
+- Trace sampling supports per-exporter `shouldSampleTrace(trace)` tail-gate, enabling "sample-all-errors, 5%-successes" patterns.
+- Logger accepts optional `getContext()` hook → auto-injects `trace_id`/`span_id` per log call.
+- Langfuse `flushAsync()` promises tracked in `pendingFlushes`; `dispose(timeoutMs)` awaits them; catch wrapped to prevent unhandled rejections.
+- OTel `evictedParents` retention is now size-based only (TTL path removed); `stringifyComplexAttributes` config added for opt-in JSON serialization.
+- `trace-manager.flush()`/`dispose()` bounded by `flushTimeoutMs` (default 30s).
+- Session event queue prioritizes `created`/`destroyed`/`error` over routine events under pressure.
+- Session `toReadonly()` deep-clones metadata (was shallow).
+- `_zeroUsageWarnedModels` bounded to 256 FIFO entries.
+- OpenAI provider registry: duplicate `registerProvider` with divergent `baseURL` throws unless `{ allowOverride: true }`; reentrancy guard.
+- OpenAI `toOpenAIParameters` memoized via `WeakMap`.
+- Preset `guardrails` config is deeply `readonly`.
+- Preset `harness.run()` accepts `onSessionId` callback so callers can learn the auto-generated session id.
+- Langfuse `traceMap` entries deleted on `.update()` failure; `events[].attributes` now sanitized.
+- SSE stream `JSON.stringify` guarded; yields error envelope instead of crashing.
+- Cost-tracker `setPricing`/`setBudget` marked `@deprecated` (one-shot warning); factory-time config preferred.
+
+**P2 — polish, micro-optimizations, test gaps:**
+- Abort listener registered before timer in `adapter-caller` backoff (closes micro-race).
+- `retryableErrors` lookup converted to `Set<string>`.
+- `serializeToolResult` depth-limited (default 10) with cycle breaking and size truncation marker.
+- `computeJitterMs` output clamped to `idleTimeout * 0.1`.
+- Logger warn/info/error/debug signatures tightened to `Readonly<Record<string, unknown>>`; stack-trace paths sanitized.
+- `setSamplingRate` gets a matching `getSamplingRate()` accessor.
+- Cost-tracker budget-alert dedup window (`alertDedupeWindowMs`, default 500ms) prevents alert flood on streaming.
+- OpenAI + Anthropic `filterExtra` allow-lists pre-built as `Set<string>`; internal schema transformers marked `@internal`; unknown-key warnings deduped.
+- Anthropic streaming tool-call arguments buffered (not re-yielded as growing prefix).
+- `AdapterHarnessConfig` marked `@internal`; `Harness.initialize()` gets full TSDoc.
+- `context/budget.ts` pins clamp-at-0 semantics; adds sticky `hasOverflowed()`.
+- Property tests (deterministic mulberry32 PRNG) added for `backoff` bounds/monotonicity, `lru-cache` size invariant + MRU promotion, tiktoken fallback token-count monotonicity.
+- New coverage: `onRetry` throw propagation, MessageQueue `since` strict-`>` boundary, backpressure throw + no-onEvent semantics, sse-stream circular-ref/throwing-getter, output-parser CRLF edge.
+
+**API additions (non-breaking):**
+- `Logger.getContext?()`, `Logger.isWarnEnabled?()`, `sanitizeStackTrace()` export.
+- `TraceExporter.shouldSampleTrace?()`, `TraceManager.getSamplingRate()`.
+- `PoolConfig.maxPendingQueueSize`, `AdapterCallerConfig.adapterTimeoutMs`.
+- `createHarness().run()` option `onSessionId?: (id: string) => void`.
+- `RunBudget.hasOverflowed()`.
+- `LangfuseCostTracker.dispose(timeoutMs?)`.
+- `OpenTelemetryExporter` config: `stringifyComplexAttributes?: boolean`.
+- Anthropic adapter config: `onMalformedToolUse?: 'warn' | 'throw' | handler`.
+- OpenAI `registerProvider` options: `{ allowOverride?: boolean }`.
+- `CostTrackerConfig.alertDedupeWindowMs?`.
+
+**New HarnessErrorCode enum values:** `ADAPTER_UNAVAILABLE`, `POOL_QUEUE_FULL`.
+
+**Test counts** (all passing): core 3080, preset 261, openai 105, langfuse 113, opentelemetry 45, anthropic 55, cli 92, devkit 211, redis 62, tiktoken 23, ajv 27 → **4074 total**.
+
+---
+
 ### Fixed — Wave-6A (production architecture audit — 14 fixes)
 
 **Memory leak prevention:**

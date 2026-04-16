@@ -273,4 +273,102 @@ describe('LRUCache', () => {
       expect(cache.get(9899)).toBeUndefined();
     });
   });
+
+  // P2-23 (Wave-12): Property-style invariants for the LRU cache. Uses a
+  // deterministic seeded PRNG (mulberry32) rather than fast-check because
+  // fast-check is not a project dependency.
+  describe('P2-23 (Wave-12): LRU cache invariants (property tests)', () => {
+    function mulberry32(seed: number): () => number {
+      let a = seed >>> 0;
+      return () => {
+        a = (a + 0x6d2b79f5) >>> 0;
+        let t = a;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+
+    it('size never exceeds maxSize after any sequence of set/get/delete', () => {
+      const rng = mulberry32(0xABCDEF);
+      // Run several independent scenarios with varying maxSize.
+      for (let scenario = 0; scenario < 20; scenario++) {
+        const maxSize = Math.floor(rng() * 20) + 1; // [1, 20]
+        const cache = new LRUCache<number, number>(maxSize);
+        const ops = 500;
+        for (let i = 0; i < ops; i++) {
+          const op = Math.floor(rng() * 3);
+          const key = Math.floor(rng() * (maxSize * 3)); // allow key overlap
+          if (op === 0) {
+            cache.set(key, i);
+          } else if (op === 1) {
+            cache.get(key);
+          } else {
+            cache.delete(key);
+          }
+          // Invariant: size is always bounded by maxSize.
+          expect(cache.size).toBeLessThanOrEqual(maxSize);
+          // Size must also match the keys iterator length (no internal drift).
+          expect([...cache.keys()].length).toBe(cache.size);
+        }
+      }
+    });
+
+    it('re-setting an existing key promotes it to MRU position', () => {
+      const rng = mulberry32(0x12345);
+      // Fill cache to capacity with distinct keys, pick a non-MRU key, re-set
+      // it with a new value, and confirm: (a) the value updated, (b) the key
+      // now appears last in iteration order (MRU), and (c) adding one more
+      // key evicts the NEW oldest (not the re-promoted key).
+      for (let scenario = 0; scenario < 50; scenario++) {
+        const maxSize = Math.floor(rng() * 8) + 3; // [3, 10]
+        const cache = new LRUCache<string, number>(maxSize);
+        // Fill with keys k0..k{maxSize-1}.
+        for (let i = 0; i < maxSize; i++) cache.set(`k${i}`, i);
+        // Pick any non-MRU key — one of k0..k{maxSize-2}.
+        const promoteIdx = Math.floor(rng() * (maxSize - 1));
+        const promoteKey = `k${promoteIdx}`;
+        cache.set(promoteKey, 999);
+
+        // (a) value updated.
+        expect(cache.get(promoteKey)).toBe(999);
+
+        // `get` also promotes — to test the MRU property of set specifically,
+        // we need to re-promote + re-check via keys().
+        cache.set(promoteKey, 999);
+        const keys = [...cache.keys()];
+        // (b) promoteKey is at the tail of the keys iterator (MRU).
+        expect(keys[keys.length - 1]).toBe(promoteKey);
+
+        // (c) Add a new key — the new oldest should be evicted, not promoteKey.
+        cache.set('new', 0);
+        expect(cache.has(promoteKey)).toBe(true);
+        expect(cache.has('new')).toBe(true);
+      }
+    });
+
+    it('cache contents after randomized operations match a reference map of last-seen values bounded by maxSize', () => {
+      // A weaker correctness property: after a sequence of `set`s only, every
+      // key present in the cache must map to its most-recently-set value.
+      const rng = mulberry32(0xDEADBEEF);
+      const maxSize = 10;
+      const cache = new LRUCache<number, number>(maxSize);
+      const expected = new Map<number, number>();
+      for (let i = 0; i < 1000; i++) {
+        const key = Math.floor(rng() * 25);
+        const val = i;
+        cache.set(key, val);
+        expected.set(key, val);
+      }
+      // Snapshot the keys first — calling `cache.get()` inside the loop would
+      // mutate iteration order (LRU promotion does delete-then-set on the
+      // backing Map), which causes the live iterator to revisit promoted keys
+      // indefinitely. Materializing to an array severs that hazard.
+      const snapshot = [...cache.keys()];
+      for (const k of snapshot) {
+        expect(cache.get(k)).toBe(expected.get(k));
+      }
+      expect(cache.size).toBeLessThanOrEqual(maxSize);
+    });
+  });
 });

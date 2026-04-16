@@ -42,6 +42,24 @@ const ANTHROPIC_EXTRA_ALLOW_LIST = new Set<string>([
   'system',
 ]);
 
+/**
+ * Policy for how the adapter reacts when an assistant `toolCalls[].arguments`
+ * string is not parseable as a JSON object (Wave-12 P1-3).
+ *
+ * - `'warn'` (default, backwards compatible): emit `logger.warn(...)`, substitute
+ *   an empty object, continue. Preserves Wave-5F behavior.
+ * - `'throw'`: throw `HarnessError(ADAPTER_ERROR)` with the raw argument string
+ *   preserved on the error's `context` via its message. Fail fast for operators
+ *   who would rather observe malformed LLM output than mask it.
+ * - Custom callback: receive `(raw, err)` and return the replacement input
+ *   object, or `null` to fall back to the empty-object default. The raw
+ *   argument string is always available for inspection/logging here.
+ */
+export type AnthropicMalformedToolUsePolicy =
+  | 'warn'
+  | 'throw'
+  | ((raw: string, err: Error) => Record<string, unknown> | null);
+
 /** Configuration for the Anthropic adapter. */
 export interface AnthropicAdapterConfig {
   /** A pre-configured Anthropic client instance. */
@@ -63,6 +81,13 @@ export interface AnthropicAdapterConfig {
    * caller can notice without breaking their pipeline.
    */
   readonly strictExtraAllowList?: boolean;
+  /**
+   * Wave-12 P1-3: policy for handling malformed / non-object tool_use input
+   * strings returned by the LLM. Defaults to `'warn'` for backwards compatibility
+   * with Wave-5F callers (warn + substitute `{}`). Set to `'throw'` to fail
+   * fast, or provide a callback to produce a custom replacement object.
+   */
+  readonly onMalformedToolUse?: AnthropicMalformedToolUsePolicy;
   /**
    * Optional token counting function. When provided, `countTokens()` delegates
    * to this function instead of the built-in heuristic. Useful for injecting
@@ -120,10 +145,118 @@ function filterExtra(
 // which redacts secret keys and writes a structured `{level, msg, meta}` line
 // to stdout. Replaces the hand-rolled console.warn/error fallback (Wave-5F T12).
 
+/**
+ * Shape that some Logger implementations optionally expose so adapters can
+ * skip building warn-level metadata payloads when the configured level would
+ * drop them anyway. We feature-detect this at runtime (Wave-12 P2-9) and
+ * never hard-require it, to keep the Pick<Logger,'warn'|'error'> surface
+ * minimal for consumers.
+ */
+interface MaybeLevelAwareLogger {
+  readonly isWarnEnabled?: () => boolean;
+}
+
+/**
+ * P2-9: defensive gate for warn-metadata allocation. Returns `true` when the
+ * logger either exposes no capability probe (historical behavior: always log)
+ * or reports that warn is active. Avoids calling `logger.isWarnEnabled()`
+ * when the property is not a function, so downstream loggers never have to
+ * implement the method.
+ */
+function isWarnActive(logger: Pick<Logger, 'warn' | 'error'>): boolean {
+  const probe = (logger as MaybeLevelAwareLogger).isWarnEnabled;
+  return typeof probe === 'function' ? probe.call(logger) : true;
+}
+
+/**
+ * P1-3 (Wave-12): resolve a raw `tc.arguments` string into the Record that
+ * Anthropic expects as `tool_use.input`. Applies `onMalformedToolUse` policy:
+ * - `'warn'` (default) mirrors the pre-Wave-12 behavior: warn + substitute `{}`.
+ * - `'throw'` raises a typed `HarnessError(ADAPTER_ERROR)` with the raw
+ *   argument string preserved for operators.
+ * - custom callback receives `(raw, err)` and can return a replacement object
+ *   or `null` to fall back to `{}`.
+ *
+ * The returned object carries the raw string on a non-enumerable
+ * `__rawArguments` slot so observability layers can recover the pre-parse
+ * payload without changing the JSON serialized to the provider.
+ */
+function resolveToolUseInput(
+  tc: { readonly id: string; readonly name: string; readonly arguments: string },
+  policy: AnthropicMalformedToolUsePolicy,
+  logger: Pick<Logger, 'warn' | 'error'>,
+): Record<string, unknown> {
+  // Happy path: parseable JSON object.
+  let parsed: unknown;
+  let parseErr: Error | undefined;
+  try {
+    parsed = JSON.parse(tc.arguments);
+    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+    parseErr = new SyntaxError(
+      `tool_use input for "${tc.name}" was not a JSON object (got ${parsed === null ? 'null' : Array.isArray(parsed) ? 'array' : typeof parsed})`,
+    );
+  } catch (err) {
+    parseErr = err instanceof Error ? err : new Error(String(err));
+  }
+
+  // Malformed path — apply policy.
+  const preview = tc.arguments.length > 200 ? tc.arguments.slice(0, 200) + '…' : tc.arguments;
+
+  if (policy === 'throw') {
+    throw new HarnessError(
+      `[harness-one/anthropic] tool_use input for "${tc.name}" was not valid JSON and onMalformedToolUse='throw'. ` +
+      `Raw (first 200 chars): ${preview}`,
+      HarnessErrorCode.ADAPTER_ERROR,
+      'Set onMalformedToolUse to \'warn\' to fall back to {} or supply a callback to produce a replacement object.',
+      parseErr,
+    );
+  }
+
+  if (typeof policy === 'function') {
+    const replacement = policy(tc.arguments, parseErr);
+    const resolved: Record<string, unknown> =
+      replacement !== null && typeof replacement === 'object' && !Array.isArray(replacement)
+        ? (replacement as Record<string, unknown>)
+        : {};
+    // Preserve raw for observability without bloating provider payload.
+    Object.defineProperty(resolved, '__rawArguments', {
+      value: tc.arguments,
+      enumerable: false,
+      writable: false,
+      configurable: true,
+    });
+    return resolved;
+  }
+
+  // Default 'warn' policy — backwards compatible with Wave-5F.
+  if (isWarnActive(logger)) {
+    const msg =
+      parsed !== undefined && (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed))
+        ? `[harness-one/anthropic] tool_use input for "${tc.name}" was not a JSON object (got ${parsed === null ? 'null' : Array.isArray(parsed) ? 'array' : typeof parsed}); substituting empty object.`
+        : `[harness-one/anthropic] tool_use input for "${tc.name}" was not valid JSON; substituting empty object. ` +
+          `Parse error: ${parseErr.message}. Raw (first 200 chars): ${preview}`;
+    // Preserve the historical single-argument shape so existing callers
+    // matching on `.calls[0][0]` remain green.
+    logger.warn(msg);
+  }
+
+  const fallback: Record<string, unknown> = {};
+  Object.defineProperty(fallback, '__rawArguments', {
+    value: tc.arguments,
+    enumerable: false,
+    writable: false,
+    configurable: true,
+  });
+  return fallback;
+}
+
 /** Convert a harness-one Message to the Anthropic message format. */
 function toAnthropicMessage(
   msg: Message,
   logger: Pick<Logger, 'warn' | 'error'>,
+  malformedPolicy: AnthropicMalformedToolUsePolicy,
 ): Anthropic.MessageParam {
   if (msg.role === 'tool' && msg.toolCallId) {
     return {
@@ -146,25 +279,8 @@ function toAnthropicMessage(
     for (const tc of msg.toolCalls) {
       // Narrow to object shape — silently casting a string to Record<string, unknown>
       // would hide LLM output corruption. When JSON is invalid or not an object,
-      // pass an empty object and let the tool execution fail loudly on missing keys.
-      let input: Record<string, unknown> = {};
-      try {
-        const parsed: unknown = JSON.parse(tc.arguments);
-        if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          input = parsed as Record<string, unknown>;
-        } else {
-          logger.warn(
-            `[harness-one/anthropic] tool_use input for "${tc.name}" was not a JSON object (got ${typeof parsed}); substituting empty object.`,
-          );
-        }
-      } catch (parseErr) {
-        const preview = tc.arguments.length > 200 ? tc.arguments.slice(0, 200) + '…' : tc.arguments;
-        logger.warn(
-          `[harness-one/anthropic] tool_use input for "${tc.name}" was not valid JSON; substituting empty object. ` +
-          `Parse error: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}. ` +
-          `Raw (first 200 chars): ${preview}`,
-        );
-      }
+      // apply the configured `onMalformedToolUse` policy (P1-3).
+      const input = resolveToolUseInput(tc, malformedPolicy, logger);
       content.push({
         type: 'tool_use',
         id: tc.id,
@@ -182,13 +298,60 @@ function toAnthropicMessage(
 }
 
 /**
+ * P2-19: known JsonSchema keys that this adapter projects onto
+ * Anthropic's `Tool.InputSchema`. Any key on `ToolSchema['parameters']` that
+ * is not in this set is silently dropped today; we warn once per unique key
+ * to surface the drop to operators without flooding logs.
+ */
+const _KNOWN_SCHEMA_KEYS: ReadonlySet<string> = new Set<string>([
+  'type',
+  'properties',
+  'required',
+  'items',
+  'enum',
+  'description',
+  'default',
+  'minimum',
+  'maximum',
+  'minLength',
+  'maxLength',
+  'pattern',
+  'additionalProperties',
+  'oneOf',
+  'anyOf',
+  'allOf',
+  'const',
+  'format',
+]);
+
+/**
+ * P2-19: module-scoped, size-capped set of schema keys for which we have
+ * already emitted a warn. Capped at 64 distinct keys — beyond that we stop
+ * growing to avoid unbounded memory growth on malicious or buggy callers.
+ */
+const _WARNED_UNKNOWN_SCHEMA_KEYS: Set<string> = new Set<string>();
+const _MAX_WARNED_UNKNOWN_SCHEMA_KEYS = 64;
+
+/** @internal — exposed only for unit tests; not part of the public API. */
+export function _resetWarnedUnknownSchemaKeysForTesting(): void {
+  _WARNED_UNKNOWN_SCHEMA_KEYS.clear();
+}
+
+/**
  * Convert a harness-one JsonSchema to Anthropic's Tool.InputSchema.
  *
  * Anthropic expects `{ type: 'object'; properties?: unknown; [k: string]: unknown }`.
  * Rather than casting with `as Anthropic.Tool.InputSchema`, we explicitly map
  * the known JsonSchema fields to produce a conforming object.
+ *
+ * @internal — this is an adapter-internal projection helper. Consumers should
+ * author schemas against `ToolSchema` directly; Anthropic-specific shape is a
+ * deliberately unexported concern.
  */
-function toAnthropicInputSchema(schema: ToolSchema['parameters']): Anthropic.Tool.InputSchema {
+function toAnthropicInputSchema(
+  schema: ToolSchema['parameters'],
+  logger?: Pick<Logger, 'warn' | 'error'>,
+): Anthropic.Tool.InputSchema {
   const result: Record<string, unknown> = { type: schema.type as 'object' };
   if (schema.properties !== undefined) result.properties = schema.properties;
   if (schema.required !== undefined) result.required = schema.required;
@@ -207,15 +370,36 @@ function toAnthropicInputSchema(schema: ToolSchema['parameters']): Anthropic.Too
   if (schema.allOf !== undefined) result.allOf = schema.allOf;
   if (schema.const !== undefined) result.const = schema.const;
   if (schema.format !== undefined) result.format = schema.format;
+
+  // P2-19: warn once per distinct unknown key. Bound the warned-set at 64
+  // entries to avoid leaking under attacker-controlled schema keys.
+  const dropped: string[] = [];
+  for (const key of Object.keys(schema as unknown as Record<string, unknown>)) {
+    if (_KNOWN_SCHEMA_KEYS.has(key)) continue;
+    if (_WARNED_UNKNOWN_SCHEMA_KEYS.has(key)) continue;
+    if (_WARNED_UNKNOWN_SCHEMA_KEYS.size >= _MAX_WARNED_UNKNOWN_SCHEMA_KEYS) break;
+    _WARNED_UNKNOWN_SCHEMA_KEYS.add(key);
+    dropped.push(key);
+  }
+  if (dropped.length > 0 && logger && isWarnActive(logger)) {
+    logger.warn(
+      `[harness-one/anthropic] toAnthropicInputSchema dropped unknown schema keys: ${dropped.join(', ')}`,
+      { dropped },
+    );
+  }
+
   return result as Anthropic.Tool.InputSchema;
 }
 
 /** Convert a harness-one ToolSchema to Anthropic's tool format. */
-function toAnthropicTool(tool: ToolSchema): Anthropic.Tool {
+function toAnthropicTool(
+  tool: ToolSchema,
+  logger?: Pick<Logger, 'warn' | 'error'>,
+): Anthropic.Tool {
   return {
     name: tool.name,
     description: tool.description,
-    input_schema: toAnthropicInputSchema(tool.parameters),
+    input_schema: toAnthropicInputSchema(tool.parameters, logger),
   };
 }
 
@@ -286,6 +470,7 @@ export function createAnthropicAdapter(config: AnthropicAdapterConfig): AgentAda
   const logger: Pick<Logger, 'warn' | 'error'> = config.logger ?? createDefaultLogger();
   const strictExtra = config.strictExtraAllowList ?? false;
   const tokenizer = config.countTokens;
+  const malformedPolicy: AnthropicMalformedToolUsePolicy = config.onMalformedToolUse ?? 'warn';
 
   return {
     name: `anthropic:${model}`,
@@ -300,8 +485,8 @@ export function createAnthropicAdapter(config: AnthropicAdapterConfig): AgentAda
         model,
         max_tokens: params.config?.maxTokens ?? 4096,
         ...(system !== undefined && { system }),
-        messages: rest.map((m) => toAnthropicMessage(m, logger)),
-        ...(params.tools && { tools: params.tools.map(toAnthropicTool) }),
+        messages: rest.map((m) => toAnthropicMessage(m, logger, malformedPolicy)),
+        ...(params.tools && { tools: params.tools.map((t) => toAnthropicTool(t, logger)) }),
         ...(params.config?.temperature !== undefined && { temperature: params.config.temperature }),
         ...(params.config?.topP !== undefined && { top_p: params.config.topP }),
         ...(params.config?.stopSequences !== undefined && { stop_sequences: params.config.stopSequences as string[] }),
@@ -333,8 +518,8 @@ export function createAnthropicAdapter(config: AnthropicAdapterConfig): AgentAda
         model,
         max_tokens: params.config?.maxTokens ?? 4096,
         ...(system !== undefined && { system }),
-        messages: rest.map((m) => toAnthropicMessage(m, logger)),
-        ...(params.tools && { tools: params.tools.map(toAnthropicTool) }),
+        messages: rest.map((m) => toAnthropicMessage(m, logger, malformedPolicy)),
+        ...(params.tools && { tools: params.tools.map((t) => toAnthropicTool(t, logger)) }),
         ...(params.config?.temperature !== undefined && { temperature: params.config.temperature }),
         ...(params.config?.topP !== undefined && { top_p: params.config.topP }),
         ...(params.config?.stopSequences !== undefined && { stop_sequences: params.config.stopSequences as string[] }),

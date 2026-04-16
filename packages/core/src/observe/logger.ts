@@ -19,12 +19,19 @@ export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 /** Structured logger interface. */
 export interface Logger {
-  debug(message: string, meta?: Record<string, unknown>): void;
-  info(message: string, meta?: Record<string, unknown>): void;
-  warn(message: string, meta?: Record<string, unknown>): void;
-  error(message: string, meta?: Record<string, unknown>): void;
+  /**
+   * P2-18: `meta` is accepted as `Readonly<Record<string, unknown>>`. Callers
+   * are free to pass either a mutable or a frozen object — the logger never
+   * mutates the caller's reference. Widening from `Record` to `Readonly` is a
+   * backward-compatible signature change (a mutable record satisfies the
+   * readonly constraint).
+   */
+  debug(message: string, meta?: Readonly<Record<string, unknown>>): void;
+  info(message: string, meta?: Readonly<Record<string, unknown>>): void;
+  warn(message: string, meta?: Readonly<Record<string, unknown>>): void;
+  error(message: string, meta?: Readonly<Record<string, unknown>>): void;
   /** Create a child logger that inherits and extends base metadata. */
-  child(meta: Record<string, unknown>): Logger;
+  child(meta: Readonly<Record<string, unknown>>): Logger;
 }
 
 /** Configuration for the logger factory. */
@@ -64,6 +71,68 @@ export interface LoggerConfig {
    * trace. Propagates to child loggers via normal baseMeta merging.
    */
   readonly correlationId?: string;
+  /**
+   * P1-7: Per-call context hook invoked on every log emission to pull the
+   * current trace/span id from an external async-context source (e.g.
+   * AsyncLocalStorage, OpenTelemetry's `trace.getActiveSpan()`).
+   *
+   * The returned `traceId` / `spanId` are merged into the outgoing record as
+   * `trace_id` and `span_id` (underscore-namespaced to avoid colliding with
+   * the existing `correlationId` field and with caller-supplied meta). Caller
+   * meta with those keys takes precedence — the hook never overwrites user
+   * fields.
+   *
+   * The hook is called once per log call that passes the level gate. If it
+   * throws or returns `undefined`, the record is emitted without trace/span
+   * fields (fail-open: a broken context hook must not silence logs).
+   */
+  readonly getContext?: () => { traceId?: string; spanId?: string } | undefined;
+  /**
+   * P2-14: Stack-trace path sanitizer override. When set, absolute paths in
+   * `Error.stack` output are rewritten to be relative to this prefix.
+   * Default: `process.cwd()` when available.
+   */
+  readonly stackSanitizer?: { readonly cwd?: string; readonly disabled?: boolean };
+}
+
+/**
+ * P2-14: Sanitize a stack trace by replacing absolute paths with relative
+ * forms. Useful for redacting local filesystem layout and monorepo roots
+ * before emitting to log aggregators.
+ *
+ * Rules:
+ *   1. Strip the `cwd` prefix (plus the following separator) so paths become
+ *      `packages/core/src/foo.ts:12:3` instead of
+ *      `/Users/alice/proj/packages/core/src/foo.ts:12:3`.
+ *   2. Collapse `.../node_modules/` segments to `node_modules/` so deeply
+ *      nested monorepo roots like
+ *      `/home/ci/build-abc/node_modules/pkg/...` become `node_modules/pkg/...`.
+ *   3. Handle `file://` URL stack entries (V8, ESM) the same way.
+ *
+ * The function is deliberately forgiving — an unexpected stack format is
+ * returned unchanged rather than throwing.
+ */
+export function sanitizeStackTrace(stack: string, opts?: { readonly cwd?: string }): string {
+  if (typeof stack !== 'string' || stack.length === 0) return stack;
+  const cwdRaw = opts?.cwd ?? (typeof process !== 'undefined' ? process.cwd() : '');
+  let out = stack;
+  // Strip cwd prefix (both bare path and file:// URL form).
+  if (cwdRaw) {
+    const escapedCwd = cwdRaw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const cwdRegex = new RegExp(escapedCwd + '[\\/\\\\]', 'g');
+    out = out.replace(cwdRegex, '');
+    // file:// URL variant — Node ESM stacks look like `file:///abs/path/foo.ts:1:1`.
+    const cwdUrlRegex = new RegExp('file://' + escapedCwd + '[\\/\\\\]', 'g');
+    out = out.replace(cwdUrlRegex, '');
+  }
+  // Collapse any remaining `.../node_modules/` prefix to `node_modules/`.
+  // Handles both POSIX (/path/to/node_modules/) and Windows
+  // (\\path\\to\\node_modules\\) separators.
+  out = out.replace(/[\/\\][^\s:()]*?[\/\\]node_modules[\/\\]/g, 'node_modules/');
+  // Also strip a bare leading `file://` that no longer has an absolute path
+  // behind it (e.g. stripped cwd leaves `file://packages/...`).
+  out = out.replace(/file:\/\//g, '');
+  return out;
 }
 
 const LOG_LEVEL_VALUES: Record<LogLevel, number> = { debug: 0, info: 1, warn: 2, error: 3 };
@@ -79,12 +148,33 @@ const LOG_LEVEL_VALUES: Record<LogLevel, number> = { debug: 0, info: 1, warn: 2,
  * PERF-030: The returned replacer carries per-call cycle-tracking state
  * (a WeakSet), so it MUST be constructed fresh for each `JSON.stringify`
  * invocation. The factory itself is stateless and hoisted to module scope.
+ *
+ * P2-14: Optional `sanitizeStack` callback rewrites `Error.stack` before
+ * emission so absolute filesystem paths don't leak into log sinks.
  */
-export function createSafeReplacer(): (key: string, value: unknown) => unknown {
+export function createSafeReplacer(opts?: {
+  readonly sanitizeStack?: (stack: string) => string;
+}): (key: string, value: unknown) => unknown {
   const seen = new WeakSet<object>();
-  return (_key: string, value: unknown): unknown => {
+  const sanitizeStack = opts?.sanitizeStack;
+  return (key: string, value: unknown): unknown => {
+    // P2-14: Apply the stack sanitizer whenever we emit a `stack` string
+    // field — not just when the value is an Error. The upstream redactor
+    // (`sanitizeAttributes`) pre-serializes Error instances into plain
+    // `{ name, message, stack }` objects before our replacer runs, so by
+    // the time we see the `stack` key the Error-ness is already lost.
+    // Gating on `key === 'stack'` + `typeof value === 'string'` is cheap
+    // and covers both paths (raw Error + pre-serialized object).
+    if (sanitizeStack && key === 'stack' && typeof value === 'string') {
+      return sanitizeStack(value);
+    }
     if (value instanceof Error) {
-      return { name: value.name, message: value.message, stack: value.stack };
+      const rawStack = value.stack;
+      return {
+        name: value.name,
+        message: value.message,
+        stack: sanitizeStack && typeof rawStack === 'string' ? sanitizeStack(rawStack) : rawStack,
+      };
     }
     if (value instanceof Date) {
       return value.toISOString();
@@ -141,23 +231,57 @@ export function createLogger(config?: LoggerConfig): Logger {
       ? undefined
       : createRedactor(config?.redact ?? { useDefaultPattern: true });
   const correlationId = config?.correlationId;
+  const getContext = config?.getContext;
+  // P2-14: resolve cwd for stack sanitization once at factory time.
+  const stackSanitizerDisabled = config?.stackSanitizer?.disabled === true;
+  const stackSanitizerCwd =
+    config?.stackSanitizer?.cwd ?? (typeof process !== 'undefined' ? process.cwd() : '');
+  const sanitizeStackFn = stackSanitizerDisabled
+    ? undefined
+    : (s: string): string => sanitizeStackTrace(s, { cwd: stackSanitizerCwd });
 
   function shouldLog(level: LogLevel): boolean {
     return LOG_LEVEL_VALUES[level] >= LOG_LEVEL_VALUES[minLevel];
   }
 
+  /**
+   * P1-7: Evaluate the optional `getContext` hook and return a shallow
+   * object of `trace_id` / `span_id` fields ready for merging. The hook
+   * is fail-open: any throw or invalid return yields an empty object so a
+   * buggy context provider cannot silence logs.
+   */
+  function resolveContextFields(): Record<string, unknown> {
+    if (!getContext) return {};
+    let ctx: { traceId?: string; spanId?: string } | undefined;
+    try {
+      ctx = getContext();
+    } catch {
+      return {};
+    }
+    if (!ctx) return {};
+    const out: Record<string, unknown> = {};
+    if (typeof ctx.traceId === 'string' && ctx.traceId.length > 0) out.trace_id = ctx.traceId;
+    if (typeof ctx.spanId === 'string' && ctx.spanId.length > 0) out.span_id = ctx.spanId;
+    return out;
+  }
+
   function createLoggerWithMeta(baseMeta: Record<string, unknown>): Logger {
-    function log(level: LogLevel, message: string, meta?: Record<string, unknown>): void {
+    function log(level: LogLevel, message: string, meta?: Readonly<Record<string, unknown>>): void {
       // PERF-030: Gate ALL work behind the level check. Previously we still
       // constructed `merged`, invoked the redactor, stamped a timestamp, and
       // built a replacer even when the call was below the configured level —
       // a common pattern in hot loops (`logger.debug(...)` at info level).
       // Now `debug()` under a production `info` logger is a single branch.
       if (!shouldLog(level)) return;
+      // P1-7: Inject trace_id / span_id from the async context hook BEFORE
+      // baseMeta / meta so caller fields win on collision. The hook never
+      // overwrites explicit user fields (e.g. `logger.warn('x', { trace_id })`).
+      const ctxFields = resolveContextFields();
       // OBS-001: Inject correlationId (if configured) before redaction so it
       // survives as-is — unless the caller intentionally overrides it in meta.
       const merged: Record<string, unknown> = {
         ...(correlationId !== undefined ? { correlationId } : {}),
+        ...ctxFields,
         ...baseMeta,
         ...meta,
       };
@@ -170,11 +294,15 @@ export function createLogger(config?: LoggerConfig): Logger {
       // Fix 9 + PERF-014: Use safe replacer for Error/Date/circular handling.
       // PERF-030: Only construct the replacer when we actually need to
       // stringify. Text mode without meta keys skips it entirely.
+      // P2-14: Only thread the stack sanitizer when enabled.
+      // `exactOptionalPropertyTypes` forbids `{ key: undefined }` against an
+      // optional-only schema, so build the options object conditionally.
+      const replacerOpts = sanitizeStackFn ? { sanitizeStack: sanitizeStackFn } : undefined;
       if (json) {
-        const replacer = createSafeReplacer();
+        const replacer = createSafeReplacer(replacerOpts);
         output(JSON.stringify({ level, message, timestamp, ...safeMerged }, replacer));
       } else if (hasOwnKeys(safeMerged)) {
-        const replacer = createSafeReplacer();
+        const replacer = createSafeReplacer(replacerOpts);
         const suffix = ' ' + JSON.stringify(safeMerged, replacer);
         output(`[${timestamp}] ${level.toUpperCase()} ${message}${suffix}`);
       } else {
@@ -188,7 +316,8 @@ export function createLogger(config?: LoggerConfig): Logger {
       info: (msg, meta) => log('info', msg, meta),
       warn: (msg, meta) => log('warn', msg, meta),
       error: (msg, meta) => log('error', msg, meta),
-      child: (meta) => createLoggerWithMeta({ ...baseMeta, ...meta }),
+      child: (meta: Readonly<Record<string, unknown>>) =>
+        createLoggerWithMeta({ ...baseMeta, ...meta }),
     };
   }
 

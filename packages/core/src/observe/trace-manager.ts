@@ -45,13 +45,33 @@ export interface TraceManager {
   /** Set attributes on a span. */
   setSpanAttributes(spanId: SpanId | string, attributes: Record<string, unknown>): void;
   /**
+   * P2-15: Snapshot accessor for the current global sampling rate. Primarily
+   * useful in tests and for introspection tooling. Runtime adjustments go
+   * through `setSamplingRate()`.
+   */
+  getSamplingRate(): number;
+  /**
    * SEC-016: Attach library-controlled metadata to a trace. Keys written here
    * land on `trace.systemMetadata` and are never redacted. `shouldExport()`
    * sampling hooks MUST read only `systemMetadata` so users can't manipulate
    * sampling decisions by injecting metadata keys.
    */
   setTraceSystemMetadata(traceId: TraceId | string, metadata: Record<string, unknown>): void;
-  /** End a span. */
+  /**
+   * End a span.
+   *
+   * P1-25: **Span status must be set BEFORE calling `endSpan()`.** The status
+   * passed to this call (or the default `'completed'`) is captured
+   * synchronously, attached to the frozen snapshot handed to exporters, and
+   * cannot be mutated after the fact. Callers that need to revise status
+   * (e.g. a deferred async error-classification step) must do so before
+   * invoking `endSpan()`, or start a new span for the revision.
+   *
+   * When `status` is omitted, `'completed'` is assumed. Pass `'error'`
+   * explicitly for failure paths — in non-production builds
+   * (`NODE_ENV !== 'production'`) a warning is logged if a caller appears
+   * to mutate a span's effective status after end.
+   */
   endSpan(spanId: SpanId | string, status?: 'completed' | 'error'): void;
   /** End a trace. */
   endTrace(traceId: TraceId | string, status?: 'completed' | 'error'): void;
@@ -65,7 +85,14 @@ export interface TraceManager {
    *   Date.now(). This helps detect leaked/stale spans.
    */
   getActiveSpans(olderThanMs?: number): Array<{ id: string; traceId: string; name: string; startTime: number }>;
-  /** Flush all exporters. */
+  /**
+   * Flush all exporters.
+   *
+   * P1-19: Bounded by the configured `flushTimeoutMs` (default 30_000). On
+   * timeout, outstanding exports are abandoned (tracked promises remain but
+   * are no longer awaited), a warn is logged, and the call resolves. This
+   * prevents shutdown from hanging on a stuck exporter.
+   */
   flush(): Promise<void>;
   /**
    * Eagerly invoke `initialize()` on every exporter that declares one.
@@ -75,9 +102,16 @@ export interface TraceManager {
    */
   initialize(): Promise<void>;
   /**
-   * Update the global sampling rate (0-1). Takes effect for traces ended
-   * after the call. A per-exporter `shouldExport(trace)` hook, when present,
-   * takes precedence over this global rate.
+   * Update the global sampling rate (0-1).
+   *
+   * P2-15: **Only affects traces started AFTER the call.** In-flight traces
+   * keep the sampling decision captured at their original `startTrace()`
+   * (stored on `trace.samplingRateSnapshot` / `trace.sampled`). This
+   * guarantees per-trace determinism — a trace admitted at rate=1.0 will
+   * always be exported even if the rate is later lowered to 0. A per-exporter
+   * `shouldExport(trace)` hook, when present, takes precedence over this
+   * global rate; a per-exporter `shouldSampleTrace(trace)` (tail hook) can
+   * veto an export at `endTrace()` time.
    */
   setSamplingRate(rate: number): void;
   /**
@@ -119,6 +153,18 @@ export function createTraceManager(config?: {
    */
   defaultSamplingRate?: number;
   /**
+   * P1-19: Maximum wall time (milliseconds) that `flush()` and `dispose()`
+   * will spend waiting for pending in-flight export promises to settle
+   * before abandoning them and returning. Defaults to `30_000` (30s).
+   *
+   * When the deadline elapses the library logs a warn via the injected
+   * logger (or invokes `onExportError`) and resolves the outer promise; the
+   * abandoned exports are no longer tracked but may still complete in the
+   * background. Set to `0` to disable the timeout entirely (legacy
+   * wait-forever behaviour).
+   */
+  flushTimeoutMs?: number;
+  /**
    * SEC-007: Secret redaction applied to all USER-SUPPLIED span attributes,
    * trace metadata, and span events at the ingestion boundary. Because
    * exporters (console, OTel, Langfuse) read `span.attributes` and
@@ -140,6 +186,15 @@ export function createTraceManager(config?: {
   const onExportError = config?.onExportError;
   const logger = config?.logger;
   let samplingRate = config?.defaultSamplingRate ?? 1;
+  // P1-19: default 30s flush deadline. `0` disables the cap.
+  const flushTimeoutMs = config?.flushTimeoutMs ?? 30_000;
+  if (!Number.isFinite(flushTimeoutMs) || flushTimeoutMs < 0) {
+    throw new HarnessError(
+      'flushTimeoutMs must be a finite, non-negative number (ms)',
+      HarnessErrorCode.CORE_INVALID_CONFIG,
+      'Use 0 to disable the cap or a positive millisecond value',
+    );
+  }
   // SEC-007 / T03: Build redactor once.
   //   - `redact === false`            => no redactor (explicit opt-out)
   //   - `redact === undefined`        => default redactor (secure-by-default)
@@ -291,6 +346,24 @@ export function createTraceManager(config?: {
     // the trace. Respect the stored decision rather than re-evaluating here.
     // Per-exporter shouldExport() hooks take precedence above.
     if (!exporter.shouldExport && !sampled) return;
+    // P1-6: Tail-based sampling veto. Evaluated AFTER head-based decisions so
+    // callers can "rescue" a head-dropped trace only by relaxing head
+    // sampling — not by using a tail hook (that would defeat memory bounds).
+    // Here we're already past the head gate so tail hook can only REMOVE
+    // traces, matching the documented export-only contract.
+    if (exporter.shouldSampleTrace) {
+      let keep = true;
+      try {
+        keep = exporter.shouldSampleTrace(trace) !== false;
+      } catch (err) {
+        // A throwing tail hook is treated as an export failure: route to the
+        // usual error sink and drop the export. Don't surface as "kept" so a
+        // buggy sampler can't silently flood the exporter.
+        reportExportError(err);
+        return;
+      }
+      if (!keep) return;
+    }
     const p = ensureInitialized(exporter)
       .then(() => exporter.exportTrace(trace))
       .catch(reportExportError);
@@ -501,6 +574,51 @@ export function createTraceManager(config?: {
     }
 
     return allEvictedSpanIds;
+  }
+
+  /**
+   * P1-19: Wait for every in-flight export to settle, bounded by
+   * `flushTimeoutMs`. On timeout, abandon the remainder (the promises remain
+   * tracked but are no longer awaited) and log a warn.
+   *
+   * `flushTimeoutMs === 0` disables the cap — callers explicitly opted into
+   * wait-forever behaviour.
+   */
+  async function waitForPendingWithTimeout(phase: 'flush' | 'dispose'): Promise<void> {
+    if (flushTimeoutMs === 0) {
+      while (pendingExports.size > 0) {
+        await Promise.allSettled(pendingExports);
+      }
+      return;
+    }
+    const deadline = Date.now() + flushTimeoutMs;
+    while (pendingExports.size > 0) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+      const timeoutPromise = new Promise<'timeout'>((resolve) => {
+        timeoutHandle = setTimeout(() => resolve('timeout'), remaining);
+      });
+      try {
+        const outcome = await Promise.race([
+          Promise.allSettled(pendingExports).then(() => 'settled' as const),
+          timeoutPromise,
+        ]);
+        if (outcome === 'timeout') break;
+      } finally {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+      }
+    }
+    if (pendingExports.size > 0) {
+      const abandoned = pendingExports.size;
+      const msg = `[harness-one/trace-manager] ${phase} timed out after ${flushTimeoutMs}ms; abandoning ${abandoned} in-flight export(s)`;
+      if (logger) {
+        try { logger.warn(msg, { phase, abandoned, flushTimeoutMs }); } catch { /* logger failure non-fatal */ }
+      } else if (onExportError) {
+        try { onExportError(new Error(msg)); } catch { /* sink failure non-fatal */ }
+      }
+      // Intentional: no console.warn fallback (library code must not write to stderr).
+    }
   }
 
   function toReadonlyTrace(mt: MutableTrace): Trace {
@@ -822,13 +940,16 @@ export function createTraceManager(config?: {
       // Settle pending in-flight exports before asking exporters to flush — a
       // span may have been fired microseconds ago and we don't want flush() to
       // race past it.
+      //
       // PERF-028: `Promise.allSettled(pendingExports)` accepts any iterable,
       // so we pass the Set directly instead of materialising a fresh array on
       // every loop turn. Loop because a settled export's `finally` hook runs
       // asynchronously and new exports can race in while we awaited.
-      while (pendingExports.size > 0) {
-        await Promise.allSettled(pendingExports);
-      }
+      //
+      // P1-19: wrap the whole settle-loop in a Promise.race with an abortable
+      // timeout so a stuck exporter cannot hang shutdown. `flushTimeoutMs === 0`
+      // disables the cap (legacy wait-forever behaviour).
+      await waitForPendingWithTimeout('flush');
       await Promise.all(exporters.map(e => e.flush()));
     },
 
@@ -847,6 +968,11 @@ export function createTraceManager(config?: {
       samplingRate = rate;
     },
 
+    // P2-15: snapshot accessor (tests + introspection).
+    getSamplingRate(): number {
+      return samplingRate;
+    },
+
     getRetryMetrics(): RetryMetrics {
       return {
         totalRetries: retryTotalRetries,
@@ -861,9 +987,9 @@ export function createTraceManager(config?: {
       // be in the exporter's queue when we clear internal state.
       // PERF-028: pass the Set directly to `Promise.allSettled` instead of
       // allocating `Array.from(pendingExports)` per turn.
-      while (pendingExports.size > 0) {
-        await Promise.allSettled(pendingExports);
-      }
+      // P1-19: bounded by flushTimeoutMs so a hanging exporter cannot block
+      // dispose forever.
+      await waitForPendingWithTimeout('dispose');
       // Flush every exporter — use allSettled so one failure doesn't block others.
       const flushResults = await Promise.allSettled(exporters.map(e => e.flush()));
       for (const result of flushResults) {

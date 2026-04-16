@@ -19,6 +19,7 @@ export interface OpenAIAdapterConfig {
     readonly apiKey?: string;
     readonly baseURL?: string;
     readonly client?: OpenAI;
+    readonly countTokens?: (text: string) => number;
     readonly defaultHeaders?: Record<string, string>;
     readonly logger?: Pick<Logger, 'warn' | 'error'>;
     readonly maxRetries?: number;
@@ -36,6 +37,7 @@ export function registerProvider(name: string, config: {
     baseURL: string;
 }, options?: {
     readonly force?: boolean;
+    readonly allowOverride?: boolean;
 }): void;
 
 // @internal

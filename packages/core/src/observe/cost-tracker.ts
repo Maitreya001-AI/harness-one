@@ -56,7 +56,16 @@ export const OVERFLOW_BUCKET_KEY = '__overflow__';
  *   from flooding the tracker with junk keys to erase legitimate totals.
  */
 export interface CostTracker {
-  /** Set pricing for one or more models. */
+  /**
+   * Set pricing for one or more models.
+   *
+   * @deprecated P1-15: Mutators leak mutable state post-construction and
+   * create non-deterministic behaviour under concurrent `recordUsage()` calls.
+   * Prefer passing the full pricing set at factory time via
+   * `createCostTracker({ pricing })`. A `@deprecated` warning is logged once
+   * per tracker on first call; the method remains functional for backward
+   * compatibility.
+   */
   setPricing(pricing: ModelPricing[]): void;
   /** Record token usage and return the record with computed cost. */
   recordUsage(usage: Omit<TokenUsageRecord, 'estimatedCost' | 'timestamp'>): TokenUsageRecord;
@@ -85,7 +94,13 @@ export interface CostTracker {
    * `OVERFLOW_BUCKET_KEY` rather than evicting (SEC-009).
    */
   getCostByTrace(traceId: string): number;
-  /** Set the budget limit. */
+  /**
+   * Set the budget limit.
+   *
+   * @deprecated P1-15: Prefer setting `budget` at construction time via
+   * `createCostTracker({ budget })`. Runtime mutation is retained for
+   * backward compatibility and logs a `@deprecated` warning on first call.
+   */
   setBudget(budget: number): void;
   /** Check if budget thresholds have been crossed. */
   checkBudget(): CostAlert | null;
@@ -216,6 +231,14 @@ export function createCostTracker(config?: {
   onOverflow?: (info: { kind: 'model' | 'trace'; capacity: number; rejectedKey: string }) => void;
   /** Optional logger for structured warning output. Falls back to the redaction-enabled default logger. */
   logger?: Logger;
+  /**
+   * P2-13: Suppress duplicate budget alerts emitted within this window
+   * (per alert type: `warning` / `critical` / `exceeded`). Streaming
+   * `recordUsage()` calls frequently fire many updates per second; without
+   * dedupe a single budget crossing can flood alert handlers. Default: 500ms.
+   * Set to `0` to disable dedupe (legacy alert-every-call behaviour).
+   */
+  alertDedupeWindowMs?: number;
 }): CostTracker {
   const pricing = new Map<string, ModelPricing>();
   const records: TokenUsageRecord[] = [];
@@ -232,6 +255,17 @@ export function createCostTracker(config?: {
   const warnUnpricedModels = config?.warnUnpricedModels ?? true;
   const onOverflow = config?.onOverflow;
   const logger = config?.logger;
+  // P2-13: alert dedupe bookkeeping. Tracks the last emission timestamp per
+  // alert type; an alert re-fires only once the dedupe window has passed.
+  const alertDedupeWindowMs = config?.alertDedupeWindowMs ?? 500;
+  const lastAlertTs: Record<CostAlert['type'], number> = {
+    warning: 0,
+    critical: 0,
+    exceeded: 0,
+  };
+  // P1-15: one-shot deprecation warnings for setPricing / setBudget.
+  let setPricingDeprecationWarned = false;
+  let setBudgetDeprecationWarned = false;
   // ARCH-008: pluggable eviction strategy. Accept a string or an object so
   // tests can inject custom strategies.
   const evictionStrategy: EvictionStrategy =
@@ -325,6 +359,17 @@ export function createCostTracker(config?: {
   }
 
   function emitAlert(alert: CostAlert): void {
+    // P2-13: dedupe within a time window, per alert type. A single budget
+    // crossing during a streaming recordUsage() burst should produce exactly
+    // one alert per type until the window elapses.
+    if (alertDedupeWindowMs > 0) {
+      const now = Date.now();
+      const last = lastAlertTs[alert.type];
+      if (last !== 0 && (now - last) < alertDedupeWindowMs) {
+        return;
+      }
+      lastAlertTs[alert.type] = now;
+    }
     for (const handler of alertHandlers) {
       handler(alert);
     }
@@ -399,6 +444,16 @@ export function createCostTracker(config?: {
 
   return {
     setPricing(newPricing: ModelPricing[]): void {
+      // P1-15: emit one-shot @deprecated warning. Preferred path is factory
+      // config (`createCostTracker({ pricing })`). We keep this operational
+      // indefinitely for backward compatibility.
+      if (!setPricingDeprecationWarned) {
+        setPricingDeprecationWarned = true;
+        safeWarn(
+          logger,
+          '[harness-one/cost-tracker] @deprecated setPricing() mutates tracker state post-construction. Prefer passing `pricing` to createCostTracker() at factory time.',
+        );
+      }
       for (const p of newPricing) {
         pricing.set(p.model, p);
       }
@@ -615,8 +670,19 @@ export function createCostTracker(config?: {
      * Alerts are only re-evaluated on the next recordUsage() call, not
      * immediately on budget change. If the current cost already exceeds
      * the new budget, the alert will fire on the next recordUsage().
+     *
+     * @deprecated P1-15: prefer `createCostTracker({ budget })` at factory
+     * time. Emits a one-shot `@deprecated` warning on first call; remains
+     * operational for backward compatibility.
      */
     setBudget(newBudget: number): void {
+      if (!setBudgetDeprecationWarned) {
+        setBudgetDeprecationWarned = true;
+        safeWarn(
+          logger,
+          '[harness-one/cost-tracker] @deprecated setBudget() mutates tracker state post-construction. Prefer passing `budget` to createCostTracker() at factory time.',
+        );
+      }
       budget = newBudget;
     },
 
@@ -635,6 +701,11 @@ export function createCostTracker(config?: {
       modelTotals.clear();
       traceTotals.clear();
       traceIdIndex.clear();
+      // P2-13: reset dedupe state so alerts can re-fire after an explicit
+      // reset (tests + operator-driven "checkpoint" workflows).
+      lastAlertTs.warning = 0;
+      lastAlertTs.critical = 0;
+      lastAlertTs.exceeded = 0;
     },
 
     getAlertMessage: getAlertMessageFn,

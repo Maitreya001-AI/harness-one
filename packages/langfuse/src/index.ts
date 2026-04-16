@@ -162,6 +162,7 @@ export function createLangfuseExporter(config: LangfuseExporterConfig): TraceExp
 
     async exportTrace(trace: Trace): Promise<void> {
       let lfTrace = traceMap.get(trace.id);
+      const createdNow = !lfTrace;
       if (!lfTrace) {
         lfTrace = client.trace({
           id: trace.id,
@@ -175,13 +176,24 @@ export function createLangfuseExporter(config: LangfuseExporterConfig): TraceExp
         touchTrace(trace.id);
       }
 
-      lfTrace.update({
-        metadata: {
-          ...trace.metadata,
-          status: trace.status,
-          spanCount: trace.spans.length,
-        },
-      });
+      // Wave-12 P1-23: If `update()` throws after we cached the trace object,
+      // leave no poisoned entry behind — subsequent spans would otherwise
+      // reuse a partially-initialised handle until LRU eviction.
+      try {
+        lfTrace.update({
+          metadata: {
+            ...trace.metadata,
+            status: trace.status,
+            spanCount: trace.spans.length,
+          },
+        });
+      } catch (err) {
+        if (createdNow) {
+          traceMap.delete(trace.id);
+          traceTimestamps.delete(trace.id);
+        }
+        throw err;
+      }
     },
 
     async exportSpan(span: Span): Promise<void> {
@@ -200,6 +212,18 @@ export function createLangfuseExporter(config: LangfuseExporterConfig): TraceExp
       // opt-out — the exporter always applies some scrubber.
       const sanitize = config.sanitize ?? defaultLangfuseSanitize;
       const attrs = sanitize(span.attributes);
+
+      // Wave-12 P1-26: events[].attributes were previously shipped raw even
+      // when the top-level attribute bag had been sanitized. Apply the same
+      // sanitizer to each event's attribute record so secrets injected via
+      // span.addEvent(name, { api_key: '...' }) are redacted in the same
+      // way as span.attributes. Events without attributes are passed
+      // through unchanged to preserve structural identity in snapshots.
+      const sanitizedEvents = span.events.map((event) =>
+        event.attributes === undefined
+          ? event
+          : { ...event, attributes: sanitize(event.attributes) },
+      );
 
       // Prioritize explicit kind attribute. Fallback heuristics only apply when
       // harness.span.kind is not set, to avoid misclassifying non-LLM operations
@@ -221,7 +245,7 @@ export function createLangfuseExporter(config: LangfuseExporterConfig): TraceExp
           output: attrs['output'] as unknown,
           metadata: {
             ...attrs,
-            events: span.events,
+            events: sanitizedEvents,
             status: span.status,
           },
           usage: {
@@ -236,7 +260,7 @@ export function createLangfuseExporter(config: LangfuseExporterConfig): TraceExp
           ...(span.endTime !== undefined && { endTime: new Date(span.endTime) }),
           metadata: {
             ...attrs,
-            events: span.events,
+            events: sanitizedEvents,
             status: span.status,
             ...(span.parentId !== undefined && { parentId: span.parentId }),
           },
@@ -415,6 +439,15 @@ export interface LangfuseCostTrackerStats {
 export interface LangfuseCostTracker extends CostTracker {
   /** Export-health counters. */
   getStats(): LangfuseCostTrackerStats;
+  /**
+   * Wave-12 P1-8: Wait for every in-flight `client.flushAsync()` invocation
+   * issued by `recordUsage` to settle (fulfilled OR rejected). Resolves when
+   * the pending-flush set drains or when `timeoutMs` elapses, whichever comes
+   * first. Safe to call multiple times; never throws.
+   *
+   * Default timeout is 5_000ms.
+   */
+  dispose(timeoutMs?: number): Promise<void>;
 }
 
 /**
@@ -469,6 +502,12 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): La
   // OBS-015: Export-health counters.
   let flushErrors = 0;
   let budgetExceededEvents = 0;
+
+  // Wave-12 P1-8: Track in-flight `flushAsync` promises so shutdown / flush
+  // callers can await them instead of leaking fire-and-forget promises. Each
+  // entry is registered before it is fired and removed in a `finally` once
+  // settled, regardless of success or rejection.
+  const pendingFlushes = new Set<Promise<unknown>>();
 
   function handleExportError(err: unknown, op: 'flush' | 'record', details?: unknown): void {
     if (op === 'flush') {
@@ -635,8 +674,21 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): La
       // OBS-015: Flush errors surface through the configured hook / logger
       // instead of being swallowed with a bare console.warn. The error is
       // also counted so operators can observe degraded export health.
-      client.flushAsync().catch((err: unknown) => {
-        handleExportError(err, 'flush');
+      //
+      // Wave-12 P1-8: Track the in-flight promise so `flush()` / shutdown
+      // paths on the exporter (and future dispose paths on the tracker) can
+      // await rather than race to completion. The catch handler is itself
+      // wrapped so a throwing logger can't surface as an unhandled rejection.
+      const flushPromise = client.flushAsync().catch((err: unknown) => {
+        try {
+          handleExportError(err, 'flush');
+        } catch {
+          // Defensive: never let a user logger break the pending-flush machinery.
+        }
+      });
+      pendingFlushes.add(flushPromise);
+      flushPromise.finally(() => {
+        pendingFlushes.delete(flushPromise);
       });
 
       // F18c: Use the snapshot taken at entry, not the live `budget` variable.
@@ -814,6 +866,26 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): La
         flushErrors,
         budgetExceededEvents,
       };
+    },
+
+    async dispose(timeoutMs: number = 5_000): Promise<void> {
+      // Wave-12 P1-8: Drain pending flushes with a cap so shutdown cannot hang
+      // on an unresponsive Langfuse backend. `allSettled` guarantees rejections
+      // don't propagate; the timeout guarantees bounded wait time.
+      if (pendingFlushes.size === 0) return;
+      const snapshot = Array.from(pendingFlushes);
+      let timerHandle: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<void>((resolve) => {
+        timerHandle = setTimeout(resolve, Math.max(0, timeoutMs));
+      });
+      try {
+        await Promise.race([
+          Promise.allSettled(snapshot).then(() => undefined),
+          timeout,
+        ]);
+      } finally {
+        if (timerHandle !== undefined) clearTimeout(timerHandle);
+      }
     },
   };
 

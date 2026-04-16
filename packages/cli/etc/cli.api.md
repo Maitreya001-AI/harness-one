@@ -25,6 +25,15 @@ export const c: {
 };
 
 // @public (undocumented)
+export const EXIT_ERROR = 1;
+
+// @public (undocumented)
+export const EXIT_INVALID_ARGS = 2;
+
+// @public
+export const EXIT_SUCCESS = 0;
+
+// @public (undocumented)
 export const FILE_NAMES: Record<ModuleName, string>;
 
 // @public (undocumented)

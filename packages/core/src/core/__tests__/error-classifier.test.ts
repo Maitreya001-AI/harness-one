@@ -66,6 +66,49 @@ describe('categorizeAdapterError', () => {
     });
   });
 
+  describe('ADAPTER_UNAVAILABLE (Wave-12 P1-1)', () => {
+    it('classifies 502 status', () => {
+      expect(categorizeAdapterError(new Error('HTTP 502 upstream'))).toBe('ADAPTER_UNAVAILABLE');
+    });
+
+    it('classifies 503 status', () => {
+      expect(categorizeAdapterError(new Error('HTTP 503 response'))).toBe('ADAPTER_UNAVAILABLE');
+    });
+
+    it('classifies 504 status', () => {
+      expect(categorizeAdapterError(new Error('HTTP 504 from provider'))).toBe('ADAPTER_UNAVAILABLE');
+    });
+
+    it('classifies "Bad Gateway"', () => {
+      expect(categorizeAdapterError(new Error('Bad Gateway'))).toBe('ADAPTER_UNAVAILABLE');
+    });
+
+    it('classifies "bad_gateway" (underscore)', () => {
+      expect(categorizeAdapterError(new Error('upstream bad_gateway'))).toBe('ADAPTER_UNAVAILABLE');
+    });
+
+    it('classifies "Service Unavailable"', () => {
+      expect(categorizeAdapterError(new Error('Service Unavailable'))).toBe('ADAPTER_UNAVAILABLE');
+    });
+
+    it('classifies "Gateway Timeout"', () => {
+      expect(categorizeAdapterError(new Error('Gateway Timeout'))).toBe('ADAPTER_UNAVAILABLE');
+    });
+
+    it('classifies "gateway-timeout" (hyphen)', () => {
+      expect(categorizeAdapterError(new Error('got gateway-timeout'))).toBe('ADAPTER_UNAVAILABLE');
+    });
+
+    it('does NOT match 5xx hidden inside a longer number (belt-and-braces)', () => {
+      // "15000" should NOT match because the 5xx must be bounded.
+      expect(categorizeAdapterError(new Error('cost=15000'))).toBe('ADAPTER_ERROR');
+    });
+
+    it('matches 500 status at end of message', () => {
+      expect(categorizeAdapterError(new Error('upstream returned 500'))).toBe('ADAPTER_UNAVAILABLE');
+    });
+  });
+
   describe('ADAPTER_ERROR (default fallback)', () => {
     it('returns ADAPTER_ERROR for unrecognized error messages', () => {
       expect(categorizeAdapterError(new Error('Something went wrong'))).toBe('ADAPTER_ERROR');

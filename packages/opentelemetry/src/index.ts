@@ -51,12 +51,20 @@ export interface OTelExporterConfig {
    * When a parent span is evicted from the LRU cache but a child arrives later,
    * this fallback map provides the minimal context needed to link them correctly.
    * Defaults to 1000.
+   *
+   * Wave-12 P1-9: Parent mapping is retained until LRU evicts. Increase this
+   * value if deep trees lose hierarchy (symptom: repeated `Parent span '...'
+   * not found` warnings for expected-alive parents).
    */
   readonly maxEvictedParents?: number;
   /**
-   * Time-to-live in milliseconds for entries in the evicted parents fallback map.
-   * After this duration, evicted parent entries are considered stale and will be
-   * removed on the next read or insertion. Defaults to 300000 (5 minutes).
+   * Wave-12 P1-9: **Deprecated and ignored.** Time-based expiry was removed
+   * because it races with child-span arrival: a parent could expire while its
+   * child was being exported, orphaning the subtree. Retention is now purely
+   * size-based (LRU on `maxEvictedParents`). The option is kept on the type
+   * so existing callers still typecheck; supplying it has no effect.
+   *
+   * @deprecated no-op since Wave-12; size-based LRU is the only retention policy.
    */
   readonly evictedParentsTtlMs?: number;
   /** Maximum number of active spans to retain before LRU eviction. Defaults to 10000. */
@@ -73,6 +81,15 @@ export interface OTelExporterConfig {
    * fallback). Falls back to `console.warn` when not provided.
    */
   readonly logger?: OTelExporterLogger;
+  /**
+   * Wave-12 P2-12: When `true`, non-primitive attributes (objects, arrays) are
+   * `JSON.stringify()`-ed and attached to the span as string attributes rather
+   * than being dropped. Functions, symbols, and circular references remain
+   * dropped (JSON.stringify would throw on the latter). Defaults to `false` so
+   * the historical "drop non-primitives" behaviour is preserved — enabling it
+   * widens the payload surface and should be opt-in.
+   */
+  readonly stringifyComplexAttributes?: boolean;
 }
 
 /** OBS-004: Runtime counter exposed by the exporter for dropped attributes. */
@@ -94,9 +111,13 @@ export function createOTelExporter(config?: OTelExporterConfig): TraceExporter &
   const serviceName = config?.serviceName ?? 'harness-one';
   const tracer = config?.tracer ?? otelTrace.getTracer(serviceName);
   const maxEvictedParents = config?.maxEvictedParents ?? 1000;
-  const evictedParentsTtlMs = config?.evictedParentsTtlMs ?? 300_000; // 5 minutes
+  // Wave-12 P1-9: `evictedParentsTtlMs` intentionally ignored. The previous
+  // TTL-based sweep raced with in-flight children and could orphan subtrees.
+  // Size-based LRU on `maxEvictedParents` is now the only retention policy.
   const onDroppedAttribute = config?.onDroppedAttribute;
   const logger = config?.logger;
+  // Wave-12 P2-12: opt-in JSON-stringify fallback for non-primitive attributes.
+  const stringifyComplexAttributes = config?.stringifyComplexAttributes ?? false;
 
   // OBS-004: Track dropped-attribute counts for operator visibility.
   let droppedAttributes = 0;
@@ -121,32 +142,13 @@ export function createOTelExporter(config?: OTelExporterConfig): TraceExporter &
     spanAccessTime.set(spanId, Date.now());
   }
 
-  /** Remove evictedParents entries older than the configured TTL. */
-  function purgeStaleEvictedParents(): void {
-    // Only purge when map is large enough to warrant cleanup
-    if (evictedParentsAccessTime.size <= maxEvictedParents) return;
-    const now = Date.now();
-    for (const [spanId, timestamp] of evictedParentsAccessTime) {
-      if (now - timestamp > evictedParentsTtlMs) {
-        evictedParents.delete(spanId);
-        evictedParentsAccessTime.delete(spanId);
-      } else {
-        // Map is ordered by insertion time; entries after this are newer
-        break;
-      }
-    }
-  }
-
-  /** Get an evicted parent span, returning undefined if the entry has expired. */
+  /**
+   * Wave-12 P1-9: Look up an evicted parent span. Previously this performed a
+   * lazy TTL check that could expire a parent mid-export, orphaning the child
+   * subtree. Retention is now purely size-based (LRU), so lookup is a simple
+   * Map access.
+   */
   function getEvictedParent(spanId: string): OTelSpan | undefined {
-    const timestamp = evictedParentsAccessTime.get(spanId);
-    if (timestamp === undefined) return undefined;
-    if (Date.now() - timestamp > evictedParentsTtlMs) {
-      // Entry has expired -- remove it lazily
-      evictedParents.delete(spanId);
-      evictedParentsAccessTime.delete(spanId);
-      return undefined;
-    }
     return evictedParents.get(spanId);
   }
 
@@ -200,6 +202,19 @@ export function createOTelExporter(config?: OTelExporterConfig): TraceExporter &
       if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
         otelSpan.setAttribute(key, value);
       } else if (value !== undefined && value !== null) {
+        // Wave-12 P2-12: optional JSON-stringify fallback. Only attempted for
+        // object-shaped values — functions/symbols still cannot be represented
+        // as string attributes without silently producing "[object Object]"
+        // or similar, so we continue to drop them. A failing JSON.stringify
+        // (circular refs, throwing getters) falls through to the drop path.
+        if (stringifyComplexAttributes && typeof value === 'object') {
+          try {
+            otelSpan.setAttribute(key, JSON.stringify(value));
+            continue;
+          } catch {
+            // fall through to drop path below
+          }
+        }
         // OBS-004: track and surface dropped non-primitive attributes rather
         // than silently discarding them. Fall back to console.debug so
         // existing tests / deployments still see the signal.
@@ -400,10 +415,9 @@ export function createOTelExporter(config?: OTelExporterConfig): TraceExporter &
         evictedParentsAccessTime.set(id, Date.now());
       }
 
-      // Purge stale entries first (no-op if under threshold)
-      purgeStaleEvictedParents();
-
-      // Purge if still over limit using Map insertion order (oldest first)
+      // Wave-12 P1-9: purge-by-TTL removed — the race with in-flight child
+      // exports caused orphaned subtrees. Size-based LRU is the only retention
+      // policy.
       if (evictedParents.size > maxEvictedParents) {
         const excess = evictedParents.size - maxEvictedParents;
         let removed = 0;

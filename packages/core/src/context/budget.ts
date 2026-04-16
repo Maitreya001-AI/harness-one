@@ -35,6 +35,12 @@ export function createBudget(config: BudgetConfig): TokenBudget {
 
   const responseReserve = config.responseReserve ?? 0;
 
+  // P2-26 (Wave-12): sticky overflow latch. Set the first time cumulative
+  // segment usage (+ responseReserve) exceeds `totalTokens`. Per-segment
+  // overflow is rejected earlier via `allocate()` / `tryAllocate()`, so
+  // this flag tracks aggregate-budget pressure only.
+  let overflowed = false;
+
   const segmentState = new Map<
     string,
     { maxTokens: number; used: number; trimPriority: number; reserved: boolean }
@@ -106,15 +112,33 @@ export function createBudget(config: BudgetConfig): TokenBudget {
 
     needsTrimming(): boolean {
       let totalUsed = 0;
+      let perSegmentOverflow = false;
       for (const seg of segmentState.values()) {
         totalUsed += seg.used;
         // H1: Check if any segment exceeds its maxTokens
         if (seg.used > seg.maxTokens) {
-          return true;
+          perSegmentOverflow = true;
         }
       }
       // H3: responseReserve is already accounted for here
-      return totalUsed + responseReserve > config.totalTokens;
+      const aggregateOverflow = totalUsed + responseReserve > config.totalTokens;
+      if (aggregateOverflow) {
+        // P2-26: latch the overflow once observed; flag persists after
+        // reset() so downstream packers can detect that trimming occurred.
+        overflowed = true;
+      }
+      return perSegmentOverflow || aggregateOverflow;
+    },
+
+    hasOverflowed(): boolean {
+      // P2-26: cheap-but-correct — recompute the aggregate so callers who
+      // never invoked `needsTrimming()` still see an accurate answer.
+      if (!overflowed) {
+        let totalUsed = 0;
+        for (const seg of segmentState.values()) totalUsed += seg.used;
+        if (totalUsed + responseReserve > config.totalTokens) overflowed = true;
+      }
+      return overflowed;
     },
 
     trimOrder(): Array<{ segment: string; trimBy: number; priority: number }> {

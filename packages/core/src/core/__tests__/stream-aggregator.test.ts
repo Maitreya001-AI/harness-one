@@ -151,6 +151,56 @@ describe('StreamAggregator', () => {
     expect(events).toEqual([]);
   });
 
+  // ---------------------------------------------------------------------
+  // Wave-12 P0-3 regression: string[] buffer for text + tool-call args.
+  // ---------------------------------------------------------------------
+  describe('Wave-12 P0-3: string[] buffer avoids O(n²) concatenation', () => {
+    it('correctly reassembles N text chunks without dropping content', () => {
+      const agg = new StreamAggregator(DEFAULT_OPTS);
+      // Pick N such that naive string concatenation would be visible in
+      // results (e.g. 1000 chunks of 1 char each = 1000 chars).
+      const N = 1000;
+      for (let i = 0; i < N; i++) {
+        drain(agg, [{ type: 'text_delta', text: String.fromCharCode(97 + (i % 26)) }]);
+      }
+      const out = agg.getMessage({ inputTokens: 0, outputTokens: 0 });
+      expect(out.message.content).toHaveLength(N);
+      // Deterministic reconstruction — first/last letter should line up
+      // with the index modulo 26.
+      expect(out.message.content[0]).toBe('a');
+      expect(out.message.content[N - 1]).toBe(String.fromCharCode(97 + ((N - 1) % 26)));
+      expect(out.bytesRead).toBe(N);
+    });
+
+    it('correctly reassembles multi-delta tool-call arguments via id append', () => {
+      const agg = new StreamAggregator(DEFAULT_OPTS);
+      // 100 deltas building up a large JSON tool-call argument.
+      const deltas: StreamAggregatorChunk[] = [];
+      for (let i = 0; i < 100; i++) {
+        deltas.push({
+          type: 'tool_call_delta',
+          toolCall: i === 0 ? { id: 'tc-1', name: 't', arguments: 'a' } : { id: 'tc-1', arguments: 'a' },
+        });
+      }
+      drain(agg, deltas);
+      const out = agg.getMessage({ inputTokens: 0, outputTokens: 0 });
+      expect(out.message.toolCalls).toHaveLength(1);
+      expect(out.message.toolCalls![0].arguments).toBe('a'.repeat(100));
+    });
+
+    it('correctly reassembles id-less appended deltas', () => {
+      const agg = new StreamAggregator(DEFAULT_OPTS);
+      drain(agg, [
+        { type: 'tool_call_delta', toolCall: { id: 'tc-1', name: 't', arguments: '' } },
+      ]);
+      for (let i = 0; i < 50; i++) {
+        drain(agg, [{ type: 'tool_call_delta', toolCall: { arguments: 'z' } }]);
+      }
+      const out = agg.getMessage({ inputTokens: 0, outputTokens: 0 });
+      expect(out.message.toolCalls![0].arguments).toBe('z'.repeat(50));
+    });
+  });
+
   describe('F6: maxToolCalls limit', () => {
     it('errors when distinct tool calls exceed maxToolCalls', () => {
       const agg = new StreamAggregator({ ...DEFAULT_OPTS, maxToolCalls: 2 });
@@ -188,6 +238,25 @@ describe('StreamAggregator', () => {
       const events = drain(agg, chunks);
       const errEvent = events.find((e) => e.type === 'error');
       expect(errEvent).toBeUndefined();
+    });
+
+    it('Wave-12 P1-12: count limit fires BEFORE allocating the new entry', () => {
+      // After the error the set size must equal the cap (the rejected
+      // tool call MUST NOT have been added to the map/array). Previously
+      // the check fired after allocation, briefly exposing a (cap+1)-sized
+      // accumulator to consumers reading `getMessage()` post-error.
+      const agg = new StreamAggregator({ ...DEFAULT_OPTS, maxToolCalls: 2 });
+      const events = drain(agg, [
+        { type: 'tool_call_delta', toolCall: { id: 'tc-1', name: 'a', arguments: '{}' } },
+        { type: 'tool_call_delta', toolCall: { id: 'tc-2', name: 'b', arguments: '{}' } },
+        { type: 'tool_call_delta', toolCall: { id: 'tc-3', name: 'c', arguments: '{}' } },
+      ]);
+      expect(events.some((e) => e.type === 'error')).toBe(true);
+      const out = agg.getMessage({ inputTokens: 0, outputTokens: 0 });
+      // Only the first two tool calls survived; the third was rejected
+      // BEFORE allocation (no partial-entry leak).
+      expect(out.message.toolCalls).toHaveLength(2);
+      expect(out.message.toolCalls!.map((t) => t.id)).toEqual(['tc-1', 'tc-2']);
     });
 
     it('appending arguments to existing tool does not count as new tool', () => {

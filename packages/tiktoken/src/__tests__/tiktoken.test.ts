@@ -287,3 +287,62 @@ describe('disposeTiktoken', () => {
     expect(() => disposeTiktoken()).not.toThrow();
   });
 });
+
+// P2-23: Token-count monotonicity — for any prefix `p` of `s`,
+// `encode(p).length <= encode(s).length`. The heuristic fallback encoder
+// uses `max(1, ceil(len/4))`, which is non-decreasing in input length;
+// any real BPE tokenizer is also expected to satisfy this invariant.
+// We exercise the heuristic fallback path (by making encoding_for_model
+// throw) so this test does not depend on the WASM-backed encoder.
+describe('P2-23: token-count monotonicity (heuristic fallback)', () => {
+  // Tiny, seedable PRNG (mulberry32) — deterministic regardless of platform.
+  function mulberry32(seed: number): () => number {
+    let t = seed >>> 0;
+    return (): number => {
+      t = (t + 0x6D2B79F5) >>> 0;
+      let r = Math.imul(t ^ (t >>> 15), 1 | t);
+      r = (r + Math.imul(r ^ (r >>> 7), 61 | r)) ^ r;
+      return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  function randomString(rand: () => number, len: number): string {
+    // Mix ASCII printable + occasional multibyte glyphs so prefix/string
+    // slicing exercises both code-unit and common whitespace boundaries.
+    const pool = 'abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,!?\n\t';
+    let out = '';
+    for (let i = 0; i < len; i++) {
+      const idx = Math.floor(rand() * pool.length);
+      out += pool.charAt(idx);
+    }
+    return out;
+  }
+
+  it('encode(prefix).length <= encode(full).length for 100 random samples (fallback path)', async () => {
+    // Force every createTiktokenTokenizer call to hit the fallback path so
+    // we're testing the pure-JS heuristic (stable + deterministic).
+    mockEncodingForModel.mockImplementation(() => {
+      throw new Error('simulated unknown model');
+    });
+
+    const mod = await import('../index.js');
+    // Silence the one-time fallback warner — we intentionally exercise
+    // the fallback path many times across distinct fake models.
+    mod.setTiktokenFallbackWarner(() => {});
+    const tokenizer = mod.createTiktokenTokenizer('fallback-monotonicity-model');
+
+    const rand = mulberry32(0xC0FFEE);
+    for (let i = 0; i < 100; i++) {
+      const len = Math.floor(rand() * 200) + 1; // 1..200
+      const full = randomString(rand, len);
+      // Pick a random prefix length in [0, len].
+      const prefixLen = Math.floor(rand() * (len + 1));
+      const prefix = full.slice(0, prefixLen);
+
+      const prefixTokens = tokenizer.encode(prefix).length;
+      const fullTokens = tokenizer.encode(full).length;
+
+      expect(prefixTokens).toBeLessThanOrEqual(fullTokens);
+    }
+  });
+});

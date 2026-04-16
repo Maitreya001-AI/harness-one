@@ -101,6 +101,70 @@ describe('toSSEStream', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Wave-12 P1-24 / P2-6: guarded JSON.stringify + reusable fallback.
+// ---------------------------------------------------------------------------
+describe('toSSEStream — guarded serialization (Wave-12 P1-24)', () => {
+  it('does not crash on circular references; emits an error SSE chunk', async () => {
+    const cyclic: Record<string, unknown> = { type: 'custom' };
+    cyclic.loop = cyclic;
+    // Cast via unknown so we can feed a non-AgentEvent to probe the
+    // resilience path without loosening the public type signature.
+    async function* poisoned(): AsyncGenerator<AgentEvent> {
+      yield cyclic as unknown as AgentEvent;
+    }
+    const chunks = await collectChunks(toSSEStream(poisoned()));
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].event).toBe('error');
+    const parsed = JSON.parse(chunks[0].data);
+    expect(parsed.error).toBe('Event serialization failed');
+    expect(typeof parsed.reason).toBe('string');
+  });
+
+  it('does not crash on a throwing getter; emits an error SSE chunk', async () => {
+    const poisonEvent = {
+      type: 'custom',
+      get data() {
+        throw new Error('getter explosion');
+      },
+    };
+    async function* poisoned(): AsyncGenerator<AgentEvent> {
+      yield poisonEvent as unknown as AgentEvent;
+    }
+    const chunks = await collectChunks(toSSEStream(poisoned()));
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].event).toBe('error');
+    expect(chunks[0].data).toContain('Event serialization failed');
+  });
+
+  it('continues emitting subsequent events after a poisoned one (P1-24)', async () => {
+    const cyclic: Record<string, unknown> = { type: 'bad' };
+    cyclic.loop = cyclic;
+    async function* mixed(): AsyncGenerator<AgentEvent> {
+      yield cyclic as unknown as AgentEvent;
+      yield { type: 'iteration_start', iteration: 42 };
+    }
+    const chunks = await collectChunks(toSSEStream(mixed()));
+    expect(chunks).toHaveLength(2);
+    expect(chunks[0].event).toBe('error');
+    expect(chunks[1].event).toBe('iteration_start');
+    expect(JSON.parse(chunks[1].data).iteration).toBe(42);
+  });
+
+  it('P2-6: pre-serialized string events skip JSON.stringify', async () => {
+    // Non-object input (string) is short-circuited into a `message`
+    // event without invoking JSON.stringify — this shaves a full
+    // stringify call per chunk on the SSE hot path.
+    async function* preSerialized(): AsyncGenerator<AgentEvent> {
+      yield 'pre-serialized-payload' as unknown as AgentEvent;
+    }
+    const chunks = await collectChunks(toSSEStream(preSerialized()));
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].event).toBe('message');
+    expect(chunks[0].data).toBe('pre-serialized-payload');
+  });
+});
+
 describe('formatSSE', () => {
   it('formats a chunk into SSE wire format', () => {
     const chunk: SSEChunk = { event: 'message', data: '{"type":"message"}' };

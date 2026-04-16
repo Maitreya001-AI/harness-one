@@ -91,7 +91,18 @@ export function createCircuitBreaker(config?: CircuitBreakerConfig): CircuitBrea
   let state: CircuitState = 'closed';
   let consecutiveFailures = 0;
   let lastFailureTime = 0;
-  let halfOpenProbeInFlight = false;
+  /**
+   * P0-5 (Wave-12): Promise-based single-slot mutex guarding the half-open
+   * probe slot. Prior flag-based guard had a check/set interleaving window
+   * where two probes could both observe `false`, both flip it to `true`, and
+   * their success/failure paths could clobber `consecutiveFailures`.
+   *
+   * With a Promise slot, the claim is atomic (read-then-assign on the single
+   * event-loop turn), and concurrent `execute()` calls that lose the race
+   * see a non-null value and fast-fail via `CircuitOpenError`. The slot is
+   * released in BOTH success and failure paths so the breaker can't wedge.
+   */
+  let halfOpenProbe: Promise<unknown> | null = null;
 
   function transition(next: CircuitState): void {
     if (state === next) return;
@@ -102,14 +113,14 @@ export function createCircuitBreaker(config?: CircuitBreakerConfig): CircuitBrea
 
   function recordSuccess(): void {
     consecutiveFailures = 0;
-    halfOpenProbeInFlight = false;
+    halfOpenProbe = null;
     if (state !== 'closed') transition('closed');
   }
 
   function recordFailure(): void {
     consecutiveFailures++;
     lastFailureTime = Date.now();
-    halfOpenProbeInFlight = false;
+    halfOpenProbe = null;
     if (state === 'half_open' || consecutiveFailures >= failureThreshold) {
       transition('open');
     }
@@ -134,12 +145,20 @@ export function createCircuitBreaker(config?: CircuitBreakerConfig): CircuitBrea
         throw new CircuitOpenError();
       }
 
+      // P0-5: Atomic claim of the half-open probe slot. Reading + writing
+      // `halfOpenProbe` happens within a single synchronous tick so no two
+      // callers can both observe a null slot and both claim it.
+      let releaseProbe: (() => void) | null = null;
       if (state === 'half_open') {
-        if (halfOpenProbeInFlight) {
-          // Only one probe at a time in half_open — reject concurrent calls.
+        if (halfOpenProbe !== null) {
+          // Another caller holds the probe — fast-fail without touching state.
           throw new CircuitOpenError('Circuit is HALF_OPEN — probe in flight');
         }
-        halfOpenProbeInFlight = true;
+        // Install a sentinel promise so concurrent callers see the slot taken.
+        // The sentinel is resolved on both success and failure paths below.
+        halfOpenProbe = new Promise<void>((resolve) => {
+          releaseProbe = resolve;
+        });
       }
 
       try {
@@ -149,6 +168,12 @@ export function createCircuitBreaker(config?: CircuitBreakerConfig): CircuitBrea
       } catch (err) {
         recordFailure();
         throw err;
+      } finally {
+        // Ensure the sentinel is resolved so any Promise-awaiting callers
+        // (if introduced later) unblock. recordSuccess/recordFailure already
+        // cleared `halfOpenProbe`, so the release is purely for observers of
+        // the sentinel itself.
+        if (releaseProbe !== null) (releaseProbe as () => void)();
       }
     },
 
@@ -156,7 +181,7 @@ export function createCircuitBreaker(config?: CircuitBreakerConfig): CircuitBrea
     recordFailure,
     reset: () => {
       consecutiveFailures = 0;
-      halfOpenProbeInFlight = false;
+      halfOpenProbe = null;
       transition('closed');
     },
   };

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createLogger, createSafeReplacer } from '../logger.js';
+import { createLogger, createSafeReplacer, sanitizeStackTrace } from '../logger.js';
 
 
 describe('createLogger', () => {
@@ -455,6 +455,164 @@ describe('createLogger', () => {
       logger.info('no-cid');
       const parsed = JSON.parse(lines[0]);
       expect(parsed.correlationId).toBeUndefined();
+    });
+  });
+
+  // P1-7: Async-context hook for auto-injecting trace_id / span_id.
+  describe('P1-7 getContext trace/span auto-injection', () => {
+    it('merges trace_id and span_id from getContext into every log record', () => {
+      const { lines, output } = captureOutput();
+      const ctx = { traceId: 'tr-abc', spanId: 'sp-xyz' };
+      const logger = createLogger({
+        json: true,
+        output,
+        getContext: () => ctx,
+      });
+      logger.info('hello');
+      const parsed = JSON.parse(lines[0]);
+      expect(parsed.trace_id).toBe('tr-abc');
+      expect(parsed.span_id).toBe('sp-xyz');
+    });
+
+    it('invokes getContext on every log call (dynamic per-request context)', () => {
+      const { lines, output } = captureOutput();
+      let current = { traceId: 'first' };
+      const logger = createLogger({ json: true, output, getContext: () => current });
+      logger.info('a');
+      current = { traceId: 'second' };
+      logger.info('b');
+      expect(JSON.parse(lines[0]).trace_id).toBe('first');
+      expect(JSON.parse(lines[1]).trace_id).toBe('second');
+    });
+
+    it('user fields in meta override getContext fields (hook never overwrites caller meta)', () => {
+      const { lines, output } = captureOutput();
+      const logger = createLogger({
+        json: true,
+        output,
+        getContext: () => ({ traceId: 'auto-tr', spanId: 'auto-sp' }),
+      });
+      logger.info('override', { trace_id: 'explicit-tr' });
+      const parsed = JSON.parse(lines[0]);
+      expect(parsed.trace_id).toBe('explicit-tr');
+      // span_id still comes from the hook (not overridden).
+      expect(parsed.span_id).toBe('auto-sp');
+    });
+
+    it('throwing getContext does not silence logs (fail-open)', () => {
+      const { lines, output } = captureOutput();
+      const logger = createLogger({
+        json: true,
+        output,
+        getContext: () => { throw new Error('ctx broken'); },
+      });
+      logger.info('still emitted');
+      expect(lines).toHaveLength(1);
+      const parsed = JSON.parse(lines[0]);
+      expect(parsed.message).toBe('still emitted');
+      // No stray trace_id / span_id fields leaked through.
+      expect(parsed.trace_id).toBeUndefined();
+      expect(parsed.span_id).toBeUndefined();
+    });
+
+    it('returning undefined from getContext produces no trace/span fields', () => {
+      const { lines, output } = captureOutput();
+      const logger = createLogger({
+        json: true,
+        output,
+        getContext: () => undefined,
+      });
+      logger.info('plain');
+      const parsed = JSON.parse(lines[0]);
+      expect(parsed.trace_id).toBeUndefined();
+      expect(parsed.span_id).toBeUndefined();
+    });
+
+    it('skips empty-string trace/span ids from the hook', () => {
+      const { lines, output } = captureOutput();
+      const logger = createLogger({
+        json: true,
+        output,
+        getContext: () => ({ traceId: '', spanId: '' }),
+      });
+      logger.info('with-empty-ctx');
+      const parsed = JSON.parse(lines[0]);
+      expect(parsed.trace_id).toBeUndefined();
+      expect(parsed.span_id).toBeUndefined();
+    });
+
+    it('child logger inherits the getContext hook', () => {
+      const { lines, output } = captureOutput();
+      const logger = createLogger({
+        json: true,
+        output,
+        getContext: () => ({ traceId: 'inherited' }),
+      });
+      const child = logger.child({ component: 'db' });
+      child.info('hi');
+      const parsed = JSON.parse(lines[0]);
+      expect(parsed.trace_id).toBe('inherited');
+      expect(parsed.component).toBe('db');
+    });
+  });
+
+  // P2-14: Absolute-path stack trace sanitization.
+  describe('P2-14 sanitizeStackTrace', () => {
+    it('strips process.cwd() prefix from absolute paths', () => {
+      const cwd = '/Users/alice/repo';
+      const stack = 'Error: boom\n    at fn (/Users/alice/repo/packages/core/src/foo.ts:12:3)';
+      const out = sanitizeStackTrace(stack, { cwd });
+      expect(out).toContain('packages/core/src/foo.ts:12:3');
+      expect(out).not.toContain('/Users/alice/repo');
+    });
+
+    it('collapses nested node_modules segments to a relative prefix', () => {
+      const stack = 'Error: x\n    at /home/ci/build-abc/node_modules/some-pkg/dist/index.js:1:1';
+      const out = sanitizeStackTrace(stack, { cwd: '/nowhere' });
+      expect(out).toContain('node_modules/some-pkg/dist/index.js');
+      expect(out).not.toContain('/home/ci/build-abc');
+    });
+
+    it('handles file:// URL-style entries', () => {
+      const cwd = '/abs/proj';
+      const stack = 'at fn (file:///abs/proj/src/bar.ts:3:4)';
+      const out = sanitizeStackTrace(stack, { cwd });
+      expect(out).toContain('src/bar.ts:3:4');
+      expect(out).not.toContain('file:///abs/proj');
+    });
+
+    it('returns unchanged input for empty or non-string stacks', () => {
+      expect(sanitizeStackTrace('')).toBe('');
+    });
+
+    it('logger emits Error.stack with paths sanitized relative to cwd', () => {
+      const { lines, output } = captureOutput();
+      const cwd = '/fake/project/root';
+      const logger = createLogger({
+        json: true,
+        output,
+        stackSanitizer: { cwd },
+      });
+      const err = new Error('oops');
+      err.stack = `Error: oops\n    at main (${cwd}/packages/core/src/foo.ts:10:5)`;
+      logger.error('failure', { error: err });
+      const parsed = JSON.parse(lines[0]);
+      expect(parsed.error.stack).toContain('packages/core/src/foo.ts:10:5');
+      expect(parsed.error.stack).not.toContain(cwd);
+    });
+
+    it('stackSanitizer disabled flag passes stack through verbatim', () => {
+      const { lines, output } = captureOutput();
+      const logger = createLogger({
+        json: true,
+        output,
+        stackSanitizer: { disabled: true },
+      });
+      const err = new Error('x');
+      err.stack = `Error: x\n    at /absolute/path/file.ts:1:1`;
+      logger.error('failure', { error: err });
+      const parsed = JSON.parse(lines[0]);
+      expect(parsed.error.stack).toContain('/absolute/path/file.ts');
     });
   });
 

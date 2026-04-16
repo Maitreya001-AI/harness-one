@@ -759,7 +759,11 @@ export class AgentLoop {
     tm: AgentLoopTraceManager | undefined,
     traceId: string | undefined,
   ): Generator<AgentEvent> {
-    // H4: prune conversation if exceeded. PERF-010: in-place splice.
+    // H4: prune conversation if exceeded.
+    // Wave-12 P0-4: avoid `splice(0, n, ...pruned)` which spreads a large
+    // array onto the call stack (stack-depth risk on big conversations) and
+    // forces an O(n) tail-copy followed by an O(m) insert. An in-place
+    // overwrite is O(n) with no spread and no temporary allocation.
     if (
       this.maxConversationMessages !== undefined &&
       ctx.conversation.length > this.maxConversationMessages
@@ -768,7 +772,11 @@ export class AgentLoop {
       if (pruneResult.warning) {
         yield { type: 'warning', message: pruneResult.warning };
       }
-      ctx.conversation.splice(0, ctx.conversation.length, ...pruneResult.pruned);
+      const pruned = pruneResult.pruned;
+      for (let i = 0; i < pruned.length; i++) {
+        ctx.conversation[i] = pruned[i];
+      }
+      ctx.conversation.length = pruned.length;
     }
 
     // End any iteration span left open from the previous turn.

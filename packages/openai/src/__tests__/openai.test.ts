@@ -1231,12 +1231,21 @@ describe('createOpenAIAdapter', () => {
       expect(providers['custom-provider']).toEqual({ baseURL: 'https://custom.example.com/v1' });
     });
 
-    it('registerProvider overwrites an existing non-built-in provider', () => {
-      // ollama is a convenience entry, not a reserved built-in
-      registerProvider('ollama', { baseURL: 'http://127.0.0.1:11434/v1' });
+    it('registerProvider overwrites an existing non-built-in provider when { allowOverride: true }', () => {
+      // ollama is a convenience entry, not a reserved built-in.
+      // Wave-12 P1-13: silent override is gated behind `allowOverride: true`.
+      registerProvider(
+        'ollama',
+        { baseURL: 'http://127.0.0.1:11434/v1' },
+        { allowOverride: true },
+      );
       expect(providers.ollama).toEqual({ baseURL: 'http://127.0.0.1:11434/v1' });
-      // Restore for other tests
-      registerProvider('ollama', { baseURL: 'http://localhost:11434/v1' });
+      // Restore for other tests (also needs allowOverride to change baseURL back).
+      registerProvider(
+        'ollama',
+        { baseURL: 'http://localhost:11434/v1' },
+        { allowOverride: true },
+      );
     });
 
     it('registerProvider rejects malformed baseURL', () => {

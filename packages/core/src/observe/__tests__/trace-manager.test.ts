@@ -1507,3 +1507,216 @@ describe('PERF-016 pendingExports leak fix', () => {
     });
   });
 });
+
+// P1-6: tail-based shouldSampleTrace hook gates export at endTrace time.
+describe('P1-6 shouldSampleTrace tail sampling hook', () => {
+  it('skips export when shouldSampleTrace returns false', async () => {
+    const exported: string[] = [];
+    const exporter: TraceExporter = {
+      name: 'tail',
+      async exportTrace(trace) { exported.push(trace.name); },
+      async exportSpan() {},
+      async flush() {},
+      shouldSampleTrace() { return false; },
+    };
+    const tm = createTraceManager({ exporters: [exporter] });
+    const tid = tm.startTrace('dropped');
+    tm.endTrace(tid);
+    await tm.flush();
+    expect(exported).toHaveLength(0);
+  });
+
+  it('exports when shouldSampleTrace returns true', async () => {
+    const exported: string[] = [];
+    const exporter: TraceExporter = {
+      name: 'tail',
+      async exportTrace(trace) { exported.push(trace.name); },
+      async exportSpan() {},
+      async flush() {},
+      shouldSampleTrace() { return true; },
+    };
+    const tm = createTraceManager({ exporters: [exporter] });
+    const tid = tm.startTrace('kept');
+    tm.endTrace(tid);
+    await tm.flush();
+    expect(exported).toEqual(['kept']);
+  });
+
+  it('implements error-traces-100% pattern via shouldSampleTrace', async () => {
+    const exported: string[] = [];
+    const exporter: TraceExporter = {
+      name: 'error-only',
+      async exportTrace(trace) { exported.push(trace.name); },
+      async exportSpan() {},
+      async flush() {},
+      shouldSampleTrace(trace) {
+        return trace.status === 'error' || trace.spans.some((s) => s.status === 'error');
+      },
+    };
+    const tm = createTraceManager({ exporters: [exporter] });
+
+    const okId = tm.startTrace('ok-trace');
+    tm.endTrace(okId, 'completed');
+
+    const errId = tm.startTrace('err-trace');
+    tm.endTrace(errId, 'error');
+
+    const errBySpanId = tm.startTrace('err-by-span');
+    const sid = tm.startSpan(errBySpanId, 'failing-span');
+    tm.endSpan(sid, 'error');
+    tm.endTrace(errBySpanId, 'completed');
+
+    await tm.flush();
+    // Only the two error traces are exported.
+    expect(exported.sort()).toEqual(['err-by-span', 'err-trace']);
+  });
+
+  it('throwing tail hook is treated as an export failure (drops export, reports error)', async () => {
+    const exported: string[] = [];
+    const errors: unknown[] = [];
+    const exporter: TraceExporter = {
+      name: 'throwing-tail',
+      async exportTrace(trace) { exported.push(trace.name); },
+      async exportSpan() {},
+      async flush() {},
+      shouldSampleTrace() { throw new Error('tail boom'); },
+    };
+    const tm = createTraceManager({
+      exporters: [exporter],
+      onExportError: (err) => errors.push(err),
+    });
+    const tid = tm.startTrace('t');
+    tm.endTrace(tid);
+    await tm.flush();
+    expect(exported).toHaveLength(0);
+    expect(errors.some((e) => (e as Error).message === 'tail boom')).toBe(true);
+  });
+
+  it('still applies head-based sampling for memory bounds (head gate runs first)', async () => {
+    // Head sampling decision = drop (rate 0); tail hook wants to keep.
+    // Expect: NOT exported — the tail hook is export-only and cannot
+    // rescue a head-dropped trace.
+    const exported: string[] = [];
+    const exporter: TraceExporter = {
+      name: 'head-dropped',
+      async exportTrace(trace) { exported.push(trace.name); },
+      async exportSpan() {},
+      async flush() {},
+      shouldSampleTrace() { return true; },
+    };
+    const tm = createTraceManager({
+      exporters: [exporter],
+      defaultSamplingRate: 0,
+    });
+    const tid = tm.startTrace('head-dropped');
+    tm.endTrace(tid);
+    await tm.flush();
+    expect(exported).toHaveLength(0);
+  });
+});
+
+// P1-19: bounded flush() / dispose() via flushTimeoutMs.
+describe('P1-19 bounded flush / dispose timeout', () => {
+  it('flush() returns within the configured timeout when an export never resolves', async () => {
+    const exporter: TraceExporter = {
+      name: 'hangs',
+      // exportSpan returns a never-resolving promise — simulates a stuck backend.
+      exportSpan: () => new Promise<void>(() => { /* never */ }),
+      async exportTrace() {},
+      async flush() {},
+    };
+    const warns: unknown[] = [];
+    const logger = {
+      warn: (msg: string, meta?: Record<string, unknown>) => { warns.push({ msg, meta }); },
+    };
+    const tm = createTraceManager({
+      exporters: [exporter],
+      logger,
+      flushTimeoutMs: 50,
+    });
+    const tid = tm.startTrace('t');
+    const sid = tm.startSpan(tid, 's');
+    tm.endSpan(sid);
+
+    const start = Date.now();
+    await tm.flush();
+    const elapsed = Date.now() - start;
+    // Must return promptly — well below the default 30s.
+    expect(elapsed).toBeLessThan(5_000);
+    // Warn about abandoned exports.
+    expect(warns.some((w) => typeof (w as { msg: string }).msg === 'string' && (w as { msg: string }).msg.includes('abandoning'))).toBe(true);
+  });
+
+  it('dispose() does not hang when an exporter never settles', async () => {
+    const exporter: TraceExporter = {
+      name: 'hangs-dispose',
+      exportSpan: () => new Promise<void>(() => { /* never */ }),
+      async exportTrace() {},
+      async flush() {},
+    };
+    const tm = createTraceManager({
+      exporters: [exporter],
+      onExportError: () => {},
+      flushTimeoutMs: 40,
+    });
+    const tid = tm.startTrace('t');
+    const sid = tm.startSpan(tid, 's');
+    tm.endSpan(sid);
+
+    const start = Date.now();
+    await tm.dispose();
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeLessThan(5_000);
+  });
+
+  it('flushTimeoutMs=0 disables the cap (legacy wait-forever semantics)', async () => {
+    // We don't want to actually hang the test forever — just verify the
+    // config path doesn't throw and that when pendingExports settles
+    // naturally, flush() completes.
+    const exporter: TraceExporter = {
+      name: 'fast',
+      async exportTrace() {},
+      async exportSpan() {},
+      async flush() {},
+    };
+    const tm = createTraceManager({ exporters: [exporter], flushTimeoutMs: 0 });
+    const tid = tm.startTrace('t');
+    tm.endTrace(tid);
+    await expect(tm.flush()).resolves.toBeUndefined();
+  });
+
+  it('rejects negative or non-finite flushTimeoutMs at construction', () => {
+    expect(() => createTraceManager({ flushTimeoutMs: -1 })).toThrow(HarnessError);
+    expect(() => createTraceManager({ flushTimeoutMs: Number.NaN })).toThrow(HarnessError);
+  });
+});
+
+// P2-15: sampling rate snapshot getter + documentation tests.
+describe('P2-15 getSamplingRate + in-flight determinism', () => {
+  it('getSamplingRate returns the currently configured rate', () => {
+    const tm = createTraceManager({ defaultSamplingRate: 0.25 });
+    expect(tm.getSamplingRate()).toBeCloseTo(0.25, 5);
+    tm.setSamplingRate(0.75);
+    expect(tm.getSamplingRate()).toBeCloseTo(0.75, 5);
+  });
+
+  it('only affects traces started AFTER the call; in-flight traces keep their decision', async () => {
+    const exported: string[] = [];
+    const exporter: TraceExporter = {
+      name: 'rate-snap',
+      async exportTrace(trace) { exported.push(trace.name); },
+      async exportSpan() {},
+      async flush() {},
+    };
+    const tm = createTraceManager({ exporters: [exporter], defaultSamplingRate: 1 });
+    // In-flight trace captured at rate=1 -> keeps its decision.
+    const inflight = tm.startTrace('inflight');
+    // New rate = 0 affects only NEW traces.
+    tm.setSamplingRate(0);
+    const afterLower = tm.startTrace('after-lower');
+    tm.endTrace(inflight);
+    tm.endTrace(afterLower);
+    await tm.flush();
+    expect(exported).toEqual(['inflight']);
+  });
+});

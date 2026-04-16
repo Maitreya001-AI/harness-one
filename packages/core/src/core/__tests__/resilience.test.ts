@@ -578,6 +578,51 @@ describe('createResilientLoop', () => {
       }
     });
 
+    // P2-25: Pin down current behavior when onRetry itself throws.
+    // The generator awaits onRetry directly (no try/catch), so the throw
+    // propagates to the consumer and aborts the run. This test documents
+    // that contract so future refactors that swallow the error must
+    // update this test deliberately.
+    it('P2-25: onRetry throwing propagates through the generator (current behavior)', async () => {
+      const toolCall: ToolCallRequest = { id: 'call_1', name: 'loop', arguments: '{}' };
+
+      // Always return tool calls so the inner loop hits max_iterations and
+      // the resilient wrapper invokes onRetry.
+      const adapter: AgentAdapter = {
+        async chat() {
+          return { message: { role: 'assistant', content: '', toolCalls: [toolCall] }, usage: USAGE };
+        },
+      };
+
+      const onRetryError = new Error('onRetry hook blew up');
+      const onRetry = vi.fn().mockRejectedValue(onRetryError);
+
+      const resilient = createResilientLoop({
+        loopConfig: { adapter, maxIterations: 1, onToolCall: async () => 'ok' },
+        maxOuterRetries: 2,
+        onRetry,
+      });
+
+      const events: AgentEvent[] = [];
+      let caught: unknown;
+      try {
+        for await (const event of resilient.run([{ role: 'user', content: 'Go' }])) {
+          events.push(event);
+        }
+      } catch (e) {
+        caught = e;
+      }
+
+      // The throw from onRetry should propagate to the consumer.
+      expect(caught).toBe(onRetryError);
+      // onRetry was called exactly once before the throw aborted the run.
+      expect(onRetry).toHaveBeenCalledTimes(1);
+      // Inner-loop events were yielded before onRetry was invoked; the final
+      // passthrough 'done' was NOT yielded because the generator threw first.
+      const doneEvents = events.filter(e => e.type === 'done');
+      expect(doneEvents).toHaveLength(0);
+    });
+
     it('disposes inner loop on successful first-try completion', async () => {
       const { AgentLoop } = await import('../agent-loop.js');
       const disposeSpy = vi.spyOn(AgentLoop.prototype, 'dispose');

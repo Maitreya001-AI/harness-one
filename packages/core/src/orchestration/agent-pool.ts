@@ -67,6 +67,10 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
   const max = config.max ?? 10;
   const idleTimeout = config.idleTimeout ?? 60_000;
   const maxAge = config.maxAge;
+  // P0-1 (Wave-12): Cap pending-queue depth to prevent unbounded memory
+  // growth under sustained acquire bursts. Default matches research-report
+  // recommendation (1000). `<= 0` disables queuing entirely.
+  const maxPendingQueueSize = config.maxPendingQueueSize ?? 1000;
 
   const entries = new Map<string, PoolEntry>();
   let disposed = false;
@@ -162,7 +166,10 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
     clearIdleTimer(entry);
     // Fix 25: Add jitter (0–10% of timeout) to prevent thundering herd.
     // Delegates to the shared jitter utility for consistency and testability.
-    const jitter = computeJitterMs(idleTimeout, 0.1);
+    // P2-4 (Wave-12): Clamp jitter to `idleTimeout * 0.1` — defensive against
+    // a custom random source returning >=1 or rounding oddities that could
+    // push a jittered timer well past the intended 10% ceiling.
+    const jitter = Math.min(computeJitterMs(idleTimeout, 0.1), Math.floor(idleTimeout * 0.1));
     const timer = setTimeout(() => {
       // Recycle: dispose idle agent if above min
       if (entry.state === 'idle') {
@@ -280,6 +287,18 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
         return acquireSync(opts.role);
       } catch (err: unknown) {
         if (err instanceof HarnessError && err.code === HarnessErrorCode.POOL_EXHAUSTED) {
+          // P0-1 (Wave-12): Reject fast when the pending queue is at capacity
+          // instead of growing the queue unboundedly. Includes current/max in
+          // the error context bag so ops can tune `maxPendingQueueSize`.
+          if (pendingQueue.length >= maxPendingQueueSize) {
+            throw new HarnessError(
+              `Agent pool pending-queue full (${pendingQueue.length}/${maxPendingQueueSize})`,
+              HarnessErrorCode.POOL_QUEUE_FULL,
+              'Increase maxPendingQueueSize, raise pool max, or shed load upstream',
+              undefined,
+              { current: pendingQueue.length, max: maxPendingQueueSize },
+            );
+          }
           // Queue the request
           return new Promise<PooledAgent>((resolve, reject) => {
             // Declared first so `cleanup` can safely reference it before assignment.

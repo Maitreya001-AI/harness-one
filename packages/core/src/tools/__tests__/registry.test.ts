@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { createRegistry } from '../registry.js';
 import { defineTool } from '../define-tool.js';
 import { toolSuccess } from '../types.js';
-import type { ToolResult } from '../types.js';
+import type { ToolResult, ParsedToolArgumentsMeta } from '../types.js';
 
 function makeEchoTool(name = 'echo') {
   return defineTool<{ text: string }>({
@@ -163,6 +163,24 @@ describe('createRegistry', () => {
         expect(result.error.category).toBe('validation');
         expect(result.error.message).toContain('Invalid JSON');
       }
+    });
+
+    it('Wave-12 P1-2: JSON parse error preserves SyntaxError on cause and includes native hint', async () => {
+      const registry = createRegistry();
+      registry.register(makeEchoTool());
+      const result = await registry.execute({
+        id: '1',
+        name: 'echo',
+        arguments: '{"unterminated: ',
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        // Native parser position/hint is embedded in the message.
+        expect(result.error.message).toMatch(/Invalid JSON in tool call arguments \(.+\)/);
+      }
+      // Non-enumerable `cause` is attached with the original SyntaxError.
+      const cause = (result as unknown as { cause?: unknown }).cause;
+      expect(cause).toBeInstanceOf(SyntaxError);
     });
 
     it('returns validation error for invalid params', async () => {
@@ -672,6 +690,128 @@ describe('createRegistry', () => {
       await registry.execute({ id: '5', name: 'echo', arguments: '{"text": 123}' });
       const good3 = await registry.execute({ id: '6', name: 'echo', arguments: '{"text":"hi"}' });
       expect(good3.success).toBe(true);
+    });
+  });
+
+  describe('Wave-12 P1-18: signal contract and non-responsive-tool warn', () => {
+    it('Symbol.toStringTag marks the registry', () => {
+      const registry = createRegistry();
+      expect(Object.prototype.toString.call(registry)).toBe('[object HarnessToolRegistry]');
+    });
+
+    it('tool that respects signal is aborted promptly on timeout', async () => {
+      let abortedObserved = false;
+      const goodTool = defineTool({
+        name: 'respectful',
+        description: 'respects signal',
+        parameters: { type: 'object' },
+        execute: async (_p, signal) =>
+          new Promise((resolve) => {
+            const timer = setTimeout(() => resolve(toolSuccess('late')), 5000);
+            signal?.addEventListener('abort', () => {
+              abortedObserved = true;
+              clearTimeout(timer);
+              resolve(toolSuccess('aborted'));
+            });
+          }),
+      });
+      const registry = createRegistry({ timeoutMs: 30 });
+      registry.register(goodTool);
+      const result = await registry.execute({ id: '1', name: 'respectful', arguments: '{}' });
+      expect(result.success).toBe(false); // the Promise.race sees the timeout first
+      expect(abortedObserved).toBe(true);
+    });
+
+    it('tool that ignores signal still returns within timeout + logs a non-responsive warn', async () => {
+      vi.useFakeTimers();
+      const warns: Array<{ msg: string; meta?: Record<string, unknown> }> = [];
+      const logger = {
+        debug: () => {},
+        info: () => {},
+        warn: (msg: string, meta?: Record<string, unknown>) => { warns.push({ msg, meta }); },
+        error: () => {},
+        child: () => logger,
+      } as unknown as Parameters<typeof createRegistry>[0] extends infer C
+        ? C extends { logger?: infer L } ? NonNullable<L> : never
+        : never;
+      const stubbornTool = defineTool({
+        name: 'stubborn',
+        description: 'ignores signal',
+        parameters: { type: 'object' },
+        execute: async () => new Promise((resolve) => {
+          setTimeout(() => resolve(toolSuccess('finally')), 10_000);
+        }),
+      });
+      const registry = createRegistry({ timeoutMs: 20, logger });
+      registry.register(stubbornTool);
+      const promise = registry.execute({ id: '1', name: 'stubborn', arguments: '{}' });
+      // First timeout fires → returns timeout result.
+      await vi.advanceTimersByTimeAsync(25);
+      const result = await promise;
+      expect(result.success).toBe(false);
+      // Advance further to trigger the non-responsive-tool detector.
+      await vi.advanceTimersByTimeAsync(25);
+      // Let pending microtasks drain so the warn is observable.
+      await vi.advanceTimersByTimeAsync(0);
+      const nonResponsive = warns.filter(w => w.msg.includes('did not resolve'));
+      expect(nonResponsive.length).toBeGreaterThanOrEqual(1);
+      // Advance fully past the tool's fake 10s to let its timer resolve & GC.
+      await vi.advanceTimersByTimeAsync(10_000);
+      vi.useRealTimers();
+    });
+  });
+
+  describe('Wave-12 P1-22: ParsedToolArgumentsMeta type compiles', () => {
+    it('accepts both success and parse_error shapes', () => {
+      const ok: ParsedToolArgumentsMeta = { kind: 'success' };
+      const bad: ParsedToolArgumentsMeta = { kind: 'parse_error', raw: '{"', error: 'Unexpected end' };
+      // Trivial runtime check — the real assertion is that the test file compiles.
+      expect(ok.kind).toBe('success');
+      expect(bad.kind).toBe('parse_error');
+      if (bad.kind === 'parse_error') {
+        expect(bad.raw).toBe('{"');
+      }
+    });
+  });
+
+  describe('Wave-12 P2-24: runtime shape assertion for tool return values', () => {
+    it('wraps a non-ToolResult return value into an error ToolResult', async () => {
+      // Deliberately subvert the type system to simulate a broken tool impl.
+      const badTool = {
+        name: 'badshape',
+        description: 'returns a raw string',
+        parameters: { type: 'object' },
+        execute: async () => 'not a tool result' as unknown as ToolResult,
+      };
+      const registry = createRegistry();
+      registry.register(badTool);
+      const result = await registry.execute({ id: '1', name: 'badshape', arguments: '{}' });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.category).toBe('internal');
+        expect(result.error.message).toContain('unexpected');
+      }
+    });
+
+    it('wraps a null return value into an error ToolResult', async () => {
+      const badTool = {
+        name: 'nulltool',
+        description: 'returns null',
+        parameters: { type: 'object' },
+        execute: async () => null as unknown as ToolResult,
+      };
+      const registry = createRegistry();
+      registry.register(badTool);
+      const result = await registry.execute({ id: '1', name: 'nulltool', arguments: '{}' });
+      expect(result.success).toBe(false);
+    });
+
+    it('passes through a valid ToolResult unchanged', async () => {
+      const registry = createRegistry();
+      registry.register(makeEchoTool());
+      const result = await registry.execute({ id: '1', name: 'echo', arguments: '{"text":"ok"}' });
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.data).toBe('ok');
     });
   });
 

@@ -145,6 +145,22 @@ describe('MessageQueue', () => {
       expect(recent[0].content).toBe('new');
     });
 
+    // P2-22: `since` uses strict greater-than semantics — a message with
+    // `timestamp === since` is excluded, matching the CQ-026 docstring.
+    it('P2-22: since boundary is strict > — excludes messages with timestamp === since', () => {
+      const mq = new MessageQueue();
+      mq.createQueue('a1');
+      mq.push('a1', makeMessage({ timestamp: 1000, content: 'before' }));
+      mq.push('a1', makeMessage({ timestamp: 1500, content: 'boundary' }));
+      mq.push('a1', makeMessage({ timestamp: 2000, content: 'after' }));
+
+      const result = mq.getMessages('a1', { since: 1500 });
+      // Strict `>`: 1500 is excluded, only 2000 is returned.
+      expect(result).toHaveLength(1);
+      expect(result[0].timestamp).toBe(2000);
+      expect(result[0].content).toBe('after');
+    });
+
     it('filters by both type and since', () => {
       const mq = new MessageQueue();
       mq.createQueue('a1');
@@ -497,6 +513,34 @@ describe('MessageQueue', () => {
 
       expect(() => mq.push('a1', makeMessage({ content: 'second' }))).toThrow();
       expect(warnings).toHaveLength(0);
+    });
+
+    // P2-10: Pin down backpressure semantics — when the queue is full and
+    // backpressure is enabled, push() throws and onEvent is NOT called
+    // (backpressure throws instead of dropping, so there's no drop event).
+    it('P2-10: throws and does NOT call onEvent when backpressure is enabled and queue is full', () => {
+      const events: Array<{ type: string; agentId: string; droppedCount: number }> = [];
+      const warnings: unknown[] = [];
+      const mq = new MessageQueue({
+        maxQueueSize: 1,
+        backpressure: true,
+        onEvent: (e) => events.push(e),
+        onWarning: (w) => warnings.push(w),
+      });
+      mq.createQueue('a1');
+      mq.push('a1', makeMessage({ content: 'first' }));
+
+      // push throws due to backpressure...
+      expect(() => mq.push('a1', makeMessage({ content: 'second' }))).toThrow(HarnessError);
+      // ...and onEvent is NOT called (no drop occurred; backpressure is the signal)
+      expect(events).toHaveLength(0);
+      // ...and onWarning is NOT called either (rejection is the signal)
+      expect(warnings).toHaveLength(0);
+
+      // The original message should remain untouched.
+      const remaining = mq.getMessages('a1');
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0].content).toBe('first');
     });
   });
 

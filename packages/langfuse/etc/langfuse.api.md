@@ -21,6 +21,7 @@ export function createLangfusePromptBackend(config: LangfusePromptBackendConfig)
 
 // @public
 export interface LangfuseCostTracker extends CostTracker {
+    dispose(timeoutMs?: number): Promise<void>;
     getStats(): LangfuseCostTrackerStats;
 }
 

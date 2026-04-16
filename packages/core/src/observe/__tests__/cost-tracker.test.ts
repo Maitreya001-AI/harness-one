@@ -1435,4 +1435,131 @@ describe('createCostTracker', () => {
       }
     });
   });
+
+  // P1-15: Mutator deprecation warnings fire once per tracker.
+  describe('P1-15 @deprecated mutator warnings', () => {
+    it('setPricing() emits a one-shot deprecation warning routed via logger', () => {
+      const warns: string[] = [];
+      const logger = {
+        debug: () => {},
+        info: () => {},
+        warn: (msg: string) => { warns.push(msg); },
+        error: () => {},
+        child: () => logger,
+      };
+      const tracker = createCostTracker({ logger });
+      tracker.setPricing([{ model: 'x', inputPer1kTokens: 0.001, outputPer1kTokens: 0 }]);
+      tracker.setPricing([{ model: 'y', inputPer1kTokens: 0.001, outputPer1kTokens: 0 }]);
+      tracker.setPricing([{ model: 'z', inputPer1kTokens: 0.001, outputPer1kTokens: 0 }]);
+      const depWarns = warns.filter((w) => w.includes('@deprecated setPricing'));
+      expect(depWarns).toHaveLength(1);
+    });
+
+    it('setBudget() emits a one-shot deprecation warning routed via logger', () => {
+      const warns: string[] = [];
+      const logger = {
+        debug: () => {},
+        info: () => {},
+        warn: (msg: string) => { warns.push(msg); },
+        error: () => {},
+        child: () => logger,
+      };
+      const tracker = createCostTracker({ logger });
+      tracker.setBudget(1);
+      tracker.setBudget(2);
+      tracker.setBudget(3);
+      const depWarns = warns.filter((w) => w.includes('@deprecated setBudget'));
+      expect(depWarns).toHaveLength(1);
+    });
+
+    it('setPricing() remains functional after the deprecation warning', () => {
+      const tracker = createCostTracker();
+      tracker.setPricing([{ model: 'keeps-working', inputPer1kTokens: 0.5, outputPer1kTokens: 0 }]);
+      const rec = tracker.recordUsage({
+        traceId: 't', model: 'keeps-working', inputTokens: 1000, outputTokens: 0,
+      });
+      expect(rec.estimatedCost).toBeCloseTo(0.5, 5);
+    });
+
+    it('setBudget() remains functional after the deprecation warning', () => {
+      const tracker = createCostTracker({
+        pricing: [{ model: 'm', inputPer1kTokens: 1.0, outputPer1kTokens: 0 }],
+      });
+      tracker.setBudget(0.0005);
+      tracker.recordUsage({ traceId: 't', model: 'm', inputTokens: 1000, outputTokens: 0 });
+      // cost 1.0 >> budget 0.0005 → exceeded
+      expect(tracker.checkBudget()?.type).toBe('exceeded');
+    });
+  });
+
+  // P2-13: alert dedupe window suppresses alert flooding during streaming.
+  describe('P2-13 alert dedupe window', () => {
+    it('suppresses duplicate alerts of the same type within the dedupe window', () => {
+      const handler = vi.fn();
+      const tracker = createCostTracker({
+        pricing: [{ model: 'm', inputPer1kTokens: 1.0, outputPer1kTokens: 0 }],
+        budget: 0.0005, // very small — every recordUsage exceeds.
+        alertDedupeWindowMs: 500,
+      });
+      tracker.onAlert(handler);
+      // Two rapid recordUsage calls over budget → only ONE alert fires.
+      tracker.recordUsage({ traceId: 't1', model: 'm', inputTokens: 1000, outputTokens: 0 });
+      tracker.recordUsage({ traceId: 't2', model: 'm', inputTokens: 1000, outputTokens: 0 });
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(handler.mock.calls[0][0].type).toBe('exceeded');
+    });
+
+    it('does not dedupe across different alert types (warning vs critical vs exceeded)', () => {
+      const alerts: CostAlert[] = [];
+      // budget=1.0; we'll push past warning, then critical, then exceeded within the window.
+      const tracker = createCostTracker({
+        pricing: [{ model: 'm', inputPer1kTokens: 1.0, outputPer1kTokens: 0 }],
+        budget: 1.0,
+        alertThresholds: { warning: 0.5, critical: 0.8 },
+        alertDedupeWindowMs: 10_000,
+      });
+      tracker.onAlert((a) => alerts.push(a));
+      // warning: cost 0.6, 60% of 1.0
+      tracker.recordUsage({ traceId: 'a', model: 'm', inputTokens: 600, outputTokens: 0 });
+      // critical: cost 0.9 total
+      tracker.recordUsage({ traceId: 'b', model: 'm', inputTokens: 300, outputTokens: 0 });
+      // exceeded: cost 1.2 total
+      tracker.recordUsage({ traceId: 'c', model: 'm', inputTokens: 300, outputTokens: 0 });
+      const types = alerts.map((a) => a.type);
+      expect(types).toContain('warning');
+      expect(types).toContain('critical');
+      expect(types).toContain('exceeded');
+    });
+
+    it('alertDedupeWindowMs=0 disables dedupe (legacy alert-every-call behaviour)', () => {
+      const handler = vi.fn();
+      const tracker = createCostTracker({
+        pricing: [{ model: 'm', inputPer1kTokens: 1.0, outputPer1kTokens: 0 }],
+        budget: 0.0005,
+        alertDedupeWindowMs: 0,
+      });
+      tracker.onAlert(handler);
+      tracker.recordUsage({ traceId: 't1', model: 'm', inputTokens: 1000, outputTokens: 0 });
+      tracker.recordUsage({ traceId: 't2', model: 'm', inputTokens: 1000, outputTokens: 0 });
+      // No dedupe → both recordUsage calls emit alerts.
+      expect(handler).toHaveBeenCalledTimes(2);
+    });
+
+    it('reset() clears dedupe state so alerts re-fire', () => {
+      const handler = vi.fn();
+      const tracker = createCostTracker({
+        pricing: [{ model: 'm', inputPer1kTokens: 1.0, outputPer1kTokens: 0 }],
+        budget: 0.0005,
+        alertDedupeWindowMs: 10_000,
+      });
+      tracker.onAlert(handler);
+      tracker.recordUsage({ traceId: 't1', model: 'm', inputTokens: 1000, outputTokens: 0 });
+      expect(handler).toHaveBeenCalledTimes(1);
+
+      tracker.reset();
+      tracker.recordUsage({ traceId: 't2', model: 'm', inputTokens: 1000, outputTokens: 0 });
+      // After reset, dedupe is cleared — alert fires again.
+      expect(handler).toHaveBeenCalledTimes(2);
+    });
+  });
 });

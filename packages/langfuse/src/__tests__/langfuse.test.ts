@@ -745,6 +745,177 @@ describe('createLangfuseExporter', () => {
       warnSpy.mockRestore();
     });
   });
+
+  // -------------------------------------------------------------------------
+  // Wave-12 P1-23: exportTrace must not leave a poisoned traceMap entry
+  // when the underlying client.update() throws.
+  // -------------------------------------------------------------------------
+
+  describe('Wave-12 P1-23: exportTrace cleans up on update() throw', () => {
+    it('deletes the newly-cached trace entry when update() throws', async () => {
+      mock.mocks.update.mockImplementationOnce(() => {
+        throw new Error('update failed');
+      });
+      const exporter = createLangfuseExporter({ client: mock.client });
+
+      // First call throws AND must not leave a poisoned trace handle behind.
+      await expect(
+        exporter.exportTrace({
+          id: 'poisoned',
+          name: 'run',
+          startTime: Date.now(),
+          metadata: {},
+          spans: [],
+          status: 'running',
+        }),
+      ).rejects.toThrow('update failed');
+
+      // Subsequent export with the same id must call trace() again (fresh
+      // handle), proving the prior entry was purged. update() now succeeds.
+      mock.mocks.trace.mockClear();
+      await exporter.exportTrace({
+        id: 'poisoned',
+        name: 'run-retry',
+        startTime: Date.now(),
+        metadata: {},
+        spans: [],
+        status: 'completed',
+      });
+      expect(mock.mocks.trace).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'poisoned' }),
+      );
+    });
+
+    it('preserves an existing traceMap entry when update() throws on a reused handle', async () => {
+      // Seed the entry successfully.
+      const exporter = createLangfuseExporter({ client: mock.client });
+      await exporter.exportTrace({
+        id: 'seeded',
+        name: 'seed',
+        startTime: Date.now(),
+        metadata: {},
+        spans: [],
+        status: 'running',
+      });
+
+      // Now make the second update() throw. The entry was NOT created this
+      // call, so it should NOT be deleted (LRU-managed handle remains valid).
+      mock.mocks.update.mockImplementationOnce(() => {
+        throw new Error('transient fail');
+      });
+      await expect(
+        exporter.exportTrace({
+          id: 'seeded',
+          name: 'seed',
+          startTime: Date.now(),
+          metadata: {},
+          spans: [],
+          status: 'completed',
+        }),
+      ).rejects.toThrow('transient fail');
+
+      // Third call should reuse the cached handle (no new trace()).
+      mock.mocks.trace.mockClear();
+      mock.mocks.update.mockImplementationOnce(() => undefined);
+      await exporter.exportTrace({
+        id: 'seeded',
+        name: 'seed',
+        startTime: Date.now(),
+        metadata: {},
+        spans: [],
+        status: 'completed',
+      });
+      expect(mock.mocks.trace).not.toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Wave-12 P1-26: events[].attributes are sanitized the same way as the
+  // top-level span.attributes bag.
+  // -------------------------------------------------------------------------
+
+  describe('Wave-12 P1-26: event-attribute sanitization', () => {
+    it('redacts secret keys in events[].attributes via the default sanitizer', async () => {
+      const exporter = createLangfuseExporter({ client: mock.client });
+      const span: Span = {
+        id: 'span-evt-default',
+        traceId: 'trace-1',
+        name: 'op',
+        startTime: 1000,
+        endTime: 2000,
+        attributes: {},
+        events: [
+          {
+            name: 'request',
+            timestamp: 1500,
+            attributes: { api_key: 'sk-secret', region: 'us-east' },
+          },
+        ],
+        status: 'completed',
+      };
+
+      await exporter.exportSpan(span);
+
+      const sent = mock.mocks.span.mock.calls[0]?.[0] as
+        | { metadata: { events: Array<{ attributes?: Record<string, unknown> }> } }
+        | undefined;
+      expect(sent).toBeDefined();
+      const evtAttrs = sent!.metadata.events[0].attributes!;
+      expect(evtAttrs.api_key).toBe('[REDACTED]');
+      expect(evtAttrs.region).toBe('us-east');
+    });
+
+    it('applies a caller-supplied sanitize function to event attributes too', async () => {
+      const sanitize = vi.fn((attrs: Record<string, unknown>) => {
+        const out = { ...attrs };
+        if ('user_token' in out) out.user_token = '***';
+        return out;
+      });
+      const exporter = createLangfuseExporter({ client: mock.client, sanitize });
+      const span: Span = {
+        id: 'span-evt-custom',
+        traceId: 'trace-1',
+        name: 'op',
+        startTime: 1000,
+        endTime: 2000,
+        attributes: { model: 'm' }, // generation path
+        events: [
+          { name: 'auth', timestamp: 1500, attributes: { user_token: 'abc123' } },
+        ],
+        status: 'completed',
+      };
+
+      await exporter.exportSpan(span);
+
+      // sanitize() called twice: once for top-level attrs, once per event
+      expect(sanitize).toHaveBeenCalledTimes(2);
+      const sent = mock.mocks.generation.mock.calls[0]?.[0] as
+        | { metadata: { events: Array<{ attributes?: Record<string, unknown> }> } }
+        | undefined;
+      expect(sent).toBeDefined();
+      expect(sent!.metadata.events[0].attributes!.user_token).toBe('***');
+    });
+
+    it('passes events without attributes through unchanged (no extra sanitize call)', async () => {
+      const sanitize = vi.fn((attrs: Record<string, unknown>) => attrs);
+      const exporter = createLangfuseExporter({ client: mock.client, sanitize });
+      const span: Span = {
+        id: 'span-evt-bare',
+        traceId: 'trace-1',
+        name: 'op',
+        startTime: 1000,
+        endTime: 2000,
+        attributes: {},
+        events: [{ name: 'bare', timestamp: 1500 }],
+        status: 'completed',
+      };
+
+      await exporter.exportSpan(span);
+
+      // Only top-level attributes triggered sanitize; bare event has no attrs
+      expect(sanitize).toHaveBeenCalledTimes(1);
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1936,6 +2107,130 @@ describe('createLangfuseCostTracker', () => {
 
       await new Promise(r => setTimeout(r, 20));
       expect(onExportError).toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Wave-12 P1-8: Track in-flight flushAsync promises so dispose() can drain
+  // them before returning. Previously these were fire-and-forget.
+  // -------------------------------------------------------------------------
+
+  describe('Wave-12 P1-8: dispose() drains pending flushAsync promises', () => {
+    it('resolves immediately when no flushes are in flight', async () => {
+      const tracker = createLangfuseCostTracker({ client: mock.client });
+      await expect(tracker.dispose()).resolves.toBeUndefined();
+    });
+
+    it('awaits a slow flushAsync before resolving dispose()', async () => {
+      const order: string[] = [];
+      mock.mocks.flushAsync.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            setTimeout(() => {
+              order.push('flush-settled');
+              resolve();
+            }, 25);
+          }),
+      );
+      const tracker = createLangfuseCostTracker({ client: mock.client });
+      tracker.setPricing([{ model: 'a', inputPer1kTokens: 0.001, outputPer1kTokens: 0 }]);
+      tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 1000, outputTokens: 0 });
+
+      await tracker.dispose();
+      order.push('dispose-returned');
+
+      // dispose() must not return before the pending flush settles.
+      expect(order).toEqual(['flush-settled', 'dispose-returned']);
+    });
+
+    it('caps dispose() at the configured timeout when flush never settles', async () => {
+      vi.useFakeTimers();
+      try {
+        mock.mocks.flushAsync.mockImplementation(() => new Promise<void>(() => {}));
+        const tracker = createLangfuseCostTracker({ client: mock.client });
+        tracker.setPricing([{ model: 'a', inputPer1kTokens: 0.001, outputPer1kTokens: 0 }]);
+        tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 1000, outputTokens: 0 });
+
+        const p = tracker.dispose(100);
+        await vi.advanceTimersByTimeAsync(101);
+        await expect(p).resolves.toBeUndefined();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('does not propagate flushAsync rejections through dispose()', async () => {
+      // handleExportError is invoked on rejection; dispose() must still
+      // resolve cleanly rather than rethrowing.
+      const onExportError = vi.fn();
+      mock.mocks.flushAsync.mockRejectedValue(new Error('network'));
+      const tracker = createLangfuseCostTracker({ client: mock.client, onExportError });
+      tracker.setPricing([{ model: 'a', inputPer1kTokens: 0.001, outputPer1kTokens: 0 }]);
+      tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 1000, outputTokens: 0 });
+
+      await expect(tracker.dispose()).resolves.toBeUndefined();
+      expect(onExportError).toHaveBeenCalledWith(
+        expect.any(Error),
+        expect.objectContaining({ op: 'flush' }),
+      );
+    });
+
+    it('does not produce unhandled rejections when the logger throws inside handleExportError', async () => {
+      // Defensive try/catch inside the .catch() handler means logger
+      // exceptions cannot escape as unhandled promise rejections.
+      const unhandledSpy = vi.fn();
+      process.on('unhandledRejection', unhandledSpy);
+      try {
+        const badLogger = {
+          debug: vi.fn(),
+          info: vi.fn(),
+          warn: vi.fn(),
+          error: vi.fn().mockImplementation(() => {
+            throw new Error('logger broken');
+          }),
+          child: vi.fn(),
+        };
+        mock.mocks.flushAsync.mockRejectedValue(new Error('network'));
+        const tracker = createLangfuseCostTracker({
+          client: mock.client,
+          logger: badLogger as never,
+        });
+        tracker.setPricing([{ model: 'a', inputPer1kTokens: 0.001, outputPer1kTokens: 0 }]);
+        tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 1000, outputTokens: 0 });
+
+        await expect(tracker.dispose()).resolves.toBeUndefined();
+        // Give any straggling rejection a chance to surface.
+        await new Promise((r) => setTimeout(r, 20));
+        expect(unhandledSpy).not.toHaveBeenCalled();
+      } finally {
+        process.off('unhandledRejection', unhandledSpy);
+      }
+    });
+
+    it('drains multiple pending flushes concurrently', async () => {
+      const settled: number[] = [];
+      let seq = 0;
+      mock.mocks.flushAsync.mockImplementation(() => {
+        const mine = seq++;
+        return new Promise<void>((resolve) => {
+          // Later calls settle sooner to prove allSettled doesn't serialize.
+          setTimeout(() => {
+            settled.push(mine);
+            resolve();
+          }, Math.max(5, 30 - mine * 10));
+        });
+      });
+
+      const tracker = createLangfuseCostTracker({ client: mock.client });
+      tracker.setPricing([{ model: 'a', inputPer1kTokens: 0.001, outputPer1kTokens: 0 }]);
+      tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 1000, outputTokens: 0 });
+      tracker.recordUsage({ traceId: 't2', model: 'a', inputTokens: 1000, outputTokens: 0 });
+      tracker.recordUsage({ traceId: 't3', model: 'a', inputTokens: 1000, outputTokens: 0 });
+
+      await tracker.dispose();
+      // All three must have settled before dispose() returns.
+      expect(settled).toHaveLength(3);
+      expect(settled.sort()).toEqual([0, 1, 2]);
     });
   });
 });

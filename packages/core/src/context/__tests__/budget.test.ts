@@ -402,4 +402,122 @@ describe('createBudget', () => {
       expect(budget.needsTrimming()).toBe(false);
     });
   });
+
+  // -----------------------------------------------------------------------
+  // P2-26 (Wave-12): negative-remaining edge / aggregate-overflow behavior
+  // -----------------------------------------------------------------------
+  describe('P2-26: negative-remaining pin-down + hasOverflowed()', () => {
+    it('remaining() clamps at 0 and never returns a negative number', () => {
+      const budget = createBudget({
+        totalTokens: 1000,
+        segments: [{ name: 'history', maxTokens: 100, trimPriority: 1 }],
+      });
+      budget.allocate('history', 100);
+      expect(budget.remaining('history')).toBe(0);
+      // allocate() throws on overflow, so `used` cannot exceed `maxTokens`.
+      expect(() => budget.allocate('history', 1)).toThrow();
+      // remaining() is still clamped at 0, never negative.
+      expect(budget.remaining('history')).toBe(0);
+      expect(budget.remaining('history')).toBeGreaterThanOrEqual(0);
+    });
+
+    it('allocate() rejects per-segment overflow and leaves segment state unchanged', () => {
+      const budget = createBudget({
+        totalTokens: 1000,
+        segments: [{ name: 'history', maxTokens: 100, trimPriority: 1 }],
+      });
+      budget.allocate('history', 50);
+      // Overflow attempt throws…
+      expect(() => budget.allocate('history', 60)).toThrow();
+      // …and the pre-throw `used` counter is preserved (no partial mutation).
+      expect(budget.remaining('history')).toBe(50);
+    });
+
+    it('hasOverflowed() starts false and remains false while under budget', () => {
+      const budget = createBudget({
+        totalTokens: 1000,
+        segments: [
+          { name: 'a', maxTokens: 500, trimPriority: 1 },
+          { name: 'b', maxTokens: 500, trimPriority: 0 },
+        ],
+      });
+      expect(budget.hasOverflowed()).toBe(false);
+      budget.allocate('a', 200);
+      budget.allocate('b', 200);
+      expect(budget.hasOverflowed()).toBe(false);
+    });
+
+    it('hasOverflowed() flips to true when cumulative usage exceeds totalTokens', () => {
+      // Segments individually within limits, but aggregate overflows.
+      const budget = createBudget({
+        totalTokens: 500,
+        segments: [
+          { name: 'a', maxTokens: 400, trimPriority: 1 },
+          { name: 'b', maxTokens: 400, trimPriority: 0 },
+        ],
+      });
+      budget.allocate('a', 300);
+      budget.allocate('b', 300);
+      // 300 + 300 = 600 > 500
+      expect(budget.hasOverflowed()).toBe(true);
+    });
+
+    it('hasOverflowed() flips to true when usage + responseReserve exceeds totalTokens', () => {
+      const budget = createBudget({
+        totalTokens: 1000,
+        segments: [{ name: 'history', maxTokens: 900, trimPriority: 1 }],
+        responseReserve: 200,
+      });
+      budget.allocate('history', 850);
+      // 850 + 200 = 1050 > 1000
+      expect(budget.hasOverflowed()).toBe(true);
+    });
+
+    it('hasOverflowed() is sticky — remains true after reset() trims usage below total', () => {
+      const budget = createBudget({
+        totalTokens: 500,
+        segments: [
+          { name: 'a', maxTokens: 400, trimPriority: 1 },
+          { name: 'b', maxTokens: 400, trimPriority: 0 },
+        ],
+      });
+      budget.allocate('a', 300);
+      budget.allocate('b', 300);
+      expect(budget.hasOverflowed()).toBe(true);
+      budget.reset('b');
+      // Even though aggregate usage is now 300 (<= 500), the sticky flag
+      // persists so callers can detect that a prior packing attempt
+      // resorted to trimming.
+      expect(budget.hasOverflowed()).toBe(true);
+    });
+
+    it('hasOverflowed() set as a side-effect of needsTrimming()', () => {
+      const budget = createBudget({
+        totalTokens: 300,
+        segments: [
+          { name: 'a', maxTokens: 200, trimPriority: 1 },
+          { name: 'b', maxTokens: 200, trimPriority: 0 },
+        ],
+      });
+      budget.allocate('a', 150);
+      budget.allocate('b', 200);
+      // 150 + 200 = 350 > 300 → needsTrimming latches the overflow
+      expect(budget.needsTrimming()).toBe(true);
+      expect(budget.hasOverflowed()).toBe(true);
+    });
+
+    it('hasOverflowed() picks up aggregate overflow even without a prior needsTrimming() call', () => {
+      const budget = createBudget({
+        totalTokens: 300,
+        segments: [
+          { name: 'a', maxTokens: 200, trimPriority: 1 },
+          { name: 'b', maxTokens: 200, trimPriority: 0 },
+        ],
+      });
+      budget.allocate('a', 150);
+      budget.allocate('b', 200);
+      // First query is hasOverflowed(); it recomputes and latches.
+      expect(budget.hasOverflowed()).toBe(true);
+    });
+  });
 });

@@ -127,16 +127,59 @@ export function createSessionManager(config?: {
     return asSessionId(prefixedSecureId('sess'));
   }
 
+  /**
+   * Wave-12 P1-10: prioritized event types. High-priority events
+   * (`created`/`destroyed`/`error`-shaped — `expired`/`evicted`) carry
+   * lifecycle state that external listeners need to reconcile; dropping
+   * them silently leaks refs and breaks auditing. When the queue is full,
+   * we evict the oldest LOW-priority event to make room for a new
+   * high-priority one instead of dropping the high-priority event.
+   */
+  const HIGH_PRIORITY_EVENTS: ReadonlySet<SessionEvent['type']> = new Set([
+    'created',
+    'destroyed',
+    'expired',
+    'evicted',
+  ]);
+  function isHighPriority(type: SessionEvent['type']): boolean {
+    return HIGH_PRIORITY_EVENTS.has(type);
+  }
+
   function emit(type: SessionEvent['type'], sessionId: SessionId, reason?: string): void {
     const event: SessionEvent = { type, sessionId, timestamp: Date.now(), ...(reason !== undefined && { reason }) };
     if (emitting) {
       if (pendingEvents.length >= MAX_PENDING_EVENTS) {
+        // Wave-12 P1-10: attempt priority-aware drop before refusing the event.
+        // If the new event is HIGH and there is at least one LOW queued,
+        // evict the oldest LOW to make room. Otherwise fall back to the
+        // historical behavior of dropping the incoming event.
+        if (isHighPriority(type)) {
+          const lowIdx = pendingEvents.findIndex(e => !isHighPriority(e.type));
+          if (lowIdx !== -1) {
+            pendingEvents.splice(lowIdx, 1);
+            _droppedEvents++;
+            if (logger) {
+              try {
+                logger.warn(
+                  '[harness-one/session-manager] low-priority event evicted to admit high-priority event',
+                  {
+                    evictedType: 'low',
+                    admittedType: type,
+                  },
+                );
+              } catch { /* logger failure non-fatal */ }
+            }
+            pendingEvents.push(event);
+            return;
+          }
+        }
         _droppedEvents++;
         if (!_droppedWarned && logger) {
           _droppedWarned = true;
           try {
             logger.warn('[harness-one/session-manager] event dropped — pending queue overflow', {
               maxPendingEvents: MAX_PENDING_EVENTS,
+              droppedType: type,
             });
           } catch { /* logger failure non-fatal */ }
         }
@@ -221,12 +264,50 @@ export function createSessionManager(config?: {
     }
   }
 
+  /**
+   * Wave-12 P1-16: deep-clone the metadata bag so nested mutations on the
+   * returned readonly view cannot bleed back into internal manager state.
+   * `structuredClone` is preferred because it handles Dates, Maps, Sets,
+   * typed arrays, and cycles natively. For runtimes that lack it, fall back
+   * to a recursive clone limited to plain JSON-compatible shapes.
+   */
+  function deepCloneMetadata(m: Record<string, unknown>): Record<string, unknown> {
+    const sc = (globalThis as { structuredClone?: (v: unknown) => unknown }).structuredClone;
+    if (typeof sc === 'function') {
+      try {
+        return sc(m) as Record<string, unknown>;
+      } catch {
+        // Fall through to recursive clone on non-cloneable inputs (functions,
+        // class instances with methods, etc.).
+      }
+    }
+    return recursiveClone(m) as Record<string, unknown>;
+  }
+
+  function recursiveClone(v: unknown, seen = new WeakMap<object, unknown>()): unknown {
+    if (v === null || typeof v !== 'object') return v;
+    const existing = seen.get(v as object);
+    if (existing !== undefined) return existing;
+    if (Array.isArray(v)) {
+      const out: unknown[] = [];
+      seen.set(v as object, out);
+      for (const item of v) out.push(recursiveClone(item, seen));
+      return out;
+    }
+    const out: Record<string, unknown> = {};
+    seen.set(v as object, out);
+    for (const k of Object.keys(v as object)) {
+      out[k] = recursiveClone((v as Record<string, unknown>)[k], seen);
+    }
+    return out;
+  }
+
   function toReadonly(ms: MutableSession): Session {
     return {
       id: ms.id,
       createdAt: ms.createdAt,
       lastAccessedAt: ms.lastAccessedAt,
-      metadata: { ...ms.metadata },
+      metadata: deepCloneMetadata(ms.metadata),
       status: ms.status,
     };
   }

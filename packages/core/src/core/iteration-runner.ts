@@ -167,22 +167,50 @@ type BailOutInput = ErrorBail | GuardrailBail | BudgetBail | EndTurnBail;
 const MAX_TOOL_RESULT_BYTES = 1 * 1024 * 1024;
 /** Maximum object nesting depth for tool-result serialization. */
 const MAX_TOOL_RESULT_DEPTH = 10;
+/**
+ * Wave-12 P2-8 truncation marker appended when the serialized result
+ * exceeds {@link MAX_TOOL_RESULT_BYTES}. Consumers/LLMs can detect the
+ * marker to know the result was cut; the prefix of the payload is still
+ * useful context.
+ */
+const TRUNCATION_MARKER = '...[truncated: result exceeded 1MiB]';
 
 /**
- * PERF-004: defensive serialization for tool-call results. Moved here
- * from `AgentLoop.safeStringifyToolResult`; no copy remains on AgentLoop.
- * Depth-limited replacer + 1 MiB byte cap + cycle detection.
+ * PERF-004 / Wave-12 P2-8: defensive serialization for tool-call results.
+ *
+ * Depth-limited replacer (default depth 10) tracks TRUE nesting via the
+ * replacer's `this` binding (the container object). The previous
+ * implementation incremented a shared counter on every key visit, which
+ * over-counted siblings and mis-triggered the depth guard on wide
+ * objects. Cycles are broken via `WeakSet`. After serialize, oversized
+ * payloads are truncated with a marker instead of dropped entirely so
+ * the LLM still sees useful context.
  */
 function safeStringifyToolResult(value: unknown): string {
   const seen = new WeakSet<object>();
-  let depth = 0;
+  /**
+   * Map container object → its depth relative to the root. `undefined`
+   * means "root" (not yet entered). Depth increments only when we descend
+   * into a new container, not on sibling keys.
+   */
+  const depthMap = new WeakMap<object, number>();
 
   const replacer = function (this: unknown, _key: string, val: unknown): unknown {
     if (val === null || typeof val !== 'object') return val;
-    if (seen.has(val)) return '[circular]';
-    if (depth >= MAX_TOOL_RESULT_DEPTH) return '[max depth exceeded]';
-    seen.add(val);
-    depth++;
+    if (seen.has(val as object)) return '[circular]';
+    // Determine this value's depth: parent depth + 1 (or 0 if root).
+    const parent = this as object | undefined;
+    const parentDepth =
+      parent !== undefined && depthMap.has(parent) ? depthMap.get(parent)! : -1;
+    const nextDepth = parentDepth + 1;
+    if (nextDepth > MAX_TOOL_RESULT_DEPTH) {
+      // Returning undefined drops the key from the output; for an array
+      // slot this produces `null`, which matches JSON.stringify's default
+      // behaviour for dropped values in arrays.
+      return undefined;
+    }
+    seen.add(val as object);
+    depthMap.set(val as object, nextDepth);
     return val;
   };
 
@@ -193,7 +221,14 @@ function safeStringifyToolResult(value: unknown): string {
     return '[Object could not be serialized]';
   }
   if (serialized === undefined) return '[result not serializable]';
-  if (serialized.length > MAX_TOOL_RESULT_BYTES) return '[result too large]';
+  if (serialized.length > MAX_TOOL_RESULT_BYTES) {
+    // Wave-12 P2-8: truncate with marker instead of discarding entirely.
+    // Subtract the marker length so the final string stays within budget.
+    return (
+      serialized.slice(0, MAX_TOOL_RESULT_BYTES - TRUNCATION_MARKER.length) +
+      TRUNCATION_MARKER
+    );
+  }
   return serialized;
 }
 

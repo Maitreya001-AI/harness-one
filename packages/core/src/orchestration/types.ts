@@ -101,6 +101,14 @@ export interface PoolConfig {
   readonly idleTimeout?: number;
   /** Milliseconds before an agent is force-recycled regardless of state. */
   readonly maxAge?: number;
+  /**
+   * P0-1 (Wave-12): Maximum number of pending async acquire requests that
+   * may be queued while the pool is exhausted. When the queue is full,
+   * further {@link AgentPool.acquireAsync} calls reject synchronously with
+   * {@link HarnessErrorCode.POOL_QUEUE_FULL}. Prevents unbounded memory
+   * growth under sustained acquire bursts. Default: 1000.
+   */
+  readonly maxPendingQueueSize?: number;
 }
 
 /** Statistics snapshot for an agent pool. */

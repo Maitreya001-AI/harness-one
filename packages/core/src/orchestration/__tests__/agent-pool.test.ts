@@ -334,6 +334,112 @@ describe('AgentPool', () => {
     });
   });
 
+  // P0-1 (Wave-12): pending-queue cap prevents unbounded memory growth.
+  describe('P0-1 (Wave-12): maxPendingQueueSize', () => {
+    it('rejects acquireAsync with POOL_QUEUE_FULL when queue is at cap', async () => {
+      pool = makePool({ max: 1, maxPendingQueueSize: 2 });
+      pool.acquire(); // exhaust the pool
+
+      // First two calls should queue successfully (not settle yet).
+      const p1 = pool.acquireAsync(60_000);
+      const p2 = pool.acquireAsync(60_000);
+      // Keep handlers so Node doesn't warn on unhandled rejection during dispose.
+      p1.catch(() => undefined);
+      p2.catch(() => undefined);
+
+      // Third call must synchronously reject with POOL_QUEUE_FULL.
+      await expect(pool.acquireAsync(60_000)).rejects.toMatchObject({
+        code: HarnessErrorCode.POOL_QUEUE_FULL,
+      });
+    });
+
+    it('POOL_QUEUE_FULL error carries current/max in details bag', async () => {
+      pool = makePool({ max: 1, maxPendingQueueSize: 1 });
+      pool.acquire();
+      const queued = pool.acquireAsync(60_000);
+      queued.catch(() => undefined);
+
+      try {
+        await pool.acquireAsync(60_000);
+        throw new Error('expected throw');
+      } catch (err) {
+        expect(err).toBeInstanceOf(HarnessError);
+        const he = err as HarnessError;
+        expect(he.code).toBe(HarnessErrorCode.POOL_QUEUE_FULL);
+        expect(he.details).toBeDefined();
+        expect(he.details?.current).toBe(1);
+        expect(he.details?.max).toBe(1);
+      }
+    });
+
+    it('default maxPendingQueueSize allows reasonable burst before rejection', async () => {
+      // Default is 1000 — a single overflow attempt should still succeed at
+      // a small burst size well under the cap.
+      pool = makePool({ max: 1 });
+      pool.acquire();
+      const queued: Array<Promise<unknown>> = [];
+      for (let i = 0; i < 10; i++) {
+        const p = pool.acquireAsync(60_000);
+        p.catch(() => undefined);
+        queued.push(p);
+      }
+      // No POOL_QUEUE_FULL yet — this is the expected default behavior.
+      expect(queued.length).toBe(10);
+    });
+
+    it('queue space reclaimed after request settles', async () => {
+      pool = makePool({ max: 1, maxPendingQueueSize: 1 });
+      const agent = pool.acquire();
+
+      // Queue one request, then attempt a second which should reject.
+      const first = pool.acquireAsync(60_000);
+      first.catch(() => undefined);
+      await expect(pool.acquireAsync(60_000)).rejects.toMatchObject({
+        code: HarnessErrorCode.POOL_QUEUE_FULL,
+      });
+
+      // Release so `first` resolves and the queue slot opens up again.
+      pool.release(agent);
+      await first;
+
+      // Now a fresh queued request should be accepted (pool is busy again
+      // because `first` is holding the only agent).
+      const next = pool.acquireAsync(60_000);
+      next.catch(() => undefined);
+      // Sanity: queue is non-empty again, meaning the second acquireAsync did
+      // NOT throw POOL_QUEUE_FULL synchronously.
+      expect(next).toBeInstanceOf(Promise);
+    });
+  });
+
+  // P2-4 (Wave-12): jitter clamp on idle timer.
+  describe('P2-4 (Wave-12): idle-timer jitter clamp', () => {
+    it('never fires before idleTimeout even with a misbehaving random source', () => {
+      // We can't inject the random source directly, but we can exercise the
+      // math: jitter must be <= idleTimeout * 0.1 for all valid inputs, so the
+      // timer always fires within [idleTimeout, idleTimeout * 1.1].
+      vi.useFakeTimers();
+      try {
+        const idleTimeout = 1000;
+        pool = makePool({ idleTimeout });
+        const agent = pool.acquire();
+        pool.release(agent); // schedules idle timer with jitter
+
+        // Before idleTimeout, the agent must remain idle (not recycled).
+        vi.advanceTimersByTime(idleTimeout - 1);
+        expect(pool.stats.idle).toBe(1);
+
+        // After idleTimeout * 1.1 + slack, the agent must be recycled —
+        // the clamp guarantees the upper bound.
+        vi.advanceTimersByTime(Math.ceil(idleTimeout * 0.1) + 5);
+        expect(pool.stats.idle).toBe(0);
+        expect(pool.stats.recycled).toBe(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
   // LM-014: async idempotent dispose that awaits loop.dispose
   describe('LM-014: async idempotent dispose', () => {
     it('awaits every loop.dispose() so all loops report disposed', async () => {

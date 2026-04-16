@@ -36,6 +36,17 @@ const _providers: Record<string, { baseURL: string }> = {
 };
 
 /**
+ * Wave-12 P2-11: reentrancy guard for {@link registerProvider} /
+ * {@link sealProviders}.
+ *
+ * These mutators must be called serially from a single init path. A simple
+ * boolean flag is enough because both paths are synchronous — if we observe
+ * the flag as `true` during our own synchronous section it means another
+ * caller (e.g. on a different worker or through re-entrant code) raced us.
+ */
+let _registryMutationInFlight = false;
+
+/**
  * Module-private flag tracking whether {@link sealProviders} has been called.
  *
  * Kept behind the accessor pair `sealProviders()` / `isProvidersSealed()` so
@@ -153,6 +164,14 @@ export const providers: Readonly<Record<string, { baseURL: string }>> = _provide
  * requests, config files fetched at runtime, etc.) — doing so would allow an
  * attacker to redirect API traffic (and bearer tokens) to an arbitrary host.
  *
+ * CONCURRENCY CONTRACT (Wave-12 P2-11): `registerProvider()` and
+ * `sealProviders()` MUST be called serially from a single initialization path.
+ * Calling them concurrently — from multiple async tasks, worker threads, or
+ * through reentrant code — throws a distinct `CORE_INVALID_CONFIG` error. The
+ * implementation uses a simple module-scoped reentrancy flag; it is not a
+ * mutex, so it only detects same-realm races and is a best-effort safeguard
+ * against the footgun of racing bootstrap paths.
+ *
  * Validation applied:
  *  - `config.baseURL` MUST parse as a valid URL (WHATWG `new URL`).
  *  - The scheme MUST be `https:` unless the host is `localhost` or
@@ -160,78 +179,117 @@ export const providers: Readonly<Record<string, { baseURL: string }>> = _provide
  *    LM Studio).
  *  - Built-in adapter names (`openai`, `anthropic`) are reserved. To
  *    deliberately override them, pass `{ force: true }` as the third argument.
+ *  - Re-registering an existing non-built-in name with a DIFFERENT baseURL
+ *    requires `{ allowOverride: true }` (Wave-12 P1-13). Idempotent
+ *    re-registration (same baseURL) is a no-op with or without the flag.
  *
- * @throws {HarnessError} with code `INVALID_CONFIG` on any validation failure.
+ * @throws {HarnessError} with code `INVALID_CONFIG` on any validation failure,
+ *   `PROVIDER_REGISTRY_SEALED` if called after `sealProviders()`.
  */
 export function registerProvider(
   name: string,
   config: { baseURL: string },
-  options?: { readonly force?: boolean },
+  options?: { readonly force?: boolean; readonly allowOverride?: boolean },
 ): void {
-  // Seal check runs FIRST, before any other validation. Rationale: once the
-  // registry is sealed we want every registration attempt — valid or not — to
-  // fail with the same distinct `PROVIDER_REGISTRY_SEALED` code, so production
-  // alerting can key off a single signal. Running validation ahead of the
-  // seal check would cause sealed-registry attempts with a typo in `name` or
-  // `config.baseURL` to surface as `INVALID_CONFIG` instead, hiding the real
-  // root cause.
-  if (_providersSealed) {
+  // Wave-12 P2-11: reentrancy guard. `registerProvider` / `sealProviders`
+  // MUST be called serially from a single init path. If another caller is
+  // mid-mutation when we enter, throw distinctly so the race surfaces.
+  if (_registryMutationInFlight) {
     throw new HarnessError(
-      `cannot register provider "${name}" — provider registry is sealed`,
-      HarnessErrorCode.PROVIDER_REGISTRY_SEALED,
-      'Call sealProviders() only after all providers are registered (typically at the end of bootstrap / inside createSecurePreset). Registering a new provider after seal requires restarting the process.',
-    );
-  }
-
-  if (typeof name !== 'string' || name.length === 0) {
-    throw new HarnessError(
-      'registerProvider: name must be a non-empty string',
+      'registerProvider: concurrent registry mutation detected — registerProvider()/sealProviders() must be called serially from a single init path',
       HarnessErrorCode.CORE_INVALID_CONFIG,
-      'Pass a non-empty provider name as the first argument.',
+      'Gate provider registration behind your bootstrap entry-point and avoid mutating the registry from multiple async tasks / workers.',
     );
   }
-
-  let parsed: URL;
+  _registryMutationInFlight = true;
   try {
-    parsed = new URL(config.baseURL);
-  } catch (err) {
-    throw new HarnessError(
-      `registerProvider: baseURL "${config.baseURL}" is not a valid URL`,
-      HarnessErrorCode.CORE_INVALID_CONFIG,
-      'Pass a fully qualified absolute URL (including scheme), e.g. "https://api.example.com/v1".',
-      err instanceof Error ? err : undefined,
-    );
-  }
-
-  const isLocalDev = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
-  if (parsed.protocol !== 'https:' && !isLocalDev) {
-    throw new HarnessError(
-      `registerProvider: refusing non-HTTPS baseURL "${config.baseURL}"`,
-      HarnessErrorCode.CORE_INVALID_CONFIG,
-      'Use an https:// URL. Plain http:// is only allowed for localhost / 127.0.0.1 development endpoints.',
-    );
-  }
-
-  // L4: Warn on private network URLs that may indicate misconfiguration.
-  // Not blocked because internal networks legitimately use private IPs,
-  // but surfacing it helps catch copy-paste errors from dev configs.
-  if (!isLocalDev) {
-    const host = parsed.hostname;
-    const isPrivate = /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/.test(host);
-    if (isPrivate) {
-      safeWarn(undefined, `[harness-one/openai] registerProvider: baseURL "${config.baseURL}" points to a private IP range. Verify this is intentional for production use.`);
+    // Seal check runs FIRST, before any other validation. Rationale: once the
+    // registry is sealed we want every registration attempt — valid or not — to
+    // fail with the same distinct `PROVIDER_REGISTRY_SEALED` code, so production
+    // alerting can key off a single signal. Running validation ahead of the
+    // seal check would cause sealed-registry attempts with a typo in `name` or
+    // `config.baseURL` to surface as `INVALID_CONFIG` instead, hiding the real
+    // root cause.
+    if (_providersSealed) {
+      throw new HarnessError(
+        `cannot register provider "${name}" — provider registry is sealed`,
+        HarnessErrorCode.PROVIDER_REGISTRY_SEALED,
+        'Call sealProviders() only after all providers are registered (typically at the end of bootstrap / inside createSecurePreset). Registering a new provider after seal requires restarting the process.',
+      );
     }
-  }
 
-  if (BUILT_IN_PROVIDER_NAMES.has(name) && !options?.force) {
-    throw new HarnessError(
-      `registerProvider: "${name}" is a reserved built-in provider name`,
-      HarnessErrorCode.CORE_INVALID_CONFIG,
-      'Pick a different name, or pass { force: true } as the third argument to explicitly override the built-in.',
-    );
-  }
+    if (typeof name !== 'string' || name.length === 0) {
+      throw new HarnessError(
+        'registerProvider: name must be a non-empty string',
+        HarnessErrorCode.CORE_INVALID_CONFIG,
+        'Pass a non-empty provider name as the first argument.',
+      );
+    }
 
-  _providers[name] = { baseURL: config.baseURL };
+    let parsed: URL;
+    try {
+      parsed = new URL(config.baseURL);
+    } catch (err) {
+      throw new HarnessError(
+        `registerProvider: baseURL "${config.baseURL}" is not a valid URL`,
+        HarnessErrorCode.CORE_INVALID_CONFIG,
+        'Pass a fully qualified absolute URL (including scheme), e.g. "https://api.example.com/v1".',
+        err instanceof Error ? err : undefined,
+      );
+    }
+
+    const isLocalDev = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
+    if (parsed.protocol !== 'https:' && !isLocalDev) {
+      throw new HarnessError(
+        `registerProvider: refusing non-HTTPS baseURL "${config.baseURL}"`,
+        HarnessErrorCode.CORE_INVALID_CONFIG,
+        'Use an https:// URL. Plain http:// is only allowed for localhost / 127.0.0.1 development endpoints.',
+      );
+    }
+
+    // L4: Warn on private network URLs that may indicate misconfiguration.
+    // Not blocked because internal networks legitimately use private IPs,
+    // but surfacing it helps catch copy-paste errors from dev configs.
+    if (!isLocalDev) {
+      const host = parsed.hostname;
+      const isPrivate = /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/.test(host);
+      if (isPrivate) {
+        safeWarn(undefined, `[harness-one/openai] registerProvider: baseURL "${config.baseURL}" points to a private IP range. Verify this is intentional for production use.`);
+      }
+    }
+
+    if (BUILT_IN_PROVIDER_NAMES.has(name) && !options?.force) {
+      throw new HarnessError(
+        `registerProvider: "${name}" is a reserved built-in provider name`,
+        HarnessErrorCode.CORE_INVALID_CONFIG,
+        'Pick a different name, or pass { force: true } as the third argument to explicitly override the built-in.',
+      );
+    }
+
+    // Wave-12 P1-13: silent overwrite is a security footgun (an attacker who
+    // lands a second registerProvider() call could repoint a well-known
+    // provider name to a hostile baseURL). Require callers to opt-in via
+    // `allowOverride: true` (or `force: true`, which subsumes it for
+    // built-ins) whenever the baseURL would change. Idempotent re-registration
+    // with the same baseURL is still a no-op to keep bootstrap code simple.
+    const existing = _providers[name];
+    if (
+      existing !== undefined &&
+      existing.baseURL !== config.baseURL &&
+      !options?.allowOverride &&
+      !options?.force
+    ) {
+      throw new HarnessError(
+        `registerProvider: "${name}" is already registered with a different baseURL ("${existing.baseURL}")`,
+        HarnessErrorCode.CORE_INVALID_CONFIG,
+        'Pass { allowOverride: true } to replace the existing baseURL, or pick a different provider name.',
+      );
+    }
+
+    _providers[name] = { baseURL: config.baseURL };
+  } finally {
+    _registryMutationInFlight = false;
+  }
 }
 
 /**
@@ -257,11 +315,29 @@ export function registerProvider(
  * across `worker_threads`, forked child processes, or test runners that call
  * `vi.resetModules()`. Each fresh module instance starts unsealed.
  *
+ * Concurrency (Wave-12 P2-11): like `registerProvider`, `sealProviders` must
+ * be called serially from a single initialization path — racing it with
+ * registerProvider throws `CORE_INVALID_CONFIG`.
+ *
  * @see isProvidersSealed
  * @see registerProvider
  */
 export function sealProviders(): void {
-  _providersSealed = true;
+  // Wave-12 P2-11: reentrancy guard. sealProviders() must never race with
+  // a concurrent registerProvider() call.
+  if (_registryMutationInFlight) {
+    throw new HarnessError(
+      'sealProviders: concurrent registry mutation detected — registerProvider()/sealProviders() must be called serially from a single init path',
+      HarnessErrorCode.CORE_INVALID_CONFIG,
+      'Gate provider registration behind your bootstrap entry-point and avoid mutating the registry from multiple async tasks / workers.',
+    );
+  }
+  _registryMutationInFlight = true;
+  try {
+    _providersSealed = true;
+  } finally {
+    _registryMutationInFlight = false;
+  }
 }
 
 /**
@@ -354,13 +430,74 @@ function toOpenAIMessage(
 }
 
 /**
- * Convert a harness-one JsonSchema to OpenAI's FunctionParameters (Record<string, unknown>).
- *
- * OpenAI expects `Record<string, unknown>` for tool parameters.
- * Rather than using a double assertion (`as unknown as Record<string, unknown>`),
- * we explicitly map the known JsonSchema fields to produce a clean record.
+ * Known keys on the harness-one JsonSchema subset that we forward to OpenAI.
+ * Keys outside this set are silently dropped by `toOpenAIParameters`; Wave-12
+ * P2-19 adds a one-shot warn per unknown key so schema drift is observable
+ * without spamming per call-site.
  */
-function toOpenAIParameters(schema: ToolSchema['parameters']): Record<string, unknown> {
+const _OPENAI_KNOWN_SCHEMA_KEYS: ReadonlySet<string> = new Set([
+  'type',
+  'properties',
+  'required',
+  'items',
+  'enum',
+  'description',
+  'default',
+  'minimum',
+  'maximum',
+  'minLength',
+  'maxLength',
+  'pattern',
+  'additionalProperties',
+  'oneOf',
+  'anyOf',
+  'allOf',
+  'const',
+  'format',
+]);
+
+/**
+ * Module-scoped dedupe for unknown-schema-key warnings (Wave-12 P2-19).
+ * Bounded FIFO at 256 entries so long-running servers with drifting schemas
+ * don't grow unbounded.
+ */
+const _unknownSchemaKeyWarned: Set<string> = new Set();
+const _UNKNOWN_SCHEMA_KEY_WARN_CAP = 256;
+
+/**
+ * Module-scoped memoization for `toOpenAIParameters` (Wave-12 P1-21).
+ *
+ * Consumers typically pass the same schema object through every adapter
+ * invocation; WeakMap-keyed memoization makes subsequent calls O(1) and avoids
+ * the allocation on every `chat()` / `stream()` request. The WeakMap ensures
+ * entries are GC'd with the schema.
+ */
+const _parametersMemo: WeakMap<object, Record<string, unknown>> = new WeakMap();
+
+/**
+ * Convert a harness-one JsonSchema to OpenAI's FunctionParameters
+ * (`Record<string, unknown>`).
+ *
+ * OpenAI expects `Record<string, unknown>` for tool parameters. Rather than
+ * using a double assertion (`as unknown as Record<string, unknown>`) we
+ * explicitly map the known JsonSchema fields to produce a clean record.
+ *
+ * Wave-12:
+ *  - P1-21: memoized via a WeakMap keyed on the schema object; identical
+ *    schema references resolve to the same output reference.
+ *  - P2-19: warn-once per unknown key so silently-dropped schema drift becomes
+ *    observable.
+ *
+ * @internal
+ */
+function toOpenAIParameters(
+  schema: ToolSchema['parameters'],
+  logger?: Pick<Logger, 'warn' | 'error'>,
+): Record<string, unknown> {
+  // WeakMap keys must be objects; JsonSchema is always an object at runtime.
+  const cached = _parametersMemo.get(schema as unknown as object);
+  if (cached !== undefined) return cached;
+
   const result: Record<string, unknown> = { type: schema.type };
   if (schema.properties !== undefined) result.properties = schema.properties;
   if (schema.required !== undefined) result.required = schema.required;
@@ -379,19 +516,46 @@ function toOpenAIParameters(schema: ToolSchema['parameters']): Record<string, un
   if (schema.allOf !== undefined) result.allOf = schema.allOf;
   if (schema.const !== undefined) result.const = schema.const;
   if (schema.format !== undefined) result.format = schema.format;
+
+  // P2-19: warn once per distinct unknown key. The cast to `Record<string, unknown>`
+  // is safe — JsonSchema is a plain object; we only iterate its own keys.
+  const dropped: string[] = [];
+  for (const key of Object.keys(schema as unknown as Record<string, unknown>)) {
+    if (!_OPENAI_KNOWN_SCHEMA_KEYS.has(key) && !_unknownSchemaKeyWarned.has(key)) {
+      if (_unknownSchemaKeyWarned.size < _UNKNOWN_SCHEMA_KEY_WARN_CAP) {
+        _unknownSchemaKeyWarned.add(key);
+      }
+      dropped.push(key);
+    }
+  }
+  if (dropped.length > 0 && logger !== undefined) {
+    logger.warn(
+      `[harness-one/openai] toOpenAIParameters: dropped unknown schema key(s): ${dropped.join(', ')}. ` +
+      'Only keys in the OpenAI adapter\'s known-schema set are forwarded; unknown keys are silently dropped. ' +
+      '(Each distinct key warns at most once.)',
+      { droppedKeys: dropped },
+    );
+  }
+
+  _parametersMemo.set(schema as unknown as object, result);
   return result;
 }
 
-/** Convert a harness-one ToolSchema to OpenAI's tool format. */
+/**
+ * Convert a harness-one ToolSchema to OpenAI's tool format.
+ *
+ * @internal
+ */
 function toOpenAITool(
   tool: ToolSchema,
+  logger?: Pick<Logger, 'warn' | 'error'>,
 ): OpenAI.Chat.Completions.ChatCompletionTool {
   return {
     type: 'function',
     function: {
       name: tool.name,
       description: tool.description,
-      parameters: toOpenAIParameters(tool.parameters),
+      parameters: toOpenAIParameters(tool.parameters, logger),
     },
   };
 }
@@ -440,8 +604,45 @@ function toHarnessMessage(
  * Models for which we've already emitted a zero-token warning in non-stream
  * chat responses. Module-scoped so we dedupe across all adapter instances in
  * the process (same policy as stream path).
+ *
+ * Wave-12 P1-11: bounded to `_ZERO_USAGE_WARN_CAP` entries with a simple FIFO
+ * eviction policy. A long-running server that rotates through many distinct
+ * model names could otherwise grow this set without bound. We use `Set`'s
+ * insertion-ordered iteration to evict the oldest entry when we hit the cap.
  */
 const _zeroUsageWarnedModels: Set<string> = new Set();
+const _ZERO_USAGE_WARN_CAP = 256;
+
+function _recordZeroUsageWarned(model: string): void {
+  if (_zeroUsageWarnedModels.has(model)) return;
+  if (_zeroUsageWarnedModels.size >= _ZERO_USAGE_WARN_CAP) {
+    // Evict the oldest entry (Set iteration is insertion-ordered).
+    const oldest = _zeroUsageWarnedModels.values().next().value;
+    if (oldest !== undefined) _zeroUsageWarnedModels.delete(oldest);
+  }
+  _zeroUsageWarnedModels.add(model);
+}
+
+/**
+ * Wave-12 P0-2: guarded narrow on the OpenAI SDK stream's private
+ * `controller` field.
+ *
+ * The SDK exposes its underlying `AbortController`-like object via a
+ * `controller` property on the stream instance. Reaching for it used to be
+ * done with a pair of `as unknown as T` casts, which silently type-launders
+ * any shape the SDK might ship in a future minor — a refactor that could
+ * turn into a runtime `TypeError` on the very next `.abort()` call.
+ *
+ * This helper instead probes the runtime shape step-by-step and returns
+ * `undefined` whenever the expected structure isn't present. No raw
+ * `as unknown as T` is used in the cleanup path.
+ */
+function getStreamController(s: unknown): { abort?: () => void } | undefined {
+  if (typeof s !== 'object' || s === null) return undefined;
+  const c = (s as Record<string, unknown>).controller;
+  if (typeof c !== 'object' || c === null) return undefined;
+  return c as { abort?: () => void };
+}
 
 /**
  * Create an AgentAdapter backed by the OpenAI SDK.
@@ -468,7 +669,7 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
       const response = await client.chat.completions.create({
         model,
         messages: params.messages.map(toOpenAIMessage),
-        ...(params.tools && { tools: params.tools.map(toOpenAITool) }),
+        ...(params.tools && { tools: params.tools.map((t) => toOpenAITool(t, logger)) }),
         ...(params.config?.temperature !== undefined && { temperature: params.config.temperature }),
         ...(params.config?.topP !== undefined && { top_p: params.config.topP }),
         ...(params.config?.maxTokens !== undefined && { max_tokens: params.config.maxTokens }),
@@ -479,7 +680,7 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
             type: 'json_schema' as const,
             json_schema: {
               name: 'response',
-              schema: toOpenAIParameters(params.responseFormat.schema),
+              schema: toOpenAIParameters(params.responseFormat.schema, logger),
               ...(params.responseFormat.strict !== undefined && { strict: params.responseFormat.strict }),
             },
           },
@@ -501,10 +702,18 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
       const missingInput = usage?.prompt_tokens === undefined || usage?.prompt_tokens === null;
       const missingOutput = usage?.completion_tokens === undefined || usage?.completion_tokens === null;
       if ((missingInput || missingOutput) && !_zeroUsageWarnedModels.has(model)) {
-        _zeroUsageWarnedModels.add(model);
-        logger.warn(
-          `[harness-one/openai] chat() response for model "${model}" had missing prompt/completion token counts — cost tracking will under-report. (This warning is emitted once per model.)`,
-        );
+        // Wave-12 P2-9: guard the warn metadata behind an optional
+        // `isWarnEnabled()` gate when the host logger exposes one. The Logger
+        // base type in `@harness-one/core/observe` does not define it today
+        // so we probe defensively with `typeof === 'function'`.
+        const maybeGate = (logger as { isWarnEnabled?: () => boolean }).isWarnEnabled;
+        const warnEnabled = typeof maybeGate === 'function' ? maybeGate.call(logger) : true;
+        if (warnEnabled) {
+          _recordZeroUsageWarned(model);
+          logger.warn(
+            `[harness-one/openai] chat() response for model "${model}" had missing prompt/completion token counts — cost tracking will under-report. (This warning is emitted once per model.)`,
+          );
+        }
       }
 
       return {
@@ -517,7 +726,7 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
       const stream = await client.chat.completions.create({
         model,
         messages: params.messages.map(toOpenAIMessage),
-        ...(params.tools && { tools: params.tools.map(toOpenAITool) }),
+        ...(params.tools && { tools: params.tools.map((t) => toOpenAITool(t, logger)) }),
         ...(params.config?.temperature !== undefined && { temperature: params.config.temperature }),
         ...(params.config?.topP !== undefined && { top_p: params.config.topP }),
         ...(params.config?.maxTokens !== undefined && { max_tokens: params.config.maxTokens }),
@@ -528,7 +737,7 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
             type: 'json_schema' as const,
             json_schema: {
               name: 'response',
-              schema: toOpenAIParameters(params.responseFormat.schema),
+              schema: toOpenAIParameters(params.responseFormat.schema, logger),
               ...(params.responseFormat.strict !== undefined && { strict: params.responseFormat.strict }),
             },
           },
@@ -630,12 +839,16 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
         // Ensure underlying stream resources are released on early consumer return.
         // The OpenAI SDK stream exposes a controller that can be aborted to free
         // the HTTP connection when the consumer breaks out of the async iterator.
+        //
+        // Wave-12 P0-2: replace the previous double-`as unknown as` casts with a
+        // guarded narrow (`getStreamController`) so SDK drift — e.g. a rename,
+        // removal, or type change of the private `controller` field — surfaces
+        // as a safe no-op rather than a silent type-lie that would explode at
+        // runtime the next time we dereference it.
         try {
-          if (stream && typeof (stream as unknown as Record<string, unknown>).controller === 'object') {
-            const ctrl = (stream as unknown as { controller: { abort?: () => void } }).controller;
-            if (typeof ctrl?.abort === 'function') {
-              ctrl.abort();
-            }
+          const ctrl = getStreamController(stream);
+          if (ctrl && typeof ctrl.abort === 'function') {
+            ctrl.abort();
           }
         } catch {
           // Stream controller cleanup failed — HTTP connection may linger until server timeout.
@@ -654,14 +867,18 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
 }
 
 /**
- * Test-only: reset the module-scoped "zero-usage warn once" dedupe set.
+ * Test-only: reset the module-scoped "zero-usage warn once" dedupe sets.
  *
  * Library consumers should NOT need to call this. It exists so unit tests can
  * exercise the one-time-warn behaviour across multiple `it()` cases without
  * leaking state between tests.
  *
+ * Wave-12 extends this to also clear the `toOpenAIParameters` unknown-key
+ * warn-once dedupe (P2-19) so schema-drift tests stay hermetic.
+ *
  * @internal
  */
 export function _resetOpenAIWarnState(): void {
   _zeroUsageWarnedModels.clear();
+  _unknownSchemaKeyWarned.clear();
 }

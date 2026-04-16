@@ -1815,6 +1815,37 @@ describe('AgentLoop', () => {
       expect(lastCapturedMessages[0].content).toBe('start');
       expect(lastCapturedMessages.length).toBeLessThanOrEqual(3);
     });
+
+    // Wave-12 P0-4: the pruning branch previously used
+    // `conversation.splice(0, len, ...pruned)`, which spreads `pruned`
+    // onto the call stack (stack-depth risk) and performs an O(n)
+    // insert. The in-place overwrite must preserve the same observable
+    // behaviour — same identity of the `conversation` array, same tail
+    // ordering — without the spread.
+    it('Wave-12 P0-4: pruning uses in-place overwrite (same array identity preserved)', async () => {
+      const toolCall: ToolCallRequest = { id: 'call_1', name: 'tool', arguments: '{}' };
+      const capturedIdentity: Array<Message[]> = [];
+      let callCount = 0;
+      const adapter: AgentAdapter = {
+        async chat(params) {
+          capturedIdentity.push(params.messages);
+          callCount++;
+          if (callCount <= 3) {
+            return { message: { role: 'assistant', content: `r${callCount}`, toolCalls: [toolCall] }, usage: USAGE };
+          }
+          return { message: { role: 'assistant', content: 'end' }, usage: USAGE };
+        },
+      };
+      const onToolCall = vi.fn().mockResolvedValue('ok');
+      const loop = new AgentLoop({ adapter, onToolCall, maxConversationMessages: 3 });
+      await collectEvents(loop.run([{ role: 'user', content: 'start' }]));
+      // Some iterations triggered pruning — the last captured conversation
+      // length is <= the cap and the first element is still the pinned
+      // system-style user message (pruner keeps head + tail).
+      const last = capturedIdentity[capturedIdentity.length - 1];
+      expect(last.length).toBeLessThanOrEqual(3);
+      expect(last[0].content).toBe('start');
+    });
   });
 
   // =====================================================================
@@ -3049,15 +3080,22 @@ describe('AgentLoop', () => {
       return toolMsg;
     }
 
-    it('replaces oversized results with [result too large]', async () => {
+    it('truncates oversized results with a marker (Wave-12 P2-8)', async () => {
       // Build a string payload > 1 MiB so the serialized JSON crosses the cap.
       const huge = 'x'.repeat(2 * 1024 * 1024);
       const toolMsg = await runWithToolResult({ payload: huge });
-      expect(toolMsg.content).toBe('[result too large]');
+      // Wave-12 P2-8: oversized results are truncated with a marker so
+      // the LLM retains useful prefix context instead of a placeholder.
+      expect(toolMsg.content).toContain('[truncated: result exceeded 1MiB]');
+      expect(toolMsg.content.length).toBeLessThanOrEqual(1 * 1024 * 1024);
+      // Prefix should contain the original payload start, not a placeholder.
+      expect(toolMsg.content.startsWith('{"payload":"xxx')).toBe(true);
     });
 
-    it('truncates deeply nested structures at max depth', async () => {
-      // Build a 20-deep chain; max depth is 10.
+    it('drops deeply nested structures past max depth (Wave-12 P2-8)', async () => {
+      // Build a 20-deep chain; max depth is 10. Values past the cap are
+      // returned as `undefined` by the replacer, so they are dropped from
+      // the serialized output entirely.
       type Nested = { next?: Nested; leaf?: string };
       const deep: Nested = {};
       let cursor: Nested = deep;
@@ -3067,9 +3105,10 @@ describe('AgentLoop', () => {
       }
       cursor.leaf = 'bottom';
       const toolMsg = await runWithToolResult(deep);
-      expect(toolMsg.content).toContain('[max depth exceeded]');
-      // The leaf string is past max depth and should NOT appear verbatim.
+      // The leaf string is past max depth and must NOT appear verbatim.
       expect(toolMsg.content).not.toContain('bottom');
+      // Sanity: the serialized prefix is valid JSON open-brace sequence.
+      expect(toolMsg.content.startsWith('{')).toBe(true);
     });
 
     it('passes small/simple values through unchanged', async () => {

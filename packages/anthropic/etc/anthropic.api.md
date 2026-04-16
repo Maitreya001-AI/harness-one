@@ -11,13 +11,21 @@ import { Logger } from 'harness-one/observe';
 // @public
 export interface AnthropicAdapterConfig {
     readonly client: Anthropic;
+    readonly countTokens?: (text: string) => number;
     readonly logger?: Pick<Logger, 'warn' | 'error'>;
     readonly model?: string;
+    readonly onMalformedToolUse?: AnthropicMalformedToolUsePolicy;
     readonly strictExtraAllowList?: boolean;
 }
 
 // @public
+export type AnthropicMalformedToolUsePolicy = 'warn' | 'throw' | ((raw: string, err: Error) => Record<string, unknown> | null);
+
+// @public
 export function createAnthropicAdapter(config: AnthropicAdapterConfig): AgentAdapter;
+
+// @internal
+export function _resetWarnedUnknownSchemaKeysForTesting(): void;
 
 // (No @packageDocumentation comment for this package)
 

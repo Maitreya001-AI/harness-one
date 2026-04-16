@@ -25,13 +25,38 @@ export interface BudgetConfig {
 export interface TokenBudget {
   readonly totalTokens: number;
   readonly responseReserve: number;
+  /**
+   * Remaining capacity for a segment, **clamped at 0**. Never returns a
+   * negative number — overflow attempts via {@link TokenBudget.allocate}
+   * throw, and {@link TokenBudget.tryAllocate} refuses the write, so the
+   * stored `used` counter cannot exceed `maxTokens` by construction.
+   */
   remaining(segmentName: string): number;
+  /**
+   * Deduct `tokens` from a segment. Throws `CONTEXT_SEGMENT_OVERFLOW`
+   * when the cumulative allocation would exceed the segment's
+   * `maxTokens`. The segment state is left unchanged on overflow.
+   */
   allocate(segmentName: string, tokens: number): void;
   /** Try to allocate tokens; returns true if successful, false if it would overflow. Does not throw. */
   tryAllocate(segmentName: string, tokens: number): boolean;
   reset(segmentName: string): void;
   needsTrimming(): boolean;
   trimOrder(): Array<{ segment: string; trimBy: number; priority: number }>;
+  /**
+   * P2-26 (Wave-12): true once the cumulative usage across all segments
+   * (plus {@link TokenBudget.responseReserve}) has been observed to
+   * exceed `totalTokens`. The flag is sticky — it remains set even after
+   * later {@link TokenBudget.reset} calls bring usage back down, so
+   * callers can detect that a prior packing attempt had to resort to
+   * trimming or budget extension.
+   *
+   * Does **not** fire on per-segment overflow (that path throws instead,
+   * so the invalid state never reaches the aggregate). The flag reflects
+   * the same condition {@link TokenBudget.needsTrimming} reports, but
+   * persists after trimming reduces `used` back under the total.
+   */
+  hasOverflowed(): boolean;
 }
 
 /**
