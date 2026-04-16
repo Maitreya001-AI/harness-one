@@ -85,12 +85,11 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
   // Fix 24: Queue for pending async acquire requests
   const pendingQueue: PendingAcquire[] = [];
 
-  // Fix 25: Use monotonic timing where available.
-  // Note: performance.now() is monotonic and not affected by clock skew.
-  // However, for compatibility with fake timers in tests, we use Date.now()
-  // for the public createdAt field and performance.now() for internal timing.
+  // Fix 25: Use monotonic timing (performance.now()) for internal expiry
+  // calculations. Date.now() is only used for the public-facing createdAt
+  // field. performance.now() is monotonic and immune to clock skew.
   function now(): number {
-    return Date.now();
+    return performance.now();
   }
 
   function isExpired(entry: PoolEntry): boolean {
@@ -110,7 +109,7 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
       ...(role !== undefined && { role }),
     });
     totalCreated++;
-    return { agent, state: 'idle', idleTimer: null, monotonicCreatedAt: Date.now() };
+    return { agent, state: 'idle', idleTimer: null, monotonicCreatedAt: performance.now() };
   }
 
   /**
@@ -399,8 +398,8 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
     },
 
     async drain(timeoutMs = 30_000): Promise<void> {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
+      const deadline = performance.now() + timeoutMs;
+      while (performance.now() < deadline) {
         let hasActive = false;
         for (const entry of entries.values()) {
           if (entry.state === 'active') {

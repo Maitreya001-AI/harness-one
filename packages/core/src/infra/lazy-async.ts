@@ -47,9 +47,11 @@ export interface LazyAsync<T> {
  */
 export function createLazyAsync<T>(factory: () => Promise<T>): LazyAsync<T> {
   let pending: Promise<T> | null = null;
+  let generation = 0;
 
   function get(): Promise<T> {
     if (pending) return pending;
+    const gen = generation;
     // Store the promise synchronously before awaiting — this is the whole
     // point. A second caller that enters `get()` during the same microtask
     // sees the same pending promise and joins it.
@@ -65,9 +67,10 @@ export function createLazyAsync<T>(factory: () => Promise<T>): LazyAsync<T> {
       (value) => value,
       (err) => {
         // Clear the cache on failure so the next caller retries. Guard against
-        // the case where the caller has already called reset() between the
-        // rejection scheduling and its resolution.
-        if (pending === p) pending = null;
+        // the case where reset() was called between the rejection scheduling
+        // and its execution — the generation counter ensures we only clear the
+        // cache if no reset has occurred since this factory call started.
+        if (generation === gen && pending === p) pending = null;
         throw err;
       },
     );
@@ -77,6 +80,7 @@ export function createLazyAsync<T>(factory: () => Promise<T>): LazyAsync<T> {
 
   function reset(): void {
     pending = null;
+    generation++;
   }
 
   return { get, reset };

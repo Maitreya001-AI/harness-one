@@ -141,6 +141,20 @@ describe('createCircuitBreaker', () => {
     ]);
   });
 
+  it('swallows onStateChange callback exceptions without breaking state transition', async () => {
+    const cb = createCircuitBreaker({
+      failureThreshold: 1,
+      onStateChange: () => { throw new Error('callback exploded'); },
+    });
+    // The callback throws, but the state should still transition to open.
+    await expect(cb.execute(async () => { throw new Error('fail'); })).rejects.toThrow('fail');
+    expect(cb.state()).toBe('open');
+
+    // reset() also triggers transition — callback throws again but state changes.
+    cb.reset();
+    expect(cb.state()).toBe('closed');
+  });
+
   it('handles failureThreshold=1 edge case', async () => {
     const cb = createCircuitBreaker({ failureThreshold: 1 });
     await expect(cb.execute(async () => { throw new Error('once'); })).rejects.toThrow();

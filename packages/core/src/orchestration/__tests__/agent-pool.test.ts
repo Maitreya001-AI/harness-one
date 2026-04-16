@@ -165,7 +165,7 @@ describe('AgentPool', () => {
   });
 
   it('expired agents are recycled on release when maxAge is set', () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'] });
     try {
       pool = makePool({ max: 5, maxAge: 100 });
       const agent = pool.acquire();
@@ -178,7 +178,7 @@ describe('AgentPool', () => {
   });
 
   it('acquire() skips expired idle agents', () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'] });
     try {
       pool = makePool({ max: 5, maxAge: 100 });
       const agent = pool.acquire();

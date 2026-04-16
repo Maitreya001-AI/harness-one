@@ -40,6 +40,8 @@ export interface AsyncLock {
    * Returns the value `fn` resolves to, or re-throws its rejection.
    */
   withLock<T>(fn: () => Promise<T>, options?: AcquireOptions): Promise<T>;
+  /** Reject all queued waiters and prevent future acquisitions. */
+  dispose(): void;
 }
 
 interface Waiter {
@@ -65,6 +67,7 @@ interface Waiter {
  */
 export function createAsyncLock(): AsyncLock {
   let held = false;
+  let disposed = false;
   const queue: Waiter[] = [];
 
   function handoff(): void {
@@ -90,6 +93,13 @@ export function createAsyncLock(): AsyncLock {
   }
 
   async function acquire(options?: AcquireOptions): Promise<() => void> {
+    if (disposed) {
+      throw new HarnessError(
+        'Lock has been disposed',
+        HarnessErrorCode.LOCK_ABORTED,
+        'The lock was disposed — create a new lock if needed',
+      );
+    }
     const signal = options?.signal;
     if (signal?.aborted) {
       throw new HarnessError(
@@ -140,5 +150,22 @@ export function createAsyncLock(): AsyncLock {
     }
   }
 
-  return { acquire, withLock };
+  function dispose(): void {
+    disposed = true;
+    while (queue.length > 0) {
+      const waiter = queue.shift() as Waiter;
+      if (waiter.signal && waiter.onAbort) {
+        waiter.signal.removeEventListener('abort', waiter.onAbort);
+      }
+      waiter.reject(
+        new HarnessError(
+          'Lock has been disposed',
+          HarnessErrorCode.LOCK_ABORTED,
+          'The lock was disposed while waiting — create a new lock if needed',
+        ),
+      );
+    }
+  }
+
+  return { acquire, withLock, dispose };
 }

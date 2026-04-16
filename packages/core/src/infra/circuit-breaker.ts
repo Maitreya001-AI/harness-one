@@ -97,7 +97,7 @@ export function createCircuitBreaker(config?: CircuitBreakerConfig): CircuitBrea
     if (state === next) return;
     const prev = state;
     state = next;
-    onStateChange?.(prev, next);
+    try { onStateChange?.(prev, next); } catch { /* intentionally swallowed — monitoring callbacks must not break state transitions */ }
   }
 
   function recordSuccess(): void {

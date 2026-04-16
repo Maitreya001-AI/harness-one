@@ -133,6 +133,37 @@ describe('createAsyncLock', () => {
     ).rejects.toMatchObject({ code: HarnessErrorCode.LOCK_ABORTED });
   });
 
+  describe('dispose()', () => {
+    it('rejects all queued waiters with LOCK_ABORTED', async () => {
+      const lock = createAsyncLock();
+      const release = await lock.acquire();
+      const p1 = lock.acquire();
+      const p2 = lock.acquire();
+      lock.dispose();
+      await expect(p1).rejects.toMatchObject({ code: HarnessErrorCode.LOCK_ABORTED });
+      await expect(p2).rejects.toMatchObject({ code: HarnessErrorCode.LOCK_ABORTED });
+      release();
+    });
+
+    it('acquire() after dispose() throws LOCK_ABORTED', async () => {
+      const lock = createAsyncLock();
+      lock.dispose();
+      await expect(lock.acquire()).rejects.toMatchObject({ code: HarnessErrorCode.LOCK_ABORTED });
+    });
+
+    it('withLock() after dispose() throws LOCK_ABORTED', async () => {
+      const lock = createAsyncLock();
+      lock.dispose();
+      await expect(lock.withLock(async () => 'never')).rejects.toMatchObject({ code: HarnessErrorCode.LOCK_ABORTED });
+    });
+
+    it('dispose() is idempotent', () => {
+      const lock = createAsyncLock();
+      lock.dispose();
+      expect(() => lock.dispose()).not.toThrow();
+    });
+  });
+
   it('errors include operator-friendly hint text', async () => {
     const lock = createAsyncLock();
     const ac = new AbortController();

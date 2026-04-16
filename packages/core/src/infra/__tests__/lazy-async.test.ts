@@ -174,6 +174,44 @@ describe('createLazyAsync', () => {
     expect(factory).toHaveBeenCalledTimes(2);
   });
 
+  it('reset() between rejection scheduling and execution does not clear the new pending promise', async () => {
+    // Race condition: reset() is called after a rejection is scheduled but
+    // before it executes. The rejection handler must not clear the NEW pending
+    // promise that was created after reset().
+    let firstReject: ((err: unknown) => void) | null = null;
+    let callNum = 0;
+    const factory = vi.fn((): Promise<string> => {
+      callNum++;
+      if (callNum === 1) {
+        return new Promise<string>((_, reject) => { firstReject = reject; });
+      }
+      return Promise.resolve('fresh');
+    });
+    const lazy = createLazyAsync(factory);
+
+    // Start first get — factory call #1
+    const first = lazy.get();
+    await new Promise((r) => setTimeout(r, 1));
+
+    // Reset clears the pending promise
+    lazy.reset();
+
+    // Start second get — factory call #2 (new pending promise)
+    const second = lazy.get();
+    expect(factory).toHaveBeenCalledTimes(2);
+
+    // Now reject the FIRST factory call. With the generation counter fix,
+    // this should NOT clear the second pending promise.
+    firstReject!(new Error('late rejection'));
+    await expect(first).rejects.toThrow('late rejection');
+    await expect(second).resolves.toBe('fresh');
+
+    // Critical: a third get() should reuse the second's cached promise,
+    // NOT start a new factory call.
+    await expect(lazy.get()).resolves.toBe('fresh');
+    expect(factory).toHaveBeenCalledTimes(2);
+  });
+
   it('returns a distinct handle per invocation', () => {
     const a = createLazyAsync(async () => 1);
     const b = createLazyAsync(async () => 2);
