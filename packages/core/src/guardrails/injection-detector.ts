@@ -106,6 +106,20 @@ const BASE64_PATTERNS: RegExp[] = [
   /(?:[A-Za-z0-9+/]{4}){8,1024}(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?/,
 ];
 
+// Module-level self-validation: assert all built-in patterns are ReDoS-safe.
+// Runs once at import time. If a future maintainer introduces an unsafe
+// built-in pattern, this throws immediately rather than silently introducing
+// a ReDoS vulnerability.
+for (const builtInSet of [BASE_PATTERNS, MEDIUM_PATTERNS, HIGH_PATTERNS, BASE64_PATTERNS]) {
+  for (const pat of builtInSet) {
+    if (isReDoSCandidate(pat.source)) {
+      throw new Error(
+        `[harness-one] Built-in injection pattern is ReDoS-unsafe: ${pat.source.slice(0, 80)}`,
+      );
+    }
+  }
+}
+
 /**
  * Create a prompt injection detector guardrail.
  *

@@ -96,6 +96,8 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
   const tagIndex = new Map<string, Set<string>>();
   /** Secondary index: grade -> set of entry IDs with that grade. */
   const gradeIndex = new Map<string, Set<string>>();
+  /** Eviction priority: ephemeral first, then useful, then critical. */
+  const GRADE_EVICTION_ORDER: readonly string[] = ['ephemeral', 'useful', 'critical'];
   function generateId(): string {
     // SEC-002: Use cryptographically secure randomness instead of
     // Math.random(), which is predictable and enables enumeration attacks
@@ -228,28 +230,25 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
       };
       entries.set(entry.id, entry);
       addToIndexes(entry);
-      // Fix 16: Grade-aware eviction. When maxEntries is exceeded, evict the
-      // lowest-grade entry first (ephemeral before useful before critical).
-      // Within the same grade, evict the oldest (FIFO by insertion order).
+      // Fix 16 + PERF: Grade-aware eviction with O(1) victim lookup.
+      // Each grade maintains a Map (insertion-ordered). To evict, we check
+      // the lowest-priority non-empty bucket and take its first entry.
       if (maxEntries !== undefined && entries.size > maxEntries) {
-        const gradeOrder: Record<string, number> = { ephemeral: 0, useful: 1, critical: 2 };
-        let victim: { id: string; grade: string; insertIdx: number } | null = null;
-        let idx = 0;
-        for (const [id, e] of entries) {
-          const gradeVal = gradeOrder[e.grade] ?? 1;
-          if (
-            victim === null ||
-            gradeVal < (gradeOrder[victim.grade] ?? 1) ||
-            (gradeVal === (gradeOrder[victim.grade] ?? 1) && idx < victim.insertIdx)
-          ) {
-            victim = { id, grade: e.grade, insertIdx: idx };
+        let victimId: string | undefined;
+        for (const grade of GRADE_EVICTION_ORDER) {
+          const bucket = gradeIndex.get(grade);
+          if (bucket && bucket.size > 0) {
+            victimId = bucket.keys().next().value;
+            break;
           }
-          idx++;
         }
-        if (victim !== null) {
-          const victimEntry = entries.get(victim.id);
+        if (victimId !== undefined) {
+          const victimEntry = entries.get(victimId);
           if (victimEntry) removeFromIndexes(victimEntry);
-          entries.delete(victim.id);
+          entries.delete(victimId);
+          // Remove from grade index
+          const bucket = gradeIndex.get(victimEntry?.grade ?? 'useful');
+          if (bucket) bucket.delete(victimId);
         }
       }
       return entry;

@@ -318,6 +318,12 @@ export class AgentLoop {
     if (this.toolTimeoutMs !== undefined && this.toolTimeoutMs <= 0) {
       throw new HarnessError('toolTimeoutMs must be > 0', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide a positive toolTimeoutMs value');
     }
+    if (!Number.isFinite(this.baseRetryDelayMs) || this.baseRetryDelayMs < 0) {
+      throw new HarnessError('baseRetryDelayMs must be a non-negative finite number', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide a value >= 0');
+    }
+    if (!Number.isInteger(this.maxAdapterRetries) || this.maxAdapterRetries < 0) {
+      throw new HarnessError('maxAdapterRetries must be a non-negative integer', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide an integer >= 0');
+    }
 
     if (config.executionStrategy) {
       this.executionStrategy = config.executionStrategy;

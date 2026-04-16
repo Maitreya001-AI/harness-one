@@ -111,7 +111,9 @@ export function createResilientLoop(config: ResilientLoopConfig): ResilientLoop 
             }
           }
         } finally {
-          currentLoop.dispose?.();
+          // CQ-015: Await dispose so async cleanup (trace flush, signal
+          // listener removal) completes before the next retry starts.
+          await Promise.resolve(currentLoop.dispose?.());
         }
 
         // Non-retryable reason or retries exhausted: pass through the done event
