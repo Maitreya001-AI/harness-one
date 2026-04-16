@@ -1053,6 +1053,129 @@ describe('createLangfuseCostTracker', () => {
     expect(record.estimatedCost).toBeCloseTo(expected);
   });
 
+  it('returns 0 cost when inputTokens is NaN (H1)', () => {
+    const warnSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const tracker = createLangfuseCostTracker({ client: mock.client });
+    tracker.setPricing([
+      { model: 'claude-3', inputPer1kTokens: 0.003, outputPer1kTokens: 0.015 },
+    ]);
+
+    const record = tracker.recordUsage({
+      traceId: 't1',
+      model: 'claude-3',
+      inputTokens: NaN,
+      outputTokens: 500,
+    });
+
+    // H1: NaN token counts must produce cost of 0, not NaN
+    expect(record.estimatedCost).toBe(0);
+    expect(Number.isNaN(record.estimatedCost)).toBe(false);
+    expect(tracker.getTotalCost()).toBe(0);
+
+    // Should have warned about invalid token counts
+    const invalidWarns = warnSpy.mock.calls.filter(c =>
+      typeof c[0] === 'string' && c[0].includes('Invalid token counts'),
+    );
+    expect(invalidWarns.length).toBeGreaterThan(0);
+    warnSpy.mockRestore();
+  });
+
+  it('returns 0 cost when outputTokens is NaN (H1)', () => {
+    const warnSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const tracker = createLangfuseCostTracker({ client: mock.client });
+    tracker.setPricing([
+      { model: 'claude-3', inputPer1kTokens: 0.003, outputPer1kTokens: 0.015 },
+    ]);
+
+    const record = tracker.recordUsage({
+      traceId: 't1',
+      model: 'claude-3',
+      inputTokens: 1000,
+      outputTokens: NaN,
+    });
+
+    expect(record.estimatedCost).toBe(0);
+    expect(Number.isNaN(record.estimatedCost)).toBe(false);
+    warnSpy.mockRestore();
+  });
+
+  it('returns 0 cost when inputTokens is Infinity (H1)', () => {
+    const warnSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const tracker = createLangfuseCostTracker({ client: mock.client });
+    tracker.setPricing([
+      { model: 'claude-3', inputPer1kTokens: 0.003, outputPer1kTokens: 0.015 },
+    ]);
+
+    const record = tracker.recordUsage({
+      traceId: 't1',
+      model: 'claude-3',
+      inputTokens: Infinity,
+      outputTokens: 500,
+    });
+
+    expect(record.estimatedCost).toBe(0);
+    expect(Number.isFinite(record.estimatedCost)).toBe(true);
+    warnSpy.mockRestore();
+  });
+
+  it('returns 0 cost when outputTokens is -Infinity (H1)', () => {
+    const warnSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const tracker = createLangfuseCostTracker({ client: mock.client });
+    tracker.setPricing([
+      { model: 'claude-3', inputPer1kTokens: 0.003, outputPer1kTokens: 0.015 },
+    ]);
+
+    const record = tracker.recordUsage({
+      traceId: 't1',
+      model: 'claude-3',
+      inputTokens: 1000,
+      outputTokens: -Infinity,
+    });
+
+    expect(record.estimatedCost).toBe(0);
+    expect(Number.isFinite(record.estimatedCost)).toBe(true);
+    warnSpy.mockRestore();
+  });
+
+  it('returns 0 cost when both tokens are NaN (H1)', () => {
+    const warnSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const tracker = createLangfuseCostTracker({ client: mock.client });
+    tracker.setPricing([
+      { model: 'claude-3', inputPer1kTokens: 0.003, outputPer1kTokens: 0.015 },
+    ]);
+
+    const record = tracker.recordUsage({
+      traceId: 't1',
+      model: 'claude-3',
+      inputTokens: NaN,
+      outputTokens: NaN,
+    });
+
+    expect(record.estimatedCost).toBe(0);
+    // Total cost should not be NaN either
+    expect(Number.isNaN(tracker.getTotalCost())).toBe(false);
+    expect(tracker.getTotalCost()).toBe(0);
+    warnSpy.mockRestore();
+  });
+
+  it('computes normal cost when token counts are valid finite numbers (H1 baseline)', () => {
+    const tracker = createLangfuseCostTracker({ client: mock.client });
+    tracker.setPricing([
+      { model: 'claude-3', inputPer1kTokens: 0.003, outputPer1kTokens: 0.015 },
+    ]);
+
+    const record = tracker.recordUsage({
+      traceId: 't1',
+      model: 'claude-3',
+      inputTokens: 1000,
+      outputTokens: 500,
+    });
+
+    // Normal case: 1000/1000 * 0.003 + 500/1000 * 0.015 = 0.003 + 0.0075 = 0.0105
+    expect(record.estimatedCost).toBeCloseTo(0.0105);
+    expect(Number.isFinite(record.estimatedCost)).toBe(true);
+  });
+
   it('returns 0 cost for unknown models', () => {
     const tracker = createLangfuseCostTracker({ client: mock.client });
     // No pricing set for this model

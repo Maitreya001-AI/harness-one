@@ -415,7 +415,9 @@ export function createAnthropicAdapter(config: AnthropicAdapterConfig): AgentAda
         //  2. Anything else is a real provider-side failure (network blip,
         //     500, malformed final message, etc.) and MUST propagate up as a
         //     typed HarnessError with `cause` preserved for observability.
-        if (params.signal?.aborted === true) {
+        const isAbort = params.signal?.aborted === true ||
+          (err instanceof Error && (err.name === 'AbortError' || (err as { code?: string }).code === 'ABORT_ERR'));
+        if (isAbort) {
           yield {
             type: 'done',
             usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },

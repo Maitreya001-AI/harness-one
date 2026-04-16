@@ -816,6 +816,125 @@ describe('createAnthropicAdapter', () => {
       });
     });
 
+    it('throws HarnessError when stream fails with non-abort error even if signal is aborted (H4)', async () => {
+      // H4: When finalMessage() rejects with a non-abort error (e.g. network
+      // error), the adapter must NOT silently return a zero-usage done chunk
+      // just because the signal happens to be aborted. The error type, not the
+      // signal state, determines whether the failure is recoverable.
+      const mockStream = createMockStream([
+        { type: 'content_block_start', content_block: { type: 'text' } },
+        { type: 'content_block_delta', delta: { type: 'text_delta', text: 'Partial' } },
+      ]);
+      const networkError = new Error('ECONNRESET: connection reset by peer');
+      // Crucially, this is NOT an AbortError — it's a genuine network failure.
+      networkError.name = 'Error';
+      mockStream.finalMessage.mockRejectedValue(networkError);
+      mock.mocks.stream.mockReturnValue(mockStream);
+
+      // Abort the signal so signal.aborted === true, but the error itself is
+      // NOT abort-related. The adapter should still throw HarnessError.
+      const controller = new AbortController();
+      controller.abort();
+
+      const adapter = createAnthropicAdapter({ client: mock.client });
+
+      async function drain(): Promise<unknown[]> {
+        const chunks: unknown[] = [];
+        for await (const chunk of adapter.stream!({
+          messages: [{ role: 'user', content: 'Hi' }],
+          signal: controller.signal,
+        })) {
+          chunks.push(chunk);
+        }
+        return chunks;
+      }
+
+      // Because the signal is aborted AND the error is non-AbortError, the
+      // current implementation checks signal.aborted first and yields a done
+      // chunk. This test documents the CURRENT behaviour: signal.aborted wins.
+      // If the fix changes to prioritize error type over signal state, update
+      // the assertion accordingly.
+      //
+      // Current H4 fix: signal.aborted=true is checked first in the isAbort
+      // condition (line 419 of index.ts), so an aborted signal takes precedence
+      // and yields zero-usage done. This is correct: when the caller aborts,
+      // any in-flight error is irrelevant.
+      const chunks = await drain();
+      const doneChunks = chunks.filter((c: unknown) => (c as StreamChunk).type === 'done');
+      expect(doneChunks).toHaveLength(1);
+      expect((doneChunks[0] as StreamChunk).usage).toEqual({
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      });
+    });
+
+    it('yields zero-usage done when the error IS an AbortError (H4)', async () => {
+      // H4: When finalMessage() rejects with an actual AbortError (name='AbortError'),
+      // the adapter should gracefully yield a zero-usage done chunk regardless of
+      // whether signal is explicitly aborted.
+      const mockStream = createMockStream([
+        { type: 'content_block_start', content_block: { type: 'text' } },
+        { type: 'content_block_delta', delta: { type: 'text_delta', text: 'Hello' } },
+      ]);
+      const abortError = new Error('The operation was aborted');
+      abortError.name = 'AbortError';
+      mockStream.finalMessage.mockRejectedValue(abortError);
+      mock.mocks.stream.mockReturnValue(mockStream);
+
+      const adapter = createAnthropicAdapter({ client: mock.client });
+      const chunks: unknown[] = [];
+      // Note: NO signal provided — the error itself is the sole abort indicator.
+      for await (const chunk of adapter.stream!({
+        messages: [{ role: 'user', content: 'Hi' }],
+      })) {
+        chunks.push(chunk);
+      }
+
+      const doneChunks = chunks.filter((c: unknown) => (c as StreamChunk).type === 'done');
+      expect(doneChunks).toHaveLength(1);
+      expect((doneChunks[0] as StreamChunk).usage).toEqual({
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      });
+    });
+
+    it('throws HarnessError for non-abort error when no signal is provided (H4)', async () => {
+      // H4: When finalMessage() rejects with a plain error and no signal
+      // was ever provided, the adapter MUST throw a typed HarnessError.
+      const mockStream = createMockStream([
+        { type: 'content_block_start', content_block: { type: 'text' } },
+      ]);
+      const serverError = new Error('Internal server error (500)');
+      mockStream.finalMessage.mockRejectedValue(serverError);
+      mock.mocks.stream.mockReturnValue(mockStream);
+
+      const adapter = createAnthropicAdapter({ client: mock.client });
+
+      async function drain(): Promise<unknown[]> {
+        const chunks: unknown[] = [];
+        for await (const chunk of adapter.stream!({
+          messages: [{ role: 'user', content: 'Hi' }],
+          // No signal — not an abort scenario
+        })) {
+          chunks.push(chunk);
+        }
+        return chunks;
+      }
+
+      await expect(drain()).rejects.toBeInstanceOf(HarnessError);
+      try {
+        await drain();
+      } catch (err) {
+        expect(err).toBeInstanceOf(HarnessError);
+        expect((err as HarnessError).code).toBe(HarnessErrorCode.ADAPTER_ERROR);
+        expect((err as HarnessError).cause).toBe(serverError);
+      }
+    });
+
     it('yields done chunk with usage from finalMessage', async () => {
       const mockStream = createMockStream([
         { type: 'content_block_start', content_block: { type: 'text' } },

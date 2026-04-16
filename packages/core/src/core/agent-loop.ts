@@ -482,10 +482,14 @@ export class AgentLoop {
             });
           } catch {
             // Logger itself failed — fall back to console.error.
-            try { console.error('[harness-one/agent-loop] hook threw:', err); } catch { /* */ }
+            try { console.error('[harness-one/agent-loop] hook threw:', err); } catch {
+              try { process.stderr.write(`[harness-one/agent-loop] hook threw: ${err instanceof Error ? err.message : String(err)}\n`); } catch { /* truly unreachable */ }
+            }
           }
         } else {
-          try { console.error('[harness-one/agent-loop] hook threw:', err); } catch { /* */ }
+          try { console.error('[harness-one/agent-loop] hook threw:', err); } catch {
+            try { process.stderr.write(`[harness-one/agent-loop] hook threw: ${err instanceof Error ? err.message : String(err)}\n`); } catch { /* truly unreachable */ }
+          }
         }
       }
     }

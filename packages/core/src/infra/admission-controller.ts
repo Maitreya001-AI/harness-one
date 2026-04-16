@@ -151,7 +151,7 @@ export function createAdmissionController(
         }
         options?.signal?.addEventListener('abort', onAbort, { once: true });
 
-        if (timeoutMs > 0) {
+        if (timeoutMs !== undefined && timeoutMs >= 0) {
           timer = setTimeout(() => {
             removeFromQueue();
             settle(() =>

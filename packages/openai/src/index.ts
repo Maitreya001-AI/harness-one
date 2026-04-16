@@ -619,11 +619,16 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
         // Ensure underlying stream resources are released on early consumer return.
         // The OpenAI SDK stream exposes a controller that can be aborted to free
         // the HTTP connection when the consumer breaks out of the async iterator.
-        if (stream && typeof (stream as unknown as Record<string, unknown>).controller === 'object') {
-          const ctrl = (stream as unknown as { controller: { abort?: () => void } }).controller;
-          if (typeof ctrl?.abort === 'function') {
-            ctrl.abort();
+        try {
+          if (stream && typeof (stream as unknown as Record<string, unknown>).controller === 'object') {
+            const ctrl = (stream as unknown as { controller: { abort?: () => void } }).controller;
+            if (typeof ctrl?.abort === 'function') {
+              ctrl.abort();
+            }
           }
+        } catch {
+          // Stream controller cleanup failed — HTTP connection may linger until server timeout.
+          // This is non-fatal; the GC will eventually collect the stream.
         }
       }
     },

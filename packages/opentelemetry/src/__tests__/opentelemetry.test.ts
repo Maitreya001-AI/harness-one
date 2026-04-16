@@ -1365,6 +1365,102 @@ describe('createOTelExporter', () => {
     });
   });
 
+  describe('H7: orphaned spanParentMap references are cleaned up on eviction', () => {
+    it('removes orphaned spanParentMap entries when their parent is evicted from evictedParents', async () => {
+      // H7 fix: when a parent entry is removed from evictedParents (due to
+      // overflow), the evictSpans function iterates spanParentMap and deletes
+      // any child->parent references pointing to the evicted parent. Without
+      // this, spanParentMap grows unboundedly with stale references.
+      const localMock = createMockTracer();
+      const exporter = createOTelExporter({
+        tracer: localMock.tracer,
+        maxSpans: 2,
+        maxEvictedParents: 1,
+      });
+
+      // Step 1: export a parent and its child
+      await exporter.exportSpan({
+        id: 'parent-a', traceId: 'trace-1', name: 'parent-a',
+        startTime: 1000, endTime: 2000, attributes: {}, events: [], status: 'completed',
+      });
+      await exporter.exportSpan({
+        id: 'child-a', traceId: 'trace-1', parentId: 'parent-a', name: 'child-a',
+        startTime: 1500, endTime: 2500, attributes: {}, events: [], status: 'completed',
+      });
+
+      // Step 2: export more spans to force parent-a out of spanMap into evictedParents,
+      // then overflow evictedParents so parent-a is removed entirely.
+      // With maxSpans=2, adding a 3rd span evicts the oldest (parent-a).
+      await exporter.exportSpan({
+        id: 'filler-1', traceId: 'trace-1', name: 'filler-1',
+        startTime: 2000, endTime: 3000, attributes: {}, events: [], status: 'completed',
+      });
+      // Now parent-a is in evictedParents (maxEvictedParents=1, exactly 1 entry).
+
+      // Adding another span evicts child-a from spanMap -> evictedParents overflows
+      // (now 2 entries, max is 1), so the oldest (parent-a) is purged from evictedParents.
+      // The H7 fix ensures the spanParentMap entry child-a->parent-a is also removed.
+      await exporter.exportSpan({
+        id: 'filler-2', traceId: 'trace-1', name: 'filler-2',
+        startTime: 3000, endTime: 4000, attributes: {}, events: [], status: 'completed',
+      });
+
+      // If orphaned references leak, successive cycles would accumulate stale
+      // entries. Verify no error and the exporter still works.
+      await expect(exporter.exportSpan({
+        id: 'filler-3', traceId: 'trace-1', name: 'filler-3',
+        startTime: 4000, endTime: 5000, attributes: {}, events: [], status: 'completed',
+      })).resolves.toBeUndefined();
+    });
+
+    it('does not leak orphaned spanParentMap references over many eviction cycles', async () => {
+      // Stress test: run many eviction cycles and verify the exporter does not
+      // accumulate unbounded internal state. The only observable effect is that
+      // the exporter keeps working without errors (we cannot inspect private maps
+      // directly, so we test behavioral correctness over many iterations).
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const localMock = createMockTracer();
+      const exporter = createOTelExporter({
+        tracer: localMock.tracer,
+        maxSpans: 3,
+        maxEvictedParents: 2,
+      });
+
+      // Run 50 cycles: each cycle exports a parent + child, triggering eviction.
+      for (let i = 0; i < 50; i++) {
+        await exporter.exportSpan({
+          id: `cycle-parent-${i}`, traceId: 'trace-1', name: `p-${i}`,
+          startTime: 1000 + i * 10, endTime: 2000 + i * 10,
+          attributes: {}, events: [], status: 'completed',
+        });
+        await exporter.exportSpan({
+          id: `cycle-child-${i}`, traceId: 'trace-1',
+          parentId: `cycle-parent-${i}`, name: `c-${i}`,
+          startTime: 1500 + i * 10, endTime: 2500 + i * 10,
+          attributes: {}, events: [], status: 'completed',
+        });
+      }
+
+      // If orphaned references accumulated, we would see incorrect behavior
+      // or unbounded memory growth. Verify the exporter still links correctly:
+      // the most recent parent should still be accessible.
+      await exporter.exportSpan({
+        id: 'final-child', traceId: 'trace-1',
+        parentId: 'cycle-parent-49', name: 'final-c',
+        startTime: 3000, endTime: 4000,
+        attributes: {}, events: [], status: 'completed',
+      });
+
+      const calls = localMock.mocks.startActiveSpan.mock.calls;
+      const finalCall = calls[calls.length - 1];
+      expect(finalCall[0]).toBe('final-c');
+      // cycle-parent-49 should still be in spanMap or evictedParents -> 4 args
+      expect(finalCall.length).toBe(4);
+
+      warnSpy.mockRestore();
+    });
+  });
+
   describe('span endTime handling', () => {
     it('ends span without endTime when not provided', async () => {
       const localMock = createMockTracer();

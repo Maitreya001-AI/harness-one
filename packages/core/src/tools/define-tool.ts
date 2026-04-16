@@ -95,6 +95,10 @@ export function defineTool<TParams = unknown>(def: {
       try {
         return await def.execute(params, signal);
       } catch (err) {
+        // If the tool already returned a structured error result, preserve it
+        if (err && typeof err === 'object' && 'error' in err && 'content' in err) {
+          return err as unknown as ToolResult;
+        }
         const message = err instanceof Error ? err.message : String(err);
         return toolError(message, 'internal', 'Check the tool implementation');
       }

@@ -37,6 +37,72 @@ describe('token-estimator', () => {
     });
   });
 
+  describe('M8: heuristicEstimate edge cases', () => {
+    it('handles surrogate pairs (emoji) without crashing or returning NaN', () => {
+      // Surrogate pairs occupy 2 UTF-16 code units. The high surrogate (0xD800-0xDBFF)
+      // falls outside CJK and ASCII ranges, so it should be classified as "normal" text.
+      const emoji = '😀🎉🚀💻🔥'; // 5 emoji, each is a surrogate pair (10 code units)
+      const tokens = estimateTokens('unknown-model', emoji);
+      expect(typeof tokens).toBe('number');
+      expect(Number.isNaN(tokens)).toBe(false);
+      expect(Number.isFinite(tokens)).toBe(true);
+      expect(tokens).toBeGreaterThan(0);
+      expect(Number.isInteger(tokens)).toBe(true);
+    });
+
+    it('handles all-CJK text with correct higher token cost', () => {
+      // All CJK characters: should use ~1.5 chars/token ratio
+      const cjk = '你好世界这是一个完整的中文句子用于测试'; // 17 CJK chars
+      const tokens = estimateTokens('unknown-model', cjk);
+      // Expected: ceil(17/1.5 + 4) = ceil(11.33 + 4) = ceil(15.33) = 16
+      expect(tokens).toBeGreaterThan(0);
+      expect(Number.isInteger(tokens)).toBe(true);
+      // CJK text is more expensive than same-length ASCII
+      const ascii = 'abcdefghijklmnopq'; // 17 ASCII chars
+      const asciiTokens = estimateTokens('unknown-model', ascii);
+      expect(tokens).toBeGreaterThan(asciiTokens);
+    });
+
+    it('handles all-code/punctuation text with correct ratio', () => {
+      // All code punctuation: should use ~3 chars/token ratio
+      const code = '{}()[];:=<>!&|+-*/%^~?';  // 22 code/punct chars
+      const tokens = estimateTokens('unknown-model', code);
+      // Expected: ceil(22/3 + 4) = ceil(7.33 + 4) = ceil(11.33) = 12
+      expect(tokens).toBeGreaterThan(0);
+      expect(Number.isInteger(tokens)).toBe(true);
+    });
+
+    it('handles mixed surrogate pairs and CJK text', () => {
+      const mixed = '你好😀世界🎉测试'; // CJK + emoji surrogate pairs
+      const tokens = estimateTokens('unknown-model', mixed);
+      expect(typeof tokens).toBe('number');
+      expect(Number.isNaN(tokens)).toBe(false);
+      expect(tokens).toBeGreaterThan(0);
+      expect(Number.isInteger(tokens)).toBe(true);
+    });
+
+    it('handles lone surrogate code units gracefully', () => {
+      // Construct a string with an isolated high surrogate (invalid, but should not crash)
+      const loneSurrogate = String.fromCharCode(0xD800);
+      const tokens = estimateTokens('unknown-model', loneSurrogate);
+      expect(typeof tokens).toBe('number');
+      expect(Number.isNaN(tokens)).toBe(false);
+      expect(tokens).toBeGreaterThan(0);
+    });
+
+    it('returns correct integer for single CJK character', () => {
+      // Single CJK char: ceil(1/1.5 + 4) = ceil(4.67) = 5
+      const tokens = estimateTokens('unknown-model', '中');
+      expect(tokens).toBe(5);
+    });
+
+    it('returns correct integer for single code/punctuation character', () => {
+      // Single code char: ceil(1/3 + 4) = ceil(4.33) = 5
+      const tokens = estimateTokens('unknown-model', '{');
+      expect(tokens).toBe(5);
+    });
+  });
+
   describe('registerTokenizer', () => {
     const mockTokenizer: Tokenizer = {
       encode(text: string) {

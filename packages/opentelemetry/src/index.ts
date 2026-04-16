@@ -177,6 +177,10 @@ export function createOTelExporter(config?: OTelExporterConfig): TraceExporter &
             if (removed >= epEvictCount) break;
             evictedParents.delete(epId);
             evictedParentsAccessTime.delete(epId);
+            // Clean up orphaned parent references pointing to this evicted parent
+            for (const [childId, parentId] of spanParentMap) {
+              if (parentId === epId) spanParentMap.delete(childId);
+            }
             removed++;
           }
         }

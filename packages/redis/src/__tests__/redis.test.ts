@@ -841,6 +841,94 @@ describe('createRedisStore', () => {
     expect(mockRedis.unwatch).toHaveBeenCalledTimes(1);
   });
 
+  it('update does not crash when unwatch fails during "not found" path (H2)', async () => {
+    const store = createRedisStore({ client: redis, prefix: 'test' });
+    const mockRedis = redis as unknown as {
+      watch: ReturnType<typeof vi.fn>;
+      unwatch: ReturnType<typeof vi.fn>;
+    };
+
+    // Make unwatch throw an error (simulating connection drop after WATCH)
+    mockRedis.unwatch.mockRejectedValue(new Error('ECONNRESET: unwatch failed'));
+
+    // update() should still throw the "not found" error, not the unwatch error
+    await expect(store.update('nonexistent', { content: 'x' })).rejects.toThrow('not found');
+    // WATCH was called once, and unwatch was attempted (and failed) once
+    expect(mockRedis.watch).toHaveBeenCalledTimes(1);
+    expect(mockRedis.unwatch).toHaveBeenCalledTimes(1);
+  });
+
+  it('update does not crash when unwatch fails during corrupted entry path (H2)', async () => {
+    const store = createRedisStore({ client: redis, prefix: 'test' });
+    const mockRedis = redis as unknown as {
+      watch: ReturnType<typeof vi.fn>;
+      unwatch: ReturnType<typeof vi.fn>;
+      _store: Map<string, string>;
+      _sets: Map<string, Set<string>>;
+    };
+
+    // Write a valid entry, then corrupt it
+    const entry = await store.write({ key: 'k', content: 'valid', grade: 'useful' });
+    const key = `test:default:${entry.id}`;
+    mockRedis._store.set(key, '{corrupt json!!!');
+
+    // Make unwatch throw — the update should still surface the corruption error
+    mockRedis.unwatch.mockRejectedValue(new Error('Connection lost'));
+
+    const warnSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await expect(store.update(entry.id, { content: 'x' })).rejects.toThrow('Corrupted');
+    expect(mockRedis.unwatch).toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it('batch read failure includes structured metadata in logs (M6)', async () => {
+    const warnFn = vi.fn();
+    const customLogger = { warn: warnFn };
+    const store = createRedisStore({ client: redis, prefix: 'test', logger: customLogger });
+
+    const mockRedis = redis as unknown as {
+      smembers: ReturnType<typeof vi.fn>;
+      mget: ReturnType<typeof vi.fn>;
+      _store: Map<string, string>;
+      _sets: Map<string, Set<string>>;
+    };
+
+    // Create entries directly so they exist in the index
+    const indexKey = 'test:default:__keys__';
+    const keySet = new Set<string>();
+    for (let i = 0; i < 5; i++) {
+      const id = `entry_${i}`;
+      const entryData = {
+        id,
+        key: `key_${i}`,
+        content: `content ${i}`,
+        grade: 'useful',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      mockRedis._store.set(`test:default:${id}`, JSON.stringify(entryData));
+      keySet.add(id);
+    }
+    mockRedis._sets.set(indexKey, keySet);
+
+    // Make mget fail with a specific error
+    const batchError = new Error('ECONNRESET: Connection reset by peer');
+    mockRedis.mget.mockRejectedValue(batchError);
+
+    // query should return empty (all batches failed), not throw
+    const results = await store.query({});
+    expect(results).toEqual([]);
+
+    // The custom logger should have been called with structured metadata
+    expect(warnFn).toHaveBeenCalledWith(
+      expect.stringContaining('batch read failed'),
+      expect.objectContaining({
+        batchSize: 5,
+        error: 'ECONNRESET: Connection reset by peer',
+      }),
+    );
+  });
+
   it('compact handles mget failure mid-batch gracefully', async () => {
     const store = createRedisStore({ client: redis, prefix: 'test' });
 

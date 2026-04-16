@@ -276,6 +276,103 @@ describe('defineTool', () => {
     });
   });
 
+  describe('M1: thrown ToolResult-shaped objects are preserved, not wrapped', () => {
+    it('preserves a thrown object with error and content fields', async () => {
+      const toolResultLike = {
+        error: { message: 'quota exceeded', category: 'internal' },
+        content: 'Please try again later',
+      };
+      const tool = defineTool({
+        name: 'quota-check',
+        description: 'Throws a ToolResult-like object',
+        parameters: { type: 'object' },
+        execute: async () => {
+          throw toolResultLike;
+        },
+      });
+
+      const result = await tool.execute({});
+      // The thrown object should be returned as-is, not wrapped as an internal error
+      expect(result).toBe(toolResultLike);
+    });
+
+    it('does NOT preserve a thrown object with only error (no content)', async () => {
+      const notToolResult = { error: 'just a string error' };
+      const tool = defineTool({
+        name: 'partial',
+        description: 'Throws object with error but no content',
+        parameters: { type: 'object' },
+        execute: async () => {
+          throw notToolResult;
+        },
+      });
+
+      const result = await tool.execute({});
+      // Missing 'content' field, so it should be wrapped as internal error
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.category).toBe('internal');
+      }
+    });
+
+    it('does NOT preserve a thrown object with only content (no error)', async () => {
+      const notToolResult = { content: 'just content' };
+      const tool = defineTool({
+        name: 'partial-content',
+        description: 'Throws object with content but no error',
+        parameters: { type: 'object' },
+        execute: async () => {
+          throw notToolResult;
+        },
+      });
+
+      const result = await tool.execute({});
+      // Missing 'error' field, so it should be wrapped as internal error
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.category).toBe('internal');
+      }
+    });
+
+    it('preserves a thrown ToolResult-shaped object even with extra fields', async () => {
+      const richResult = {
+        error: { message: 'rate limit' },
+        content: 'slow down',
+        retryAfter: 30,
+      };
+      const tool = defineTool({
+        name: 'rate-limit',
+        description: 'Throws a ToolResult-like with extra fields',
+        parameters: { type: 'object' },
+        execute: async () => {
+          throw richResult;
+        },
+      });
+
+      const result = await tool.execute({});
+      // Both 'error' and 'content' are present, so the object is preserved
+      expect(result).toBe(richResult);
+    });
+
+    it('wraps a standard Error normally (not treated as ToolResult)', async () => {
+      const tool = defineTool({
+        name: 'standard-error',
+        description: 'Throws a regular Error',
+        parameters: { type: 'object' },
+        execute: async () => {
+          throw new Error('standard boom');
+        },
+      });
+
+      const result = await tool.execute({});
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.message).toBe('standard boom');
+        expect(result.error.category).toBe('internal');
+      }
+    });
+  });
+
   describe('edge cases', () => {
     it('tool with responseFormat preserved on frozen definition', () => {
       const tool = defineTool({

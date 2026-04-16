@@ -576,7 +576,14 @@ export function createHarness(config: HarnessConfig): Harness {
           const existing = await conversations.load(sessionId);
           await conversations.save(sessionId, [...existing, ...messages]);
         } catch (err) {
-          logger.warn('Failed to persist input messages to conversation store', { error: err });
+          logger.error('[harness-one/preset] Failed to persist input messages to conversation store — session history may have gaps', {
+            sessionId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          yield {
+            type: 'warning' as const,
+            message: `Conversation persistence failed: ${err instanceof Error ? err.message : String(err)}`,
+          };
         }
         for await (const event of loop.run(messages)) {
           // Validate tool call arguments against input guardrails before executing
@@ -622,7 +629,14 @@ export function createHarness(config: HarnessConfig): Harness {
             try {
               await conversations.append(sessionId, event.message);
             } catch (err) {
-              logger.warn('Failed to persist message to conversation store', { error: err });
+              logger.error('[harness-one/preset] Failed to persist message to conversation store — session history may have gaps', {
+                sessionId,
+                error: err instanceof Error ? err.message : String(err),
+              });
+              yield {
+                type: 'warning' as const,
+                message: `Conversation persistence failed: ${err instanceof Error ? err.message : String(err)}`,
+              };
             }
           } else if (event.type === 'tool_result') {
             // Run output guardrails on tool results
@@ -651,7 +665,14 @@ export function createHarness(config: HarnessConfig): Harness {
                 toolCallId: event.toolCallId,
               });
             } catch (err) {
-              logger.warn('Failed to persist message to conversation store', { error: err });
+              logger.error('[harness-one/preset] Failed to persist tool result to conversation store — session history may have gaps', {
+                sessionId,
+                error: err instanceof Error ? err.message : String(err),
+              });
+              yield {
+                type: 'warning' as const,
+                message: `Conversation persistence failed: ${err instanceof Error ? err.message : String(err)}`,
+              };
             }
           }
           yield event;

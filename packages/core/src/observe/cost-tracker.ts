@@ -262,8 +262,13 @@ export function createCostTracker(config?: {
     if (onOverflow) {
       try {
         onOverflow({ kind, capacity, rejectedKey });
-      } catch {
-        // Swallow to avoid breaking the record path on a buggy callback.
+      } catch (err) {
+        // C3: Log instead of silently swallowing — the record path must not
+        // break, but operators need visibility into buggy callbacks.
+        safeWarn(
+          logger,
+          `[harness-one/cost-tracker] onOverflow callback threw for ${kind} (key: "${rejectedKey}"): ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     } else {
       safeWarn(
@@ -284,6 +289,10 @@ export function createCostTracker(config?: {
   // PERF-03: Secondary index for O(1) getCostByTrace lookups
   const traceTotals = new Map<string, KahanSum>();
 
+  // C1/PERF-040: Secondary index mapping traceId → latest records array index
+  // for O(1) lookups in updateUsage() instead of O(n) backward scan.
+  const traceIdIndex = new Map<string, number>();
+
   if (config?.pricing) {
     for (const p of config.pricing) {
       pricing.set(p.model, p);
@@ -293,6 +302,15 @@ export function createCostTracker(config?: {
   function computeCost(usage: Omit<TokenUsageRecord, 'estimatedCost' | 'timestamp'>): number {
     const p = pricing.get(usage.model);
     if (!p) return 0;
+
+    // Guard against NaN/Infinity tokens propagating through budget enforcement.
+    if (!Number.isFinite(usage.inputTokens) || !Number.isFinite(usage.outputTokens)) {
+      safeWarn(
+        logger,
+        `[harness-one/cost-tracker] Non-finite token count for model "${usage.model}" (input=${usage.inputTokens}, output=${usage.outputTokens}). Returning cost 0.`,
+      );
+      return 0;
+    }
 
     let cost = 0;
     cost += (usage.inputTokens / 1000) * p.inputPer1kTokens;
@@ -424,6 +442,11 @@ export function createCostTracker(config?: {
       };
       records.push(record);
 
+      // C1: Update traceId → index for O(1) updateUsage() lookups
+      if (usage.traceId) {
+        traceIdIndex.set(usage.traceId, records.length - 1);
+      }
+
       // Fix 5: Use KahanSum for running total
       runningSum.add(estimatedCost);
 
@@ -456,6 +479,27 @@ export function createCostTracker(config?: {
         // ARCH-008: cumulative-since-start strategies leave per-key totals
         // untouched; sliding-window strategies (`lru`) decrement them here.
         evictionStrategy.onRecordEvicted(evicted, modelTotals, traceTotals);
+
+        // C1: After shift, all indices in traceIdIndex are off by 1.
+        // Decrement every stored index. Remove entries pointing to the
+        // evicted slot (index would become -1).
+        for (const [tid, idx] of traceIdIndex) {
+          if (idx === 0) {
+            // The evicted record was the latest for this traceId —
+            // scan for the next occurrence or remove the entry.
+            let found = false;
+            for (let j = records.length - 1; j >= 0; j--) {
+              if (records[j].traceId === tid) {
+                traceIdIndex.set(tid, j);
+                found = true;
+                break;
+              }
+            }
+            if (!found) traceIdIndex.delete(tid);
+          } else {
+            traceIdIndex.set(tid, idx - 1);
+          }
+        }
       }
 
       // Check budget alerts after recording
@@ -470,18 +514,11 @@ export function createCostTracker(config?: {
     },
 
     updateUsage(traceId: string, usage: Partial<Omit<TokenUsageRecord, 'estimatedCost' | 'timestamp' | 'traceId' | 'model'>>): TokenUsageRecord | undefined {
-      // Find the most recent record for the given traceId
-      let existingRecord: TokenUsageRecord | undefined;
-      let existingIndex = -1;
-      for (let i = records.length - 1; i >= 0; i--) {
-        if (records[i].traceId === traceId) {
-          existingRecord = records[i];
-          existingIndex = i;
-          break;
-        }
-      }
-
-      if (!existingRecord || existingIndex === -1) return undefined;
+      // C1/PERF-040: O(1) lookup via secondary traceId → index map
+      const existingIndex = traceIdIndex.get(traceId);
+      if (existingIndex === undefined) return undefined;
+      const existingRecord = records[existingIndex];
+      if (!existingRecord) return undefined;
 
       if (usage.inputTokens !== undefined && usage.inputTokens < existingRecord.inputTokens) {
         throw new HarnessError(
@@ -597,6 +634,7 @@ export function createCostTracker(config?: {
       runningSum.reset();
       modelTotals.clear();
       traceTotals.clear();
+      traceIdIndex.clear();
     },
 
     getAlertMessage: getAlertMessageFn,

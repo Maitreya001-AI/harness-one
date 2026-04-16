@@ -35,6 +35,30 @@ describe('countTokens', () => {
     expect(tokens).toBe(3);
   });
 
+  describe('M2: undefined content returns valid number, not NaN', () => {
+    it('returns a valid number for a message with undefined content', () => {
+      const msg = { role: 'user' as const, content: undefined } as unknown as { role: 'user'; content: string };
+      const tokens = countTokens('test-model', [msg]);
+      expect(typeof tokens).toBe('number');
+      expect(Number.isNaN(tokens)).toBe(false);
+      expect(tokens).toBeGreaterThanOrEqual(0);
+    });
+
+    it('returns a valid number for a message with explicitly undefined content', () => {
+      const msg = { role: 'assistant' as const, content: undefined } as unknown as { role: 'assistant'; content: string };
+      const tokens = countTokens('test-model', [msg]);
+      expect(Number.isFinite(tokens)).toBe(true);
+    });
+
+    it('treats undefined content the same as empty string content', () => {
+      const undefinedMsg = { role: 'user' as const, content: undefined } as unknown as { role: 'user'; content: string };
+      const emptyMsg = { role: 'user' as const, content: '' };
+      const tokensUndefined = countTokens('test-model', [undefinedMsg]);
+      const tokensEmpty = countTokens('test-model', [emptyMsg]);
+      expect(tokensUndefined).toBe(tokensEmpty);
+    });
+  });
+
   describe('H7: token counting memoization', () => {
     it('caches token count for the same message object', () => {
       const spy = vi.spyOn(tokenEstimator, 'estimateTokens');

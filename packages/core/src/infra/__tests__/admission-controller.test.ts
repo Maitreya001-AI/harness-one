@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createAdmissionController } from '../admission-controller.js';
 
 describe('createAdmissionController (Wave-5D ARCH-8)', () => {
@@ -53,6 +53,76 @@ describe('createAdmissionController (Wave-5D ARCH-8)', () => {
       }),
     ).rejects.toThrow('boom');
     expect(ac.inflight('t')).toBe(0);
+  });
+
+  describe('H6: timeoutMs=0 means immediate rejection', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('rejects immediately when timeoutMs=0 and no permit is available', async () => {
+      const ac = createAdmissionController({ maxInflight: 1 });
+      // Saturate the single permit slot
+      const held = await ac.acquire('t');
+
+      const pending = ac.acquire('t', { timeoutMs: 0 });
+
+      // Advance timers by 0ms — the setTimeout(fn, 0) callback should fire
+      vi.advanceTimersByTime(0);
+
+      await expect(pending).rejects.toThrow(/timed out after 0ms/);
+      expect(ac.waiting('t')).toBe(0);
+      held.release();
+    });
+
+    it('does not reject when a permit is available even with timeoutMs=0', async () => {
+      const ac = createAdmissionController({ maxInflight: 1 });
+
+      // No contention — acquire should succeed immediately regardless of timeoutMs
+      const permit = await ac.acquire('t', { timeoutMs: 0 });
+      expect(ac.inflight('t')).toBe(1);
+      permit.release();
+      expect(ac.inflight('t')).toBe(0);
+    });
+
+    it('timeoutMs=0 fires before a longer-timeout waiter in the same queue', async () => {
+      const ac = createAdmissionController({ maxInflight: 1 });
+      const held = await ac.acquire('t');
+
+      const fastPending = ac.acquire('t', { timeoutMs: 0 });
+      const slowPending = ac.acquire('t', { timeoutMs: 5000 });
+
+      // Only advance to 0ms — fast waiter should reject, slow should remain queued
+      vi.advanceTimersByTime(0);
+
+      await expect(fastPending).rejects.toThrow(/timed out after 0ms/);
+      expect(ac.waiting('t')).toBe(1); // slow waiter still waiting
+
+      // Release the held permit so the slow waiter can be granted
+      held.release();
+      const slowPermit = await slowPending;
+      expect(ac.inflight('t')).toBe(1);
+      slowPermit.release();
+    });
+
+    it('timeoutMs=0 rejects with POOL_TIMEOUT error code', async () => {
+      const ac = createAdmissionController({ maxInflight: 1 });
+      await ac.acquire('t');
+
+      const pending = ac.acquire('t', { timeoutMs: 0 });
+      vi.advanceTimersByTime(0);
+
+      try {
+        await pending;
+        expect.unreachable('should have rejected');
+      } catch (err: unknown) {
+        expect((err as { code?: string }).code).toBe('POOL_TIMEOUT');
+      }
+    });
   });
 
   it('isolates per-tenant budgets', async () => {

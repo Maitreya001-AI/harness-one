@@ -1086,4 +1086,353 @@ describe('createCostTracker', () => {
       expect(tracker.getTotalCost()).toBeCloseTo(2.0, 6);
     });
   });
+
+  // C1: updateUsage O(1) lookup via traceIdIndex
+  describe('updateUsage O(1) lookup via traceIdIndex (C1)', () => {
+    it('finds the correct record among 100+ records', () => {
+      const tracker = createCostTracker({ pricing });
+
+      // Record 150 distinct traces
+      for (let i = 0; i < 150; i++) {
+        tracker.recordUsage({ traceId: `trace-${i}`, model: 'claude-3', inputTokens: 100, outputTokens: 0 });
+      }
+
+      // Update a record in the middle (trace-75)
+      const updated = tracker.updateUsage('trace-75', { inputTokens: 1000, outputTokens: 500 });
+      expect(updated).toBeDefined();
+      expect(updated!.traceId).toBe('trace-75');
+      expect(updated!.inputTokens).toBe(1000);
+      expect(updated!.outputTokens).toBe(500);
+      // Cost: 1000/1000*0.003 + 500/1000*0.015 = 0.0105
+      expect(updated!.estimatedCost).toBeCloseTo(0.0105, 4);
+    });
+
+    it('updates the very last record correctly', () => {
+      const tracker = createCostTracker({ pricing });
+      for (let i = 0; i < 100; i++) {
+        tracker.recordUsage({ traceId: `t-${i}`, model: 'claude-3', inputTokens: 100, outputTokens: 0 });
+      }
+      const updated = tracker.updateUsage('t-99', { inputTokens: 5000 });
+      expect(updated).toBeDefined();
+      expect(updated!.traceId).toBe('t-99');
+      expect(updated!.inputTokens).toBe(5000);
+    });
+
+    it('updates the very first record correctly', () => {
+      const tracker = createCostTracker({ pricing });
+      for (let i = 0; i < 100; i++) {
+        tracker.recordUsage({ traceId: `t-${i}`, model: 'claude-3', inputTokens: 100, outputTokens: 0 });
+      }
+      const updated = tracker.updateUsage('t-0', { inputTokens: 5000 });
+      expect(updated).toBeDefined();
+      expect(updated!.traceId).toBe('t-0');
+      expect(updated!.inputTokens).toBe(5000);
+    });
+
+    it('returns undefined for update after the trace record has been evicted', () => {
+      const tracker = createCostTracker({
+        pricing: [{ model: 'a', inputPer1kTokens: 1.0, outputPer1kTokens: 0 }],
+        maxRecords: 5,
+      });
+
+      // Record 5 traces to fill buffer
+      for (let i = 0; i < 5; i++) {
+        tracker.recordUsage({ traceId: `t-${i}`, model: 'a', inputTokens: 100, outputTokens: 0 });
+      }
+
+      // Record 5 more with different traceIds to evict the first 5
+      for (let i = 5; i < 10; i++) {
+        tracker.recordUsage({ traceId: `t-${i}`, model: 'a', inputTokens: 100, outputTokens: 0 });
+      }
+
+      // t-0 through t-4 should be evicted — updateUsage returns undefined
+      const result = tracker.updateUsage('t-0', { inputTokens: 9999 });
+      expect(result).toBeUndefined();
+    });
+
+    it('returns undefined for a completely non-existent traceId', () => {
+      const tracker = createCostTracker({ pricing });
+      tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 100, outputTokens: 0 });
+
+      const result = tracker.updateUsage('never-recorded', { inputTokens: 500 });
+      expect(result).toBeUndefined();
+    });
+
+    it('returns undefined when updating on a fresh (empty) tracker', () => {
+      const tracker = createCostTracker({ pricing });
+      const result = tracker.updateUsage('anything', { inputTokens: 100 });
+      expect(result).toBeUndefined();
+    });
+
+    it('correctly adjusts totals when updating among many records', () => {
+      const tracker = createCostTracker({ pricing });
+
+      // Record 100 traces, each with inputTokens=100
+      for (let i = 0; i < 100; i++) {
+        tracker.recordUsage({ traceId: `t-${i}`, model: 'claude-3', inputTokens: 100, outputTokens: 0 });
+      }
+
+      // Each cost: 100/1000 * 0.003 = 0.0003
+      // Total before update: 100 * 0.0003 = 0.03
+      expect(tracker.getTotalCost()).toBeCloseTo(0.03, 4);
+
+      // Update trace-50 to have 1000 input tokens
+      tracker.updateUsage('t-50', { inputTokens: 1000 });
+      // New cost for t-50: 1000/1000 * 0.003 = 0.003 (delta = 0.003 - 0.0003 = 0.0027)
+      // New total: 0.03 + 0.0027 = 0.0327
+      expect(tracker.getTotalCost()).toBeCloseTo(0.0327, 4);
+      expect(tracker.getCostByTrace('t-50')).toBeCloseTo(0.003, 4);
+    });
+  });
+
+  // C3: signalOverflow logs callback errors
+  describe('signalOverflow logs callback errors (C3)', () => {
+    it('emits a warning via logger when onOverflow callback throws', () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      try {
+        const throwingCallback = vi.fn(() => {
+          throw new Error('callback exploded');
+        });
+
+        const tracker = createCostTracker({
+          pricing: [{ model: 'base', inputPer1kTokens: 1.0, outputPer1kTokens: 0 }],
+          maxModels: 1,
+          warnUnpricedModels: false,
+          onOverflow: throwingCallback,
+        });
+
+        // First record fills the model capacity
+        tracker.recordUsage({ traceId: 't1', model: 'base', inputTokens: 1000, outputTokens: 0 });
+        // Second model triggers overflow — callback throws, but recording must not break
+        tracker.recordUsage({ traceId: 't1', model: 'new-model', inputTokens: 1000, outputTokens: 0 });
+
+        // The callback was called and threw
+        expect(throwingCallback).toHaveBeenCalledTimes(1);
+
+        // safeWarn routes through console.log — verify the error message was logged
+        expect(logSpy).toHaveBeenCalled();
+        const loggedMessages = logSpy.mock.calls.map((c) => String(c[0]));
+        expect(loggedMessages.some((m) => m.includes('onOverflow callback threw') && m.includes('callback exploded'))).toBe(true);
+      } finally {
+        logSpy.mockRestore();
+      }
+    });
+
+    it('does not disrupt cost recording when onOverflow throws', () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      try {
+        const tracker = createCostTracker({
+          pricing: [
+            { model: 'base', inputPer1kTokens: 1.0, outputPer1kTokens: 0 },
+            { model: 'overflow-model', inputPer1kTokens: 1.0, outputPer1kTokens: 0 },
+          ],
+          maxModels: 1,
+          warnUnpricedModels: false,
+          onOverflow: () => { throw new Error('boom'); },
+        });
+
+        tracker.recordUsage({ traceId: 't1', model: 'base', inputTokens: 1000, outputTokens: 0 });
+        tracker.recordUsage({ traceId: 't2', model: 'overflow-model', inputTokens: 2000, outputTokens: 0 });
+
+        // Both records should be counted despite the overflow callback error
+        // base: 1.0, overflow-model: 2.0 => total = 3.0
+        expect(tracker.getTotalCost()).toBeCloseTo(3.0, 4);
+      } finally {
+        logSpy.mockRestore();
+      }
+    });
+
+    it('logs the kind and rejected key when onOverflow throws', () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      try {
+        const tracker = createCostTracker({
+          pricing: [{ model: 'base', inputPer1kTokens: 1.0, outputPer1kTokens: 0 }],
+          maxModels: 1,
+          warnUnpricedModels: false,
+          onOverflow: () => { throw new Error('oops'); },
+        });
+
+        tracker.recordUsage({ traceId: 't1', model: 'base', inputTokens: 1000, outputTokens: 0 });
+        tracker.recordUsage({ traceId: 't1', model: 'rejected-model-xyz', inputTokens: 1000, outputTokens: 0 });
+
+        const loggedMessages = logSpy.mock.calls.map((c) => String(c[0]));
+        // The warning should contain the kind ('model') and the rejected key name
+        expect(loggedMessages.some((m) => m.includes('model') && m.includes('rejected-model-xyz'))).toBe(true);
+      } finally {
+        logSpy.mockRestore();
+      }
+    });
+
+    it('logs warning for trace overflow when onOverflow throws', () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      try {
+        const tracker = createCostTracker({
+          pricing: [{ model: 'base', inputPer1kTokens: 1.0, outputPer1kTokens: 0 }],
+          maxTraces: 1,
+          onOverflow: () => { throw new TypeError('type error in callback'); },
+        });
+
+        tracker.recordUsage({ traceId: 'first-trace', model: 'base', inputTokens: 1000, outputTokens: 0 });
+        tracker.recordUsage({ traceId: 'second-trace', model: 'base', inputTokens: 1000, outputTokens: 0 });
+
+        const loggedMessages = logSpy.mock.calls.map((c) => String(c[0]));
+        expect(loggedMessages.some((m) => m.includes('onOverflow callback threw') && m.includes('trace'))).toBe(true);
+        expect(loggedMessages.some((m) => m.includes('type error in callback'))).toBe(true);
+      } finally {
+        logSpy.mockRestore();
+      }
+    });
+  });
+
+  // NaN guard in computeCost
+  describe('NaN guard in computeCost', () => {
+    it('returns zero cost when inputTokens is NaN', () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      try {
+        const tracker = createCostTracker({ pricing });
+        const record = tracker.recordUsage({
+          traceId: 't-nan',
+          model: 'claude-3',
+          inputTokens: NaN,
+          outputTokens: 500,
+        });
+        expect(record.estimatedCost).toBe(0);
+        expect(tracker.getTotalCost()).toBe(0);
+      } finally {
+        logSpy.mockRestore();
+      }
+    });
+
+    it('returns zero cost when outputTokens is NaN', () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      try {
+        const tracker = createCostTracker({ pricing });
+        const record = tracker.recordUsage({
+          traceId: 't-nan',
+          model: 'claude-3',
+          inputTokens: 1000,
+          outputTokens: NaN,
+        });
+        expect(record.estimatedCost).toBe(0);
+        expect(tracker.getTotalCost()).toBe(0);
+      } finally {
+        logSpy.mockRestore();
+      }
+    });
+
+    it('returns zero cost when both inputTokens and outputTokens are NaN', () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      try {
+        const tracker = createCostTracker({ pricing });
+        const record = tracker.recordUsage({
+          traceId: 't-nan',
+          model: 'claude-3',
+          inputTokens: NaN,
+          outputTokens: NaN,
+        });
+        expect(record.estimatedCost).toBe(0);
+        expect(tracker.getTotalCost()).toBe(0);
+      } finally {
+        logSpy.mockRestore();
+      }
+    });
+
+    it('returns zero cost when inputTokens is Infinity', () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      try {
+        const tracker = createCostTracker({ pricing });
+        const record = tracker.recordUsage({
+          traceId: 't-inf',
+          model: 'claude-3',
+          inputTokens: Infinity,
+          outputTokens: 500,
+        });
+        expect(record.estimatedCost).toBe(0);
+        expect(tracker.getTotalCost()).toBe(0);
+      } finally {
+        logSpy.mockRestore();
+      }
+    });
+
+    it('returns zero cost when outputTokens is -Infinity', () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      try {
+        const tracker = createCostTracker({ pricing });
+        const record = tracker.recordUsage({
+          traceId: 't-neg-inf',
+          model: 'claude-3',
+          inputTokens: 1000,
+          outputTokens: -Infinity,
+        });
+        expect(record.estimatedCost).toBe(0);
+        expect(tracker.getTotalCost()).toBe(0);
+      } finally {
+        logSpy.mockRestore();
+      }
+    });
+
+    it('emits a warning when non-finite tokens are recorded', () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      try {
+        const tracker = createCostTracker({ pricing });
+        tracker.recordUsage({
+          traceId: 't-nan',
+          model: 'claude-3',
+          inputTokens: NaN,
+          outputTokens: 0,
+        });
+
+        expect(logSpy).toHaveBeenCalled();
+        const loggedMessages = logSpy.mock.calls.map((c) => String(c[0]));
+        expect(loggedMessages.some((m) => m.includes('Non-finite token count'))).toBe(true);
+      } finally {
+        logSpy.mockRestore();
+      }
+    });
+
+    it('does not produce NaN in total cost after NaN tokens are recorded', () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      try {
+        const tracker = createCostTracker({ pricing });
+
+        // Record a valid entry first
+        tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+        expect(tracker.getTotalCost()).toBeCloseTo(0.003, 4);
+
+        // Record a NaN entry — should not pollute the total
+        tracker.recordUsage({ traceId: 't2', model: 'claude-3', inputTokens: NaN, outputTokens: 0 });
+        expect(tracker.getTotalCost()).toBeCloseTo(0.003, 4);
+        expect(Number.isNaN(tracker.getTotalCost())).toBe(false);
+
+        // Record another valid entry — total should still be correct
+        tracker.recordUsage({ traceId: 't3', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
+        expect(tracker.getTotalCost()).toBeCloseTo(0.006, 4);
+        expect(Number.isNaN(tracker.getTotalCost())).toBe(false);
+      } finally {
+        logSpy.mockRestore();
+      }
+    });
+
+    it('NaN tokens do not trigger false budget alerts', () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      try {
+        const handler = vi.fn();
+        const tracker = createCostTracker({ pricing, budget: 1.0 });
+        tracker.onAlert(handler);
+
+        tracker.recordUsage({
+          traceId: 't-nan',
+          model: 'claude-3',
+          inputTokens: NaN,
+          outputTokens: NaN,
+        });
+
+        // Cost is 0, budget is 1.0 — no alert should fire
+        expect(handler).not.toHaveBeenCalled();
+        expect(tracker.getTotalCost()).toBe(0);
+      } finally {
+        logSpy.mockRestore();
+      }
+    });
+  });
 });

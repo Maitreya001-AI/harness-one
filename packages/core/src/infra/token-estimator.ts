@@ -108,7 +108,7 @@ function heuristicEstimate(text: string): number {
     }
   }
 
-  const normalCount = len - cjkCount - codeCount;
+  const normalCount = Math.max(0, len - cjkCount - codeCount);
 
   return Math.ceil(cjkCount / 1.5 + codeCount / 3 + normalCount / 4 + 4);
 }

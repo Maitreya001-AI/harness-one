@@ -218,9 +218,12 @@ export function createRedisStore(config: RedisStoreConfig): RedisMemoryStore {
         let values: (string | null)[];
         try {
           values = await client.mget(...keys);
-        } catch {
+        } catch (err) {
           // Connection failure mid-batch: skip this chunk and continue
-          logger.warn('[harness-one/redis] batch read failed, results may be partial');
+          logger.warn('[harness-one/redis] batch read failed, results may be partial', {
+            batchSize: batch.length,
+            error: err instanceof Error ? err.message : String(err),
+          });
           continue;
         }
 
@@ -277,12 +280,12 @@ export function createRedisStore(config: RedisStoreConfig): RedisMemoryStore {
 
         const raw = await client.get(key);
         if (!raw) {
-          await client.unwatch();
+          try { await client.unwatch(); } catch { /* unwatch failure is non-fatal; the watch will timeout */ }
           throw new HarnessError(`Memory entry not found: ${id}`, HarnessErrorCode.MEMORY_NOT_FOUND);
         }
         const existing = parseEntryFromRedis(raw, id, logger);
         if (!existing) {
-          await client.unwatch();
+          try { await client.unwatch(); } catch { /* unwatch failure is non-fatal; the watch will timeout */ }
           throw new HarnessError(
             `Corrupted memory entry: ${id}`,
             HarnessErrorCode.MEMORY_DATA_CORRUPTION,
@@ -444,10 +447,13 @@ export function createRedisStore(config: RedisStoreConfig): RedisMemoryStore {
         let values: (string | null)[];
         try {
           values = await client.mget(...keys);
-        } catch {
+        } catch (err) {
           // Transient failure — skip this chunk and let the next repair pass
           // handle it. Never throw from a maintenance routine.
-          logger.warn('[harness-one/redis] repair batch read failed, skipping chunk');
+          logger.warn('[harness-one/redis] repair batch read failed, skipping chunk', {
+            batchSize: batch.length,
+            error: err instanceof Error ? err.message : String(err),
+          });
           continue;
         }
         for (let k = 0; k < values.length; k++) {

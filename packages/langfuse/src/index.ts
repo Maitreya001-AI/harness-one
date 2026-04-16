@@ -152,8 +152,8 @@ export function createLangfuseExporter(config: LangfuseExporterConfig): TraceExp
     while (traceMap.size > MAX_TRACE_MAP_SIZE) {
       const oldest = traceTimestamps.keys().next().value;
       if (oldest === undefined) break;
-      traceMap.delete(oldest);
       traceTimestamps.delete(oldest);
+      traceMap.delete(oldest);
     }
   }
 
@@ -503,6 +503,10 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): La
         warnedModels.add(usage.model);
         safeWarn(undefined, `[harness-one/langfuse] No pricing configured for model "${usage.model}" — cost will be reported as $0`);
       }
+      return 0;
+    }
+    if (!Number.isFinite(usage.inputTokens) || !Number.isFinite(usage.outputTokens)) {
+      safeWarn(undefined, `[harness-one/langfuse] Invalid token counts for model "${usage.model}" — inputTokens=${usage.inputTokens}, outputTokens=${usage.outputTokens}. Cost will be 0.`);
       return 0;
     }
     let cost = 0;

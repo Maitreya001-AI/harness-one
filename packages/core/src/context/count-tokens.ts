@@ -55,7 +55,7 @@ export function countMessageTokens(model: string, msg: Message): number {
     tokenCache.set(msg, modelCache);
   }
 
-  const tokens = estimateTokens(model, msg.content);
+  const tokens = estimateTokens(model, msg.content ?? '');
   modelCache.set(model, tokens);
   return tokens;
 }
