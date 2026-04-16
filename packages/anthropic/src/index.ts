@@ -151,9 +151,12 @@ function toAnthropicMessage(
             `[harness-one/anthropic] tool_use input for "${tc.name}" was not a JSON object (got ${typeof parsed}); substituting empty object.`,
           );
         }
-      } catch {
+      } catch (parseErr) {
+        const preview = tc.arguments.length > 200 ? tc.arguments.slice(0, 200) + '…' : tc.arguments;
         logger.warn(
-          `[harness-one/anthropic] tool_use input for "${tc.name}" was not valid JSON; substituting empty object. Raw arguments may be truncated or malformed.`,
+          `[harness-one/anthropic] tool_use input for "${tc.name}" was not valid JSON; substituting empty object. ` +
+          `Parse error: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}. ` +
+          `Raw (first 200 chars): ${preview}`,
         );
       }
       content.push({

@@ -222,8 +222,13 @@ async function runGuardrails(
         pipeline.onEvent?.(event);
         return { passed: false, verdict, results };
       }
-      // failOpen: emit event with error info, then skip this guardrail
-      const errorVerdict: GuardrailEvent['verdict'] = { action: 'allow' };
+      // failOpen: emit event with error info, then skip this guardrail.
+      // The reason field distinguishes genuine 'allow' from error-fallback 'allow'.
+      const message = err instanceof Error ? err.message : String(err);
+      const errorVerdict: GuardrailEvent['verdict'] = {
+        action: 'allow',
+        reason: `Guardrail error (fail-open): ${message}`,
+      };
       const errorEvent: GuardrailEvent = {
         guardrail: entry.name,
         direction,

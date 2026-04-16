@@ -595,9 +595,13 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
         }
       }
 
-      // Only emit bare done if stream ended without a usage chunk
+      // Only emit bare done if stream ended without a usage chunk.
+      // OBS-011: Emit both a warning and a tagged event so cost tracking can
+      // detect this condition. Ensure stream_options.include_usage is set to
+      // true in the request to guarantee usage data in the final chunk.
       logger.warn(
-        '[harness-one/openai] Stream ended without usage data — token counts will be zero. This may affect cost tracking.',
+        '[harness-one/openai] Stream ended without usage data — token counts will be zero. ' +
+        'Ensure stream_options.include_usage is true. This affects cost tracking and budget enforcement.',
       );
       yield {
         type: 'done' as const,

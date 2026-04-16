@@ -106,7 +106,7 @@ describe('AgentPool', () => {
 
   it('stats reflects correct idle/active/total counts', () => {
     pool = makePool();
-    expect(pool.stats).toEqual({ idle: 0, active: 0, total: 0, created: 0, recycled: 0 });
+    expect(pool.stats).toEqual({ idle: 0, active: 0, total: 0, created: 0, recycled: 0, disposeErrors: 0 });
 
     const a1 = pool.acquire();
     expect(pool.stats).toMatchObject({ idle: 0, active: 1, total: 1, created: 1 });

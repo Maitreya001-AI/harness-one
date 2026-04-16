@@ -45,8 +45,9 @@ export class LRUCache<K, V> {
     this.map.set(key, value);
     // Evict oldest if over capacity
     while (this.map.size > this.maxSize) {
-      const oldest = this.map.keys().next().value as K;
-      this.map.delete(oldest);
+      const iter = this.map.keys().next();
+      if (iter.done) break; // Safety: map unexpectedly empty
+      this.map.delete(iter.value);
     }
   }
 

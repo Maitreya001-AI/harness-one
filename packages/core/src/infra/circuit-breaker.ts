@@ -10,6 +10,8 @@
  * @module
  */
 
+import { HarnessError, HarnessErrorCode } from '../core/errors.js';
+
 /** Circuit breaker states. */
 export type CircuitState = 'closed' | 'open' | 'half_open';
 
@@ -72,10 +74,18 @@ export function createCircuitBreaker(config?: CircuitBreakerConfig): CircuitBrea
   const onStateChange = config?.onStateChange;
 
   if (!Number.isInteger(failureThreshold) || failureThreshold < 1) {
-    throw new Error('failureThreshold must be a positive integer');
+    throw new HarnessError(
+      'failureThreshold must be a positive integer',
+      HarnessErrorCode.CORE_INVALID_CONFIG,
+      'Provide a positive integer for failureThreshold (e.g. 5)',
+    );
   }
   if (!Number.isFinite(resetTimeoutMs) || resetTimeoutMs < 1) {
-    throw new Error('resetTimeoutMs must be a positive number');
+    throw new HarnessError(
+      'resetTimeoutMs must be a positive number',
+      HarnessErrorCode.CORE_INVALID_CONFIG,
+      'Provide a positive number for resetTimeoutMs (e.g. 30000)',
+    );
   }
 
   let state: CircuitState = 'closed';

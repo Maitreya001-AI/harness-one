@@ -6,7 +6,7 @@
 
 /** Verdict returned by a guardrail after evaluating content. */
 export type GuardrailVerdict =
-  | { action: 'allow' }
+  | { action: 'allow'; reason?: string }
   | { action: 'block'; reason: string }
   | { action: 'modify'; modified: string; reason: string };
 

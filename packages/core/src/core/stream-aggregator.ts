@@ -27,6 +27,7 @@
  */
 
 import type { Message, ToolCallRequest, TokenUsage } from './types.js';
+import { HarnessError, HarnessErrorCode } from './errors.js';
 
 /**
  * Streaming chunk shape consumed by the aggregator. Mirrors the relevant
@@ -153,8 +154,10 @@ export class StreamAggregator {
           if (existing.arguments.length > this.options.maxToolArgBytes) {
             yield {
               type: 'error',
-              error: new Error(
+              error: new HarnessError(
                 `Tool call "${existing.name}" arguments exceeded maximum size (${this.options.maxToolArgBytes} bytes)`,
+                HarnessErrorCode.CORE_TOKEN_BUDGET_EXCEEDED,
+                'Reduce tool call argument size or increase maxToolArgBytes',
               ),
             };
             return;
@@ -182,8 +185,10 @@ export class StreamAggregator {
         if (last.arguments.length > this.options.maxToolArgBytes) {
           yield {
             type: 'error',
-            error: new Error(
+            error: new HarnessError(
               `Tool call "${last.name}" arguments exceeded maximum size (${this.options.maxToolArgBytes} bytes)`,
+              HarnessErrorCode.CORE_TOKEN_BUDGET_EXCEEDED,
+              'Reduce tool call argument size or increase maxToolArgBytes',
             ),
           };
           return;
@@ -225,15 +230,23 @@ export class StreamAggregator {
     this.toolCallList.length = 0;
   }
 
-  private checkSizeLimits(): Error | null {
+  private checkSizeLimits(): HarnessError | null {
     if (this.accumulatedBytes > this.options.maxStreamBytes) {
-      return new Error(`Stream exceeded maximum size (${this.options.maxStreamBytes} bytes)`);
+      return new HarnessError(
+        `Stream exceeded maximum size (${this.options.maxStreamBytes} bytes)`,
+        HarnessErrorCode.CORE_TOKEN_BUDGET_EXCEEDED,
+        'Reduce response size or increase maxStreamBytes',
+      );
     }
     if (
       this.options.cumulativeStreamBytesSoFar + this.accumulatedBytes >
       this.options.maxCumulativeStreamBytes
     ) {
-      return new Error('Cumulative stream size exceeded maximum across all iterations');
+      return new HarnessError(
+        'Cumulative stream size exceeded maximum across all iterations',
+        HarnessErrorCode.CORE_TOKEN_BUDGET_EXCEEDED,
+        'Reduce conversation length or increase maxCumulativeStreamBytes',
+      );
     }
     return null;
   }

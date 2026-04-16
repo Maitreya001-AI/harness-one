@@ -109,6 +109,15 @@ export function createAdmissionController(
         const timeoutMs = options?.timeoutMs ?? defaultTimeoutMs;
         let timer: ReturnType<typeof setTimeout> | undefined;
         let settled = false;
+        /** CQ-038: Prevents double-removal when abort and timeout fire concurrently. */
+        let removedFromQueue = false;
+
+        function removeFromQueue(): void {
+          if (removedFromQueue) return;
+          removedFromQueue = true;
+          const idx = state.queue.indexOf(grant);
+          if (idx >= 0) state.queue.splice(idx, 1);
+        }
 
         const settle = (fn: () => void): void => {
           if (settled) return;
@@ -119,8 +128,7 @@ export function createAdmissionController(
         };
 
         const onAbort = (): void => {
-          const idx = state.queue.indexOf(grant);
-          if (idx >= 0) state.queue.splice(idx, 1);
+          removeFromQueue();
           settle(() =>
             reject(
               new HarnessError(
@@ -145,8 +153,7 @@ export function createAdmissionController(
 
         if (timeoutMs > 0) {
           timer = setTimeout(() => {
-            const idx = state.queue.indexOf(grant);
-            if (idx >= 0) state.queue.splice(idx, 1);
+            removeFromQueue();
             settle(() =>
               reject(
                 new HarnessError(

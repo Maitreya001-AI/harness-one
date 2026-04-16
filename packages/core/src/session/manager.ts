@@ -107,6 +107,12 @@ export function createSessionManager(config?: {
   const MAX_PENDING_EVENTS = 1000;
   let emitting = false;
   const pendingEvents: SessionEvent[] = [];
+  // OBS-010: Counters are intentionally write-only to keep event emission
+  // allocation-free. Consumers surface them via the `SessionManager` if needed.
+   
+  let _droppedHandlerErrors = 0;
+   
+  let _droppedEvents = 0;
 
   // SEC-002: Use cryptographically secure random IDs instead of a predictable
   // counter + timestamp combination. Predictable session IDs enable
@@ -118,19 +124,25 @@ export function createSessionManager(config?: {
   function emit(type: SessionEvent['type'], sessionId: SessionId, reason?: string): void {
     const event: SessionEvent = { type, sessionId, timestamp: Date.now(), ...(reason !== undefined && { reason }) };
     if (emitting) {
-      if (pendingEvents.length >= MAX_PENDING_EVENTS) return; // prevent unbounded growth
+      if (pendingEvents.length >= MAX_PENDING_EVENTS) { _droppedEvents++; return; }
       pendingEvents.push(event);
       return;
     }
     emitting = true;
     try {
       for (const handler of eventHandlers) {
-        try { handler(event); } catch { /* Prevent misbehaving handler from breaking event delivery */ }
+        try { handler(event); } catch {
+          // Prevent misbehaving handler from breaking event delivery.
+          // Logged as a dropped handler error rather than silently swallowed.
+          _droppedHandlerErrors++;
+        }
       }
       while (pendingEvents.length > 0) {
         const queued = pendingEvents.shift() as SessionEvent;
         for (const handler of eventHandlers) {
-          try { handler(queued); } catch { /* ignore */ }
+          try { handler(queued); } catch {
+            _droppedHandlerErrors++;
+          }
         }
       }
     } finally {

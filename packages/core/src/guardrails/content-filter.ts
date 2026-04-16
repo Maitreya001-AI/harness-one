@@ -106,14 +106,16 @@ export function createContentFilter(config: {
   const blockedKeywords = (config.blocked ?? []).map((w) => {
     const normalized = w.normalize('NFKC').toLowerCase();
     const escaped = escapeRegExp(normalized);
-    // Determine appropriate boundary assertions based on first/last characters
-    const startsWithWord = /^\w/.test(normalized);
-    const endsWithWord = /\w$/.test(normalized);
-    const prefix = startsWithWord ? '\\b' : '(?<!\\w)';
-    const suffix = endsWithWord ? '\\b' : '(?!\\w)';
+    // Determine appropriate boundary assertions based on first/last characters.
+    // Use Unicode-aware \p{L} (letter) and \p{N} (number) via 'u' flag so
+    // non-ASCII keywords like "café" get correct boundary detection (SEC-012).
+    const startsWithWord = /^[\p{L}\p{N}_]/u.test(normalized);
+    const endsWithWord = /[\p{L}\p{N}_]$/u.test(normalized);
+    const prefix = startsWithWord ? '(?<!\\p{L}|\\p{N}|_)' : '(?<!\\p{L}|\\p{N}|_)';
+    const suffix = endsWithWord ? '(?!\\p{L}|\\p{N}|_)' : '(?!\\p{L}|\\p{N}|_)';
     return {
       original: normalized,
-      regex: new RegExp(prefix + escaped + suffix, 'gi'),
+      regex: new RegExp(prefix + escaped + suffix, 'giu'),
     };
   });
   const rawPatterns = config.blockedPatterns ?? [];

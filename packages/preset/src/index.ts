@@ -697,10 +697,14 @@ export function createHarness(config: HarnessConfig): Harness {
       const deadline = Date.now() + timeoutMs;
       // 1. Tell the loop to stop taking new work.
       loop.abort();
-      // 2. Brief settle: shortest of 100ms or timeoutMs.
+      // 2. Brief settle: shortest of 100ms or timeoutMs. Timer is unref'd
+      //    so it cannot keep the process alive during graceful shutdown.
       const settleMs = Math.min(100, timeoutMs);
       if (settleMs > 0) {
-        await new Promise<void>((r) => setTimeout(r, settleMs));
+        await new Promise<void>((r) => {
+          const t = setTimeout(r, settleMs);
+          if (typeof t === 'object' && 'unref' in t) (t as NodeJS.Timeout).unref();
+        });
       }
       // 3. Delegate to shutdown, respecting the remaining deadline. We
       //    cannot cancel the shutdown mid-flight, so we attach a watchdog
@@ -717,6 +721,9 @@ export function createHarness(config: HarnessConfig): Harness {
       let watchdogHandle: ReturnType<typeof setTimeout> | undefined;
       const watchdog = new Promise<void>((resolve) => {
         watchdogHandle = setTimeout(resolve, remaining);
+        if (typeof watchdogHandle === 'object' && 'unref' in watchdogHandle) {
+          (watchdogHandle as NodeJS.Timeout).unref();
+        }
       });
       try {
         await Promise.race([

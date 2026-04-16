@@ -312,4 +312,6 @@ const boundary = createContextBoundary(orch.context, [
 - Agent Pool 不支持 Agent 状态持久化（重启后池为空）
 - Handoff 的 inbox 和 receipt 存储在内存中，不支持持久化
 - Context Boundary 是 advisory 的——直接引用底层 SharedContext 可绕过访问控制
+- SharedContext 键通过 NFKC+casefold 规范化存储（Wave-7），`entries()` 返回的键为规范化后的形式
+- PoolStats 新增 `disposeErrors` 计数器追踪 dispose 过程中被静默丢弃的错误数（Wave-7 OBS-010）
 - Handoff 的 verify() 需要用户提供 verifier 回调，不内置语义验证

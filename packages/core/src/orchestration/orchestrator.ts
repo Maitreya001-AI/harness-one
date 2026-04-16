@@ -256,16 +256,18 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
 
   const sharedContext: SharedContext = {
     get(key: string): unknown {
-      return contextStore.get(key);
+      // SEC-011: Normalize key for consistent lookup — ensures 'ADMIN' and
+      // 'admin' resolve to the same entry, matching boundary policy normalization.
+      return contextStore.get(normalizeContextKey(key));
     },
     /**
      * Set a value on the shared context.
      *
      * SEC-011: Keys that would bypass own-property checks via prototype
      * pollution (`__proto__`, `constructor`, `prototype`) are rejected with
-     * an `INVALID_KEY` HarnessError. Keys are stored verbatim (case/normalization
-     * preserved) — policy matching in `createContextBoundary` applies NFKC +
-     * casefold before comparison (see `normalizeContextKey`).
+     * an `INVALID_KEY` HarnessError. Keys are normalized via NFKC + casefold
+     * before storage so that lookup and boundary policy matching are consistent
+     * (see `normalizeContextKey`).
      */
     set(key: string, value: unknown): void {
       if (typeof key !== 'string' || key.length === 0) {
@@ -275,15 +277,17 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
           'Provide a non-empty string key',
         );
       }
-      if (FORBIDDEN_CONTEXT_KEYS.has(key)) {
+      // SEC-011: Normalize before forbidden-key check to catch Unicode variants.
+      const normalized = normalizeContextKey(key);
+      if (FORBIDDEN_CONTEXT_KEYS.has(normalized)) {
         throw new HarnessError(
           `Invalid context key "${key}": reserved prototype-polluting identifier`,
           HarnessErrorCode.CORE_INVALID_KEY,
           `Avoid keys in {${Array.from(FORBIDDEN_CONTEXT_KEYS).join(', ')}}`,
         );
       }
-      contextStore.set(key, value);
-      emit({ type: 'context_updated', key });
+      contextStore.set(normalized, value);
+      emit({ type: 'context_updated', key: normalized });
     },
     entries(): ReadonlyMap<string, unknown> {
       return new Map(contextStore);

@@ -419,6 +419,20 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
     },
 
     async compact(policy) {
+      if (policy.maxEntries !== undefined && policy.maxEntries < 0) {
+        throw new HarnessError(
+          'CompactionPolicy.maxEntries must be non-negative',
+          HarnessErrorCode.CORE_INVALID_CONFIG,
+          'Provide a non-negative value for maxEntries',
+        );
+      }
+      if (policy.maxAge !== undefined && policy.maxAge < 0) {
+        throw new HarnessError(
+          'CompactionPolicy.maxAge must be non-negative',
+          HarnessErrorCode.CORE_INVALID_CONFIG,
+          'Provide a non-negative value for maxAge (milliseconds)',
+        );
+      }
       const all = Array.from(entries.values());
       const now = Date.now();
       const weights = policy.gradeWeights ?? {

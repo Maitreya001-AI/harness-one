@@ -34,7 +34,14 @@ export interface IngestResult {
  * const results = await pipeline.query('hello');
  * ```
  */
+/**
+ * Safety limit when config.maxChunks is not set — prevents unbounded memory
+ * growth from a runaway ingest loop. 100 000 chunks × ~500 bytes each ≈ 50 MB.
+ */
+const DEFAULT_MAX_CHUNKS = 100_000;
+
 export function createRAGPipeline(config: RAGPipelineConfig): RAGPipeline {
+  const effectiveMaxChunks = config.maxChunks ?? DEFAULT_MAX_CHUNKS;
   const allChunks: DocumentChunk[] = [];
   const contentHashes = new Set<string>();
 
@@ -149,23 +156,22 @@ export function createRAGPipeline(config: RAGPipelineConfig): RAGPipeline {
     }
     chunks = uniqueChunks;
 
-    // Fix 18: Capacity check with explicit signaling
-    if (config.maxChunks !== undefined) {
-      const remaining = config.maxChunks - allChunks.length;
-      if (remaining <= 0) {
-        config.onWarning?.({
-          message: `Pipeline capacity reached (maxChunks: ${config.maxChunks}). No new chunks added.`,
-          type: 'capacity',
-        });
-        return 0;
-      }
-      if (chunks.length > remaining) {
-        config.onWarning?.({
-          message: `Pipeline capacity exceeded: only ${remaining} of ${chunks.length} chunks will be added (${chunks.length - remaining} dropped, maxChunks: ${config.maxChunks})`,
-          type: 'capacity',
-        });
-        chunks = chunks.slice(0, remaining);
-      }
+    // Fix 18: Capacity check with explicit signaling.
+    // Uses effectiveMaxChunks (user-set or DEFAULT_MAX_CHUNKS) to always bound memory.
+    const remaining = effectiveMaxChunks - allChunks.length;
+    if (remaining <= 0) {
+      config.onWarning?.({
+        message: `Pipeline capacity reached (maxChunks: ${effectiveMaxChunks}). No new chunks added.`,
+        type: 'capacity',
+      });
+      return 0;
+    }
+    if (chunks.length > remaining) {
+      config.onWarning?.({
+        message: `Pipeline capacity exceeded: only ${remaining} of ${chunks.length} chunks will be added (${chunks.length - remaining} dropped, maxChunks: ${effectiveMaxChunks})`,
+        type: 'capacity',
+      });
+      chunks = chunks.slice(0, remaining);
     }
 
     if (chunks.length === 0) {

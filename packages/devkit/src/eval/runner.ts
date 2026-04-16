@@ -154,9 +154,10 @@ export function createEvalRunner(config: EvalConfig): EvalRunner {
           }
           const message = err instanceof Error ? err.message : String(err);
           scorerErrors.push({ scorer: scorer.name, error: message });
-          // Fill with zero scores
+          // Fill with NaN scores so callers can distinguish scorer failure from
+          // a genuine zero score. `explanation` carries the error context.
           batchResults.set(scorer.name, cases.map(() => ({
-            score: 0,
+            score: NaN,
             explanation: `Scorer error: ${message}`,
           })));
         }

@@ -79,6 +79,8 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
   let warmedUp = false;
   let totalCreated = 0;
   let totalRecycled = 0;
+  /** OBS-010: Counter for dispose errors silently dropped during teardown. */
+  let totalDisposeErrors = 0;
 
   // Fix 24: Queue for pending async acquire requests
   const pendingQueue: PendingAcquire[] = [];
@@ -126,25 +128,26 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
       }
     } catch {
       // Individual agent dispose errors should not abort the pool teardown —
-      // aggregated logging is the pool consumer's responsibility. Drop here.
+      // tracked via totalDisposeErrors for observability (OBS-010).
+      totalDisposeErrors++;
     }
     entries.delete(entry.agent.id);
   }
 
   /**
    * Fire-and-forget variant for call sites that cannot easily go async
-   * (idle-timer expiry, resize(), release()). Errors are swallowed to
-   * preserve the previous sync contract.
+   * (idle-timer expiry, resize(), release()). Errors are tracked via
+   * totalDisposeErrors for observability (OBS-010).
    */
   function disposeEntrySync(entry: PoolEntry): void {
     clearIdleTimer(entry);
     try {
       const result = entry.agent.loop.dispose?.() as unknown;
       if (result && typeof (result as { catch?: unknown }).catch === 'function') {
-        (result as Promise<void>).catch(() => {});
+        (result as Promise<void>).catch(() => { totalDisposeErrors++; });
       }
     } catch {
-      /* swallow */
+      totalDisposeErrors++;
     }
     entries.delete(entry.agent.id);
   }
@@ -190,7 +193,7 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
       if (entry.state === 'idle') idle++;
       else active++;
     }
-    return { idle, active, total: entries.size, created: totalCreated, recycled: totalRecycled };
+    return { idle, active, total: entries.size, created: totalCreated, recycled: totalRecycled, disposeErrors: totalDisposeErrors };
   }
 
   // Fix 24: Try to fulfill pending async acquire requests

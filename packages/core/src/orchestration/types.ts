@@ -110,6 +110,8 @@ export interface PoolStats {
   readonly total: number;
   readonly created: number;
   readonly recycled: number;
+  /** OBS-010: Cumulative count of agent dispose errors silently dropped. */
+  readonly disposeErrors: number;
 }
 
 /** A handle to an agent acquired from the pool. */

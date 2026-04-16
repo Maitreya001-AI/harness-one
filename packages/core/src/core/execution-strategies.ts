@@ -1,4 +1,5 @@
 import type { ToolCallRequest, ExecutionStrategy, ToolExecutionResult } from './types.js';
+import { HarnessError, HarnessErrorCode } from './errors.js';
 
 /**
  * Sequential execution strategy (current default behavior).
@@ -34,7 +35,11 @@ export function createParallelStrategy(options?: {
 }): ExecutionStrategy {
   const maxConcurrency = options?.maxConcurrency ?? 5;
   if (!Number.isInteger(maxConcurrency) || maxConcurrency < 1) {
-    throw new Error('maxConcurrency must be a positive integer');
+    throw new HarnessError(
+      'maxConcurrency must be a positive integer',
+      HarnessErrorCode.CORE_INVALID_CONFIG,
+      'Provide a positive integer for maxConcurrency (e.g. 5)',
+    );
   }
 
   return {

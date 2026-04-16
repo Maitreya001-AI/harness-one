@@ -139,7 +139,7 @@ const injected = results.filter((r) => {
 ## 去重与容量管理
 
 - **去重**：`createRAGPipeline` 在内部维护已索引内容的哈希集合。同批次内和跨批次的重复 chunk 均会跳过，并触发 `onWarning({ type: 'duplicate' })`。
-- **容量上限**：`maxChunks` 限制流水线的总 chunk 数。达到上限后新 chunk 不被添加，触发 `onWarning({ type: 'capacity' })`。
+- **容量上限**：`maxChunks` 限制流水线的总 chunk 数。达到上限后新 chunk 不被添加，触发 `onWarning({ type: 'capacity' })`。未设置 `maxChunks` 时，默认上限为 100,000 chunks 以防止无限内存增长（Wave-7）。
 - **清空**：`pipeline.clear()` 清除所有已索引 chunk 和内容哈希，但不重置检索器的内部状态（需重新创建流水线以彻底重置）。
 
 ## 依赖关系

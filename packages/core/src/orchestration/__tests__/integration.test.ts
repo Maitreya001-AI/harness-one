@@ -464,10 +464,10 @@ describe('Multi-agent orchestration integration', () => {
       const data = orch.context.get('sharedData') as { status: string };
       expect(data.status).toBe('ready');
 
-      // Context entries are available to all
+      // Context entries are available to all (keys are NFKC+casefold normalized)
       const entries = orch.context.entries();
       expect(entries.size).toBe(1);
-      expect(entries.get('sharedData')).toEqual({ status: 'ready' });
+      expect(entries.get('shareddata')).toEqual({ status: 'ready' });
 
       orch.dispose();
     });
