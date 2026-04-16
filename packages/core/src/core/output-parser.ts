@@ -200,12 +200,21 @@ export async function parseWithRetry<T>(
     } catch (err) {
       if (attempt === max) throw err;
       const feedback = `Parse failed: ${err instanceof Error ? err.message : String(err)}. ${parser.getFormatInstructions()}`;
-      current = await Promise.race([
-        regenerate(feedback),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Regenerate timed out')), timeoutMs),
-        ),
-      ]);
+      // SEC-008: Capture the timeout handle so we always clear it, even when
+      // regenerate() resolves first. Without this, the timer leaks one handle
+      // per retry iteration, keeping the event loop alive.
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(
+            () => reject(new Error('Regenerate timed out')),
+            timeoutMs,
+          );
+        });
+        current = await Promise.race([regenerate(feedback), timeoutPromise]);
+      } finally {
+        if (timeoutId !== undefined) clearTimeout(timeoutId);
+      }
     }
   }
   /* istanbul ignore next -- unreachable after for-loop */

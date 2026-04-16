@@ -8,6 +8,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed — Wave-5G follow-up (post-audit hardening)
+
+- **Timer leak in `output-parser.ts` `parseWithRetry()`** — `Promise.race` timeout handle is now always cleared via `try/finally`, matching the pattern in `self-healing.ts`. Previously, each retry iteration leaked one timer.
+- **`tools/registry.ts` JSON.parse size guard** — `execute()` now rejects arguments exceeding 5 MiB (matching `AgentLoop.maxToolArgBytes` default) before parsing, preventing DoS via direct `registry.execute()` calls that bypass AgentLoop's streaming guard.
+- **Rate limiter eviction callback ordering** — internal LRU/bucket state is now cleaned up BEFORE the `onEviction` callback fires, so callbacks that query the limiter during eviction see consistent state.
+- **`clearTokenizerRegistry()` exported from `infra/token-estimator.ts`** — test suites can now call this in `afterEach` to restore isolation. The global registry previously persisted across tests with no reset mechanism.
+- **Agent pool idle jitter unified** — `Math.random()` in `agent-pool.ts:startIdleTimer()` replaced with `computeJitterMs()` from `infra/backoff.ts` for consistency and testability.
+- **Orchestrator metadata redaction** — `OrchestratorConfig.redactMetadata` option added; when set, `getAgent()`/`listAgents()` apply the redactor before returning metadata, preventing sensitive field leakage.
+- **`withAbortableTimeout()` utility** (`infra/abortable-timeout.ts`) — unified `Promise.race + AbortSignal + setTimeout` helper with guaranteed cleanup. New `CORE_TIMEOUT` error code added.
+- **`computeJitterMs()` helper** (`infra/backoff.ts`) — additive jitter for timers (idle timeouts, GC intervals) without exponential scaling.
+- **`createRandomStrategy()` JSDoc** — explicitly documents that `Math.random()` is non-cryptographic and intended only for load-balancing.
+
+### Changed — Wave-5G follow-up (documentation)
+
+- **Backoff `maxMs` behavior change documented** — Wave-5G's backoff unification implicitly capped `AdapterCaller` retry delay at 10s (default `maxMs`); previously delay grew unbounded with `baseRetryDelayMs * 2^attempt`. This is an improvement (prevents multi-minute backoffs at high retry counts) but was undocumented.
+
 ### Added — Wave-5D (first pass, observability + lifecycle)
 
 - **`MetricsPort` interface + `createNoopMetricsPort()`** on the `harness-one/observe` subpath. Vendor-neutral `counter` / `gauge` / `histogram` instruments alongside the existing `TraceExporter` / `InstrumentationPort` surface. The OTel bridge ships separately (will land in `@harness-one/opentelemetry`); the no-op port lets callers emit metrics unconditionally without null-checks when no backend is wired up. (ARCH-5)

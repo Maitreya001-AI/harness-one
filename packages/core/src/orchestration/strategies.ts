@@ -38,6 +38,13 @@ export function createRoundRobinStrategy(): DelegationStrategy {
 /**
  * Random delegation: picks a random available idle agent.
  *
+ * **Randomness**: Uses `Math.random()` (non-cryptographic) for load-balancing
+ * purposes. This is intentional — agent selection is not a security boundary,
+ * and the slight predictability has no security impact. Do NOT use this
+ * strategy for any form of token generation, session assignment, or other
+ * security-sensitive randomness. For those, use `crypto.randomBytes` via
+ * the helpers in `infra/ids.ts`.
+ *
  * **Thread safety** (Fix 33): This strategy is stateless and safe for
  * concurrent use. Each call independently selects a random idle agent.
  *

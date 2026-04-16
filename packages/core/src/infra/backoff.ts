@@ -42,3 +42,23 @@ export function computeBackoffMs(attempt: number, config?: BackoffConfig): numbe
   const jitter = exponential * (1 - jitterFraction + random() * jitterFraction);
   return Math.floor(jitter);
 }
+
+/**
+ * Compute a random additive jitter in `[0, baseMs * fraction)`.
+ *
+ * Useful for spreading timers (idle timeouts, GC intervals) to avoid
+ * thundering-herd effects without the exponential scaling of
+ * {@link computeBackoffMs}.
+ *
+ * @param baseMs - The base delay to jitter around.
+ * @param fraction - Maximum jitter as a fraction of `baseMs` (default: 0.1 → 10%).
+ * @param random - Optional random source for deterministic testing.
+ * @returns Jitter offset in milliseconds (always >= 0).
+ */
+export function computeJitterMs(
+  baseMs: number,
+  fraction = 0.1,
+  random: () => number = Math.random,
+): number {
+  return Math.floor(random() * fraction * baseMs);
+}

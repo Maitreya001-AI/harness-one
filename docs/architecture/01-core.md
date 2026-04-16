@@ -20,6 +20,7 @@ core 模块定义了 harness-one 的共享类型契约（Message、TokenUsage、
 | `src/core/guardrail-helpers.ts` | `findLatestUserMessage` + `pickBlockingGuardName` 纯函数 | ~52 |
 | `src/core/execution-strategies.ts` | 工具执行策略：顺序 + 并行（worker pool 并发控制） | ~100 |
 | `src/core/error-classifier.ts` | `categorizeAdapterError` — 错误到类别字符串的纯函数分类（AdapterCaller 与 StreamHandler 共用） | — |
+| `src/core/output-parser.ts` | JSON 输出解析器 + `parseWithRetry` 重试（定时器已修复 `try/finally` 清理） | ~218 |
 | `src/core/index.ts` | 公共导出桶文件 | ~38 |
 
 ### Wave-5B AgentLoop 模块分解（2026-04-15）

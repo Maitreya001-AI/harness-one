@@ -41,6 +41,16 @@ export function registerTokenizer(model: string, tokenizer: Tokenizer): boolean 
  * const tokens = estimateTokens('claude-3', 'Hello world');
  * ```
  */
+/**
+ * Clear all registered tokenizers. **Test-only** — call in `afterEach` or
+ * `afterAll` to restore isolation when tests register custom tokenizers.
+ *
+ * @internal Exposed for test suites; not part of the public API contract.
+ */
+export function clearTokenizerRegistry(): void {
+  registry.clear();
+}
+
 export function estimateTokens(model: string, text: string): number {
   const tokenizer = registry.get(model);
   if (tokenizer) {

@@ -8,6 +8,7 @@
 - ✅ **Wave-5E 完成**（信任边界类型化 E1-E8）。commit `fa2e0e8`。
 - ✅ **Wave-5D 首批完成**（MetricsPort + HarnessLifecycle + in-process AdmissionController）。commit `f5890fc`。**5D.1 延后**：CostTracker 合并、conversation reconciler、Redis-backed TokenBucket、Langfuse 降级为辅 TraceExporter——这四项需要 PRD + ADR 竞争。
 - ✅ **Wave-5G 完成**（架构加固 12 项修复）：Circuit Breaker / 统一退避 / 安全随机 ID 补全（TraceManager + AgentPool）/ console.warn → safeWarn / ESLint no-floating-promises / RAG 多租户隔离 / Lifecycle+Metrics 集成 Preset / 优雅关闭 handler / 配置统一校验 / 测试工具扩展 / cache-stability 稳定序列化。
+- ✅ **Wave-5G follow-up 完成**（审计后加固 11 项）：output-parser 定时器泄漏修复 / registry JSON.parse 大小限制 / rate-limiter 淘汰回调时序修正 / token-estimator clearRegistry / agent-pool jitter 统一 / orchestrator metadata redaction / abortable-timeout 统一工具 / circuit-breaker + backoff 单元测试 / strategies JSDoc 文档 / backoff maxMs 行为变更文档。
 
 ## 分支与 commits
 

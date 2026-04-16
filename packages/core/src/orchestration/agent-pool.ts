@@ -7,6 +7,7 @@
 import type { AgentLoop } from '../core/agent-loop.js';
 import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import { prefixedSecureId } from '../infra/ids.js';
+import { computeJitterMs } from '../infra/backoff.js';
 import type { AgentPool, PoolConfig, PooledAgent, PoolStats } from './types.js';
 
 interface PoolEntry {
@@ -157,8 +158,9 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
 
   function startIdleTimer(entry: PoolEntry): void {
     clearIdleTimer(entry);
-    // Fix 25: Add jitter (random 0-10% of timeout) to prevent thundering herd
-    const jitter = Math.random() * 0.1 * idleTimeout;
+    // Fix 25: Add jitter (0–10% of timeout) to prevent thundering herd.
+    // Delegates to the shared jitter utility for consistency and testability.
+    const jitter = computeJitterMs(idleTimeout, 0.1);
     const timer = setTimeout(() => {
       // Recycle: dispose idle agent if above min
       if (entry.state === 'idle') {

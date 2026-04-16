@@ -97,8 +97,14 @@ export function createRateLimiter(config: {
       const oldest = lru.keys().next().value;
       if (oldest !== undefined) {
         // SEC-013: signal eviction of an "active" key (recent activity within
-        // the current window).
+        // the current window). Clean up ALL internal state BEFORE invoking the
+        // user callback so the callback always sees consistent state if it
+        // queries the limiter (e.g. calls guard() for the evicted key).
         const evictedLastSeen = lastSeen.get(oldest);
+        lru.delete(oldest);
+        timestampBuckets.delete(oldest);
+        bucketedBuckets.delete(oldest);
+        lastSeen.delete(oldest);
         if (
           onEviction &&
           evictedLastSeen !== undefined &&
@@ -110,10 +116,6 @@ export function createRateLimiter(config: {
             // Never let user callback break the guard.
           }
         }
-        lru.delete(oldest);
-        timestampBuckets.delete(oldest);
-        bucketedBuckets.delete(oldest);
-        lastSeen.delete(oldest);
       }
     }
   }

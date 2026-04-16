@@ -215,8 +215,20 @@ export function createRegistry(config?: CreateRegistryConfig): ToolRegistry {
       );
     }
 
-    // Parse arguments
+    // Parse arguments — enforce a byte-length cap before parsing so a direct
+    // registry.execute() call (bypassing AgentLoop's maxToolArgBytes streaming
+    // guard) cannot DoS the event loop with oversized payloads.
+    const MAX_ARG_BYTES = 5 * 1024 * 1024; // 5 MiB, matching AgentLoop default
     let params: unknown;
+    if (Buffer.byteLength(call.arguments, 'utf8') > MAX_ARG_BYTES) {
+      turnCalls--;
+      sessionCalls--;
+      return toolError(
+        `Tool call arguments exceed maximum size (${MAX_ARG_BYTES} bytes)`,
+        'validation',
+        'Reduce the size of tool call arguments',
+      );
+    }
     try {
       params = JSON.parse(call.arguments);
     } catch {

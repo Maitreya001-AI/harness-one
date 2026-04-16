@@ -88,6 +88,14 @@ export interface OrchestratorConfig {
    * - Queue-overflow message drops always emit `logger.warn` (on top of `onWarning`).
    */
   readonly logger?: Logger;
+  /**
+   * Optional redaction function applied to agent metadata before it is
+   * returned by `getAgent()` / `listAgents()`. Prevents sensitive fields
+   * (API keys, tokens, internal state) from leaking to callers.
+   *
+   * When omitted, metadata is returned as-is (deep-cloned but not filtered).
+   */
+  readonly redactMetadata?: (metadata: Record<string, unknown>) => Record<string, unknown>;
 }
 
 /** OBS-009: Metrics snapshot for an orchestrator instance. */
@@ -125,6 +133,7 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
   const eventHandlers = new Set<(event: OrchestratorEvent) => void>();
   const contextStore = new Map<string, unknown>();
   const logger = config?.logger;
+  const redactMetadata = config?.redactMetadata;
 
   // OBS-009: Cumulative count of dropped messages (queue overflow).
   let droppedMessages = 0;
@@ -221,10 +230,14 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
       // Deep clone via structuredClone so callers can't mutate nested
       // fields and corrupt orchestrator state. A shallow `{ ...metadata }`
       // leaves nested objects (e.g., `metadata.user`) shared by reference.
+      // Optional redaction strips sensitive fields before returning.
       ...(agent.metadata !== undefined && {
-        metadata: typeof structuredClone === 'function'
-          ? structuredClone(agent.metadata)
-          : JSON.parse(JSON.stringify(agent.metadata)) as Record<string, unknown>,
+        metadata: (() => {
+          const cloned = typeof structuredClone === 'function'
+            ? structuredClone(agent.metadata)
+            : JSON.parse(JSON.stringify(agent.metadata)) as Record<string, unknown>;
+          return redactMetadata ? redactMetadata(cloned) : cloned;
+        })(),
       }),
     };
   }
