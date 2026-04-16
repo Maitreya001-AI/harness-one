@@ -24,7 +24,10 @@ export default tseslint.config(
         allowTypedFunctionExpressions: true,
         allowHigherOrderFunctions: true,
       }],
-      // Prevent accidental floating promises
+      // Prevent accidental floating promises — requires typed linting
+      // (parserOptions.project). Kept 'off' at the global level; enable in
+      // package-level configs that wire up project references. The rule is
+      // documented as a code-review standard even when not lint-enforced.
       '@typescript-eslint/no-floating-promises': 'off',
       // Allow unused vars prefixed with _
       '@typescript-eslint/no-unused-vars': ['error', {

@@ -1046,19 +1046,25 @@ describe('createCostTracker', () => {
       expect(modelOverflows.length).toBe(1); // throttled to once
     });
 
-    it('falls back to console.warn when onOverflow is not provided', () => {
-      const tracker = createCostTracker({
-        pricing: [{ model: 'base', inputPer1kTokens: 1.0, outputPer1kTokens: 0 }],
-        maxModels: 1,
-        warnUnpricedModels: false,
-      });
-      tracker.recordUsage({ traceId: 't', model: 'base', inputTokens: 1000, outputTokens: 0 });
-      tracker.recordUsage({ traceId: 't', model: 'second', inputTokens: 1000, outputTokens: 0 });
+    it('falls back to structured logger (via safeWarn) when onOverflow is not provided', () => {
+      // safeWarn routes through createDefaultLogger which outputs via console.log.
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      try {
+        const tracker = createCostTracker({
+          pricing: [{ model: 'base', inputPer1kTokens: 1.0, outputPer1kTokens: 0 }],
+          maxModels: 1,
+          warnUnpricedModels: false,
+        });
+        tracker.recordUsage({ traceId: 't', model: 'base', inputTokens: 1000, outputTokens: 0 });
+        tracker.recordUsage({ traceId: 't', model: 'second', inputTokens: 1000, outputTokens: 0 });
 
-      expect(warnSpy).toHaveBeenCalled();
-      expect(
-        warnSpy.mock.calls.some((c) => typeof c[0] === 'string' && c[0].includes('__overflow__')),
-      ).toBe(true);
+        expect(logSpy).toHaveBeenCalled();
+        expect(
+          logSpy.mock.calls.some((c) => typeof c[0] === 'string' && c[0].includes('__overflow__')),
+        ).toBe(true);
+      } finally {
+        logSpy.mockRestore();
+      }
     });
   });
 

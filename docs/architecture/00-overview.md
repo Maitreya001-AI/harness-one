@@ -123,7 +123,8 @@ import { createEvalRunner } from '@harness-one/devkit';      // 取代旧的 har
 | **工厂函数优先** | 12+ 个模块中绝大多数使用 `createXxx()` 工厂函数。AgentLoop 同时提供 `new AgentLoop()` 类形式与 `createAgentLoop()` 工厂别名（0.2.0 统一风格） |
 | **零运行时依赖** | JSON Schema 验证器、Token 估算器、LRU 缓存均为内部实现（`_internal/`） |
 | **不可变返回值** | 所有工厂返回的对象使用 `Object.freeze()` 或 `structuredClone` 冻结；metadata 从 0.2.0 起深拷贝防止外部嵌套修改 |
-| **Fail-Closed 安全默认** | 护栏出错时默认拦截请求，而非放行 |
+| **Fail-Closed 安全默认** | 护栏出错时默认拦截请求，而非放行；所有外部可达 ID 使用 `prefixedSecureId`（crypto-backed）；日志输出通过结构化 Logger 路由（保证 redaction） |
+| **Circuit Breaker** | AdapterCaller 可选 `circuitBreaker` 配置（`infra/circuit-breaker.ts`），在 LLM 持续失败时快速失败防止级联故障 |
 | **Errors as Data** | 工具失败返回 `ToolResult`，护栏拦截返回 `GuardrailVerdict`，只有编程错误抛出 `HarnessError` |
 | **契约即实现** | 0.2.0 对"声明但未调用"的钩子（TraceExporter.initialize/isHealthy/shouldExport）补齐实现；公开 `*Capabilities` 字段让后端显式声明所支持的契约级别 |
 | **边界必校验** | 任何跨磁盘/网络/用户输入边界的反序列化都走 schema 校验（`validateMemoryEntry` 等），不再出现 `JSON.parse(...) as T` 强转 |

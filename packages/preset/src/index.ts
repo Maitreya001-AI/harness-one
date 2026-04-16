@@ -323,7 +323,7 @@ export function createHarness(config: HarnessConfig): Harness {
       // surfaces instead of hiding behind "why isn't my tokenizer being
       // called?". Logger is resolved here because `logger` isn't yet
       // constructed at this point; fall back to `console.warn` until then.
-      (config.logger?.warn ?? console.warn)(
+      (config.logger ?? createLogger()).warn(
         'harness-one: custom tokenizer supplied but config.model is not set; ' +
         'tokenizer will not be auto-registered. Pass config.model or call ' +
         'registerTokenizer() manually.',
@@ -850,4 +850,17 @@ export { createConfigFromEnv } from './env.js';
 // ---------------------------------------------------------------------------
 
 export { createSecurePreset } from './secure.js';
-export type { SecurePresetGuardrailLevel, SecurePresetOptions } from './secure.js';
+export type { SecurePresetGuardrailLevel, SecurePresetOptions, SecureHarness } from './secure.js';
+
+// ---------------------------------------------------------------------------
+// Graceful shutdown handler
+// ---------------------------------------------------------------------------
+
+export { createShutdownHandler } from './shutdown.js';
+export type { ShutdownHandlerOptions } from './shutdown.js';
+
+// ---------------------------------------------------------------------------
+// Config validation
+// ---------------------------------------------------------------------------
+
+export { validateHarnessConfig } from './validate-config.js';

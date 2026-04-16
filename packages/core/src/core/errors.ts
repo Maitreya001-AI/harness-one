@@ -102,6 +102,8 @@ export enum HarnessErrorCode {
   ADAPTER_NETWORK = 'ADAPTER_NETWORK',
   ADAPTER_PARSE = 'ADAPTER_PARSE',
   ADAPTER_RATE_LIMIT = 'ADAPTER_RATE_LIMIT',
+  /** Circuit breaker is OPEN — fast-failing to prevent cascade failures. */
+  ADAPTER_CIRCUIT_OPEN = 'ADAPTER_CIRCUIT_OPEN',
   /**
    * Escape mechanism: third-party adapter subclasses (`@harness-one/openai`,
    * `@harness-one/anthropic`, etc.) throw with `code = ADAPTER_CUSTOM` and

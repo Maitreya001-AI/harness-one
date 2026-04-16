@@ -1,12 +1,13 @@
 # Wave-5 恢复入口
 
-**当前状态**（2026-04-15）:
+**当前状态**（2026-04-16）:
 - ✅ **Wave-5A 完成**，分支 `wave-5/production-grade` 已 push 到 origin
 - ✅ **Wave-5B 完成**（AgentLoop 3-module decomposition），commits `aa2ce18`（ADR）→ `c94a0e6`（review must-fix）
 - ✅ **Wave-5C 主路径完成**（PR-1/PR-2/PR-3 全部 land），commits `18aa594`（PR-1a）→ `f49ff28`（PR-3b）。**T-3.4 placeholder npm publishes 延后至 org-admin token 到位后补一个 PR-3c commit**（R-3.C）。
 - ✅ **Wave-5F 完成**（cleanup batch：adapter safeWarn 迁移 + 安全随机 ID + unref timers + preset pricing NaN）。commit `b0b8726`。
 - ✅ **Wave-5E 完成**（信任边界类型化 E1-E8）。commit `fa2e0e8`。
 - ✅ **Wave-5D 首批完成**（MetricsPort + HarnessLifecycle + in-process AdmissionController）。commit `f5890fc`。**5D.1 延后**：CostTracker 合并、conversation reconciler、Redis-backed TokenBucket、Langfuse 降级为辅 TraceExporter——这四项需要 PRD + ADR 竞争。
+- ✅ **Wave-5G 完成**（架构加固 12 项修复）：Circuit Breaker / 统一退避 / 安全随机 ID 补全（TraceManager + AgentPool）/ console.warn → safeWarn / ESLint no-floating-promises / RAG 多租户隔离 / Lifecycle+Metrics 集成 Preset / 优雅关闭 handler / 配置统一校验 / 测试工具扩展 / cache-stability 稳定序列化。
 
 ## 分支与 commits
 

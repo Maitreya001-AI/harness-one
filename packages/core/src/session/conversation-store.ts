@@ -5,6 +5,7 @@
  */
 
 import type { Message } from '../core/types.js';
+import { safeWarn } from '../infra/safe-log.js';
 
 /**
  * Interface for persisting conversation message histories.
@@ -106,7 +107,7 @@ export interface ConversationStoreConfig {
    * are `Infinity`. Default: 10_000 sessions.
    */
   readonly unboundedWarnThreshold?: number;
-  /** Custom warn sink. Default: `console.warn`. */
+  /** Custom warn sink. Default: structured logger via `safeWarn` (redaction-enabled). */
   readonly onWarning?: (message: string) => void;
 }
 
@@ -131,7 +132,7 @@ export function createInMemoryConversationStore(config?: ConversationStoreConfig
   const maxSessions = config?.maxSessions ?? Infinity;
   const maxMessagesPerSession = config?.maxMessagesPerSession ?? Infinity;
   const unboundedWarnThreshold = config?.unboundedWarnThreshold ?? 10_000;
-  const warn = config?.onWarning ?? ((m: string) => console.warn(m));
+  const warn = config?.onWarning ?? ((m: string) => safeWarn(undefined, m));
 
   let unboundedWarned = false;
 

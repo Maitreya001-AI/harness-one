@@ -6,6 +6,7 @@
 
 import type { AgentLoop } from '../core/agent-loop.js';
 import { HarnessError, HarnessErrorCode} from '../core/errors.js';
+import { prefixedSecureId } from '../infra/ids.js';
 import type { AgentPool, PoolConfig, PooledAgent, PoolStats } from './types.js';
 
 interface PoolEntry {
@@ -77,7 +78,6 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
   let warmedUp = false;
   let totalCreated = 0;
   let totalRecycled = 0;
-  let poolAgentCounter = 0;
 
   // Fix 24: Queue for pending async acquire requests
   const pendingQueue: PendingAcquire[] = [];
@@ -97,7 +97,9 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
 
   function createEntry(role?: string): PoolEntry {
     const loop: AgentLoop = factory(role);
-    const id = `pool-agent-${++poolAgentCounter}`;
+    // SEC-002: Use cryptographically secure IDs for pool agents to prevent
+    // enumeration in multi-tenant deployments.
+    const id = prefixedSecureId('pa');
     const agent: PooledAgent = Object.freeze({
       id,
       loop,

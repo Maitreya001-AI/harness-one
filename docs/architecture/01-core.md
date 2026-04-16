@@ -15,7 +15,7 @@ core 模块定义了 harness-one 的共享类型契约（Message、TokenUsage、
 | `src/core/events.ts` | AgentEvent 判别联合 + DoneReason | ~30 |
 | `src/core/agent-loop.ts` | AgentLoop 类——生命周期/状态/指标所有者；`run()` 现为 65 行协调骨架（见 Wave-5B 分解） | ~845 |
 | `src/core/iteration-runner.ts` | 单轮迭代编排：adapter 调用 → 工具分发 → 护栏钩子；`bailOut` 判别联合统一终止分支 | ~660 |
-| `src/core/adapter-caller.ts` | 唯一的重试 + 指数退避所有者；按 `streaming` 分支走 `adapter.stream()` 或 `adapter.chat()`；每次调用接受 `onRetry` 回调 | ~400 |
+| `src/core/adapter-caller.ts` | 唯一的重试 + 指数退避所有者（退避逻辑委托 `infra/backoff.ts`）；按 `streaming` 分支走 `adapter.stream()` 或 `adapter.chat()`；每次调用接受 `onRetry` 回调；可选 `circuitBreaker` 配置实现快速失败 | ~400 |
 | `src/core/stream-handler.ts` | 将 `adapter.stream()` 翻译为 `AgentEvent` 流；返回 `StreamResult` 判别联合（承载错误类别，消除原 `_lastStreamErrorCategory` 侧信道） | ~161 |
 | `src/core/guardrail-helpers.ts` | `findLatestUserMessage` + `pickBlockingGuardName` 纯函数 | ~52 |
 | `src/core/execution-strategies.ts` | 工具执行策略：顺序 + 并行（worker pool 并发控制） | ~100 |

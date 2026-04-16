@@ -6,7 +6,7 @@
 
 import { randomInt } from 'node:crypto';
 import { HarnessError, HarnessErrorCode} from '../core/errors.js';
-import { asSpanId, asTraceId } from '../infra/ids.js';
+import { asSpanId, asTraceId, prefixedSecureId } from '../infra/ids.js';
 import type { SpanId, TraceId } from '../core/types.js';
 import {
   createRedactor,
@@ -356,7 +356,6 @@ export function createTraceManager(config?: {
   let lruHead: MutableTrace | null = null;
   let lruTail: MutableTrace | null = null;
   let lruSize = 0;
-  let nextId = 1;
   let isEvicting = false; // Re-entrance guard for eviction (Fix 3)
   /**
    * LM-016: Dead trace IDs — returned by `startTrace()` when every configured
@@ -379,8 +378,14 @@ export function createTraceManager(config?: {
   // to count success/failure outcomes.
   const retryingSpanIds = new Set<string>();
 
-  function genId(): string {
-    return `id-${nextId++}-${Date.now().toString(36)}`;
+  // SEC-002: Use cryptographically secure IDs instead of predictable
+  // counter + timestamp. Prevents trace/span ID enumeration in multi-tenant
+  // deployments.
+  function genTraceId(): TraceId {
+    return asTraceId(prefixedSecureId('tr'));
+  }
+  function genSpanId(): SpanId {
+    return asSpanId(prefixedSecureId('sp'));
   }
 
   /**
@@ -542,12 +547,12 @@ export function createTraceManager(config?: {
           (e) => typeof e.isHealthy === 'function' && !e.isHealthy(),
         );
       if (allExportersUnhealthy) {
-        const deadId = `${DEAD_TRACE_PREFIX}${genId()}`;
+        const deadId = asTraceId(`${DEAD_TRACE_PREFIX}${genTraceId()}`);
         deadTraceIds.add(deadId);
-        return asTraceId(deadId);
+        return deadId;
       }
 
-      const id = genId();
+      const id = genTraceId();
       // SEC-007 + SEC-016: user metadata is scrubbed at ingestion so exporters
       // (console, OTel, Langfuse) never observe secrets.
       const userMeta = metadata
@@ -583,9 +588,9 @@ export function createTraceManager(config?: {
       // operation treats as a no-op. Mirrors startTrace's evict-at-birth
       // semantics so callers don't need special-casing.
       if (deadTraceIds.has(traceId)) {
-        const deadSpanId = `${DEAD_SPAN_PREFIX}${genId()}`;
+        const deadSpanId = asSpanId(`${DEAD_SPAN_PREFIX}${genSpanId()}`);
         deadSpanIds.add(deadSpanId);
-        return asSpanId(deadSpanId);
+        return deadSpanId;
       }
       const trace = traces.get(traceId);
       if (!trace) {
@@ -608,7 +613,7 @@ export function createTraceManager(config?: {
           );
         }
       }
-      const id = genId();
+      const id = genSpanId();
       spans.set(id, {
         id,
         traceId,

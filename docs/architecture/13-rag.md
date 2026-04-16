@@ -15,7 +15,7 @@ rag 模块提供将文档转化为可检索上下文的完整流水线：加载 
 | `src/rag/types.ts` | 核心类型：Document、DocumentChunk、EmbeddingModel、Retriever、RetrievalResult 等 | ~84 |
 | `src/rag/loaders.ts` | 内置加载器：createTextLoader、createDocumentArrayLoader | ~54 |
 | `src/rag/chunking.ts` | 内置分块策略：FixedSize、Paragraph、SlidingWindow | ~213 |
-| `src/rag/retriever.ts` | 内置检索器：createInMemoryRetriever（余弦相似度 + LRU 查询缓存） | ~122 |
+| `src/rag/retriever.ts` | 内置检索器：createInMemoryRetriever（余弦相似度 + LRU 查询缓存 + 多租户隔离 SEC-010） | ~270 |
 | `src/rag/pipeline.ts` | 流水线编排：createRAGPipeline | ~158 |
 | `src/rag/index.ts` | 公共导出桶文件 | ~36 |
 

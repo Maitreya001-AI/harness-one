@@ -108,7 +108,7 @@ function computeContentOverlapRatio(
   if (total === 0) return 1;
 
   function messageKey(m: Message): string {
-    const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+    const content = typeof m.content === 'string' ? m.content : stableStringify(m.content);
     return `${m.role}::${content}::${m.name ?? ''}`;
   }
 
@@ -131,6 +131,18 @@ function computeContentOverlapRatio(
   }
 
   return overlap / total;
+}
+
+/**
+ * Stable JSON serialization with sorted keys. Ensures identical logical
+ * content always produces the same string regardless of property insertion
+ * order (unlike native JSON.stringify).
+ */
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  const sorted = Object.keys(value as Record<string, unknown>).sort();
+  return `{${sorted.map((k) => `${JSON.stringify(k)}:${stableStringify((value as Record<string, unknown>)[k])}`).join(',')}}`;
 }
 
 function messagesEqual(a: Message, b: Message): boolean {

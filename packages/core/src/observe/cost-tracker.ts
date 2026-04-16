@@ -6,6 +6,8 @@
 
 import type { TokenUsageRecord, CostAlert } from './types.js';
 import { HarnessError, HarnessErrorCode} from '../core/errors.js';
+import { safeWarn } from '../infra/safe-log.js';
+import type { Logger } from './logger.js';
 import {
   type EvictionStrategy,
   type EvictionStrategyName,
@@ -209,9 +211,11 @@ export function createCostTracker(config?: {
    * SEC-009: Invoked at most once per minute (per tracker) when either
    * `modelTotals` or `traceTotals` is at capacity and a new key is being
    * folded into the `__overflow__` bucket. Use for operator alerting.
-   * If not provided, a `console.warn` is emitted at the same cadence.
+   * If not provided, a warning is emitted via the structured logger at the same cadence.
    */
   onOverflow?: (info: { kind: 'model' | 'trace'; capacity: number; rejectedKey: string }) => void;
+  /** Optional logger for structured warning output. Falls back to the redaction-enabled default logger. */
+  logger?: Logger;
 }): CostTracker {
   const pricing = new Map<string, ModelPricing>();
   const records: TokenUsageRecord[] = [];
@@ -225,6 +229,7 @@ export function createCostTracker(config?: {
   const strictMode = config?.strictMode ?? false;
   const warnUnpricedModels = config?.warnUnpricedModels ?? true;
   const onOverflow = config?.onOverflow;
+  const logger = config?.logger;
   // ARCH-008: pluggable eviction strategy. Accept a string or an object so
   // tests can inject custom strategies.
   const evictionStrategy: EvictionStrategy =
@@ -259,7 +264,8 @@ export function createCostTracker(config?: {
         // Swallow to avoid breaking the record path on a buggy callback.
       }
     } else {
-      console.warn(
+      safeWarn(
+        logger,
         `[harness-one/cost-tracker] ${kind} total map at capacity (${capacity}); aggregating new keys into "${OVERFLOW_BUCKET_KEY}". First rejected key: "${rejectedKey}".`,
       );
     }
@@ -402,7 +408,8 @@ export function createCostTracker(config?: {
       // One-time warning for unpriced models (so operators can update pricing).
       if (warnUnpricedModels && usage.model && !pricing.has(usage.model) && !warnedUnpriced.has(usage.model)) {
         warnedUnpriced.add(usage.model);
-        console.warn(
+        safeWarn(
+          logger,
           `[harness-one/cost-tracker] No pricing registered for model "${usage.model}". Cost will be reported as 0. Call setPricing() to fix.`,
         );
       }

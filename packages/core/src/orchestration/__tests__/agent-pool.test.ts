@@ -150,13 +150,15 @@ describe('AgentPool', () => {
     expect(pool.stats.total).toBe(0); // all disposed
   });
 
-  it('two independent pools have isolated ID counters', () => {
+  it('two independent pools produce unique cryptographic IDs', () => {
     const pool1 = makePool({ max: 5 });
     const pool2 = makePool({ max: 5 });
     const a1 = pool1.acquire();
     const a2 = pool2.acquire();
-    // Both should start from 1 (isolated counters)
-    expect(a1.id).toBe(a2.id);
+    // SEC-002: IDs are cryptographically random — never equal across pools.
+    expect(a1.id).not.toBe(a2.id);
+    expect(a1.id).toMatch(/^pa-/);
+    expect(a2.id).toMatch(/^pa-/);
     pool1.dispose();
     pool2.dispose();
     pool = makePool(); // keep afterEach happy

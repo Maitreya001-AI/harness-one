@@ -267,13 +267,14 @@ await admission.withPermit('tenant-123', () => harness.run(messages));
 - **prompt** · `harness-one/prompt` — PromptBuilder / Registry / SkillEngine / DisclosureManager
 - **tools** · `harness-one/tools` — defineTool / createRegistry / ToolMiddleware / toolSuccess/toolError
 - **guardrails** · `harness-one/guardrails` — createPipeline / injection/pii/contentFilter/rateLimiter/schemaValidator / withSelfHealing
-- **observe** · `harness-one/observe` — createTraceManager / createCostTracker / createLogger / FailureTaxonomy / CacheMonitor
+- **observe** · `harness-one/observe` — createTraceManager / createCostTracker / createLogger / FailureTaxonomy / CacheMonitor / HarnessLifecycle / MetricsPort
 - **session** · `harness-one/session` — createSessionManager / createInMemoryConversationStore / AuthContext
 - **memory** · `harness-one/memory` — createInMemoryStore / createFileSystemStore / createRelay / runMemoryStoreConformance / validate\* guards
 - **eval** · `harness-one/eval` — createEvalRunner / createRelevanceScorer / Generator-Evaluator
 - **evolve** · `harness-one/evolve` — createComponentRegistry / 漂移检测
 - **orchestration** · `harness-one/orchestration` — createOrchestrator / createAgentPool / createHandoff / createContextBoundary / MessageQueue
-- **rag** · `harness-one/rag` — createRAGPipeline（文档加载、分块、嵌入、检索、token 估算）
+- **rag** · `harness-one/rag` — createRAGPipeline（文档加载、分块、嵌入、检索、token 估算、多租户隔离）
+- **preset** · `@harness-one/preset` — createSecurePreset（含 lifecycle + metrics 自动装配）/ createShutdownHandler / validateHarnessConfig
 
 ## 文档
 

@@ -40,6 +40,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **`harness-one/infra` exports `unrefTimeout` / `unrefInterval`** — long-lived library timers must never hold the host event loop open. The per-call tool-timeout in `tools/registry.ts` switched to `unrefTimeout`. (m-2)
 - **`@harness-one/preset` pricing validation rejects `NaN` / `Infinity`** alongside negatives (input/output/cacheRead/cacheWrite rates). Previously NaN would silently produce NaN cost attributions downstream. (m-4)
 
+### Added — Wave-5G (architecture hardening)
+
+- **Circuit breaker** (`infra/circuit-breaker.ts`): `createCircuitBreaker()` with configurable `failureThreshold` (default 5) and `resetTimeoutMs` (default 30s). State machine: closed → open → half_open. Integrated into `AdapterCaller` via optional `circuitBreaker` config — when the circuit is OPEN, calls fast-fail with `ADAPTER_CIRCUIT_OPEN` without reaching the LLM provider. New `HarnessErrorCode.ADAPTER_CIRCUIT_OPEN` added.
+- **Unified backoff utility** (`infra/backoff.ts`): `computeBackoffMs(attempt, config?)` consolidates duplicated exponential backoff + jitter logic from `AdapterCaller`, `self-healing.ts`, and `agent-pool.ts`. Supports configurable `baseMs`, `maxMs`, `jitterFraction`, and injectable `random` source for deterministic testing.
+- **Graceful shutdown handler** (`@harness-one/preset/shutdown`): `createShutdownHandler(harness, options?)` registers SIGTERM/SIGINT handlers that drain the harness and dispose resources. Returns a cleanup function for test teardown. Double-signal forces exit.
+- **Config validation** (`@harness-one/preset/validate-config`): `validateHarnessConfig()` performs structural validation (provider enum, guardrail sensitivity enum, PII types, tokenizer shape, unknown keys) at construction time with actionable `CORE_INVALID_CONFIG` errors.
+- **`SecureHarness` type** — `createSecurePreset` now returns `SecureHarness` (extends `Harness`) with `lifecycle: HarnessLifecycle` and `metrics: MetricsPort` auto-wired. Lifecycle transitions to `ready` after construction; `shutdown()`/`drain()` coordinate with lifecycle state machine.
+- **RAG multi-tenant chunk isolation** (SEC-010): `createInMemoryRetriever` gains `indexScoped(chunks, tenantId)` method. When `tenantId` / `scope` is supplied to `retrieve()`, only chunks indexed under that tenant (or globally unscoped chunks) are considered, preventing cross-tenant data leakage.
+- **Expanded test utilities** (`core/test-utils.ts`): `createFailingAdapter`, `createStreamingMockAdapter`, `createErrorStreamingMockAdapter` — consolidate duplicated mock adapter patterns from 6+ test files.
+
+### Changed — Wave-5G (architecture hardening)
+
+- **`@typescript-eslint/no-floating-promises`** documented as a code-review standard. Requires typed linting (`parserOptions.project`) to enforce — package-level ESLint configs that wire up project references can enable it.
+- **TraceManager IDs use `prefixedSecureId`** instead of predictable `id-${counter}-${timestamp}`. Trace IDs prefixed `tr-`, span IDs prefixed `sp-`. Eliminates enumeration risk in multi-tenant deployments. (SEC-002)
+- **AgentPool IDs use `prefixedSecureId('pa')`** instead of `pool-agent-${counter}`. (SEC-002)
+- **`console.warn` replaced with structured `safeWarn`** in `cost-tracker.ts` (overflow + unpriced model warnings) and `conversation-store.ts` (unbounded growth warning). All warnings now flow through the redaction-enabled default logger. (SEC-001)
+- **`cache-stability.ts` uses stable JSON serialization** — `messageKey()` now uses `stableStringify()` (sorted object keys) instead of `JSON.stringify` to prevent hash collisions when property insertion order varies.
+- **`AdapterCaller` backoff delegates to `computeBackoffMs`** — removes duplicated Math.pow + Math.random logic.
+- **`self-healing.ts` backoff delegates to `computeBackoffMs`** — same deduplication.
+
 ### Changed (BREAKING — Wave-5C PR-3)
 
 - **F-1: Root `harness-one` barrel trimmed to 19 curated value symbols.**

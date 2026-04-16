@@ -26,8 +26,10 @@ observe 模块提供两个核心能力：TraceManager 管理分布式追踪（Tr
 | 文件 | 职责 | 约行数 |
 |------|------|--------|
 | `src/observe/types.ts` | 类型定义：Trace、Span、SpanEvent、TokenUsageRecord、CostAlert、TraceExporter | ~67 |
-| `src/observe/trace-manager.ts` | createTraceManager + createConsoleExporter + createNoOpExporter | ~273 |
-| `src/observe/cost-tracker.ts` | createCostTracker——成本追踪与预算告警 | ~177 |
+| `src/observe/trace-manager.ts` | createTraceManager + createConsoleExporter + createNoOpExporter；trace/span ID 使用 `prefixedSecureId` 生成（SEC-002） | ~273 |
+| `src/observe/cost-tracker.ts` | createCostTracker——成本追踪与预算告警；警告通过 `safeWarn` 结构化日志输出（不再直接 `console.warn`） | ~177 |
+| `src/observe/lifecycle.ts` | HarnessLifecycle 状态机：init → ready → draining → shutdown；聚合健康检查（Wave-5D ARCH-6） | ~119 |
+| `src/observe/metrics-port.ts` | MetricsPort 接口：vendor-neutral counter/gauge/histogram + createNoopMetricsPort（Wave-5D ARCH-5） | ~65 |
 | `src/observe/failure-taxonomy.ts` | createFailureTaxonomy——从 Trace 分类失败模式 | ~189 |
 | `src/observe/cache-monitor.ts` | createCacheMonitor——KV-cache 命中率监控 | ~133 |
 | `src/observe/index.ts` | 公共导出桶文件 | ~20 |

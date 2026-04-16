@@ -55,6 +55,26 @@ Under the hood:
   `createRegistry({ allowedCapabilities: [...] })` or `createPermissiveRegistry()`
 - AgentLoop guardrail pipeline is pre-wired (input + output + tool-output hooks)
 - OpenAI provider registry is sealed after construction
+- `HarnessLifecycle` state machine auto-created with health checks for core components
+- `MetricsPort` wired (no-op by default; swap in OTel adapter for real metrics)
+- Unified config validation catches typos and invalid values at construction time
+
+**Graceful shutdown** — wire SIGTERM/SIGINT handlers in one call:
+
+```ts
+import { createSecurePreset, createShutdownHandler } from '@harness-one/preset';
+
+const harness = createSecurePreset({ ... });
+createShutdownHandler(harness, { timeoutMs: 15_000 });
+// Now SIGTERM/SIGINT will drain in-flight work and exit cleanly.
+```
+
+**Lifecycle & health checks** — query harness readiness (useful for k8s probes):
+
+```ts
+const health = await harness.lifecycle.health();
+// { state: 'ready', ready: true, components: { traceManager: { status: 'up' }, ... } }
+```
 
 
 ### Using `harness-one` directly
@@ -687,6 +707,17 @@ for (const { chunk, score, tokens } of results) {
 
 `RetrievalResult.tokens` gives a token estimate so you can stay within your context budget when injecting retrieved chunks into a prompt.
 
+**Multi-tenant isolation** (SEC-010): use `indexScoped()` and `tenantId` / `scope` options to prevent cross-tenant data leakage:
+
+```typescript
+const retriever = createInMemoryRetriever({ embedding: myModel });
+await retriever.indexScoped(tenantAChunks, 'tenant-a');
+await retriever.indexScoped(tenantBChunks, 'tenant-b');
+
+// Tenant A only sees their own chunks:
+const results = await retriever.retrieve('query', { tenantId: 'tenant-a', limit: 5 });
+```
+
 ## Feature Maturity
 
 Not all features are at the same maturity level. This table clarifies what's production-ready vs. what requires additional work.
@@ -708,6 +739,8 @@ Not all features are at the same maturity level. This table clarifies what's pro
 | Context Engineering | Production | Budget, packing, compression, checkpoints |
 | Multi-Agent Orchestration | Production | Agent pool, handoff, context boundaries |
 | Fallback Adapter | Production | Circuit-breaker with mutual exclusion |
+| Circuit Breaker | Production | Prevents cascade failures when LLM provider is down |
+| Graceful Shutdown | Production | SIGTERM/SIGINT → drain → dispose handler |
 | Failure Taxonomy | Monitoring | Classifies failures; requires manual action |
 | Drift Detection | Advisory | Detects metric drift; no auto-remediation |
 | Component Registry | Tracking | Tracks retirement conditions; no CI enforcement |

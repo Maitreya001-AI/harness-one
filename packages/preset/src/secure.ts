@@ -14,8 +14,11 @@
 
 import { sealProviders } from '@harness-one/openai';
 import { createDefaultLogger } from 'harness-one/observe';
+import { createHarnessLifecycle, createNoopMetricsPort } from 'harness-one/observe';
+import type { HarnessLifecycle, MetricsPort } from 'harness-one/observe';
 
 import { createHarness, type Harness, type HarnessConfig } from './index.js';
+import { validateHarnessConfig } from './validate-config.js';
 
 /**
  * Preset levels for the default guardrail pipeline.
@@ -72,7 +75,19 @@ type HarnessGuardrails = NonNullable<HarnessConfig['guardrails']>;
  * });
  * ```
  */
-export function createSecurePreset(config: HarnessConfig & SecurePresetOptions): Harness {
+/** Extended Harness returned by `createSecurePreset` with lifecycle + metrics. */
+export interface SecureHarness extends Harness {
+  /** Lifecycle state machine for health checks and drain coordination. */
+  readonly lifecycle: HarnessLifecycle;
+  /** Vendor-neutral metrics port (no-op by default; wire an OTel adapter for real metrics). */
+  readonly metrics: MetricsPort;
+}
+
+export function createSecurePreset(config: HarnessConfig & SecurePresetOptions): SecureHarness {
+  // Unified structural validation — catches typos, invalid enum values,
+  // and unrecognized keys at construction time with actionable errors.
+  validateHarnessConfig(config as unknown as Record<string, unknown>);
+
   const level: SecurePresetGuardrailLevel = config.guardrailLevel ?? 'standard';
 
   const guardrails = mergeSecureGuardrails(level, config.guardrails);
@@ -98,7 +113,41 @@ export function createSecurePreset(config: HarnessConfig & SecurePresetOptions):
     sealProviders();
   }
 
-  return harness;
+  // Wire lifecycle state machine with core component health checks.
+  const lifecycle = createHarnessLifecycle();
+
+  lifecycle.registerHealthCheck('traceManager', () => {
+    // TraceManager is stateless beyond its export queue; if it exists, it's up.
+    return { status: 'up' };
+  });
+
+  lifecycle.registerHealthCheck('sessions', () => {
+    return { status: 'up' };
+  });
+
+  // Metrics port — no-op by default. Callers can replace this with an OTel
+  // adapter via `@harness-one/opentelemetry`.
+  const metrics = createNoopMetricsPort();
+
+  // Transition to ready after construction.
+  lifecycle.markReady();
+
+  return {
+    ...harness,
+    lifecycle,
+    metrics,
+    // Override shutdown to coordinate with lifecycle state machine.
+    async shutdown(): Promise<void> {
+      lifecycle.beginDrain();
+      await harness.shutdown();
+      lifecycle.completeShutdown();
+    },
+    async drain(timeoutMs?: number): Promise<void> {
+      lifecycle.beginDrain();
+      await harness.drain(timeoutMs);
+      lifecycle.completeShutdown();
+    },
+  };
 }
 
 /**

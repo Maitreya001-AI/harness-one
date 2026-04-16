@@ -96,7 +96,7 @@ export { createResilientLoop } from './resilience.js';
 
 // Test utilities
 export type { MockAdapterConfig } from './test-utils.js';
-export { createMockAdapter } from './test-utils.js';
+export { createMockAdapter, createFailingAdapter, createStreamingMockAdapter, createErrorStreamingMockAdapter } from './test-utils.js';
 
 // Wave-5E (SEC-A07) — trusted system-message factory.
 export {

@@ -25,6 +25,8 @@ import type { AgentAdapter, Message, TokenUsage, ToolSchema } from './types.js';
 import type { AgentEvent } from './events.js';
 import { AbortedError, HarnessError, HarnessErrorCode} from './errors.js';
 import { categorizeAdapterError } from './error-classifier.js';
+import { computeBackoffMs } from '../infra/backoff.js';
+import { type CircuitBreaker, CircuitOpenError } from '../infra/circuit-breaker.js';
 import type { StreamHandler } from './stream-handler.js';
 
 /** Successful single-attempt adapter call result (Step 1 shape; retained). */
@@ -106,6 +108,12 @@ export interface AdapterCallerConfig {
    * path explicit — the caller always has one on hand).
    */
   readonly streamHandler: StreamHandler;
+  /**
+   * Optional circuit breaker for the adapter. When the circuit is OPEN,
+   * calls fast-fail with `ADAPTER_CIRCUIT_OPEN` without reaching the LLM
+   * provider, preventing cascade failures during sustained outages.
+   */
+  readonly circuitBreaker?: CircuitBreaker;
 }
 
 /** Public surface of the adapter caller. */
@@ -155,10 +163,10 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
    * `AgentLoop.backoff` (L1216-L1253).
    */
   function backoff(attempt: number): Promise<void> {
-    const base = config.baseRetryDelayMs * Math.pow(2, attempt);
-    // Add random jitter: 0-25% of the base delay
-    const jitter = Math.floor(Math.random() * base * 0.25);
-    const delay = base + jitter;
+    const delay = computeBackoffMs(attempt, {
+      baseMs: config.baseRetryDelayMs,
+      jitterFraction: 0.25,
+    });
 
     return new Promise<void>((resolve, reject) => {
       if (config.signal.aborted) {
@@ -196,14 +204,28 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
   async function callOnce(
     conversation: readonly Message[],
   ): Promise<AdapterCallOnceResult> {
-    try {
+    const chatFn = async (): Promise<AdapterCallOnceResult> => {
       const response = await config.adapter.chat({
         messages: conversation as Message[],
         signal: config.signal,
         ...(config.tools !== undefined && { tools: config.tools as ToolSchema[] }),
       });
       return { ok: true, message: response.message, usage: response.usage };
+    };
+
+    try {
+      if (config.circuitBreaker) {
+        return await config.circuitBreaker.execute(chatFn);
+      }
+      return await chatFn();
     } catch (err) {
+      if (err instanceof CircuitOpenError) {
+        return {
+          ok: false,
+          error: err,
+          errorCategory: HarnessErrorCode.ADAPTER_CIRCUIT_OPEN,
+        };
+      }
       const error = err instanceof Error ? err : new Error(String(err));
       return {
         ok: false,

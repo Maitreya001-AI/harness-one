@@ -57,10 +57,20 @@ export function createInMemoryRetriever(config: {
    * prevent DoS / accidental embedding-cost blow-ups. Default: 16_384.
    */
   maxQueryLength?: number;
-}): Retriever & { retrieveExtended(query: string, options?: RetrieveOptions): Promise<ExtendedRetrievalResult> } {
+}): Retriever & {
+  retrieveExtended(query: string, options?: RetrieveOptions): Promise<ExtendedRetrievalResult>;
+  /** SEC-010: Index chunks scoped to a specific tenant. */
+  indexScoped(chunks: readonly DocumentChunk[], tenantId: string): Promise<void>;
+} {
   const chunks: DocumentChunk[] = [];
   /** Pre-computed normalized embeddings, parallel to chunks array. undefined for chunks without embeddings. */
   const normalizedEmbeddings: (readonly number[] | undefined)[] = [];
+  /**
+   * SEC-010: Per-chunk tenant tag, parallel to the chunks array. `undefined`
+   * means the chunk is globally visible (backwards-compatible with the
+   * unscoped `index()` method).
+   */
+  const chunkTenants: (string | undefined)[] = [];
 
   // LRU cache for query embeddings to avoid redundant API calls for repeated queries.
   const queryCacheMax = config.queryCacheSize ?? 64;
@@ -166,11 +176,22 @@ export function createInMemoryRetriever(config: {
     return embedding;
   }
 
-  function scoreChunks(normalizedQuery: readonly number[] | undefined, minScore: number): { scored: RetrievalResult[]; skippedChunks: number } {
+  /**
+   * SEC-010: Score chunks against the query, optionally filtering by tenant.
+   * When `tenant` is provided, only chunks indexed under that tenant (or
+   * globally unscoped chunks) are considered. This prevents cross-tenant
+   * data leakage in multi-tenant deployments.
+   */
+  function scoreChunks(normalizedQuery: readonly number[] | undefined, minScore: number, tenant?: string): { scored: RetrievalResult[]; skippedChunks: number } {
     let skippedChunks = 0;
     const scored: RetrievalResult[] = [];
 
     for (let i = 0; i < chunks.length; i++) {
+      // SEC-010: Skip chunks that belong to a different tenant.
+      const chunkTenant = chunkTenants[i];
+      if (tenant !== undefined && chunkTenant !== undefined && chunkTenant !== tenant) {
+        continue;
+      }
       const chunk = chunks[i];
       const normEmb = normalizedEmbeddings[i];
       if (!normEmb) {
@@ -208,6 +229,19 @@ export function createInMemoryRetriever(config: {
     async index(newChunks: readonly DocumentChunk[]): Promise<void> {
       for (const chunk of newChunks) {
         chunks.push(chunk);
+        chunkTenants.push(undefined); // globally visible
+        if (chunk.embedding && chunk.embedding.length > 0) {
+          normalizedEmbeddings.push(normalizeVector(chunk.embedding));
+        } else {
+          normalizedEmbeddings.push(undefined);
+        }
+      }
+    },
+
+    async indexScoped(newChunks: readonly DocumentChunk[], tenantId: string): Promise<void> {
+      for (const chunk of newChunks) {
+        chunks.push(chunk);
+        chunkTenants.push(tenantId);
         if (chunk.embedding && chunk.embedding.length > 0) {
           normalizedEmbeddings.push(normalizeVector(chunk.embedding));
         } else {
@@ -227,9 +261,10 @@ export function createInMemoryRetriever(config: {
       const limit = options?.limit ?? 5;
       const minScore = options?.minScore ?? 0;
 
+      const tenant = options?.tenantId ?? options?.scope;
       const queryEmbedding = await getQueryEmbedding(query, options?.tenantId, options?.scope);
       const normalizedQuery = normalizeVector(queryEmbedding);
-      const { scored } = scoreChunks(normalizedQuery, minScore);
+      const { scored } = scoreChunks(normalizedQuery, minScore, tenant);
 
       scored.sort((a, b) => b.score - a.score);
       return scored.slice(0, limit);
@@ -246,9 +281,10 @@ export function createInMemoryRetriever(config: {
       const limit = options?.limit ?? 5;
       const minScore = options?.minScore ?? 0;
 
+      const tenant = options?.tenantId ?? options?.scope;
       const queryEmbedding = await getQueryEmbedding(query, options?.tenantId, options?.scope);
       const normalizedQuery = normalizeVector(queryEmbedding);
-      const { scored, skippedChunks } = scoreChunks(normalizedQuery, minScore);
+      const { scored, skippedChunks } = scoreChunks(normalizedQuery, minScore, tenant);
 
       scored.sort((a, b) => b.score - a.score);
       return {

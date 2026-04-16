@@ -6,6 +6,7 @@
 
 import type { Guardrail, GuardrailContext } from './types.js';
 import { HarnessError, HarnessErrorCode} from '../core/errors.js';
+import { computeBackoffMs } from '../infra/backoff.js';
 
 /**
  * A1-19 (Wave 4b): AbortSignal-aware sleep.
@@ -118,9 +119,8 @@ export async function withSelfHealing(
       return { content, attempts: attempt, passed: false, ...(totalTokens !== undefined && { totalTokens }) };
     }
 
-    // Exponential backoff with jitter: base * (0.5 + random * 0.5)
-    const baseMs = Math.min(1000 * Math.pow(2, attempt - 1), 10_000);
-    const backoffMs = baseMs * (0.5 + Math.random() * 0.5);
+    // Exponential backoff with jitter via shared utility.
+    const backoffMs = computeBackoffMs(attempt - 1);
     // A1-19 (Wave 4b): honour external abort during backoff. Previously we
     // used a raw setTimeout so aborting during sleep kept the timer armed
     // until natural expiry (wasted handle + delayed shutdown). `sleepWithAbort`
