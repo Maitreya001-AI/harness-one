@@ -5,6 +5,7 @@
  */
 
 import type { Guardrail, GuardrailContext } from './types.js';
+import { HarnessError, HarnessErrorCode } from '../core/errors.js';
 
 /**
  * Create a rate limiter guardrail with sliding window and LRU key eviction.
@@ -60,15 +61,11 @@ export function createRateLimiter(config: {
   bucketMs?: number;
 }): { name: string; guard: Guardrail } {
   if (config.distributed) {
-    return {
-      name: 'rate_limiter',
-      guard() {
-        return {
-          action: 'allow' as const,
-          reason: 'Distributed rate limiting is not implemented in the built-in rate limiter. Use @harness-one/redis. Falling back to no-op.',
-        };
-      },
-    };
+    throw new HarnessError(
+      'Distributed rate limiting is not implemented in the built-in rate limiter. Use @harness-one/redis for distributed rate limiting.',
+      HarnessErrorCode.CORE_INVALID_CONFIG,
+      'Remove the distributed flag or use @harness-one/redis',
+    );
   }
   const maxKeys = config.maxKeys ?? 10_000;
   const onEviction = config.onEviction;

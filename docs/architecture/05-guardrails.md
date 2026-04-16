@@ -82,7 +82,7 @@ function withSelfHealing(config: {
   regenerateTimeoutMs?: number;
   estimateTokens?: (text: string) => number;
   maxTotalTokens?: number;
-}, initialContent: string): Promise<{ content: string; attempts: number; passed: boolean; totalTokens?: number }>
+}, initialContent: string): Promise<{ content: string; attempts: number; passed: boolean; failureReason?: string; totalTokens?: number }>
 ```
 
 **内置护栏工厂**
@@ -90,6 +90,9 @@ function withSelfHealing(config: {
 ```ts
 function createRateLimiter(config: {
   max: number; windowMs: number; keyFn?: (ctx) => string; maxKeys?: number;
+  distributed?: boolean;  // Wave-6: throws CORE_INVALID_CONFIG (use @harness-one/redis)
+  bucketMs?: number;      // PERF-012: time-bucketed counting for high-volume keys
+  onEviction?: (evicted: { key: string; lastSeen: number }) => void;  // SEC-013: LRU flood detection
 }): { name: string; guard: Guardrail }
 
 function createInjectionDetector(config?: {

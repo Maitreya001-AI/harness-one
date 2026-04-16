@@ -11,13 +11,17 @@ import { validateJsonSchema } from '../infra/json-schema.js';
 /** Default maximum byte length for JSON content (1 MiB). Protects against DoS via oversized payloads. */
 const DEFAULT_MAX_JSON_BYTES = 1_048_576;
 
+// Module-level TextEncoder: TextEncoder is stateless, so a single
+// instance can be reused across all calls. Previously a new instance
+// was allocated on every utf8ByteLength call, wasting memory.
+const textEncoder = new TextEncoder();
+
 /**
  * Measure the UTF-8 byte length of a string without allocating a Buffer
  * (runtime-agnostic: works in Node, Deno, browsers, and Workers).
  */
 function utf8ByteLength(s: string): number {
-  // TextEncoder is available in all supported JS runtimes.
-  return new TextEncoder().encode(s).length;
+  return textEncoder.encode(s).length;
 }
 
 /**

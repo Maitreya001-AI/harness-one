@@ -100,7 +100,11 @@ export function createSessionManager(config?: {
   // handler reference twice is deduplicated (store one).
   const eventHandlers = new Set<(event: SessionEvent) => void>();
 
-  // Emit reentry protection: queue events if already emitting
+  // Emit reentry protection: queue events if already emitting.
+  // Cap the pending queue to prevent unbounded growth if event handlers
+  // trigger cascading events (e.g., handler calls destroy() which emits
+  // more events). 1000 is generous enough for legitimate reentry depth.
+  const MAX_PENDING_EVENTS = 1000;
   let emitting = false;
   const pendingEvents: SessionEvent[] = [];
 
@@ -114,6 +118,7 @@ export function createSessionManager(config?: {
   function emit(type: SessionEvent['type'], sessionId: SessionId, reason?: string): void {
     const event: SessionEvent = { type, sessionId, timestamp: Date.now(), ...(reason !== undefined && { reason }) };
     if (emitting) {
+      if (pendingEvents.length >= MAX_PENDING_EVENTS) return; // prevent unbounded growth
       pendingEvents.push(event);
       return;
     }

@@ -259,11 +259,9 @@ describe('createRateLimiter', () => {
   // ---- Distributed flag (Fix 8) ----
 
   describe('distributed flag', () => {
-    it('returns a no-op guardrail when distributed: true (not yet implemented)', async () => {
-      const { guard } = createRateLimiter({ max: 10, windowMs: 60_000, distributed: true });
-      const result = await guard({ content: 'test' });
-      expect(result.action).toBe('allow');
-      expect(result.reason).toContain('not implemented');
+    it('throws when distributed: true (not implemented)', () => {
+      expect(() => createRateLimiter({ max: 10, windowMs: 60_000, distributed: true }))
+        .toThrow(/not implemented/i);
     });
 
     it('works normally when distributed is undefined (backward compatible)', () => {

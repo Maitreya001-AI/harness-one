@@ -659,6 +659,13 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): La
     },
 
     setBudget(newBudget: number): void {
+      if (!Number.isFinite(newBudget) || newBudget < 0) {
+        throw new HarnessError(
+          `Budget must be a non-negative finite number, got ${newBudget}`,
+          HarnessErrorCode.CORE_INVALID_CONFIG,
+          'Provide a non-negative number for the budget',
+        );
+      }
       budget = newBudget;
       // OBS-003: New budget => new dedupe window.
       emittedBudgetExceeded.clear();

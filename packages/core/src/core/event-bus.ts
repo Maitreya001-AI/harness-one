@@ -68,7 +68,15 @@ export function createEventBus(options?: EventBusOptions): EventBus {
       const h = handler as EventHandler;
       set.add(h);
       return () => {
-        handlers.get(event)?.delete(h);
+        const s = handlers.get(event);
+        if (s) {
+          s.delete(h);
+          // Prevent memory leak: remove the empty Set from the Map so it
+          // can be garbage-collected. Long-running apps with many
+          // subscribe/unsubscribe cycles would otherwise accumulate empty
+          // Sets for every event name ever used.
+          if (s.size === 0) handlers.delete(event);
+        }
       };
     },
     emit<T>(event: string, data: T): void {
@@ -79,14 +87,26 @@ export function createEventBus(options?: EventBusOptions): EventBus {
             h(data);
           } catch (err) {
             if (onHandlerError) {
-              onHandlerError(event, err instanceof Error ? err : new Error(String(err)));
+              // Wrap in try/catch so a throwing onHandlerError doesn't break
+              // delivery of remaining handlers. Without this, the first
+              // handler error + a buggy error-handler stops all subsequent
+              // handlers from firing.
+              try {
+                onHandlerError(event, err instanceof Error ? err : new Error(String(err)));
+              } catch {
+                // onHandlerError itself threw — swallow to preserve delivery.
+              }
             }
           }
         }
       }
     },
     off(event: string, handler: EventHandler): void {
-      handlers.get(event)?.delete(handler);
+      const s = handlers.get(event);
+      if (s) {
+        s.delete(handler);
+        if (s.size === 0) handlers.delete(event);
+      }
     },
     removeAll(event?: string): void {
       if (event) {

@@ -5,6 +5,8 @@
  */
 
 import type { Guardrail, GuardrailContext } from './types.js';
+import { HarnessError, HarnessErrorCode } from '../core/errors.js';
+import { isReDoSCandidate } from './content-filter.js';
 
 /** Configuration for which PII types to detect. */
 interface PIIDetectConfig {
@@ -116,6 +118,15 @@ export function createPIIDetector(config?: {
   }
 
   for (const custom of customPatterns) {
+    // Validate custom patterns against ReDoS to prevent user-supplied
+    // regexes from causing catastrophic backtracking.
+    if (isReDoSCandidate(custom.pattern.source)) {
+      throw new HarnessError(
+        `Custom PII pattern "${custom.name}" is potentially vulnerable to ReDoS`,
+        HarnessErrorCode.CORE_REDOS_PATTERN,
+        'Simplify the regex to avoid nested quantifiers or overlapping alternations',
+      );
+    }
     detectors.push({ name: custom.name, pattern: custom.pattern });
   }
 

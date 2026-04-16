@@ -595,14 +595,16 @@ describe('validateJsonSchema', () => {
       expect(result.valid).toBe(true);
     });
 
-    it('skips __proto__ as a required property name (dangerous)', () => {
+    it('rejects __proto__ as a required property name (dangerous)', () => {
       const schema = {
         type: 'object',
         required: ['__proto__'],
       };
-      // __proto__ should be silently skipped — no error, but a warning is emitted.
+      // Dangerous property names should produce an explicit validation error
+      // rather than being silently skipped, so schema authors are alerted.
       const result = validateJsonSchema(schema, {});
-      expect(result.valid).toBe(true);
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].message).toContain('dangerous property');
     });
 
     it('skips constructor/prototype as property schema keys', () => {

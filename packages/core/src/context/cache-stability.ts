@@ -137,12 +137,18 @@ function computeContentOverlapRatio(
  * Stable JSON serialization with sorted keys. Ensures identical logical
  * content always produces the same string regardless of property insertion
  * order (unlike native JSON.stringify).
+ *
+ * Handles circular references by emitting `"[Circular]"` instead of
+ * recursing infinitely, preventing stack overflow on cyclic message content.
  */
-function stableStringify(value: unknown): string {
+function stableStringify(value: unknown, seen?: WeakSet<object>): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  const tracker = seen ?? new WeakSet<object>();
+  if (tracker.has(value as object)) return '"[Circular]"';
+  tracker.add(value as object);
+  if (Array.isArray(value)) return `[${value.map((v) => stableStringify(v, tracker)).join(',')}]`;
   const sorted = Object.keys(value as Record<string, unknown>).sort();
-  return `{${sorted.map((k) => `${JSON.stringify(k)}:${stableStringify((value as Record<string, unknown>)[k])}`).join(',')}}`;
+  return `{${sorted.map((k) => `${JSON.stringify(k)}:${stableStringify((value as Record<string, unknown>)[k], tracker)}`).join(',')}}`;
 }
 
 function messagesEqual(a: Message, b: Message): boolean {

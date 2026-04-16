@@ -59,7 +59,11 @@ export function createRedactor(config?: RedactConfig): Redactor {
       if (useDefault && DEFAULT_SECRET_PATTERN.test(key)) return true;
       for (const p of extraPatterns) {
         p.lastIndex = 0;
-        if (p.test(key)) return true;
+        const matched = p.test(key);
+        // Reset lastIndex after test() to prevent stateful global-flag
+        // regexes from returning incorrect results on subsequent calls.
+        p.lastIndex = 0;
+        if (matched) return true;
       }
       return false;
     },

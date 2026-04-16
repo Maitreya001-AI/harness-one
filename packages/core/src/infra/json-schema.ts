@@ -255,7 +255,9 @@ function validate(
     if (schema.required) {
       for (const key of schema.required) {
         if (DANGEROUS_PROP_NAMES.has(key)) {
-          // Dangerous key names are never enforced; silently skip
+          // Dangerous key names (e.g. __proto__) are rejected explicitly
+          // rather than silently skipped, so schema authors are alerted.
+          errors.push({ path: `${path}.${key}`, message: `Cannot require dangerous property "${key}"` });
           continue;
         }
         if (!hasOwn(obj, key) || obj[key] === undefined) {

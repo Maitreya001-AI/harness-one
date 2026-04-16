@@ -225,7 +225,9 @@ export class MessageQueue {
   dequeue(agentId: string, limit?: number): AgentMessage[] {
     const queue = this.queues.get(agentId);
     if (!queue || queue.length === 0) return [];
-    const count = limit !== undefined ? Math.min(limit, queue.length) : queue.length;
+    // Clamp negative limits to 0 to prevent undefined splice behavior.
+    const count = limit !== undefined ? Math.min(Math.max(0, limit), queue.length) : queue.length;
+    if (count === 0) return [];
     return queue.splice(0, count);
   }
 

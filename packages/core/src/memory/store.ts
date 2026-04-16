@@ -244,11 +244,10 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
         }
         if (victimId !== undefined) {
           const victimEntry = entries.get(victimId);
+          // removeFromIndexes already handles grade + tag index cleanup,
+          // so no need for a separate gradeIndex deletion afterwards.
           if (victimEntry) removeFromIndexes(victimEntry);
           entries.delete(victimId);
-          // Remove from grade index
-          const bucket = gradeIndex.get(victimEntry?.grade ?? 'useful');
-          if (bucket) bucket.delete(victimId);
         }
       }
       return entry;

@@ -79,7 +79,7 @@ export async function withSelfHealing(
     signal?: AbortSignal;
   },
   initialContent: string,
-): Promise<{ content: string; attempts: number; passed: boolean; totalTokens?: number }> {
+): Promise<{ content: string; attempts: number; passed: boolean; failureReason?: string; totalTokens?: number }> {
   const maxRetries = config.maxRetries ?? 3;
   if (maxRetries < 1) {
     throw new HarnessError('maxRetries must be >= 1', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide a maxRetries value of 1 or higher');
@@ -168,9 +168,8 @@ export async function withSelfHealing(
         if (timeoutId !== undefined) clearTimeout(timeoutId);
       }
     } catch (err) {
-      // Don't swallow regenerate() errors — include them in failure context
-      const _errorMessage = err instanceof Error ? err.message : String(err);
-      void _errorMessage; // preserved for debugging/logging
+      // Preserve regenerate() error info so callers can debug failures.
+      const errorMessage = err instanceof Error ? err.message : String(err);
       // Count the retry prompt tokens even on failure so the budget is accurate
       if (estimateTokens && totalTokens !== undefined) {
         totalTokens += retryPromptTokens;
@@ -179,6 +178,7 @@ export async function withSelfHealing(
         content,
         attempts: attempt,
         passed: false,
+        failureReason: errorMessage,
         ...(totalTokens !== undefined && { totalTokens }),
       };
     }

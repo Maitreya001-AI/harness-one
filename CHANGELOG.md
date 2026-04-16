@@ -8,6 +8,36 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed — Wave-6A (production architecture audit — 14 fixes)
+
+**Memory leak prevention:**
+- `EventBus.on()` unsubscribe now removes empty handler Sets from the Map — prevents long-running apps from accumulating empty Sets for every event name.
+- `EventBus.off()` applies the same cleanup.
+- `SessionManager` pending events queue capped at 1000 entries — prevents unbounded growth from cascading event handlers.
+
+**Error handling robustness:**
+- `EventBus.emit()` wraps `onHandlerError` in try/catch — a throwing error-handler no longer breaks delivery of remaining handlers.
+- `withSelfHealing` now surfaces `failureReason` on regenerate() failures instead of discarding the error message.
+- JSON Schema validator rejects dangerous property names (`__proto__`, `constructor`, `prototype`) in `required` with an explicit error instead of silently skipping.
+
+**Concurrency safety:**
+- `MiddlewareChain.execute()` snapshots middlewares via `Array.from()` instead of `Set.values()` — prevents iterator invalidation if the Set is mutated during async execution.
+
+**Security hardening:**
+- `createRateLimiter` now throws `CORE_INVALID_CONFIG` when `distributed: true` — previously silently fell back to a no-op, allowing unlimited requests.
+- `createPIIDetector` validates custom patterns against ReDoS before accepting them.
+- `redact.ts` resets `lastIndex` after `test()` on global-flag regex patterns.
+- `stableStringify` in cache-stability handles circular references via WeakSet — prevents stack overflow on cyclic message content.
+
+**Performance:**
+- `schema-validator.ts` reuses a module-level TextEncoder instance instead of allocating one per call.
+- `MessageQueue.dequeue()` clamps negative limit to 0 — prevents undefined splice behavior.
+
+**Data consistency:**
+- `InMemoryStore` eviction removed redundant grade-index deletion that could corrupt the index when `victimEntry` was falsy.
+- `createLangfuseCostTracker.setBudget()` validates input is a non-negative finite number.
+- `@harness-one/ajv` uses WeakMap-based identity caching for circular schemas — prevents LRU cache thrashing.
+
 ### Fixed — Wave-5H (deep architecture review — 23 fixes)
 
 **Input validation hardening:**

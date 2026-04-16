@@ -94,13 +94,16 @@ export function createMiddlewareChain<TExtra extends Record<string, unknown> = R
     },
 
     async execute(ctx: MiddlewareContext<TExtra>, handler: () => Promise<unknown>): Promise<unknown> {
-      // Snapshot the iteration order at execute() start so mid-flight use()/
+      // Snapshot to an array at execute() start so mid-flight use()/
       // unsubscribe() calls behave the same way as the historical array
       // version (new middlewares only participate in subsequent executions).
-      const iter = middlewares.values();
+      // Using Array.from instead of Set.values() prevents iterator
+      // invalidation if the Set is mutated during async execution.
+      const snapshot = Array.from(middlewares);
+      let idx = 0;
       const next = async (): Promise<unknown> => {
-        const { value: mw, done } = iter.next();
-        if (!done) {
+        if (idx < snapshot.length) {
+          const mw = snapshot[idx++];
           try {
             return await mw(ctx, next);
           } catch (err) {

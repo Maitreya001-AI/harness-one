@@ -105,15 +105,29 @@ export type AjvSchemaValidator = Omit<SchemaValidator, 'validate'> & {
  * same validator, which is the desired reuse behaviour. We include a length
  * suffix to further reduce accidental collisions between short inputs.
  */
+// Cache identity-based keys for circular/unserialisable schemas so the
+// same schema object always maps to the same validator (cache reuse).
+const circularSchemaKeys = new WeakMap<object, string>();
+let circularKeyCounter = 0;
+
 function stableSchemaKey(schema: JsonSchema): string {
   let str: string;
   try {
     str = JSON.stringify(schema);
   } catch {
     // Circular or otherwise unserialisable schemas — fall back to
-    // reference identity via a per-call unique key so we don't crash,
-    // at the cost of no cache reuse for that call.
-    return `__unserializable_${Math.random().toString(36).slice(2)}_${Date.now()}`;
+    // reference identity. Use a WeakMap so the same schema object
+    // always gets the same key (preserving LRU cache reuse), while
+    // different schema objects get different keys.
+    if (typeof schema === 'object' && schema !== null) {
+      let cached = circularSchemaKeys.get(schema as object);
+      if (!cached) {
+        cached = `__circular_${circularKeyCounter++}`;
+        circularSchemaKeys.set(schema as object, cached);
+      }
+      return cached;
+    }
+    return `__unserializable_${circularKeyCounter++}`;
   }
   let hash = 5381;
   for (let i = 0; i < str.length; i++) {
