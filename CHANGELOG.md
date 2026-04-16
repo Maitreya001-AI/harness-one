@@ -8,6 +8,38 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added — Wave-5D (first pass, observability + lifecycle)
+
+- **`MetricsPort` interface + `createNoopMetricsPort()`** on the `harness-one/observe` subpath. Vendor-neutral `counter` / `gauge` / `histogram` instruments alongside the existing `TraceExporter` / `InstrumentationPort` surface. The OTel bridge ships separately (will land in `@harness-one/opentelemetry`); the no-op port lets callers emit metrics unconditionally without null-checks when no backend is wired up. (ARCH-5)
+- **`HarnessLifecycle` state machine + `health()`** on `harness-one/observe`. States `init → ready → draining → shutdown` with one-way transitions enforced at runtime (`CORE_INVALID_STATE` on misuse) and a `forceShutdown()` escape hatch for crash paths. `registerHealthCheck(name, check)` + `health()` aggregate component probes; thrown probes surface as `{ status: 'down', detail }` rather than poisoning the aggregate. Hosts now have one place to ask "is the harness accepting new work?". (ARCH-6)
+- **`createAdmissionController` (in-process per-tenant token bucket)** on `harness-one/infra`. Configurable `maxInflight` (default 128) + `defaultTimeoutMs` (default 5000). `acquire(tenantId, { signal, timeoutMs })` is fail-closed on timeout (throws `POOL_TIMEOUT`) and abort-aware. `withPermit(tenantId, fn)` releases the permit in a `finally` regardless of fn outcome. Cross-process Redis-backed coordination is deferred to **5D.1**. (ARCH-8)
+
+> **Deferred to Wave-5D.1** (require PRD + ADR competition before implementation):
+> 1. Consolidating `CostTracker` into a single source of truth (currently Wave-5A core + Wave-4 langfuse adapter both maintain accounts).
+> 2. Conversation-store reconciler that crash-recovers `session` ↔ `memory` ↔ `conversation` divergence after partial writes.
+> 3. Promoting `AdmissionController` to a Redis-backed cross-process token bucket with optional in-process fallback.
+> 4. Demoting `@harness-one/langfuse` from a peer trace pipeline to a secondary `TraceExporter` so OTel becomes the canonical observability stack.
+
+### Changed (BREAKING — Wave-5E, trust-boundary typing)
+
+- **`SystemMessage._trust` brand + `createTrustedSystemMessage()`** (`harness-one/core`). Restored messages claiming `role: 'system'` without the brand are downgraded to `user` by `sanitizeRestoredMessage()`; an attacker who can write to the session store can no longer elevate a user turn into a system prompt. The brand is a process-local `Symbol` and so is not JSON-serialisable — persisted system messages must be re-minted by host code after restore. (SEC-A07)
+- **`RedisStoreConfig.tenantId` (multi-tenant key isolation)** in `@harness-one/redis`. Default `'default'` with a one-shot warn so single-tenant deployments stay explicit. Keys flip from `prefix:id` to `prefix:{tenantId}:id`; index key follows. Colon in `tenantId` rejected at construction. **Migration**: multi-tenant deployments must wire `tenantId` per request scope; existing data must be migrated by re-keying or by writing through both prefixes during a rollover window. (SEC-A08)
+- **Memory entry size + reserved-key enforcement.** `assertMemoryEntrySize()` enforces `DEFAULT_MAX_CONTENT_BYTES = 1 MiB` and `DEFAULT_MAX_METADATA_BYTES = 16 KiB`; `RESERVED_METADATA_KEYS = ['_version', '_trust']` (harness-internal markers — `tenantId` / `sessionId` stay userland filter dimensions). `createInMemoryStore.write()` calls the assertion. (SEC-A08)
+- **`createContextBoundary` rejects non-segment prefixes.** Policy prefixes (`allowRead`/`denyRead`/`allowWrite`/`denyWrite`) MUST end with `.` or `/` or construction throws `CORE_INVALID_CONFIG`. Closes the substring leak where `'admin'` would also match `'administrator'`. (SEC-A09)
+- **`HandoffManager.createSendHandle(from)` (sealed sender handle).** Closure-captured `from` identity; the handle exposes `.from` read-only and `send(to, payload)` always uses the bound value. The 3-arg `send(from, to, payload)` form is retained for single-agent callers and tests, but multi-agent deployments should issue handles instead. (SEC-A10)
+- **`HandoffConfig.maxPayloadBytes` (default 64 KiB) + `maxPayloadDepth` (default 16).** Depth check runs **before** `JSON.stringify`, so circular references throw `ORCH_HANDOFF_SERIALIZATION_ERROR` instead of a bare `SyntaxError`. (SEC-A11)
+- **`additionalProperties: false` is now enforced** by the core `infra/json-schema.ts` validator. Previously declared-but-ignored; tool schemas declaring it now reject unknown keys at validation time. (SEC-A05)
+- **`runRagContext(pipeline, chunks, meta)`** added to `harness-one/guardrails`. Scans each retrieved chunk through the input pipeline; the first non-`allow` verdict short-circuits and poisons the whole retrieval set. Consumers MUST call this before concatenating chunks into the prompt context — an injection in a RAG document otherwise bypasses input guardrails entirely. (SEC-A16)
+
+### Changed — Wave-5F (cleanup batch)
+
+- **Adapter default loggers route through core's `createDefaultLogger()`** in `@harness-one/anthropic`, `@harness-one/openai`, `@harness-one/ajv`, `@harness-one/redis`. Hand-rolled `console.warn`/`console.error` fallback shims removed; the core singleton redacts secrets and emits structured JSON lines. (T12 / T13)
+- **`@harness-one/langfuse` inline `console.warn` migrated to `safeWarn`** so prompt-fetch failures and missing-pricing warnings surface through the redacted default logger. (T13)
+- **`packages/core/src/context/checkpoint.ts` IDs use `prefixedSecureId('cp')`** (crypto.randomBytes) instead of `Math.random().toString(36)`; checkpoint handles cannot be guessed from observed timestamps. (SEC-A14)
+- **`packages/core/src/observe/trace-manager.ts` sampling uses `crypto.randomInt`** instead of `Math.random()`. Sampling decisions are no longer predictable from observed trace output. (SEC-A15)
+- **`harness-one/infra` exports `unrefTimeout` / `unrefInterval`** — long-lived library timers must never hold the host event loop open. The per-call tool-timeout in `tools/registry.ts` switched to `unrefTimeout`. (m-2)
+- **`@harness-one/preset` pricing validation rejects `NaN` / `Infinity`** alongside negatives (input/output/cacheRead/cacheWrite rates). Previously NaN would silently produce NaN cost attributions downstream. (m-4)
+
 ### Changed (BREAKING — Wave-5C PR-3)
 
 - **F-1: Root `harness-one` barrel trimmed to 19 curated value symbols.**

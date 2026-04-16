@@ -61,6 +61,7 @@ export type {
   Role,
   Message,
   SystemMessage,
+  TrustedSystemBrand,
   UserMessage,
   AssistantMessage,
   ToolMessage,

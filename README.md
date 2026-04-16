@@ -850,6 +850,40 @@ const loop = new AgentLoop({
 
 **harness-one/essentials removed** (Wave-5C): the curated `harness-one/essentials` subpath has been removed as redundant with the trimmed root barrel. Import the symbols you need directly from `harness-one` or the relevant submodule (`harness-one/core`, `harness-one/observe`, …).
 
+**Root barrel trimmed to 19 symbols** (Wave-5C): the unscoped `harness-one` root now re-exports only the 19 curated user-journey value symbols. Other factories (`createEventBus`, `toSSEStream`, `categorizeAdapterError`, …) live on subpaths only. **`createSecurePreset` is no longer re-exported from the root** — import it directly from `@harness-one/preset`. See [`CHANGELOG.md`](./CHANGELOG.md) for the full inventory.
+
+**`HarnessErrorCode` is closed and module-prefixed** (Wave-5C): `HarnessError.code` is no longer widened with `(string & {})` and members renamed (`UNKNOWN` → `CORE_UNKNOWN`, `MAX_ITERATIONS` → `CORE_MAX_ITERATIONS`, `GUARDRAIL_VIOLATION` → `GUARD_VIOLATION`, etc.). Adapter-specific codes use `HarnessErrorCode.ADAPTER_CUSTOM` + `details.adapterCode`. Always **value-import** (`import { HarnessErrorCode }`) — `import type` silently breaks `Object.values()`; the lint rule `harness-one/no-type-only-harness-error-code` catches this. Full rename mapping in [`CHANGELOG.md`](./CHANGELOG.md).
+
+**`@harness-one/cli` and `@harness-one/devkit` extracted** (Wave-5C): the `harness-one/cli` subpath moved to [`@harness-one/cli`](./packages/cli) (use `pnpm dlx @harness-one/cli init` or install locally). `harness-one/eval` and `harness-one/evolve` moved to [`@harness-one/devkit`](./packages/devkit); the runtime architecture-rule engine remains in core under `harness-one/evolve-check`.
+
+**Trust-boundary typing + multi-tenant Redis** (Wave-5E): `SystemMessage` carries an optional `_trust` brand minted by `createTrustedSystemMessage()` from `harness-one/core`; restored messages without the brand are downgraded to `user` so a session-store write cannot elevate authority. `RedisStoreConfig.tenantId` is required for multi-tenant deployments (one-shot warn if defaulted) — keys flip to `prefix:{tenantId}:id`. Memory entries enforce a 1 MiB content / 16 KiB metadata cap and reserve `_version`/`_trust` keys. `createContextBoundary` rejects policy prefixes without a trailing `.`/`/`. `HandoffManager.createSendHandle(from)` mints sealed sender handles; payloads cap at 64 KiB / depth 16. Tool schemas declaring `additionalProperties: false` are now actually enforced. Per-chunk RAG context scanning ships as `runRagContext` from `harness-one/guardrails`.
+
+**Adapter logger + crypto IDs + unref timers** (Wave-5F): `@harness-one/anthropic` / `@harness-one/openai` / `@harness-one/ajv` / `@harness-one/redis` now route their default logger through core's redaction-enabled `createDefaultLogger()` (no more bare `console.warn`). `@harness-one/langfuse` inline warnings flow through `safeWarn`. `harness-one/context` checkpoint IDs use `prefixedSecureId('cp')` (crypto.randomBytes); trace sampling uses `crypto.randomInt`. The new `harness-one/infra` `unrefTimeout` / `unrefInterval` helpers replace the ad-hoc `.unref?.()` pattern. `@harness-one/preset` pricing validation rejects NaN/Infinity alongside negatives.
+
+**MetricsPort + lifecycle state machine + AdmissionController** (Wave-5D first pass): three vendor-neutral primitives shipping on subpaths.
+
+```ts
+import {
+  createNoopMetricsPort,         // counter / gauge / histogram facade — wire an OTel bridge in your host
+  createHarnessLifecycle,        // init → ready → draining → shutdown + aggregated `health()`
+} from 'harness-one/observe';
+
+import { createAdmissionController } from 'harness-one/infra';
+
+const metrics = createNoopMetricsPort();
+const lifecycle = createHarnessLifecycle();
+lifecycle.registerHealthCheck('adapter', () => ({ status: 'up' }));
+lifecycle.markReady();
+
+const admission = createAdmissionController({ maxInflight: 64, defaultTimeoutMs: 5000 });
+await admission.withPermit('tenant-123', async () => {
+  // adapter call — automatically respects per-tenant inflight cap, fails closed on timeout
+  return harness.run(messages);
+});
+```
+
+The four bigger 5D items — `CostTracker` consolidation, conversation-store reconciler, Redis-backed cross-process token bucket, and demoting `@harness-one/langfuse` to a secondary `TraceExporter` — are deferred to **5D.1** pending PRD + ADR competition.
+
 **AgentLoopHook** (0.4.0) — pass an array of hooks in `AgentLoopConfig.hooks` to receive `onIterationStart` / `onToolCall` / `onCost` / `onIterationEnd` callbacks without subscribing to `AgentEvent`. Hook errors are swallowed through the injected logger and never break the loop.
 
 All auto-configured components can be replaced by passing the explicit override field (`adapter`, `exporters`, `memoryStore`, `schemaValidator`).
@@ -869,33 +903,43 @@ The `init` command creates working starter files in a `harness/` directory. The 
 
 ## Architecture
 
-### Module Dependency Graph
+### Module Dependency Graph (Wave-5C 1.0-rc)
 
 ```
                     +-----------+
-                    |   infra   |  <- JSON Schema validator + token estimator + LRU
-                    +-----+-----+
+                    |   infra   |  <- JSON Schema, IDs, LRU, async-lock, timers, safe-log,
+                    +-----+-----+      AdmissionController (Wave-5D)
                           |
                     +-----+-----+
-                    |   core    |  <- shared types + AgentLoop + HarnessError
-                    +-----+-----+
+                    |   core    |  <- shared types + AgentLoop + HarnessError(Code)
+                    +-----+-----+      + TrustedSystemMessage helpers (Wave-5E)
                           |
-  +--------+--------+-----+-----+--------+--------+--------+--------+--------+---------------+
-  |        |        |     |     |        |        |        |        |        |               |
-  v        v        v     v     v        v        v        v        v        v               v
-context  prompt   tools   guardrails  observe  session  memory    eval    evolve    rag    orchestration
-                                                  |
-                                                  v
-                                                fs-io  <- extracted I/O layer (memory only)
+  +--------+--------+-----+-----+--------+--------+--------+--------+----------------+---------------+
+  |        |        |     |     |        |        |        |        |                |               |
+  v        v        v     v     v        v        v        v        v                v               v
+context  prompt   tools   guardrails  observe  session  memory    rag    evolve-check       orchestration
+                                       |                  |
+                                       v                  v
+                              MetricsPort +            fs-io
+                              HarnessLifecycle
+                              (Wave-5D)
 ```
 
-Dependency rules (enforced):
+Sibling packages (extracted from core in Wave-5C):
+
+```
+@harness-one/cli      <- harness-one CLI binary (was `harness-one/cli`)
+@harness-one/devkit   <- eval + evolve dev-tools (was `harness-one/eval` + `/evolve`)
+@harness-one/preset   <- batteries-included `createSecurePreset` / `createHarness`
+```
+
+Dependency rules (enforced by `harness-one/evolve-check`):
 
 1. `infra/` -> no dependencies (leaf module)
 2. `core/` -> only `infra/`
 3. Every feature module -> only `core/` + `infra/` (mostly type-only imports)
 4. Feature modules never import each other (`context`, `tools`, `guardrails`, `prompt`, etc. are siblings)
-5. `cli/` -> only Node.js built-ins (`fs`, `path`, `readline`)
+5. Sibling packages depend on `harness-one` as a regular or peer dep; never the reverse
 
 ### Key Design Decisions
 
@@ -918,10 +962,10 @@ Dependency rules (enforced):
 | 6. Observability | `observe` | Tracing, spans, cost tracking, budget alerts |
 | 7. Session Management | `session` | TTL, LRU eviction, locking, garbage collection |
 | 8. Memory & Persistence | `memory` | Graded storage, sessionId filter, atomic fs writes, cross-context relay |
-| 9. Evaluation | `eval` | Scorers, quality gates, generator-evaluator, flywheel |
-| 10. Evolution | `evolve` | Component registry, drift detection, architecture rules |
-| 11. Multi-Agent Orchestration | `orchestration` | AgentPool, Handoff, MessageTransport, ContextBoundary, MessageQueue |
-| 12. RAG Pipeline | `rag` | Document loading, chunking, embedding, retrieval, token estimates |
+| 9. Evaluation | `@harness-one/devkit` (since Wave-5C) | Scorers, quality gates, generator-evaluator, flywheel |
+| 10. Evolution | `@harness-one/devkit` + `harness-one/evolve-check` (split in Wave-5C) | Component registry, drift detection (devkit) + architecture rules (core) |
+| 11. Multi-Agent Orchestration | `orchestration` | AgentPool, Handoff (sealed `SendHandle` + 64 KiB cap, Wave-5E), MessageTransport, ContextBoundary (segment-aware, Wave-5E), MessageQueue |
+| 12. RAG Pipeline | `rag` + `runRagContext` (Wave-5E) | Document loading, chunking, embedding, retrieval, token estimates, per-chunk guardrail scanning |
 
 ## Troubleshooting
 

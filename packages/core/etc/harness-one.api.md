@@ -1260,6 +1260,8 @@ export interface StreamChunk {
 export interface SystemMessage extends BaseMessage {
     // (undocumented)
     readonly role: 'system';
+    // (undocumented)
+    readonly _trust?: TrustedSystemBrand;
 }
 
 // @public
@@ -1506,6 +1508,9 @@ export interface TraceManager {
 }
 
 // @public
+export type TrustedSystemBrand = Brand<symbol, 'TrustedSystemBrand'>;
+
+// @public
 export interface UserMessage extends BaseMessage {
     // (undocumented)
     readonly role: 'user';
@@ -1530,11 +1535,11 @@ export interface VectorSearchOptions {
 
 // Warnings were encountered during analysis:
 //
-// dist/cost-tracker-DuPeBp9y.d.ts:345:5 - (ae-forgotten-export) The symbol "RedactConfig" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-DuPeBp9y.d.ts:617:5 - (ae-forgotten-export) The symbol "EvictionStrategyName" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-DuPeBp9y.d.ts:617:5 - (ae-forgotten-export) The symbol "EvictionStrategy" needs to be exported by the entry point index.d.ts
-// dist/pipeline-TMNlcXBi.d.ts:94:5 - (ae-forgotten-export) The symbol "GuardrailEvent" needs to be exported by the entry point index.d.ts
-// dist/resilience-BO5GN2qg.d.ts:255:5 - (ae-forgotten-export) The symbol "MiddlewareContext" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-DNlSgwqX.d.ts:345:5 - (ae-forgotten-export) The symbol "RedactConfig" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-DNlSgwqX.d.ts:617:5 - (ae-forgotten-export) The symbol "EvictionStrategyName" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-DNlSgwqX.d.ts:617:5 - (ae-forgotten-export) The symbol "EvictionStrategy" needs to be exported by the entry point index.d.ts
+// dist/pipeline-DBOT4Ivp.d.ts:94:5 - (ae-forgotten-export) The symbol "GuardrailEvent" needs to be exported by the entry point index.d.ts
+// dist/resilience-O0dWTF0g.d.ts:255:5 - (ae-forgotten-export) The symbol "MiddlewareContext" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 

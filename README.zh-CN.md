@@ -157,13 +157,56 @@ await harness.shutdown();
 | ⑥ | 评估与验证 | eval | `harness-one/eval` |
 | ⑦ | 可观测性 | observe | `harness-one/observe` |
 | ⑧ | 持续演进 | evolve | `harness-one/evolve` |
-| ⑨ | 熵回收 | evolve（合并） | `harness-one/evolve` |
+| ⑨ | 熵回收 | evolve（合并） | `harness-one/evolve-check`（运行时） + `@harness-one/devkit`（开发时） |
 | — | 会话管理 | session | `harness-one/session` |
 | ⑩ | 多 Agent 编排 | orchestration | `harness-one/orchestration` |
 | — | RAG 流水线 | rag | `harness-one/rag` |
-| — | CLI 脚手架 | cli | `npx harness-one` |
+| — | CLI 脚手架 | cli | `pnpm dlx @harness-one/cli init` |
 
 详细架构说明在 [`docs/architecture/`](./docs/architecture/)。
+
+## 1.0-rc 关键变化（Wave-5C / 5D / 5E / 5F）
+
+> 完整逐项映射见 [CHANGELOG.md](./CHANGELOG.md) 的 Unreleased 段。
+
+### Wave-5C — 包边界与 API 1.0-rc
+
+- **根桶收紧到 19 个值导出**（UJ-1..UJ-5 主路径）。其余工厂走子路径（`harness-one/core`、`harness-one/tools`、`harness-one/observe`、`harness-one/infra` 等）或兄弟包。**`createSecurePreset` 不再从根桶导出**——直接从 `@harness-one/preset` 导入。
+- **`HarnessErrorCode` 收口 + 模块前缀**：`UNKNOWN` → `CORE_UNKNOWN`、`MAX_ITERATIONS` → `CORE_MAX_ITERATIONS`、`GUARDRAIL_VIOLATION` → `GUARD_VIOLATION` 等。`HarnessError.code` 不再 `(string & {})` widening；switch 现在可以穷举校验。**必须值导入** `import { HarnessErrorCode }`——`import type` 会静默丢失 `Object.values()`，自定义 lint 规则 `harness-one/no-type-only-harness-error-code` 在 lint 时拦截。
+- **`@harness-one/cli` 与 `@harness-one/devkit` 抽离**：`harness-one/cli` 子路径迁移到 [`@harness-one/cli`](./packages/cli)（`pnpm dlx @harness-one/cli init`）。`harness-one/eval` 与 `harness-one/evolve` 迁移到 [`@harness-one/devkit`](./packages/devkit)；运行时架构规则保留在 core 的 `harness-one/evolve-check` 子路径。
+
+### Wave-5D（首批，可观测性 + 生命周期）
+
+```ts
+import {
+  createNoopMetricsPort,        // counter / gauge / histogram 接口（host 可桥到 OTel）
+  createHarnessLifecycle,       // init → ready → draining → shutdown 状态机 + 聚合 health()
+} from 'harness-one/observe';
+
+import { createAdmissionController } from 'harness-one/infra';
+
+const admission = createAdmissionController({ maxInflight: 64, defaultTimeoutMs: 5000 });
+await admission.withPermit('tenant-123', () => harness.run(messages));
+```
+
+四项较大改造延后到 **5D.1**（需 PRD + ADR）：CostTracker 单一账本、conversation reconciler、Redis 跨进程 TokenBucket、Langfuse 降级为辅 TraceExporter。
+
+### Wave-5E — 信任边界类型化
+
+- **`createTrustedSystemMessage` brand**：`SystemMessage._trust` 标记 host-only system message；恢复路径无 brand 的 system 消息降级为 `user`。
+- **`@harness-one/redis` 多租户键**：`RedisStoreConfig.tenantId` 必填（默认 `'default'` 一次性 warn）；键格式 `prefix:{tenantId}:id`。
+- **memory 字节上限 + 保留键**：1 MiB content / 16 KiB metadata；`_version` / `_trust` 是保留键。
+- **`createContextBoundary` segment 边界**：策略前缀必须以 `.` 或 `/` 结尾，否则构造抛 `CORE_INVALID_CONFIG`。
+- **`HandoffManager.createSendHandle(from)` sealed 句柄** + payload 64 KiB / depth 16 上限。
+- **`additionalProperties: false` 真正 enforce**（之前是声明而忽略）。
+- **`runRagContext`** 逐 chunk 跑入 input pipeline；任一 chunk 命中污染整个检索集。
+
+### Wave-5F — 清扫批
+
+- 5 个 adapter 默认 logger 改走 core 的 `createDefaultLogger()` / `safeWarn`（不再裸 `console.warn`）。
+- `checkpoint` ID 改 crypto.randomBytes；trace 采样改 `crypto.randomInt`。
+- 新 `harness-one/infra` 暴露 `unrefTimeout` / `unrefInterval`，长生命周期 timer 默认不持有事件循环。
+- preset pricing 校验拒绝 NaN / Infinity。
 
 ## 0.2.0 的主要变化
 
