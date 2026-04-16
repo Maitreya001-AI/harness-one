@@ -296,6 +296,12 @@ export interface OpenAIAdapterConfig {
    * provider-parameter drift to fail loudly in CI. Defaults to `false`.
    */
   readonly strictExtraAllowList?: boolean;
+  /**
+   * Optional token counting function. When provided, `countTokens()` delegates
+   * to this function instead of the built-in heuristic. Useful for injecting
+   * a tiktoken-based counter without coupling the adapter to the tokenizer package.
+   */
+  readonly countTokens?: (text: string) => number;
 }
 
 /** Convert a harness-one Message to OpenAI's chat completion message format. */
@@ -443,6 +449,7 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
   // Wave-5F T12: delegate default logger to core's redaction-enabled
   // singleton instead of a hand-rolled console.warn/error fallback.
   const logger: Pick<Logger, 'warn' | 'error'> = config.logger ?? createDefaultLogger();
+  const tokenizer = config.countTokens;
 
   return {
     name: `openai:${model}`,
@@ -536,77 +543,96 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
       const MAX_TOOL_CALLS = 128;
       const MAX_TOOL_ARG_BYTES = 1_048_576; // 1MB
 
-      for await (const chunk of stream) {
-        const delta = chunk.choices[0]?.delta;
-        if (!delta) continue;
+      try {
+        for await (const chunk of stream) {
+          const delta = chunk.choices[0]?.delta;
+          if (!delta) continue;
 
-        if (delta.content) {
-          yield { type: 'text_delta', text: delta.content };
-        }
+          if (delta.content) {
+            yield { type: 'text_delta', text: delta.content };
+          }
 
-        if (delta.tool_calls) {
-          for (const tc of delta.tool_calls) {
-            // Determine the lookup key: prefer tc.id, fall back to index-to-ID map,
-            // and finally generate a fallback ID from the index.
-            const id = tc.id ?? indexToId.get(tc.index) ?? `tool_${tc.index}`;
+          if (delta.tool_calls) {
+            for (const tc of delta.tool_calls) {
+              // Determine the lookup key: prefer tc.id, fall back to index-to-ID map,
+              // and finally generate a fallback ID from the index.
+              const id = tc.id ?? indexToId.get(tc.index) ?? `tool_${tc.index}`;
 
-            // Skip new tool calls beyond the safety limit
-            if (toolCallAccum.size >= MAX_TOOL_CALLS && !toolCallAccum.has(id)) {
-              continue;
-            }
-
-            let accum = toolCallAccum.get(id);
-            if (!accum) {
-              accum = { id, name: '', arguments: '' };
-              toolCallAccum.set(id, accum);
-            }
-            // Update the index-to-ID mapping whenever we see an id for an index
-            if (tc.id) {
-              indexToId.set(tc.index, tc.id);
-              accum.id = tc.id;
-            }
-            if (tc.function?.name) accum.name = tc.function.name;
-            if (tc.function?.arguments) {
-              // Skip arguments that would exceed the size limit
-              if (accum.arguments.length + tc.function.arguments.length > MAX_TOOL_ARG_BYTES) {
+              // Skip new tool calls beyond the safety limit
+              if (toolCallAccum.size >= MAX_TOOL_CALLS && !toolCallAccum.has(id)) {
                 continue;
               }
-              accum.arguments += tc.function.arguments;
-            }
 
-            yield {
-              type: 'tool_call_delta',
-              toolCall: {
-                ...(accum.id ? { id: accum.id } : {}),
-                ...(accum.name ? { name: accum.name } : {}),
-                ...(tc.function?.arguments !== undefined && { arguments: tc.function.arguments }),
-              },
-            };
+              let accum = toolCallAccum.get(id);
+              if (!accum) {
+                accum = { id, name: '', arguments: '' };
+                toolCallAccum.set(id, accum);
+              }
+              // Update the index-to-ID mapping whenever we see an id for an index
+              if (tc.id) {
+                indexToId.set(tc.index, tc.id);
+                accum.id = tc.id;
+              }
+              if (tc.function?.name) accum.name = tc.function.name;
+              if (tc.function?.arguments) {
+                // Skip arguments that would exceed the size limit
+                if (accum.arguments.length + tc.function.arguments.length > MAX_TOOL_ARG_BYTES) {
+                  continue;
+                }
+                accum.arguments += tc.function.arguments;
+              }
+
+              yield {
+                type: 'tool_call_delta',
+                toolCall: {
+                  ...(accum.id ? { id: accum.id } : {}),
+                  ...(accum.name ? { name: accum.name } : {}),
+                  ...(tc.function?.arguments !== undefined && { arguments: tc.function.arguments }),
+                },
+              };
+            }
+          }
+
+          // OpenAI sends usage data in the final stream chunk.
+          // We emit 'done' and return immediately upon receiving it.
+          // If OpenAI changes this behavior (e.g., sends usage before final chunk),
+          // subsequent chunks would be silently dropped — review this logic if that happens.
+          if (chunk.usage) {
+            yield { type: 'done', usage: toTokenUsage(chunk.usage) };
+            return; // usage chunk is the final event — don't emit another done
           }
         }
 
-        // OpenAI sends usage data in the final stream chunk.
-        // We emit 'done' and return immediately upon receiving it.
-        // If OpenAI changes this behavior (e.g., sends usage before final chunk),
-        // subsequent chunks would be silently dropped — review this logic if that happens.
-        if (chunk.usage) {
-          yield { type: 'done', usage: toTokenUsage(chunk.usage) };
-          return; // usage chunk is the final event — don't emit another done
+        // Only emit bare done if stream ended without a usage chunk.
+        // OBS-011: Emit both a warning and a tagged event so cost tracking can
+        // detect this condition. Ensure stream_options.include_usage is set to
+        // true in the request to guarantee usage data in the final chunk.
+        logger.warn(
+          '[harness-one/openai] Stream ended without usage data — token counts will be zero. ' +
+          'Ensure stream_options.include_usage is true. This affects cost tracking and budget enforcement.',
+        );
+        yield {
+          type: 'done' as const,
+          usage: { inputTokens: 0, outputTokens: 0 },
+        };
+      } finally {
+        // Ensure underlying stream resources are released on early consumer return.
+        // The OpenAI SDK stream exposes a controller that can be aborted to free
+        // the HTTP connection when the consumer breaks out of the async iterator.
+        if (stream && typeof (stream as unknown as Record<string, unknown>).controller === 'object') {
+          const ctrl = (stream as unknown as { controller: { abort?: () => void } }).controller;
+          if (typeof ctrl?.abort === 'function') {
+            ctrl.abort();
+          }
         }
       }
+    },
 
-      // Only emit bare done if stream ended without a usage chunk.
-      // OBS-011: Emit both a warning and a tagged event so cost tracking can
-      // detect this condition. Ensure stream_options.include_usage is set to
-      // true in the request to guarantee usage data in the final chunk.
-      logger.warn(
-        '[harness-one/openai] Stream ended without usage data — token counts will be zero. ' +
-        'Ensure stream_options.include_usage is true. This affects cost tracking and budget enforcement.',
-      );
-      yield {
-        type: 'done' as const,
-        usage: { inputTokens: 0, outputTokens: 0 },
-      };
+    async countTokens(messages: readonly Message[]): Promise<number> {
+      const text = messages.map((m) => m.content).join('');
+      if (tokenizer) return tokenizer(text);
+      // Heuristic: ~4 chars per token + small overhead per message for role/framing
+      return Math.ceil(text.length / 4) + messages.length * 4;
     },
   };
 }

@@ -109,7 +109,7 @@ export function createRegistry(config?: CreateRegistryConfig): ToolRegistry {
       throw new HarnessError(
         `Invalid tool name "${tool.name}": must match /^[a-zA-Z][a-zA-Z0-9_.]*$/`,
         HarnessErrorCode.TOOL_INVALID_NAME,
-        'Tool names must start with a letter and contain only letters, digits, dots, or underscores',
+        'Tool name must start with a letter and contain only letters, digits, underscores, and dots',
       );
     }
     if (tools.has(tool.name)) {

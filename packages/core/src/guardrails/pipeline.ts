@@ -133,11 +133,19 @@ class BoundedEventBuffer {
   readonly results: GuardrailEvent[] = [];
   /** Index of the oldest event with verdict.action !== 'block'; -1 if none. */
   private oldestNonBlockIdx: number = -1;
+  /** Number of events evicted from this buffer due to capacity overflow. */
+  private _evictedCount: number = 0;
 
   constructor(private readonly maxResults: number) {}
 
+  /** Number of events evicted from this buffer due to capacity overflow. */
+  get evictedCount(): number {
+    return this._evictedCount;
+  }
+
   push(event: GuardrailEvent): void {
     if (this.results.length >= this.maxResults) {
+      this._evictedCount++;
       if (this.oldestNonBlockIdx >= 0 && this.oldestNonBlockIdx < this.results.length) {
         // Evict at the tracked pointer (O(n) splice into the middle is
         // unavoidable for a plain array, but finding the target is O(1)).

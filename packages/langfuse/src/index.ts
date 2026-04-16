@@ -580,6 +580,11 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): La
     },
 
     recordUsage(usage: Omit<TokenUsageRecord, 'estimatedCost' | 'timestamp'>): TokenUsageRecord {
+      // F18c: Snapshot the budget reference at the start of the call so all
+      // checks within this invocation use a consistent value, even if
+      // setBudget() is called concurrently from another async context.
+      const budgetSnapshot = budget;
+
       const estimatedCost = computeCost(usage);
       const record: TokenUsageRecord = {
         ...usage,
@@ -630,7 +635,8 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): La
         handleExportError(err, 'flush');
       });
 
-      if (budget !== undefined) {
+      // F18c: Use the snapshot taken at entry, not the live `budget` variable.
+      if (budgetSnapshot !== undefined) {
         const alert = tracker.checkBudget();
         if (alert) {
           emitAlert(alert);

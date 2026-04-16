@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { parseArgs, getTemplate, auditProject, ALL_MODULES, MODULE_DESCRIPTIONS, FILE_NAMES, c, SUPPORTS_COLOR, writeModuleFiles, runInit, runAudit, showHelp } from '../index.js';
+import { parseArgs, getTemplate, auditProject, ALL_MODULES, MODULE_DESCRIPTIONS, FILE_NAMES, c, SUPPORTS_COLOR, writeModuleFiles, runInit, runAudit, showHelp, EXIT_SUCCESS, EXIT_ERROR, EXIT_INVALID_ARGS } from '../index.js';
 import { scanFiles, maturityLabel } from '../audit.js';
 import type { ModuleName, ParsedArgs } from '../index.js';
 import { HarnessError, HarnessErrorCode} from 'harness-one';
@@ -738,5 +738,28 @@ describe('showHelp', () => {
     expect(output).toContain('--modules');
 
     logSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F24: Exit code constants
+// ---------------------------------------------------------------------------
+
+describe('F24: Exit code constants', () => {
+  it('EXIT_SUCCESS is 0', () => {
+    expect(EXIT_SUCCESS).toBe(0);
+  });
+
+  it('EXIT_ERROR is 1', () => {
+    expect(EXIT_ERROR).toBe(1);
+  });
+
+  it('EXIT_INVALID_ARGS is 2', () => {
+    expect(EXIT_INVALID_ARGS).toBe(2);
+  });
+
+  it('all exit codes are distinct', () => {
+    const codes = new Set([EXIT_SUCCESS, EXIT_ERROR, EXIT_INVALID_ARGS]);
+    expect(codes.size).toBe(3);
   });
 });

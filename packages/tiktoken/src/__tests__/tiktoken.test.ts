@@ -168,6 +168,50 @@ describe('registerTiktokenModels', () => {
   });
 });
 
+describe('F19: LRU cache eviction with WASM memory management', () => {
+  it('evicts the least-recently-used encoder when cache exceeds max size (10)', () => {
+    // Create 11 tokenizers for distinct models — the first should be evicted
+    for (let i = 0; i < 11; i++) {
+      createTiktokenTokenizer(`model-${i}`);
+    }
+
+    // 11 models created, cache max = 10, so model-0 should be evicted and freed
+    expect(mockFree).toHaveBeenCalledTimes(1);
+    expect(mockEncodingForModel).toHaveBeenCalledTimes(11);
+  });
+
+  it('calls .free() on evicted encoder to release WASM memory', () => {
+    for (let i = 0; i < 12; i++) {
+      createTiktokenTokenizer(`evict-model-${i}`);
+    }
+
+    // 12 models, max 10 => 2 evictions, each calling .free()
+    expect(mockFree).toHaveBeenCalledTimes(2);
+  });
+
+  it('re-accessing a cached model prevents it from being evicted (LRU touch)', () => {
+    // Create 10 models to fill the cache
+    for (let i = 0; i < 10; i++) {
+      createTiktokenTokenizer(`lru-${i}`);
+    }
+    expect(mockFree).not.toHaveBeenCalled();
+
+    // Touch lru-0 (move it to end of LRU)
+    createTiktokenTokenizer('lru-0');
+    // Should NOT create a new encoder — cache hit
+    expect(mockEncodingForModel).toHaveBeenCalledTimes(10);
+
+    // Add one more to trigger eviction — lru-1 should be evicted (not lru-0)
+    createTiktokenTokenizer('lru-new');
+    expect(mockFree).toHaveBeenCalledTimes(1);
+    // lru-0 should still be cached (re-access returns same instance)
+    const tok = createTiktokenTokenizer('lru-0');
+    expect(tok).toBeDefined();
+    // Still 11 total creations (10 original + 1 new)
+    expect(mockEncodingForModel).toHaveBeenCalledTimes(11);
+  });
+});
+
 describe('disposeTiktoken', () => {
   it('calls .free() on every cached encoder', () => {
     createTiktokenTokenizer('gpt-4');

@@ -809,4 +809,56 @@ describe('createInMemoryStore', () => {
       });
     });
   });
+
+  describe('F13: writeBatch atomicity', () => {
+    it('writes all entries atomically', async () => {
+      const results = await store.writeBatch!([
+        { key: 'b1', content: 'first', grade: 'useful' },
+        { key: 'b2', content: 'second', grade: 'useful' },
+        { key: 'b3', content: 'third', grade: 'critical' },
+      ]);
+      expect(results).toHaveLength(3);
+      expect(await store.count()).toBe(3);
+
+      // All entries are readable
+      for (const entry of results) {
+        const read = await store.read(entry.id);
+        expect(read).not.toBeNull();
+      }
+    });
+
+    it('rolls back all entries on mid-batch dimension mismatch error', async () => {
+      // Write an entry with a 3-dim embedding first
+      await store.write({ key: 'base', content: 'base', grade: 'useful', metadata: { embedding: [1, 0, 0] } });
+      expect(await store.count()).toBe(1);
+
+      // Batch with a mismatched dimension should fail entirely
+      await expect(
+        store.writeBatch!([
+          { key: 'b1', content: 'ok', grade: 'useful', metadata: { embedding: [1, 0, 0] } },
+          { key: 'b2', content: 'bad-dim', grade: 'useful', metadata: { embedding: [1, 0] } },
+        ]),
+      ).rejects.toThrow(HarnessError);
+
+      // None of the batch entries should have been written
+      expect(await store.count()).toBe(1);
+    });
+
+    it('batch entries get unique IDs', async () => {
+      const results = await store.writeBatch!([
+        { key: 'b1', content: 'a', grade: 'useful' },
+        { key: 'b2', content: 'b', grade: 'useful' },
+      ]);
+      expect(results[0].id).not.toBe(results[1].id);
+    });
+
+    it('batch entries are queryable by tags', async () => {
+      await store.writeBatch!([
+        { key: 'b1', content: 'a', grade: 'useful', tags: ['batch-tag'] },
+        { key: 'b2', content: 'b', grade: 'critical', tags: ['batch-tag'] },
+      ]);
+      const results = await store.query({ tags: ['batch-tag'] });
+      expect(results).toHaveLength(2);
+    });
+  });
 });

@@ -1312,6 +1312,59 @@ describe('createOTelExporter', () => {
     });
   });
 
+  describe('F18b: logger disconnect — configurable logger for parent-linking warnings', () => {
+    it('routes parent-linking warning through provided logger instead of console.warn', async () => {
+      const warnFn = vi.fn();
+      const customLogger = { warn: warnFn };
+      const localMock = createMockTracer();
+      const exporter = createOTelExporter({ tracer: localMock.tracer, logger: customLogger });
+
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      await exporter.exportSpan({
+        id: 'span-orphan',
+        traceId: 'trace-1',
+        parentId: 'unknown-parent',
+        name: 'orphan-op',
+        startTime: 1000,
+        attributes: {},
+        events: [],
+        status: 'completed',
+      });
+
+      // Custom logger received the warning
+      expect(warnFn).toHaveBeenCalledWith(
+        expect.stringContaining("Parent span 'unknown-parent' not found"),
+        expect.objectContaining({ parentId: 'unknown-parent', spanId: 'span-orphan' }),
+      );
+      // console.warn was NOT called
+      expect(warnSpy).not.toHaveBeenCalled();
+      warnSpy.mockRestore();
+    });
+
+    it('falls back to console.warn when no logger is provided', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const localMock = createMockTracer();
+      const exporter = createOTelExporter({ tracer: localMock.tracer });
+
+      await exporter.exportSpan({
+        id: 'span-fallback',
+        traceId: 'trace-1',
+        parentId: 'missing-parent',
+        name: 'fallback-op',
+        startTime: 1000,
+        attributes: {},
+        events: [],
+        status: 'completed',
+      });
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Parent span 'missing-parent' not found"),
+      );
+      warnSpy.mockRestore();
+    });
+  });
+
   describe('span endTime handling', () => {
     it('ends span without endTime when not provided', async () => {
       const localMock = createMockTracer();

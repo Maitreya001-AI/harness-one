@@ -47,6 +47,28 @@ core 模块定义了 harness-one 的共享类型契约（Message、TokenUsage、
 
 **设计文档**：`docs/forge-fix/wave-5/wave-5b-adr-v2.md`（设计决策与边界论证）、`wave-5b-adr-critique.md` / `wave-5b-review-redteam.md` / `wave-5b-review-synthesis.md`（评审记录）。
 
+### Wave-10 深度架构审计修复（2026-04-16）
+
+基于 UltraDeep 架构审计报告的 27 项全面修复，覆盖 3 个严重级别（Critical/High/Medium/Low）：
+
+**Critical 修复**：
+- `AgentPool`: `monotonicCreatedAt` 和 `drain()` 改用 `performance.now()` 单调时钟——修复 NTP/DST 时钟偏移导致的 agent 过期异常（F2/F20）。
+- `SessionManager`: `_droppedEvents` 计数器通过 `droppedEvents` getter 公开；首次丢弃时通过 logger 发出警告（F3/F23）。
+- `ContextRelay`: 新增 `readonly version` getter 暴露乐观并发版本号（relay 已内置 `updateWithGuard` + `MEMORY_RELAY_CONFLICT`）（F4）。
+
+**High 修复**：
+- `AgentLoop`: 新增 `strictHooks?: boolean` 配置——`true` 时 hook 异常上抛而非静默吞咽；`false` 仍保留现有行为但确保通过 logger/console.error 输出（F5）。
+- `StreamAggregator`: 新增 `maxToolCalls?: number`（默认 128）——超出限制时 yield error 事件，与 OpenAI 适配器的 `MAX_TOOL_CALLS` 对齐（F6）。
+- `CircuitBreaker`: `onStateChange` 回调包裹 try/catch——回调异常不再破坏状态转换（F7）。
+- `LazyAsync`: 引入 `generation` 计数器——`reset()` 递增 generation，rejection handler 仅在 generation 匹配时清除缓存，消除竞态（F9）。
+- `AsyncLock`: 新增 `dispose()` 方法——reject 所有排队 waiter 并阻止后续 acquire（F17）。
+
+**Medium 修复**：
+- `TraceManager`: 采样决策移至 `startTrace()` 时刻——trace context 记录 `sampled: boolean`，`endTrace()` 尊重已存决策（F12）。
+- `MemoryStore.writeBatch`: 已确认实现正确（validate-first + rollback），补充了原子性测试（F13）。
+- `tools/registry.ts`: TOOL_NAME_RE 错误消息现在明确提及下划线和点号（F21）。
+- `GuardrailPipeline`: `BoundedEventBuffer` 新增 `evictedCount` getter（F3b）。
+
 ### Wave-5H 架构加固（2026-04-16）
 
 对全代码库进行深度架构审查后的 23 项修复：

@@ -84,6 +84,8 @@ function createMockRedis() {
     scard: vi.fn(async (key: string) => getSet(key).size),
     mget: vi.fn(async (...keys: string[]) => keys.map((k) => store.get(k) ?? null)),
     multi,
+    watch: vi.fn(async () => 'OK'),
+    unwatch: vi.fn(async () => 'OK'),
     _store: store,
     _sets: sets,
   } as unknown as RedisStoreConfig['client'];
@@ -731,6 +733,112 @@ describe('createRedisStore', () => {
     // Should return empty array, not throw
     const results = await store.query({});
     expect(results).toEqual([]);
+  });
+
+  // ── F10: Optimistic locking on update ────────────────────────────────
+
+  it('update uses WATCH/MULTI/EXEC for optimistic locking (F10)', async () => {
+    const store = createRedisStore({ client: redis, prefix: 'test' });
+    const mockRedis = redis as unknown as {
+      watch: ReturnType<typeof vi.fn>;
+      unwatch: ReturnType<typeof vi.fn>;
+      multi: ReturnType<typeof vi.fn>;
+    };
+
+    const entry = await store.write({ key: 'k', content: 'original', grade: 'useful' });
+    mockRedis.watch.mockClear();
+    mockRedis.multi.mockClear();
+
+    const updated = await store.update(entry.id, { content: 'modified' });
+
+    expect(updated.content).toBe('modified');
+    // WATCH must be called before the read-modify-write
+    expect(mockRedis.watch).toHaveBeenCalledTimes(1);
+    // The pipeline must be used for the write
+    expect(mockRedis.multi).toHaveBeenCalledTimes(1);
+  });
+
+  it('update retries on WATCH conflict (exec returns null) — F10', async () => {
+    const store = createRedisStore({ client: redis, prefix: 'test' });
+    const mockRedis = redis as unknown as {
+      watch: ReturnType<typeof vi.fn>;
+      multi: ReturnType<typeof vi.fn>;
+    };
+
+    const entry = await store.write({ key: 'k', content: 'original', grade: 'useful' });
+    mockRedis.watch.mockClear();
+    mockRedis.multi.mockClear();
+
+    // Make exec return null (conflict) on first two attempts, succeed on third
+    let execCallCount = 0;
+    mockRedis.multi.mockImplementation(() => {
+      const queue: (() => unknown)[] = [];
+      const pipeline = {
+        set: vi.fn((..._args: unknown[]) => {
+          queue.push(() => 'OK');
+          return pipeline;
+        }),
+        sadd: vi.fn((..._args: unknown[]) => {
+          queue.push(() => 1);
+          return pipeline;
+        }),
+        exec: vi.fn(async () => {
+          execCallCount++;
+          if (execCallCount <= 2) return null; // conflict
+          const results: [null, unknown][] = [];
+          for (const fn of queue) {
+            results.push([null, fn()]);
+          }
+          return results;
+        }),
+      };
+      return pipeline;
+    });
+
+    const updated = await store.update(entry.id, { content: 'retried' });
+    expect(updated.content).toBe('retried');
+    // 3 attempts total: 2 conflicts + 1 success
+    expect(mockRedis.watch).toHaveBeenCalledTimes(3);
+  });
+
+  it('update throws after 3 failed retry attempts — F10', async () => {
+    const store = createRedisStore({ client: redis, prefix: 'test' });
+    const mockRedis = redis as unknown as {
+      watch: ReturnType<typeof vi.fn>;
+      multi: ReturnType<typeof vi.fn>;
+    };
+
+    const entry = await store.write({ key: 'k', content: 'original', grade: 'useful' });
+    mockRedis.watch.mockClear();
+    mockRedis.multi.mockClear();
+
+    // Make exec always return null (persistent conflict)
+    mockRedis.multi.mockImplementation(() => {
+      const pipeline = {
+        set: vi.fn(() => pipeline),
+        sadd: vi.fn(() => pipeline),
+        exec: vi.fn(async () => null),
+      };
+      return pipeline;
+    });
+
+    await expect(store.update(entry.id, { content: 'fail' })).rejects.toThrow(
+      'Concurrent update conflict after 3 retries',
+    );
+    // All 3 retries were attempted
+    expect(mockRedis.watch).toHaveBeenCalledTimes(3);
+  });
+
+  it('update calls unwatch when entry not found during optimistic locking — F10', async () => {
+    const store = createRedisStore({ client: redis, prefix: 'test' });
+    const mockRedis = redis as unknown as {
+      watch: ReturnType<typeof vi.fn>;
+      unwatch: ReturnType<typeof vi.fn>;
+    };
+
+    await expect(store.update('nonexistent', { content: 'x' })).rejects.toThrow('not found');
+    expect(mockRedis.watch).toHaveBeenCalledTimes(1);
+    expect(mockRedis.unwatch).toHaveBeenCalledTimes(1);
   });
 
   it('compact handles mget failure mid-batch gracefully', async () => {

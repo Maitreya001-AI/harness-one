@@ -150,4 +150,55 @@ describe('StreamAggregator', () => {
     const events = drain(agg, [{ type: 'mystery' as 'text_delta', text: undefined }]);
     expect(events).toEqual([]);
   });
+
+  describe('F6: maxToolCalls limit', () => {
+    it('errors when distinct tool calls exceed maxToolCalls', () => {
+      const agg = new StreamAggregator({ ...DEFAULT_OPTS, maxToolCalls: 2 });
+      const chunks: StreamAggregatorChunk[] = [
+        { type: 'tool_call_delta', toolCall: { id: 'tc-1', name: 'a', arguments: '{}' } },
+        { type: 'tool_call_delta', toolCall: { id: 'tc-2', name: 'b', arguments: '{}' } },
+        { type: 'tool_call_delta', toolCall: { id: 'tc-3', name: 'c', arguments: '{}' } },
+      ];
+      const events = drain(agg, chunks);
+      const errEvent = events.find((e): e is { type: 'error'; error: Error } => e.type === 'error');
+      expect(errEvent).toBeDefined();
+      expect(errEvent!.error.message).toContain('Exceeded maximum number of tool calls');
+      expect(errEvent!.error.message).toContain('2');
+    });
+
+    it('allows tool calls up to maxToolCalls without error', () => {
+      const agg = new StreamAggregator({ ...DEFAULT_OPTS, maxToolCalls: 3 });
+      const chunks: StreamAggregatorChunk[] = [
+        { type: 'tool_call_delta', toolCall: { id: 'tc-1', name: 'a', arguments: '{}' } },
+        { type: 'tool_call_delta', toolCall: { id: 'tc-2', name: 'b', arguments: '{}' } },
+        { type: 'tool_call_delta', toolCall: { id: 'tc-3', name: 'c', arguments: '{}' } },
+      ];
+      const events = drain(agg, chunks);
+      const errEvent = events.find((e) => e.type === 'error');
+      expect(errEvent).toBeUndefined();
+    });
+
+    it('defaults to 128 when maxToolCalls is not set', () => {
+      const agg = new StreamAggregator(DEFAULT_OPTS);
+      // Creating 128 tool calls should be fine (under default limit)
+      const chunks: StreamAggregatorChunk[] = [];
+      for (let i = 0; i < 128; i++) {
+        chunks.push({ type: 'tool_call_delta', toolCall: { id: `tc-${i}`, name: `tool${i}`, arguments: '{}' } });
+      }
+      const events = drain(agg, chunks);
+      const errEvent = events.find((e) => e.type === 'error');
+      expect(errEvent).toBeUndefined();
+    });
+
+    it('appending arguments to existing tool does not count as new tool', () => {
+      const agg = new StreamAggregator({ ...DEFAULT_OPTS, maxToolCalls: 1 });
+      const chunks: StreamAggregatorChunk[] = [
+        { type: 'tool_call_delta', toolCall: { id: 'tc-1', name: 'a', arguments: '{"x":' } },
+        { type: 'tool_call_delta', toolCall: { id: 'tc-1', arguments: '"y"}' } },
+      ];
+      const events = drain(agg, chunks);
+      const errEvent = events.find((e) => e.type === 'error');
+      expect(errEvent).toBeUndefined();
+    });
+  });
 });

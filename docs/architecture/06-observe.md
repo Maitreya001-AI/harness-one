@@ -146,7 +146,7 @@ cost = (inputTokens/1000 * inputPrice) + (outputTokens/1000 * outputPrice)
 | `shouldExport?(trace)` | `endTrace` 时对该 exporter 询问是否导出此 trace（sampling / attribute 过滤） |
 | `shutdown?()` | `tm.dispose()` 时调用 |
 
-**全局 sampling**：没有 per-exporter `shouldExport?()` 时，`defaultSamplingRate` 会生效（`Math.random() < rate` 才导出）。两者同时提供时 `shouldExport?()` 优先。
+**全局 sampling（Wave-10 F12 更新）**：采样决策在 `startTrace()` 时刻做出（`Math.random() < rate`），结果存储在 trace context 的 `sampled: boolean` 字段上。`endTrace()` 尊重已存决策，不再重新掷骰。运行时通过 `setSamplingRate()` 调整仅影响新启动的 trace，已启动的 trace 不受影响。per-exporter `shouldExport?()` 优先级仍高于全局 sampling。
 
 **懒初始化容错**：`initialize()` 失败时错误通过 `onExportError` / logger 报告，但不会永久阻塞后续 exportSpan/exportTrace 调用——每次导出仍会尝试 awaitting 缓存的 `initialize()` promise（已 settled），避免 exporter 因初次连接失败从此下线。
 

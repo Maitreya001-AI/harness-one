@@ -167,9 +167,16 @@ export interface AgentLoopConfig {
    */
   readonly hooks?: readonly AgentLoopHook[];
   /**
+   * When true, hook errors are re-thrown instead of swallowed. Useful for
+   * testing and development where hook failures should be immediately visible.
+   * Default: false (production-safe — errors are logged and swallowed).
+   */
+  readonly strictHooks?: boolean;
+  /**
    * Optional structured logger. Used to surface hook failures (ARCH-006)
    * and other diagnostic warnings that previously fell back to
-   * `console.warn`. Optional — when omitted, hook failures are silent.
+   * `console.warn`. Optional — when omitted, hook failures fall back to
+   * console.error.
    */
   readonly logger?: { warn: (msg: string, meta?: Record<string, unknown>) => void };
   /**
@@ -235,6 +242,7 @@ export class AgentLoop {
   private readonly iterationRunner: IterationRunner;
   /** ARCH-006: registered iteration-level hooks. Empty array when none. */
   private readonly hooks: readonly AgentLoopHook[];
+  private readonly strictHooks: boolean;
   private readonly logger?: { warn: (msg: string, meta?: Record<string, unknown>) => void };
   /** T10 (Wave-5A): optional input-side guardrail pipeline. */
   private readonly inputPipeline?: GuardrailPipeline;
@@ -296,6 +304,7 @@ export class AgentLoop {
     // simplify per-iteration dispatch). Logger is optional — when omitted,
     // hook errors are swallowed silently.
     this.hooks = config.hooks ?? [];
+    this.strictHooks = config.strictHooks ?? false;
     if (config.logger !== undefined) this.logger = config.logger;
     // T10 (Wave-5A): store optional guardrail pipelines. `exactOptionalPropertyTypes`
     // forbids writing `undefined` to a `readonly pipe?: GuardrailPipeline`, so we
@@ -398,6 +407,7 @@ export class AgentLoop {
       abortController: this.abortController,
       maxTotalTokens: this.maxTotalTokens,
       hooks: this.hooks,
+      strictHooks: this.strictHooks,
       ...(this.onToolCall !== undefined && { onToolCall: this.onToolCall }),
       ...(this.toolTimeoutMs !== undefined && { toolTimeoutMs: this.toolTimeoutMs }),
       ...(this.inputPipeline !== undefined && { inputPipeline: this.inputPipeline }),
@@ -461,6 +471,9 @@ export class AgentLoop {
         // a typed contract at the public boundary (`AgentLoopHook`).
         (fn as (i: typeof info) => void).call(hook, info);
       } catch (err) {
+        if (this.strictHooks) {
+          throw err;
+        }
         if (this.logger) {
           try {
             this.logger.warn('[harness-one/agent-loop] hook threw', {
@@ -468,8 +481,11 @@ export class AgentLoop {
               error: err instanceof Error ? err.message : String(err),
             });
           } catch {
-            // Logger itself failed — nothing more we can safely do.
+            // Logger itself failed — fall back to console.error.
+            try { console.error('[harness-one/agent-loop] hook threw:', err); } catch { /* */ }
           }
+        } else {
+          try { console.error('[harness-one/agent-loop] hook threw:', err); } catch { /* */ }
         }
       }
     }

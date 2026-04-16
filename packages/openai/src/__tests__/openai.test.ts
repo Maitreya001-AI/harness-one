@@ -1109,6 +1109,35 @@ describe('createOpenAIAdapter', () => {
       expect((toolChunks[0] as StreamChunk).toolCall!.arguments).toBe(largeArgs);
     });
 
+    it('does not throw when consumer breaks early from stream (F8 resource cleanup)', async () => {
+      const abortFn = vi.fn();
+      const asyncIter = {
+        async *[Symbol.asyncIterator]() {
+          yield { choices: [{ delta: { content: 'chunk1' } }] };
+          yield { choices: [{ delta: { content: 'chunk2' } }] };
+          yield { choices: [{ delta: { content: 'chunk3' } }] };
+          yield { choices: [{ delta: {} }], usage: { prompt_tokens: 5, completion_tokens: 2 } };
+        },
+        controller: { abort: abortFn },
+      };
+      mock.mocks.create.mockResolvedValue(asyncIter);
+
+      const adapter = createOpenAIAdapter({ client: mock.client });
+      const chunks: unknown[] = [];
+      for await (const chunk of adapter.stream!({
+        messages: [{ role: 'user', content: 'Hi' }],
+      })) {
+        chunks.push(chunk);
+        if ((chunk as StreamChunk).type === 'text_delta') break; // early return
+      }
+
+      // Should have collected only the first text chunk before breaking
+      expect(chunks).toHaveLength(1);
+      expect((chunks[0] as StreamChunk).type).toBe('text_delta');
+      // The controller.abort() should have been called in the finally block
+      expect(abortFn).toHaveBeenCalled();
+    });
+
     it('correctly accumulates tool calls when continuation chunks lack id and use index for lookup', async () => {
       // This test verifies the ID-based keying with index fallback:
       // When a continuation chunk has no `tc.id` but has `tc.index`, the accumulator
@@ -1294,6 +1323,47 @@ describe('createOpenAIAdapter', () => {
         expect.objectContaining({ model: 'llama-3.3-70b-versatile' }),
         expect.any(Object),
       );
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // F15: countTokens()
+  // -------------------------------------------------------------------------
+  describe('countTokens()', () => {
+    it('returns a reasonable heuristic count without custom tokenizer', async () => {
+      const adapter = createOpenAIAdapter({ client: mock.client });
+      const count = await adapter.countTokens!([
+        { role: 'user', content: 'Hello world' },
+      ]);
+      // "Hello world" = 11 chars / 4 ≈ 3, + 1 message * 4 overhead = 7
+      expect(count).toBeGreaterThan(0);
+      expect(count).toBeLessThan(100);
+    });
+
+    it('uses injected tokenizer when provided', async () => {
+      const customTokenizer = vi.fn().mockReturnValue(42);
+      const adapter = createOpenAIAdapter({ client: mock.client, countTokens: customTokenizer });
+      const count = await adapter.countTokens!([
+        { role: 'user', content: 'Hello world' },
+      ]);
+      expect(count).toBe(42);
+      expect(customTokenizer).toHaveBeenCalledWith('Hello world');
+    });
+
+    it('handles multiple messages', async () => {
+      const adapter = createOpenAIAdapter({ client: mock.client });
+      const count = await adapter.countTokens!([
+        { role: 'system', content: 'You are helpful' },
+        { role: 'user', content: 'Hi' },
+      ]);
+      // "You are helpfulHi" = 17 chars / 4 ≈ 5, + 2 messages * 4 = 13
+      expect(count).toBeGreaterThan(0);
+    });
+
+    it('handles empty messages', async () => {
+      const adapter = createOpenAIAdapter({ client: mock.client });
+      const count = await adapter.countTokens!([]);
+      expect(count).toBe(0);
     });
   });
 

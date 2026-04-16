@@ -78,6 +78,8 @@ SessionManager 接口：
 
 emit() 使用 `emitting` 标志和 `pendingEvents` 队列。如果 handler 同步触发新事件（如在 'accessed' handler 中调用 create()），新事件被排队而非递归执行，防止状态损坏。
 
+**事件丢弃可见性（Wave-10 F3）**：当 pendingEvents 队列达到 `MAX_PENDING_EVENTS` 上限时，新事件被丢弃。`droppedEvents` 只读属性（getter）暴露累计丢弃计数，首次丢弃时通过 logger 发出警告（boolean latch 防止日志风暴）。
+
 ### 自动 GC
 
 `setInterval` 定时调用 `gc()`。使用 `timer.unref()` 防止阻止 Node.js 进程退出。`dispose()` 清除定时器。

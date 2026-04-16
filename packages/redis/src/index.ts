@@ -262,29 +262,61 @@ export function createRedisStore(config: RedisStoreConfig): RedisMemoryStore {
     },
 
     /**
-     * Update an entry. Note: this is NOT atomic across processes.
-     * For concurrent access, use Redis transactions (WATCH/MULTI/EXEC) at the application level.
+     * Update an entry with optimistic locking via WATCH/MULTI/EXEC.
+     *
+     * F10: The read-modify-write cycle is protected against concurrent
+     * mutations. If another client modifies the key between WATCH and EXEC,
+     * the transaction returns `null` and we retry (up to 3 attempts).
      */
     async update(id: string, updates: Partial<Pick<MemoryEntry, 'content' | 'grade' | 'metadata' | 'tags'>>) {
-      const raw = await client.get(entryKey(id));
-      if (!raw) {
-        throw new HarnessError(`Memory entry not found: ${id}`, HarnessErrorCode.MEMORY_NOT_FOUND);
+      const key = entryKey(id);
+      const MAX_RETRIES = 3;
+
+      for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        await client.watch(key);
+
+        const raw = await client.get(key);
+        if (!raw) {
+          await client.unwatch();
+          throw new HarnessError(`Memory entry not found: ${id}`, HarnessErrorCode.MEMORY_NOT_FOUND);
+        }
+        const existing = parseEntryFromRedis(raw, id, logger);
+        if (!existing) {
+          await client.unwatch();
+          throw new HarnessError(
+            `Corrupted memory entry: ${id}`,
+            HarnessErrorCode.MEMORY_DATA_CORRUPTION,
+            'Delete and recreate the entry',
+          );
+        }
+
+        const updated: MemoryEntry = {
+          ...existing,
+          ...updates,
+          updatedAt: Date.now(),
+        };
+
+        const value = JSON.stringify(updated);
+        const pipeline = client.multi();
+        if (defaultTTL) {
+          pipeline.set(key, value, 'EX', defaultTTL);
+        } else {
+          pipeline.set(key, value);
+        }
+        pipeline.sadd(indexKey, id);
+        const result = await pipeline.exec();
+
+        if (result !== null) {
+          return updated; // Success — no conflict
+        }
+        // result is null → WATCH detected a concurrent modification, retry
       }
-      const existing = parseEntryFromRedis(raw, id, logger);
-      if (!existing) {
-        throw new HarnessError(
-          `Corrupted memory entry: ${id}`,
-          HarnessErrorCode.MEMORY_DATA_CORRUPTION,
-          'Delete and recreate the entry',
-        );
-      }
-      const updated: MemoryEntry = {
-        ...existing,
-        ...updates,
-        updatedAt: Date.now(),
-      };
-      await setEntry(updated);
-      return updated;
+
+      throw new HarnessError(
+        `Concurrent update conflict after ${MAX_RETRIES} retries for entry: ${id}`,
+        HarnessErrorCode.MEMORY_RELAY_CONFLICT,
+        'Retry the operation or use application-level serialization',
+      );
     },
 
     async delete(id: string) {

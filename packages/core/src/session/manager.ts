@@ -30,6 +30,8 @@ export interface SessionManager {
   readonly activeSessions: number;
   /** Maximum allowed sessions. */
   readonly maxSessions: number;
+  /** Number of events dropped due to reentrant event queue overflow. */
+  readonly droppedEvents: number;
 
   /** Register an event handler. Returns an unsubscribe function. */
   onEvent(handler: (event: SessionEvent) => void): () => void;
@@ -65,10 +67,13 @@ export function createSessionManager(config?: {
   maxSessions?: number;
   ttlMs?: number;
   gcIntervalMs?: number;
+  /** Optional structured logger for surfacing event-drop warnings. */
+  logger?: { warn: (msg: string, meta?: Record<string, unknown>) => void };
 }): SessionManager {
   const maxSessions = config?.maxSessions ?? 100;
   const ttlMs = config?.ttlMs ?? 5 * 60 * 1000;
   const gcIntervalMs = config?.gcIntervalMs ?? 60000;
+  const logger = config?.logger;
 
   if (maxSessions < 1) {
     throw new HarnessError('maxSessions must be >= 1', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide a positive maxSessions value');
@@ -111,8 +116,9 @@ export function createSessionManager(config?: {
   // allocation-free. Consumers surface them via the `SessionManager` if needed.
    
   let _droppedHandlerErrors = 0;
-   
+
   let _droppedEvents = 0;
+  let _droppedWarned = false;
 
   // SEC-002: Use cryptographically secure random IDs instead of a predictable
   // counter + timestamp combination. Predictable session IDs enable
@@ -124,7 +130,18 @@ export function createSessionManager(config?: {
   function emit(type: SessionEvent['type'], sessionId: SessionId, reason?: string): void {
     const event: SessionEvent = { type, sessionId, timestamp: Date.now(), ...(reason !== undefined && { reason }) };
     if (emitting) {
-      if (pendingEvents.length >= MAX_PENDING_EVENTS) { _droppedEvents++; return; }
+      if (pendingEvents.length >= MAX_PENDING_EVENTS) {
+        _droppedEvents++;
+        if (!_droppedWarned && logger) {
+          _droppedWarned = true;
+          try {
+            logger.warn('[harness-one/session-manager] event dropped — pending queue overflow', {
+              maxPendingEvents: MAX_PENDING_EVENTS,
+            });
+          } catch { /* logger failure non-fatal */ }
+        }
+        return;
+      }
       pendingEvents.push(event);
       return;
     }
@@ -406,6 +423,10 @@ export function createSessionManager(config?: {
 
     get maxSessions(): number {
       return maxSessions;
+    },
+
+    get droppedEvents(): number {
+      return _droppedEvents;
     },
 
     onEvent(handler: (event: SessionEvent) => void): () => void {

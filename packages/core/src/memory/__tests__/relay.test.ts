@@ -775,4 +775,83 @@ describe('createRelay', () => {
       ).resolves.toBeUndefined();
     });
   });
+
+  describe('F4: version getter', () => {
+    it('starts at version 0 before any writes', () => {
+      const r = createRelay({ store });
+      expect(r.version).toBe(0);
+      r.dispose();
+    });
+
+    it('increments version after save()', async () => {
+      const r = createRelay({ store });
+      expect(r.version).toBe(0);
+      await r.save({
+        progress: {},
+        artifacts: [],
+        checkpoint: 'cp1',
+        timestamp: Date.now(),
+      });
+      expect(r.version).toBe(1);
+      await r.save({
+        progress: { step: 2 },
+        artifacts: [],
+        checkpoint: 'cp2',
+        timestamp: Date.now(),
+      });
+      expect(r.version).toBe(2);
+      r.dispose();
+    });
+
+    it('increments version after checkpoint()', async () => {
+      const r = createRelay({ store });
+      await r.checkpoint({ step: 1 });
+      expect(r.version).toBe(1);
+      r.dispose();
+    });
+
+    it('increments version after addArtifact()', async () => {
+      const r = createRelay({ store });
+      await r.addArtifact('file.txt');
+      expect(r.version).toBe(1);
+      r.dispose();
+    });
+
+    it('resets to 0 on dispose()', async () => {
+      const r = createRelay({ store });
+      await r.save({
+        progress: {},
+        artifacts: [],
+        checkpoint: 'cp1',
+        timestamp: Date.now(),
+      });
+      expect(r.version).toBe(1);
+      r.dispose();
+      expect(r.version).toBe(0);
+    });
+
+    it('reflects version from loaded relay state', async () => {
+      const r1 = createRelay({ store });
+      await r1.save({
+        progress: {},
+        artifacts: [],
+        checkpoint: 'cp1',
+        timestamp: Date.now(),
+      });
+      await r1.save({
+        progress: { step: 2 },
+        artifacts: [],
+        checkpoint: 'cp2',
+        timestamp: Date.now(),
+      });
+      expect(r1.version).toBe(2);
+
+      // Second relay loads existing state
+      const r2 = createRelay({ store });
+      await r2.load();
+      expect(r2.version).toBe(2);
+      r1.dispose();
+      r2.dispose();
+    });
+  });
 });

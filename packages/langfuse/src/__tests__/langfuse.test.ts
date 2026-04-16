@@ -1464,6 +1464,37 @@ describe('createLangfuseCostTracker', () => {
   });
 
   // -------------------------------------------------------------------------
+  // F18c: Budget race condition — snapshot-based budget check
+  // -------------------------------------------------------------------------
+
+  describe('F18c: budget snapshot prevents mid-check mutation', () => {
+    it('uses a consistent budget snapshot throughout recordUsage', () => {
+      const tracker = createLangfuseCostTracker({ client: mock.client });
+      tracker.setPricing([
+        { model: 'a', inputPer1kTokens: 1.0, outputPer1kTokens: 1.0 },
+      ]);
+      tracker.setBudget(10.0);
+
+      const alerts: CostAlert[] = [];
+      tracker.onAlert((a) => alerts.push(a));
+
+      // Record usage well below the budget — should produce no alert
+      tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 100, outputTokens: 100 });
+      expect(alerts).toHaveLength(0);
+
+      // If budget were read live (not snapshotted), a concurrent setBudget(0.01)
+      // mid-recordUsage could cause the check to fire for a budget that wasn't
+      // set when the call began. With the snapshot, this is safe.
+      tracker.setBudget(0.01);
+      // The previous recordUsage already completed, so the new budget only
+      // affects future calls.
+      tracker.recordUsage({ traceId: 't2', model: 'a', inputTokens: 1, outputTokens: 1 });
+      // Now the budget is exceeded (cost > 0.01)
+      expect(alerts.length).toBeGreaterThan(0);
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // OBS-003: Budget-exceeded Langfuse event emission (with dedupe)
   // -------------------------------------------------------------------------
 

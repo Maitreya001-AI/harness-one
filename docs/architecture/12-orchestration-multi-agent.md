@@ -62,6 +62,7 @@ function createAgentPool(config: PoolConfig): AgentPool
 - **懒预热** —— `min` 数量的 Agent 在首次 `acquire()` 时才创建，而非构造时
 - **空闲定时器 unref** —— `setTimeout().unref()` 确保空闲定时器不阻止 Node.js 进程退出
 - **超龄回收** —— `acquire()` 和 `release()` 时检查 `maxAge`，超龄 Agent 自动销毁并替换
+- **单调时钟（Wave-10 F2）** —— `monotonicCreatedAt` 和 `drain()` 使用 `performance.now()` 而非 `Date.now()`，避免 NTP/DST 时钟偏移导致 Agent 过期异常
 
 ## Handoff Protocol
 

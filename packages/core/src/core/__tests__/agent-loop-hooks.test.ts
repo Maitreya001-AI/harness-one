@@ -135,4 +135,39 @@ describe('AgentLoopHook (ARCH-006)', () => {
     const events = await drain(loop.run([{ role: 'user', content: 'hi' }]));
     expect(events.some((e) => e.type === 'done')).toBe(true);
   });
+
+  describe('F5: strictHooks mode', () => {
+    it('strictHooks: true re-throws hook errors instead of swallowing', async () => {
+      const adapter = adapterFromResponses([
+        { message: { role: 'assistant', content: 'hi' }, usage: USAGE },
+      ]);
+      const throwingHook: AgentLoopHook = {
+        onIterationStart: () => { throw new Error('strict-boom'); },
+      };
+      const loop = createAgentLoop({
+        adapter,
+        hooks: [throwingHook],
+        strictHooks: true,
+      });
+      await expect(
+        drain(loop.run([{ role: 'user', content: 'hi' }])),
+      ).rejects.toThrow('strict-boom');
+    });
+
+    it('strictHooks: false (default) swallows hook errors', async () => {
+      const adapter = adapterFromResponses([
+        { message: { role: 'assistant', content: 'hi' }, usage: USAGE },
+      ]);
+      const throwingHook: AgentLoopHook = {
+        onIterationStart: () => { throw new Error('swallowed-boom'); },
+      };
+      const loop = createAgentLoop({
+        adapter,
+        hooks: [throwingHook],
+      });
+      // Should complete without error
+      const events = await drain(loop.run([{ role: 'user', content: 'hi' }]));
+      expect(events.some((e) => e.type === 'done')).toBe(true);
+    });
+  });
 });

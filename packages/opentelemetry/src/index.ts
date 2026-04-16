@@ -31,6 +31,15 @@ const CACHE_ATTR_RENAME: Record<string, string> = {
   avgLatency: 'cache.latency_ms',
 };
 
+/**
+ * F18b: Minimal logger interface accepted by the OTel exporter.
+ * When provided, parent-linking warnings and diagnostics are routed here
+ * instead of falling back to `console.warn`.
+ */
+export interface OTelExporterLogger {
+  warn: (message: string, context?: Record<string, unknown>) => void;
+}
+
 /** Configuration for the OpenTelemetry exporter. */
 export interface OTelExporterConfig {
   /** Optional OTel Tracer instance. If not provided, uses the global tracer. */
@@ -59,6 +68,11 @@ export interface OTelExporterConfig {
    * signals into their metrics pipeline.
    */
   readonly onDroppedAttribute?: (info: { key: string; type: string; where: 'attribute' | 'event' }) => void;
+  /**
+   * F18b: Optional logger for diagnostic warnings (e.g., parent-linking
+   * fallback). Falls back to `console.warn` when not provided.
+   */
+  readonly logger?: OTelExporterLogger;
 }
 
 /** OBS-004: Runtime counter exposed by the exporter for dropped attributes. */
@@ -82,6 +96,7 @@ export function createOTelExporter(config?: OTelExporterConfig): TraceExporter &
   const maxEvictedParents = config?.maxEvictedParents ?? 1000;
   const evictedParentsTtlMs = config?.evictedParentsTtlMs ?? 300_000; // 5 minutes
   const onDroppedAttribute = config?.onDroppedAttribute;
+  const logger = config?.logger;
 
   // OBS-004: Track dropped-attribute counts for operator visibility.
   let droppedAttributes = 0;
@@ -269,11 +284,13 @@ export function createOTelExporter(config?: OTelExporterConfig): TraceExporter &
       // The span still gets linked under the trace root below (CQ-002) so the
       // hierarchy stays connected — we just couldn't resolve the direct parent.
       if (harnessSpan.parentId && !parentOTelSpan) {
-        if (typeof console !== 'undefined') {
-          console.warn(
-            `[harness-one/opentelemetry] Parent span '${harnessSpan.parentId}' not found (evicted or never exported). ` +
-            `Falling back to the trace-root context for span '${harnessSpan.id}'.`,
-          );
+        const warnMsg =
+          `[harness-one/opentelemetry] Parent span '${harnessSpan.parentId}' not found (evicted or never exported). ` +
+          `Falling back to the trace-root context for span '${harnessSpan.id}'.`;
+        if (logger) {
+          logger.warn(warnMsg, { parentId: harnessSpan.parentId, spanId: harnessSpan.id });
+        } else if (typeof console !== 'undefined') {
+          console.warn(warnMsg);
         }
       }
 

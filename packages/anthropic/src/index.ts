@@ -63,6 +63,12 @@ export interface AnthropicAdapterConfig {
    * caller can notice without breaking their pipeline.
    */
   readonly strictExtraAllowList?: boolean;
+  /**
+   * Optional token counting function. When provided, `countTokens()` delegates
+   * to this function instead of the built-in heuristic. Useful for injecting
+   * a tiktoken-based counter without coupling the adapter to the tokenizer package.
+   */
+  readonly countTokens?: (text: string) => number;
 }
 
 /**
@@ -279,6 +285,7 @@ export function createAnthropicAdapter(config: AnthropicAdapterConfig): AgentAda
   const model = config.model ?? 'claude-sonnet-4-20250514';
   const logger: Pick<Logger, 'warn' | 'error'> = config.logger ?? createDefaultLogger();
   const strictExtra = config.strictExtraAllowList ?? false;
+  const tokenizer = config.countTokens;
 
   return {
     name: `anthropic:${model}`,
@@ -340,22 +347,48 @@ export function createAnthropicAdapter(config: AnthropicAdapterConfig): AgentAda
       let currentToolId: string | undefined;
       let currentToolName: string | undefined;
 
+      // Safety limits to prevent OOM from malformed streams (parity with OpenAI adapter)
+      const MAX_TOOL_CALLS = 128;
+      const MAX_TOOL_ARG_BYTES = 1_048_576; // 1MB
+      let toolCallCount = 0;
+      let currentToolArgBytes = 0;
+      let currentToolLimitExceeded = false;
+
       for await (const event of stream) {
         if (event.type === 'content_block_start') {
           const block = event.content_block;
           if (block.type === 'tool_use') {
-            currentToolId = block.id;
-            currentToolName = block.name;
+            toolCallCount++;
+            currentToolArgBytes = 0;
+            currentToolLimitExceeded = false;
+            if (toolCallCount > MAX_TOOL_CALLS) {
+              // Skip this tool call entirely
+              currentToolId = undefined;
+              currentToolName = undefined;
+              currentToolLimitExceeded = true;
+            } else {
+              currentToolId = block.id;
+              currentToolName = block.name;
+            }
           } else {
             // Reset tool state when a non-tool block starts
             currentToolId = undefined;
             currentToolName = undefined;
+            currentToolLimitExceeded = false;
           }
         } else if (event.type === 'content_block_delta') {
           const delta = event.delta;
           if (delta.type === 'text_delta') {
             yield { type: 'text_delta', text: delta.text };
           } else if (delta.type === 'input_json_delta') {
+            // Skip if this tool call was beyond the count limit
+            if (currentToolLimitExceeded) continue;
+            // Skip if arguments would exceed the size limit
+            if (currentToolArgBytes + delta.partial_json.length > MAX_TOOL_ARG_BYTES) {
+              currentToolLimitExceeded = true;
+              continue;
+            }
+            currentToolArgBytes += delta.partial_json.length;
             yield {
               type: 'tool_call_delta',
               toolCall: {
@@ -397,6 +430,13 @@ export function createAnthropicAdapter(config: AnthropicAdapterConfig): AgentAda
         );
       }
       yield { type: 'done', usage: toTokenUsage(finalMsg.usage) };
+    },
+
+    async countTokens(messages: readonly Message[]): Promise<number> {
+      const text = messages.map((m) => m.content).join('');
+      if (tokenizer) return tokenizer(text);
+      // Heuristic: ~4 chars per token + small overhead per message for role/framing
+      return Math.ceil(text.length / 4) + messages.length * 4;
     },
   };
 }

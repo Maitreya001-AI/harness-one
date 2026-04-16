@@ -7,13 +7,14 @@
  * @module
  */
 
+import { randomUUID } from 'node:crypto';
 import { createAgentLoop, HarnessError, createMiddlewareChain, HarnessErrorCode} from 'harness-one/core';
 import type { AgentAdapter, Message, AgentEvent, MiddlewareChain, AgentLoop } from 'harness-one/core';
 import { createTraceManager, createConsoleExporter, createCostTracker, createLogger } from 'harness-one/observe';
 import type { TraceExporter, TraceManager, CostTracker, ModelPricing, Logger } from 'harness-one/observe';
 import { createPromptBuilder } from 'harness-one/prompt';
 import type { PromptBuilder } from 'harness-one/prompt';
-import { registerTokenizer } from 'harness-one/context';
+import { registerTokenizer, countTokens } from 'harness-one/context';
 import { createRegistry } from 'harness-one/tools';
 import type { ToolRegistry, SchemaValidator } from 'harness-one/tools';
 import { createPipeline, createInjectionDetector, createRateLimiter, createContentFilter, createPIIDetector, runInput, runOutput } from 'harness-one/guardrails';
@@ -421,9 +422,10 @@ export function createHarness(config: HarnessConfig): Harness {
     if (defaultSessionWarnEmitted) return;
     defaultSessionWarnEmitted = true;
     logger.warn(
-      'harness-one: harness.run() invoked without a sessionId. All messages are persisted ' +
-      'to the "default" session; concurrent run() calls will interleave. Pass ' +
-      'harness.run(messages, { sessionId }) in multi-request environments.',
+      'harness-one: harness.run() invoked without a sessionId. An auto-generated unique ' +
+      'session ID is being used, which prevents message interleaving but means conversation ' +
+      'history cannot be resumed. Pass harness.run(messages, { sessionId }) to enable ' +
+      'persistent, resumable conversations.',
     );
   }
 
@@ -481,10 +483,18 @@ export function createHarness(config: HarnessConfig): Harness {
           // gates future exports. Re-throw if you want fail-fast semantics
           // at your call site.
         }
-        // Tokenizer warming: when the caller asked for the tiktoken preset,
-        // `registerTiktokenModels()` already ran synchronously at factory
-        // time, so nothing more is required. Explicit no-op here keeps the
-        // extension point visible for future async tokenizer backends.
+        // F18a: Pre-warm tiktoken WASM by encoding a dummy string so the
+        // first real request doesn't pay a cold-start latency penalty.
+        // `registerTiktokenModels()` ran synchronously at factory time;
+        // this forces the WASM module to actually load.
+        if (config.tokenizer === 'tiktoken') {
+          try {
+            const model = config.model ?? 'gpt-4';
+            countTokens(model, [{ role: 'user', content: '' }]);
+          } catch {
+            // Non-fatal — lazy loading will still work on first real call
+          }
+        }
       })();
       return initializePromise;
     },
@@ -493,8 +503,15 @@ export function createHarness(config: HarnessConfig): Harness {
       messages: Message[],
       options?: { sessionId?: string },
     ): AsyncGenerator<AgentEvent> {
-      const sessionId = options?.sessionId ?? 'default';
-      if (sessionId === 'default') warnDefaultSessionOnce();
+      // F14: Auto-generate a unique session ID when none is provided,
+      // preventing accidental message interleaving across concurrent requests.
+      let sessionId: string;
+      if (options?.sessionId) {
+        sessionId = options.sessionId;
+      } else {
+        sessionId = `session_${randomUUID()}`;
+        warnDefaultSessionOnce();
+      }
 
       // Start a harness-level trace so pre-loop and per-event guardrail checks
       // produce structured spans a human can correlate to loop iteration spans.
@@ -530,7 +547,10 @@ export function createHarness(config: HarnessConfig): Harness {
       }
 
       try {
-        // Run input guardrails on user messages before passing to agent loop
+        // Run input guardrails on user messages before passing to agent loop.
+        // F18d: Guardrail checks run first; persistence is batched after all
+        // checks pass so a mid-batch guardrail failure doesn't leave partial
+        // state in the conversation store.
         for (const msg of messages) {
           if (msg.role === 'user') {
             const inputResult = await traceGuardrail('guardrail:input', () =>
@@ -550,11 +570,13 @@ export function createHarness(config: HarnessConfig): Harness {
               return;
             }
           }
-          try {
-            await conversations.append(sessionId, msg);
-          } catch (err) {
-            logger.warn('Failed to persist message to conversation store', { error: err });
-          }
+        }
+        // F18d: Atomic batch persist — all input messages in one save() call.
+        try {
+          const existing = await conversations.load(sessionId);
+          await conversations.save(sessionId, [...existing, ...messages]);
+        } catch (err) {
+          logger.warn('Failed to persist input messages to conversation store', { error: err });
         }
         for await (const event of loop.run(messages)) {
           // Validate tool call arguments against input guardrails before executing

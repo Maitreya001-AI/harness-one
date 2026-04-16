@@ -284,20 +284,13 @@ export function createTraceManager(config?: {
     trackExport(p);
   }
 
-  function exportTraceTo(exporter: TraceExporter, trace: Trace, sampleRate: number): void {
+  function exportTraceTo(exporter: TraceExporter, trace: Trace, sampled: boolean): void {
     if (exporter.isHealthy && !exporter.isHealthy()) return;
     if (exporter.shouldExport && !exporter.shouldExport(trace)) return;
-    // LM-011 (Wave 4b): global sampling decision uses the rate captured at
-    // trace-start, NOT the live `samplingRate` closure variable. Mid-flight
-    // `setSamplingRate()` calls must not change the verdict for traces that
-    // have already begun — otherwise ops can silently drop traces the
-    // application has already decided to keep.
-    // Wave-5F SEC-A15: use crypto.randomInt for sampling so an attacker who
-    // can observe trace output cannot predict which traces will be dropped.
-    // randomInt(2**30) / 2**30 gives a uniform float in [0, 1) at ~30 bits
-    // of precision — sufficient for sampling decisions without importing
-    // additional crypto primitives.
-    if (!exporter.shouldExport && sampleRate < 1 && randomInt(0, 1 << 30) / (1 << 30) >= sampleRate) return;
+    // F12: The sampling decision is made at startTrace() time and stored on
+    // the trace. Respect the stored decision rather than re-evaluating here.
+    // Per-exporter shouldExport() hooks take precedence above.
+    if (!exporter.shouldExport && !sampled) return;
     const p = ensureInitialized(exporter)
       .then(() => exporter.exportTrace(trace))
       .catch(reportExportError);
@@ -335,6 +328,13 @@ export function createTraceManager(config?: {
      * guaranteed to export even if sampling was lowered before it ended.
      */
     samplingRateSnapshot: number;
+    /**
+     * F12: Sampling decision made at trace-start. When false, exporters skip
+     * this trace at endTrace() time without re-evaluating the sampling rate.
+     * This ensures changing the sampling rate after startTrace() does not
+     * affect already-started traces.
+     */
+    sampled: boolean;
     /**
      * PERF-029: doubly-linked-list pointers that implement the LRU order.
      * `prev`/`next` link into `lruHead` / `lruTail` so `appendTraceOrder()`
@@ -563,6 +563,10 @@ export function createTraceManager(config?: {
       const userMeta = metadata
         ? (redactor ? sanitizeAttributes(metadata, redactor) : { ...metadata })
         : {};
+      // F12: Make the sampling decision at trace-start so that changing the
+      // sampling rate after startTrace() does not affect already-started traces.
+      const rateSnapshot = samplingRate;
+      const sampled = rateSnapshot >= 1 || randomInt(0, 1 << 30) / (1 << 30) < rateSnapshot;
       const mutable: MutableTrace = {
         id,
         name,
@@ -572,7 +576,8 @@ export function createTraceManager(config?: {
         spanIds: [],
         status: 'running',
         // LM-011 (Wave 4b): snapshot current sampling rate at trace-start.
-        samplingRateSnapshot: samplingRate,
+        samplingRateSnapshot: rateSnapshot,
+        sampled,
         lruPrev: null,
         lruNext: null,
         inLru: false,
@@ -782,13 +787,12 @@ export function createTraceManager(config?: {
       // PERF-029: O(1) linked-list unlink; previously O(n) index rebuild.
       removeTraceOrder(trace);
 
-      // Export — respects isHealthy(), shouldExport(), lazy initialize(), and samplingRate.
-      // LM-011 (Wave 4b): pass the rate captured at trace-start so concurrent
+      // Export — respects isHealthy(), shouldExport(), lazy initialize(), and sampling.
+      // F12: pass the sampling decision made at trace-start so concurrent
       // `setSamplingRate()` calls can't flip the decision.
       const readonlyTrace = toReadonlyTrace(trace);
-      const rateAtStart = trace.samplingRateSnapshot;
       for (const exporter of exporters) {
-        exportTraceTo(exporter, readonlyTrace, rateAtStart);
+        exportTraceTo(exporter, readonlyTrace, trace.sampled);
       }
     },
 

@@ -642,6 +642,78 @@ describe('createAnthropicAdapter', () => {
       expect((toolChunks[1] as StreamChunk).toolCall!.arguments).toBe('"test"}');
     });
 
+    it('skips new tool calls beyond MAX_TOOL_CALLS limit (F16)', async () => {
+      // Generate 129 tool_use blocks — only the first 128 should produce tool_call_delta
+      const events: unknown[] = [];
+      for (let i = 0; i < 129; i++) {
+        events.push({
+          type: 'content_block_start',
+          content_block: { type: 'tool_use', id: `tc-${i}`, name: `tool_${i}` },
+        });
+        events.push({
+          type: 'content_block_delta',
+          delta: { type: 'input_json_delta', partial_json: '{}' },
+        });
+      }
+
+      const mockStream = createMockStream(events);
+      mockStream.finalMessage.mockResolvedValue({
+        usage: { input_tokens: 10, output_tokens: 5 },
+      });
+      mock.mocks.stream.mockReturnValue(mockStream);
+
+      const adapter = createAnthropicAdapter({ client: mock.client });
+      const chunks: unknown[] = [];
+      for await (const chunk of adapter.stream!({
+        messages: [{ role: 'user', content: 'Hi' }],
+      })) {
+        chunks.push(chunk);
+      }
+
+      const toolChunks = chunks.filter((c: unknown) => (c as StreamChunk).type === 'tool_call_delta');
+      // The 129th tool call should be skipped
+      expect(toolChunks).toHaveLength(128);
+    });
+
+    it('skips tool call arguments that would exceed MAX_TOOL_ARG_BYTES (F16)', async () => {
+      const largeJson = 'x'.repeat(1_048_500); // just under 1MB
+      const overflowJson = 'y'.repeat(200); // would push over 1MB
+
+      const events: unknown[] = [
+        {
+          type: 'content_block_start',
+          content_block: { type: 'tool_use', id: 'tc-big', name: 'big_tool' },
+        },
+        {
+          type: 'content_block_delta',
+          delta: { type: 'input_json_delta', partial_json: largeJson },
+        },
+        {
+          type: 'content_block_delta',
+          delta: { type: 'input_json_delta', partial_json: overflowJson },
+        },
+      ];
+
+      const mockStream = createMockStream(events);
+      mockStream.finalMessage.mockResolvedValue({
+        usage: { input_tokens: 10, output_tokens: 5 },
+      });
+      mock.mocks.stream.mockReturnValue(mockStream);
+
+      const adapter = createAnthropicAdapter({ client: mock.client });
+      const chunks: unknown[] = [];
+      for await (const chunk of adapter.stream!({
+        messages: [{ role: 'user', content: 'Hi' }],
+      })) {
+        chunks.push(chunk);
+      }
+
+      const toolChunks = chunks.filter((c: unknown) => (c as StreamChunk).type === 'tool_call_delta');
+      // First chunk has the large args; second chunk should be skipped
+      expect(toolChunks).toHaveLength(1);
+      expect((toolChunks[0] as StreamChunk).toolCall!.arguments).toBe(largeJson);
+    });
+
     it('passes system message, tools, and temperature to stream call', async () => {
       const mockStream = createMockStream([
         { type: 'content_block_start', content_block: { type: 'text' } },
@@ -768,6 +840,47 @@ describe('createAnthropicAdapter', () => {
       expect(doneChunk!.usage!.outputTokens).toBe(8);
       expect(doneChunk!.usage!.cacheReadTokens).toBe(5);
       expect(doneChunk!.usage!.cacheWriteTokens).toBe(2);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // F15: countTokens()
+  // -------------------------------------------------------------------------
+  describe('countTokens()', () => {
+    it('returns a reasonable heuristic count without custom tokenizer', async () => {
+      const adapter = createAnthropicAdapter({ client: mock.client });
+      const count = await adapter.countTokens!([
+        { role: 'user', content: 'Hello world' },
+      ]);
+      // "Hello world" = 11 chars / 4 ≈ 3, + 1 message * 4 overhead = 7
+      expect(count).toBeGreaterThan(0);
+      expect(count).toBeLessThan(100);
+    });
+
+    it('uses injected tokenizer when provided', async () => {
+      const customTokenizer = vi.fn().mockReturnValue(42);
+      const adapter = createAnthropicAdapter({ client: mock.client, countTokens: customTokenizer });
+      const count = await adapter.countTokens!([
+        { role: 'user', content: 'Hello world' },
+      ]);
+      expect(count).toBe(42);
+      expect(customTokenizer).toHaveBeenCalledWith('Hello world');
+    });
+
+    it('handles multiple messages', async () => {
+      const adapter = createAnthropicAdapter({ client: mock.client });
+      const count = await adapter.countTokens!([
+        { role: 'system', content: 'You are helpful' },
+        { role: 'user', content: 'Hi' },
+      ]);
+      // "You are helpfulHi" = 17 chars / 4 ≈ 5, + 2 messages * 4 = 13
+      expect(count).toBeGreaterThan(0);
+    });
+
+    it('handles empty messages', async () => {
+      const adapter = createAnthropicAdapter({ client: mock.client });
+      const count = await adapter.countTokens!([]);
+      expect(count).toBe(0);
     });
   });
 

@@ -24,6 +24,8 @@ export interface ContextRelay {
    * @param options - Retry configuration. Defaults: maxRetries=3, backoffMs=100.
    */
   saveWithRetry(state: RelayState, options?: { maxRetries?: number; backoffMs?: number }): Promise<void>;
+  /** Current optimistic concurrency version. Starts at 0, increments on each write. */
+  readonly version: number;
   /** Release internal references. After dispose(), save/load/checkpoint/addArtifact will throw. */
   dispose(): void;
 }
@@ -274,6 +276,10 @@ export function createRelay(config: {
         }
       }
       throw lastError;
+    },
+
+    get version(): number {
+      return lastKnownVersion;
     },
 
     dispose(): void {

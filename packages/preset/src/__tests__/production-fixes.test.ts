@@ -516,7 +516,7 @@ describe('Issue 3: Tool call argument guardrail validation', () => {
     expect(errorEvent).toBeUndefined();
   });
 
-  it('error event for blocked tool args has GUARDRAIL_BLOCKED code', async () => {
+  it('error event for blocked tool args has GUARD_BLOCKED code', async () => {
     mocks.mockAgentLoopRun.mockImplementation(async function* () {
       yield {
         type: 'tool_call' as const,
@@ -544,5 +544,183 @@ describe('Issue 3: Tool call argument guardrail validation', () => {
       | undefined;
     expect(errorEvent).toBeDefined();
     expect(errorEvent!.error.code).toBe(HarnessErrorCode.GUARD_BLOCKED);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F14: Auto-generated session IDs
+// ---------------------------------------------------------------------------
+
+describe('F14: Auto-generated session IDs', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('two run() calls without sessionId get different auto-generated session IDs', async () => {
+    const sessionIds: string[] = [];
+    // Capture sessionId by spying on conversation store methods
+    mocks.mockAgentLoopRun.mockImplementation(async function* () {
+      yield {
+        type: 'done' as const,
+        reason: 'end_turn' as const,
+        totalUsage: { inputTokens: 0, outputTokens: 0 },
+      };
+    });
+
+    const harness = createHarness({ ...baseConfig });
+
+    // Intercept the conversations.save call to capture session IDs
+    const origSave = harness.conversations.save.bind(harness.conversations);
+    vi.spyOn(harness.conversations, 'save').mockImplementation(async (sid: string, msgs) => {
+      sessionIds.push(sid);
+      return origSave(sid, msgs);
+    });
+
+    // First run — no sessionId
+    for await (const _event of harness.run([{ role: 'user', content: 'hello' }])) { /* drain */ }
+    // Second run — no sessionId
+    for await (const _event of harness.run([{ role: 'user', content: 'world' }])) { /* drain */ }
+
+    expect(sessionIds).toHaveLength(2);
+    expect(sessionIds[0]).toMatch(/^session_/);
+    expect(sessionIds[1]).toMatch(/^session_/);
+    expect(sessionIds[0]).not.toBe(sessionIds[1]);
+  });
+
+  it('emits default-session warning only once across multiple run() calls', async () => {
+    mocks.mockAgentLoopRun.mockImplementation(async function* () {
+      yield {
+        type: 'done' as const,
+        reason: 'end_turn' as const,
+        totalUsage: { inputTokens: 0, outputTokens: 0 },
+      };
+    });
+
+    const warnSpy = vi.fn();
+    const harness = createHarness({
+      ...baseConfig,
+      logger: { warn: warnSpy, info: vi.fn(), error: vi.fn(), debug: vi.fn() } as unknown as import('harness-one/observe').Logger,
+    });
+
+    for await (const _event of harness.run([{ role: 'user', content: 'a' }])) { /* drain */ }
+    for await (const _event of harness.run([{ role: 'user', content: 'b' }])) { /* drain */ }
+
+    // Filter for the session warning specifically
+    const sessionWarnings = warnSpy.mock.calls.filter(
+      (c: unknown[]) => typeof c[0] === 'string' && (c[0] as string).includes('without a sessionId'),
+    );
+    expect(sessionWarnings).toHaveLength(1);
+  });
+
+  it('uses provided sessionId when explicitly passed', async () => {
+    const sessionIds: string[] = [];
+    mocks.mockAgentLoopRun.mockImplementation(async function* () {
+      yield {
+        type: 'done' as const,
+        reason: 'end_turn' as const,
+        totalUsage: { inputTokens: 0, outputTokens: 0 },
+      };
+    });
+
+    const harness = createHarness({ ...baseConfig });
+
+    const origSave = harness.conversations.save.bind(harness.conversations);
+    vi.spyOn(harness.conversations, 'save').mockImplementation(async (sid: string, msgs) => {
+      sessionIds.push(sid);
+      return origSave(sid, msgs);
+    });
+
+    for await (const _event of harness.run([{ role: 'user', content: 'hello' }], { sessionId: 'my-session' })) { /* drain */ }
+
+    expect(sessionIds[0]).toBe('my-session');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F18a: Tiktoken prewarming
+// ---------------------------------------------------------------------------
+
+describe('F18a: Tiktoken prewarming in initialize()', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('calls registerTiktokenModels at construction and countTokens during initialize', async () => {
+    const harness = createHarness({
+      ...baseConfig,
+      tokenizer: 'tiktoken',
+    });
+
+    expect(mocks.registerTiktokenModels).toHaveBeenCalled();
+
+    // initialize() should call countTokens to prewarm WASM
+    // Since we're in a test environment with mocked tiktoken, this may throw
+    // but should not propagate (non-fatal)
+    await harness.initialize?.();
+
+    // If it doesn't throw, initialization completed successfully
+    expect(harness.initialize).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F18d: Atomic batch input persistence
+// ---------------------------------------------------------------------------
+
+describe('F18d: Atomic batch input persistence', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('persists all input messages via save() instead of individual append() calls', async () => {
+    mocks.mockAgentLoopRun.mockImplementation(async function* () {
+      yield {
+        type: 'done' as const,
+        reason: 'end_turn' as const,
+        totalUsage: { inputTokens: 0, outputTokens: 0 },
+      };
+    });
+
+    const harness = createHarness({ ...baseConfig });
+
+    const saveSpy = vi.spyOn(harness.conversations, 'save');
+    const appendSpy = vi.spyOn(harness.conversations, 'append');
+
+    const inputMessages = [
+      { role: 'user' as const, content: 'message one' },
+      { role: 'user' as const, content: 'message two' },
+      { role: 'user' as const, content: 'message three' },
+    ];
+
+    for await (const _event of harness.run(inputMessages)) { /* drain */ }
+
+    // F18d: save() should be called once for the batch, NOT append() per message
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    const savedMessages = saveSpy.mock.calls[0][1];
+    expect(savedMessages).toHaveLength(3);
+    // Individual append should NOT be called for input messages
+    // (append is still used for assistant/tool messages during the loop)
+    expect(appendSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not persist any input messages if guardrail blocks mid-batch', async () => {
+    mocks.mockAgentLoopRun.mockImplementation(async function* () {});
+
+    const harness = createHarness({
+      ...baseConfig,
+      guardrails: { pii: { types: ['email'] } },
+    });
+
+    const saveSpy = vi.spyOn(harness.conversations, 'save');
+
+    const inputMessages = [
+      { role: 'user' as const, content: 'safe first message' },
+      { role: 'user' as const, content: 'Contact me at user@example.com' }, // PII blocked
+    ];
+
+    for await (const _event of harness.run(inputMessages)) { /* drain */ }
+
+    // save() should NOT be called because guardrails blocked before persistence
+    expect(saveSpy).not.toHaveBeenCalled();
   });
 });

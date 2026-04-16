@@ -38,8 +38,18 @@ interface CachedEntry {
 /**
  * Module-level encoder cache. Avoids expensive encoder creation on every call.
  * Maps model name -> cached entry.
+ *
+ * F19: Bounded to {@link MAX_CACHE_SIZE} entries. When the cache exceeds the
+ * limit, the least-recently-used encoder is evicted and its WASM memory freed
+ * via `.free()`.
  */
 const encoderCache = new Map<string, CachedEntry>();
+
+/**
+ * F19: Maximum number of model encoders to retain in the cache.
+ * When exceeded, the least-recently-used encoder is evicted and freed.
+ */
+const MAX_CACHE_SIZE = 10;
 
 /** Default models to register when no model list is provided. */
 const DEFAULT_MODELS: string[] = [
@@ -120,9 +130,12 @@ export function registerTiktokenModels(models?: string[]): void {
  * @returns The created Tokenizer instance.
  */
 export function createTiktokenTokenizer(model: string): Tokenizer {
-  // Check encoder cache first
+  // Check encoder cache first — touch (delete+reinsert) to mark as recently used
   const cached = encoderCache.get(model);
   if (cached) {
+    // F19: LRU touch — move to end of insertion order
+    encoderCache.delete(model);
+    encoderCache.set(model, cached);
     return cached.tokenizer;
   }
 
@@ -159,6 +172,18 @@ export function createTiktokenTokenizer(model: string): Tokenizer {
 
   // Cache the encoder (even if undefined) so the warn fires exactly once per model.
   encoderCache.set(model, { tokenizer, encoder: encoder ?? ({ encode: () => new Uint32Array() } as NativeEncoder) });
+
+  // F19: Evict the least-recently-used encoder when the cache exceeds MAX_CACHE_SIZE.
+  // Map insertion order gives us LRU — the first key is the oldest.
+  while (encoderCache.size > MAX_CACHE_SIZE) {
+    const oldest = encoderCache.keys().next().value;
+    if (oldest === undefined) break;
+    const evicted = encoderCache.get(oldest);
+    if (evicted) {
+      evicted.encoder.free?.();
+    }
+    encoderCache.delete(oldest);
+  }
 
   registerTokenizer(model, tokenizer);
   return tokenizer;

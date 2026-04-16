@@ -71,6 +71,8 @@ export interface StreamAggregatorOptions {
   readonly cumulativeStreamBytesSoFar: number;
   /** Cap on cumulative bytes across all iterations combined. */
   readonly maxCumulativeStreamBytes: number;
+  /** Maximum number of distinct tool calls per iteration. Default: 128. */
+  readonly maxToolCalls?: number;
 }
 
 /**
@@ -163,6 +165,19 @@ export class StreamAggregator {
             return;
           }
         } else {
+          // Check tool call count limit before adding a new entry.
+          const maxToolCalls = this.options.maxToolCalls ?? 128;
+          if (this.accumulatedToolCalls.size >= maxToolCalls) {
+            yield {
+              type: 'error',
+              error: new HarnessError(
+                `Exceeded maximum number of tool calls (${maxToolCalls})`,
+                HarnessErrorCode.CORE_TOKEN_BUDGET_EXCEEDED,
+                'Reduce the number of tool calls or increase maxToolCalls',
+              ),
+            };
+            return;
+          }
           // PERF-024: New tool call — push once into the parallel array so
           // subsequent deltas mutate in place via the map reference.
           const entry = {

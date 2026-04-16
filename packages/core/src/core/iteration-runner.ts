@@ -102,6 +102,7 @@ export interface IterationRunnerConfig {
   readonly outputPipeline?: GuardrailPipeline;
   readonly traceManager?: AgentLoopTraceManager;
   readonly hooks: readonly AgentLoopHook[];
+  readonly strictHooks?: boolean;
   readonly logger?: { warn: (msg: string, meta?: Record<string, unknown>) => void };
 }
 
@@ -229,6 +230,9 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
       try {
         (fn as (i: typeof info) => void).call(hook, info);
       } catch (err) {
+        if (config.strictHooks) {
+          throw err;
+        }
         if (config.logger) {
           try {
             config.logger.warn('[harness-one/agent-loop] hook threw', {
@@ -236,8 +240,11 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
               error: err instanceof Error ? err.message : String(err),
             });
           } catch {
-            // Logger itself failed — nothing more we can safely do.
+            // Logger itself failed — fall back to console.error.
+            try { console.error('[harness-one/agent-loop] hook threw:', err); } catch { /* */ }
           }
+        } else {
+          try { console.error('[harness-one/agent-loop] hook threw:', err); } catch { /* */ }
         }
       }
     }

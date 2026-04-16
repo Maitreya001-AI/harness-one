@@ -47,6 +47,18 @@ describe('createRegistry', () => {
       registry.register(makeEchoTool('fs.readFile'));
       expect(registry.get('fs.readFile')).toBeDefined();
     });
+
+    it('F21: accepts underscored names', () => {
+      const registry = createRegistry();
+      registry.register(makeEchoTool('my_tool'));
+      expect(registry.get('my_tool')).toBeDefined();
+    });
+
+    it('F21: accepts names with dots and underscores combined', () => {
+      const registry = createRegistry();
+      registry.register(makeEchoTool('ns.my_tool'));
+      expect(registry.get('ns.my_tool')).toBeDefined();
+    });
   });
 
   describe('get', () => {

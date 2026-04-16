@@ -1134,11 +1134,11 @@ describe('createHarness() factory', () => {
 
       const harness = createHarness(anthropicConfig);
       const events: unknown[] = [];
-      for await (const event of harness.run([{ role: 'user', content: 'Hello' }])) {
+      for await (const event of harness.run([{ role: 'user', content: 'Hello' }], { sessionId: 'test-persist' })) {
         events.push(event);
       }
 
-      const stored = await harness.conversations.load('default');
+      const stored = await harness.conversations.load('test-persist');
       expect(stored).toHaveLength(1);
       expect(stored[0]).toEqual({ role: 'user', content: 'Hello' });
     });
@@ -1153,11 +1153,11 @@ describe('createHarness() factory', () => {
       });
 
       const harness = createHarness(anthropicConfig);
-      for await (const _event of harness.run([{ role: 'user', content: 'Hello' }])) {
+      for await (const _event of harness.run([{ role: 'user', content: 'Hello' }], { sessionId: 'test-persist-asst' })) {
         // consume events
       }
 
-      const stored = await harness.conversations.load('default');
+      const stored = await harness.conversations.load('test-persist-asst');
       expect(stored).toHaveLength(2); // user + assistant
       expect(stored[1]).toEqual({ role: 'assistant', content: 'Hi!' });
     });
@@ -1172,11 +1172,11 @@ describe('createHarness() factory', () => {
       });
 
       const harness = createHarness(anthropicConfig);
-      for await (const _event of harness.run([{ role: 'user', content: 'use tool' }])) {
+      for await (const _event of harness.run([{ role: 'user', content: 'use tool' }], { sessionId: 'test-persist-tool' })) {
         // consume events
       }
 
-      const stored = await harness.conversations.load('default');
+      const stored = await harness.conversations.load('test-persist-tool');
       expect(stored).toHaveLength(2); // user + tool
       expect(stored[1]).toEqual({
         role: 'tool',
@@ -1195,15 +1195,15 @@ describe('createHarness() factory', () => {
       });
 
       const harness = createHarness(anthropicConfig);
-      for await (const _event of harness.run([{ role: 'user', content: 'calc' }])) {
+      for await (const _event of harness.run([{ role: 'user', content: 'calc' }], { sessionId: 'test-persist-stringify' })) {
         // consume events
       }
 
-      const stored = await harness.conversations.load('default');
+      const stored = await harness.conversations.load('test-persist-stringify');
       expect(stored[1].content).toBe(JSON.stringify({ data: [1, 2, 3] }));
     });
 
-    it('catches and logs conversation append errors for user messages without crashing', async () => {
+    it('catches and logs conversation save errors for user messages without crashing', async () => {
       mocks.mockAgentLoopRun.mockImplementation(async function* () {
         yield {
           type: 'done' as const,
@@ -1213,11 +1213,11 @@ describe('createHarness() factory', () => {
       });
 
       const harness = createHarness(anthropicConfig);
-      // Make conversations.append throw
-      vi.spyOn(harness.conversations, 'append').mockRejectedValue(new Error('storage failure'));
+      // F18d: input messages now use save() for batch persistence
+      vi.spyOn(harness.conversations, 'save').mockRejectedValue(new Error('storage failure'));
 
       const events: unknown[] = [];
-      // Should not throw even though append fails
+      // Should not throw even though save fails
       for await (const event of harness.run([{ role: 'user', content: 'Hello' }])) {
         events.push(event);
       }
@@ -1236,12 +1236,9 @@ describe('createHarness() factory', () => {
       });
 
       const harness = createHarness(anthropicConfig);
-      // Allow first append (user msg) but fail on second (assistant msg)
-      let callCount = 0;
-      vi.spyOn(harness.conversations, 'append').mockImplementation(async () => {
-        callCount++;
-        if (callCount > 1) throw new Error('storage failure');
-      });
+      // F18d: user messages now use save() for batch persistence, so
+      // append() is only called for assistant/tool messages during the loop.
+      vi.spyOn(harness.conversations, 'append').mockRejectedValue(new Error('storage failure'));
 
       const events: unknown[] = [];
       for await (const event of harness.run([{ role: 'user', content: 'Hello' }])) {
@@ -1263,11 +1260,8 @@ describe('createHarness() factory', () => {
       });
 
       const harness = createHarness(anthropicConfig);
-      let callCount = 0;
-      vi.spyOn(harness.conversations, 'append').mockImplementation(async () => {
-        callCount++;
-        if (callCount > 1) throw new Error('storage failure');
-      });
+      // F18d: user messages use save(); append() is only for loop events.
+      vi.spyOn(harness.conversations, 'append').mockRejectedValue(new Error('storage failure'));
 
       const events: unknown[] = [];
       for await (const event of harness.run([{ role: 'user', content: 'use tool' }])) {

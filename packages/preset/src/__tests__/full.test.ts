@@ -360,9 +360,9 @@ describe('createHarness', () => {
       const harness = createHarness(baseConfig);
       const messages = [{ role: 'user' as const, content: 'Hello' }];
 
-      // Consume the async generator
+      // Consume the async generator — use explicit sessionId for lookup
       const events = [];
-      for await (const event of harness.run(messages)) {
+      for await (const event of harness.run(messages, { sessionId: 'test-auto-persist' })) {
         events.push(event);
       }
 
@@ -372,7 +372,7 @@ describe('createHarness', () => {
       expect(events[1]).toEqual(expect.objectContaining({ type: 'tool_result' }));
 
       // Verify messages were persisted to conversation store
-      const stored = await harness.conversations.load('default');
+      const stored = await harness.conversations.load('test-auto-persist');
       // Should contain: 1 input message + 1 assistant message + 1 tool message = 3
       expect(stored).toHaveLength(3);
       expect(stored[0]).toEqual({ role: 'user', content: 'Hello' });
