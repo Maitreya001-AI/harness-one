@@ -61,6 +61,8 @@ export function createInMemoryRetriever(config: {
   retrieveExtended(query: string, options?: RetrieveOptions): Promise<ExtendedRetrievalResult>;
   /** SEC-010: Index chunks scoped to a specific tenant. */
   indexScoped(chunks: readonly DocumentChunk[], tenantId: string): Promise<void>;
+  /** Clear all indexed data and caches for pipeline compatibility. */
+  clear(): void;
 } {
   const chunks: DocumentChunk[] = [];
   /** Pre-computed normalized embeddings, parallel to chunks array. undefined for chunks without embeddings. */
@@ -291,6 +293,14 @@ export function createInMemoryRetriever(config: {
         results: scored.slice(0, limit),
         skippedChunks,
       };
+    },
+
+    clear(): void {
+      chunks.length = 0;
+      normalizedEmbeddings.length = 0;
+      chunkTenants.length = 0;
+      queryEmbeddingCache.clear();
+      inflightEmbeds.clear();
     },
   });
 }

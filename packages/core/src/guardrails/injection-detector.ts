@@ -41,6 +41,10 @@ const HOMOGLYPH_MAP: Record<string, string> = {
   '\u027E': 'r', // ɾ (fish-hook r) → Latin r
   '\u028C': 'v', // ʌ (turned v) → Latin v
   '\u1E77': 'u', // ṷ (u with circumflex below) → Latin u
+  // Arabic homoglyphs
+  '\u0627': 'a', // Arabic alef → Latin a
+  '\u06BE': 'h', // Arabic heh doachashmee → Latin h
+  '\u06D5': 'e', // Arabic ae → Latin e
   // Mathematical/Roman numeral confusables
   '\u217E': 'd', // ⅾ (small roman numeral five hundred) → Latin d
   '\u217C': 'l', // ⅼ (small roman numeral fifty) → Latin l
@@ -171,7 +175,7 @@ export function createInjectionDetector(config?: {
     normalized = normalized.normalize('NFKC');
     // Apply Cyrillic-to-Latin, Greek-to-Latin, IPA, and mathematical homoglyph mapping
     // Uses unicode flag (u) to correctly handle surrogate-pair code points (U+1D400 and above)
-    normalized = normalized.replace(/[\u0430\u0435\u043E\u0441\u0440\u0443\u0445\u0456\u0501\u03BF\u03B1\u03B5\u03BD\u03BA\u03C4\u03B7\u03B9\u0251\u0261\u026A\u0274\u025B\u027E\u028C\u1E77\u217E\u217C\u2170\u2174\u2179\u{1D400}-\u{1D433}\u{1D434}-\u{1D467}]/gu, (ch) => HOMOGLYPH_MAP[ch] ?? ch);
+    normalized = normalized.replace(/[\u0430\u0435\u043E\u0441\u0440\u0443\u0445\u0456\u0501\u03BF\u03B1\u03B5\u03BD\u03BA\u03C4\u03B7\u03B9\u0251\u0261\u026A\u0274\u025B\u027E\u028C\u1E77\u0627\u06BE\u06D5\u217E\u217C\u2170\u2174\u2179\u{1D400}-\u{1D433}\u{1D434}-\u{1D467}]/gu, (ch) => HOMOGLYPH_MAP[ch] ?? ch);
     // Normalize whitespace (newlines, tabs, multiple spaces → single space)
     normalized = normalized.replace(/\s+/g, ' ');
     // Strip markdown formatting characters
@@ -202,10 +206,18 @@ export function createInjectionDetector(config?: {
       }
     } else {
       const prefix = normalized.slice(0, MAX_PATTERN_INPUT_LENGTH);
+      // Wave-8: Sample the middle section to prevent middle-payload injection bypass.
+      // Pick a window centered at the midpoint of the content.
+      const midStart = Math.max(0, Math.floor(normalized.length / 2) - Math.floor(MAX_PATTERN_INPUT_LENGTH / 2));
+      const middle = normalized.slice(midStart, midStart + MAX_PATTERN_INPUT_LENGTH);
       const suffix = normalized.slice(-MAX_PATTERN_INPUT_LENGTH);
       for (const pattern of patterns) {
         pattern.lastIndex = 0;
         if (pattern.test(prefix)) {
+          return { action: 'block', reason: 'Potential prompt injection detected: injection pattern detected' };
+        }
+        pattern.lastIndex = 0;
+        if (pattern.test(middle)) {
           return { action: 'block', reason: 'Potential prompt injection detected: injection pattern detected' };
         }
         pattern.lastIndex = 0;

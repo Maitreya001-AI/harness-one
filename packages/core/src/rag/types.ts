@@ -85,6 +85,8 @@ export interface RAGPipelineConfig {
    * passing `traceManager: createTraceManager(...)` keeps working unchanged.
    */
   readonly traceManager?: InstrumentationPort;
+  /** Optional AbortSignal to cancel in-progress ingest operations. */
+  readonly signal?: AbortSignal;
 }
 
 /**

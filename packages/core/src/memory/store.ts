@@ -282,13 +282,27 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
           ...(input.tags !== undefined && { tags: input.tags }),
         });
       }
-      for (const entry of prepared) {
-        entries.set(entry.id, entry);
-        addToIndexes(entry);
+      // Commit all entries and indexes atomically: if any index update
+      // throws, roll back all entries written in this batch.
+      const committedIds: string[] = [];
+      try {
+        for (const entry of prepared) {
+          entries.set(entry.id, entry);
+          addToIndexes(entry);
+          committedIds.push(entry.id);
+        }
+      } catch (err) {
+        // Rollback: remove all entries and indexes from this batch
+        for (const id of committedIds) {
+          const entry = entries.get(id);
+          if (entry) {
+            removeFromIndexes(entry);
+            entries.delete(id);
+          }
+        }
+        throw err;
       }
       // Apply grade-aware eviction after batch commit (same logic as write()).
-      // addToIndexes already maintains gradeIndex, so we just walk the
-      // eviction order until we're back under the cap.
       if (maxEntries !== undefined) {
         while (entries.size > maxEntries) {
           let victimId: string | undefined;
@@ -491,19 +505,37 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
 
     async searchByVector(options: VectorSearchOptions) {
       const { embedding, limit = 10, minScore = 0 } = options;
-      const scored: Array<MemoryEntry & { score: number }> = [];
+      // Use a bounded min-heap approach: maintain only top-K results
+      // to avoid O(N log N) sort when only top-K is needed.
+      const topK: Array<MemoryEntry & { score: number }> = [];
+      let minInTopK = Infinity;
 
       for (const entry of entries.values()) {
         const entryEmbedding = entry.metadata?.['embedding'];
         if (!Array.isArray(entryEmbedding)) continue;
         const score = cosineSimilarity(embedding, entryEmbedding as number[]);
-        if (score >= minScore) {
-          scored.push({ ...entry, score });
+        if (score < minScore) continue;
+
+        if (topK.length < limit) {
+          topK.push({ ...entry, score });
+          if (score < minInTopK) minInTopK = score;
+        } else if (score > minInTopK) {
+          // Find and replace the minimum element
+          let minIdx = 0;
+          for (let i = 1; i < topK.length; i++) {
+            if (topK[i].score < topK[minIdx].score) minIdx = i;
+          }
+          topK[minIdx] = { ...entry, score };
+          // Recompute min
+          minInTopK = topK[0].score;
+          for (let i = 1; i < topK.length; i++) {
+            if (topK[i].score < minInTopK) minInTopK = topK[i].score;
+          }
         }
       }
 
-      scored.sort((a, b) => b.score - a.score);
-      return scored.slice(0, limit);
+      topK.sort((a, b) => b.score - a.score);
+      return topK;
     },
   };
 }

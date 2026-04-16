@@ -307,6 +307,11 @@ const boundary = createContextBoundary(orch.context, [
 - **依赖**: `core/agent-loop.ts`（AgentLoop 类型）、`core/errors.ts`（HarnessError）、`orchestration/orchestrator.ts`（AgentOrchestrator 接口；Handoff 仅需 MessageTransport）
 - **被依赖**: 无直接模块依赖
 
+## Wave-8 Production Hardening
+
+1. **Orchestrator 优雅排空与关闭**：新增 `drainAndDispose(timeoutMs?)` 方法，等待所有进行中的委派完成后再执行 dispose，实现优雅关闭。
+2. **关闭后拒绝委派**：调用 `drainAndDispose()` 后，后续的 `delegate()` 调用将抛出 `CORE_INVALID_STATE` 错误，防止在关闭过程中接受新的委派请求。
+
 ## 已知限制
 
 - Agent Pool 不支持 Agent 状态持久化（重启后池为空）

@@ -24,6 +24,8 @@ export interface ContextRelay {
    * @param options - Retry configuration. Defaults: maxRetries=3, backoffMs=100.
    */
   saveWithRetry(state: RelayState, options?: { maxRetries?: number; backoffMs?: number }): Promise<void>;
+  /** Release internal references. After dispose(), save/load/checkpoint/addArtifact will throw. */
+  dispose(): void;
 }
 
 /** Relay state with optimistic concurrency version. */
@@ -157,17 +159,31 @@ export function createRelay(config: {
     }
   }
 
+  let disposed = false;
+  function assertNotDisposed(): void {
+    if (disposed) {
+      throw new HarnessError(
+        'ContextRelay has been disposed',
+        HarnessErrorCode.CORE_INVALID_STATE,
+        'Do not use a relay after calling dispose()',
+      );
+    }
+  }
+
   return {
     async save(state) {
+      assertNotDisposed();
       await updateWithGuard(() => state);
     },
 
     async load() {
+      assertNotDisposed();
       const existing = await findRelay();
       return existing?.state ?? null;
     },
 
     async checkpoint(progress) {
+      assertNotDisposed();
       // CQ-005: routes through updateWithGuard so version conflicts are
       // detected the same way as save(). Previously this path skipped the
       // version check and could silently clobber concurrent writes.
@@ -190,6 +206,7 @@ export function createRelay(config: {
     },
 
     async addArtifact(path) {
+      assertNotDisposed();
       // CQ-005: same version-checked path as save() — prevents silent
       // overwrite when multiple writers race on artifact lists.
       await updateWithGuard((current) => {
@@ -214,6 +231,7 @@ export function createRelay(config: {
      * Uses exponential backoff between retries.
      */
     async saveWithRetry(state, options) {
+      assertNotDisposed();
       const maxRetries = options?.maxRetries ?? 3;
       const backoffMs = options?.backoffMs ?? 100;
 
@@ -242,6 +260,12 @@ export function createRelay(config: {
         }
       }
       throw lastError;
+    },
+
+    dispose(): void {
+      disposed = true;
+      currentId = null;
+      lastKnownVersion = 0;
     },
   };
 }

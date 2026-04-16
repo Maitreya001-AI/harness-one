@@ -60,6 +60,8 @@ export interface HarnessLifecycle {
   readonly beginDrain: () => void;
   readonly completeShutdown: () => void;
   readonly forceShutdown: () => void;
+  /** Run all health checks and only transition to ready if all are 'up'. Throws if any check is 'down'. */
+  readonly markReadyAfterHealthCheck: () => Promise<void>;
   /** Release all registered health check references and transition to shutdown. */
   readonly dispose: () => void;
 }
@@ -79,7 +81,7 @@ export function createHarnessLifecycle(): HarnessLifecycle {
     state = next;
   }
 
-  return {
+  const lifecycle: HarnessLifecycle = {
     status: () => state,
     registerHealthCheck: (name, check) => {
       checks.set(name, check);
@@ -111,6 +113,20 @@ export function createHarnessLifecycle(): HarnessLifecycle {
       };
     },
     markReady: () => assertTransition('ready', ['init']),
+    markReadyAfterHealthCheck: async () => {
+      const healthResult = await lifecycle.health();
+      const downComponents = Object.entries(healthResult.components)
+        .filter(([, h]) => h.status === 'down');
+      if (downComponents.length > 0) {
+        const names = downComponents.map(([n]) => n).join(', ');
+        throw new HarnessError(
+          `Cannot mark ready: components are down: ${names}`,
+          HarnessErrorCode.CORE_INVALID_STATE,
+          'Fix failing health checks before marking the harness as ready',
+        );
+      }
+      assertTransition('ready', ['init']);
+    },
     beginDrain: () => assertTransition('draining', ['ready']),
     completeShutdown: () => assertTransition('shutdown', ['draining']),
     forceShutdown: () => {
@@ -122,4 +138,5 @@ export function createHarnessLifecycle(): HarnessLifecycle {
       state = 'shutdown';
     },
   };
+  return lifecycle;
 }

@@ -121,11 +121,13 @@ export function createBudget(config: BudgetConfig): TokenBudget {
       const entries: Array<{ segment: string; trimBy: number; priority: number }> = [];
       for (const [name, seg] of segmentState) {
         if (seg.reserved || seg.used === 0) continue;
-        entries.push({
-          segment: name,
-          trimBy: seg.used,
-          priority: seg.trimPriority,
-        });
+        entries.push(
+          Object.freeze({
+            segment: name,
+            trimBy: seg.used,
+            priority: seg.trimPriority,
+          }),
+        );
       }
       // Sort by trimPriority descending (highest first = trim first)
       entries.sort((a, b) => b.priority - a.priority);

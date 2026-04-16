@@ -66,6 +66,8 @@ export interface AgentOrchestrator {
   getChildren(parentId: string): AgentRegistration[];
   /** Dispose the orchestrator, clearing all agents, queues, and handlers. */
   dispose(): void;
+  /** Dispose the orchestrator after waiting for in-flight delegations. */
+  drainAndDispose(timeoutMs?: number): Promise<void>;
   /** Get the orchestration mode. */
   readonly mode: OrchestrationMode;
   /** OBS-009: Runtime metrics snapshot (includes cumulative message drops). */
@@ -127,6 +129,9 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
     status: AgentStatus;
     metadata?: Record<string, unknown>;
   }
+
+  let inflightDelegations = 0;
+  let disposed = false;
 
   const agents = new Map<string, MutableAgentRegistration>();
   // PERF-017: Set-backed handler registry for O(1) unsubscribe.
@@ -412,6 +417,13 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
     },
 
     async delegate(task: DelegationTask): Promise<string | undefined> {
+      if (disposed) {
+        throw new HarnessError(
+          'Orchestrator is disposing, cannot accept new delegations',
+          HarnessErrorCode.CORE_INVALID_STATE,
+          'Wait for drainAndDispose() to complete',
+        );
+      }
       if (!strategy) return undefined;
       // A1-1 (Wave 4b): the cycle-detection window ("inspect delegationChain
       // -> await strategy.select -> mutate delegationChain") is a TOCTOU gap
@@ -467,10 +479,18 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
         }
         return selectedId;
       };
+      const trackedDelegation = async (): Promise<string | undefined> => {
+        inflightDelegations++;
+        try {
+          return await runDelegation();
+        } finally {
+          inflightDelegations--;
+        }
+      };
       if (delegatedFromKey) {
-        return getDelegationLock(delegatedFromKey).withLock(runDelegation);
+        return getDelegationLock(delegatedFromKey).withLock(trackedDelegation);
       }
-      return runDelegation();
+      return trackedDelegation();
     },
 
     get context(): SharedContext {
@@ -504,6 +524,16 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
       delegationChain.clear();
       delegationLocks.clear();
       droppedMessages = 0;
+    },
+
+    async drainAndDispose(timeoutMs: number = 30_000): Promise<void> {
+      disposed = true;
+      // Wait for in-flight delegations to complete
+      const deadline = Date.now() + timeoutMs;
+      while (inflightDelegations > 0 && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      orchestrator.dispose();
     },
 
     getMetrics(): OrchestratorMetrics {

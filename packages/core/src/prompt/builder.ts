@@ -7,6 +7,7 @@
 import { createHash } from 'node:crypto';
 
 import type { PromptLayer, AssembledPrompt } from './types.js';
+import { HarnessError, HarnessErrorCode } from '../core/errors.js';
 import { estimateTokens as estimateTokensInternal } from '../infra/token-estimator.js';
 
 /** Builder for assembling multi-layer prompts with cache optimization. */
@@ -64,8 +65,9 @@ export function createPromptBuilder(config?: {
       const value = variables.get(key);
       if (value === undefined) return `{{${key}}}`;
       if (sanitize) {
-        // Strip any {{...}} patterns from injected values to prevent recursive expansion
-        return value.replace(/\{\{(\w+)\}\}/g, '$1');
+        // Replace any {{...}} patterns in injected values with empty string
+        // to prevent recursive expansion and variable name leakage
+        return value.replace(/\{\{(\w+)\}\}/g, '');
       }
       return value;
     });
@@ -86,6 +88,13 @@ export function createPromptBuilder(config?: {
 
   return {
     addLayer(layer: PromptLayer): void {
+      if (!layer.name || typeof layer.name !== 'string' || layer.name.trim().length === 0) {
+        throw new HarnessError(
+          'Layer name must be a non-empty string',
+          HarnessErrorCode.CORE_INVALID_CONFIG,
+          'Provide a non-empty name for the prompt layer',
+        );
+      }
       layers.set(layer.name, Object.freeze({ ...layer }));
       dirty = true;
       cachedPrefixHash = undefined;

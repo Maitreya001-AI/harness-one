@@ -21,6 +21,9 @@ import { LRUCache } from './lru-cache.js';
  * A cached value of `null` means the pattern was previously rejected
  * (invalid regex) — we remember that so repeated attempts don't re-throw.
  */
+/** Maximum recursion depth for schema validation to prevent stack overflow from pathological inputs. */
+const MAX_VALIDATION_DEPTH = 64;
+
 const REGEX_CACHE_MAX = 256;
 const regexCache = new LRUCache<string, RegExp | null>(REGEX_CACHE_MAX);
 
@@ -158,7 +161,7 @@ export function validateJsonSchema(
   schema: object,
   data: unknown,
 ): ValidationResult {
-  const errors: ValidationError[] = [];
+  const errors: (ValidationError & { keyword?: string })[] = [];
   validate(schema as SchemaObject, data, '', errors);
   const warnings = detectUnsupportedKeywords(schema as Record<string, unknown>);
   return { valid: errors.length === 0, errors, warnings };
@@ -192,8 +195,14 @@ function validate(
   schema: SchemaObject,
   data: unknown,
   path: string,
-  errors: ValidationError[],
+  errors: (ValidationError & { keyword?: string })[],
+  depth: number = 0,
 ): void {
+  if (depth >= MAX_VALIDATION_DEPTH) {
+    errors.push({ path, message: `Maximum validation depth (${MAX_VALIDATION_DEPTH}) exceeded`, keyword: 'maxDepth' });
+    return;
+  }
+
   // Enum check (can be standalone without type)
   if (schema.enum !== undefined) {
     if (!schema.enum.some((v) => strictEqual(v, data))) {
@@ -272,7 +281,7 @@ function validate(
         if (DANGEROUS_PROP_NAMES.has(key)) continue;
         const propSchema = schema.properties[key];
         if (hasOwn(obj, key) && obj[key] !== undefined) {
-          validate(propSchema, obj[key], `${path}.${key}`, errors);
+          validate(propSchema, obj[key], `${path}.${key}`, errors, depth + 1);
         }
       }
     }
@@ -301,7 +310,7 @@ function validate(
   // Array constraints
   if (Array.isArray(data) && schema.items) {
     for (let i = 0; i < data.length; i++) {
-      validate(schema.items, data[i], `${path}[${i}]`, errors);
+      validate(schema.items, data[i], `${path}[${i}]`, errors, depth + 1);
     }
   }
 }

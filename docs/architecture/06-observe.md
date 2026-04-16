@@ -286,6 +286,11 @@ function createCacheMonitor(config?: CacheMonitorConfig): CacheMonitor
 - **成本节约估算** —— `estimatedSavings = cacheReadTokens × (inputPrice - cacheReadPrice) / 1000`，下限为 0
 - **数据淘汰** —— 原始数据点超过 `maxBuckets × 10` 时，从最旧端淘汰
 
+## Wave-8 Production Hardening
+
+1. **Lifecycle markReadyAfterHealthCheck()**：新增异步方法 `markReadyAfterHealthCheck()`，在状态转换为 ready 之前先运行所有已注册的健康检查，若任一组件状态为 `'down'` 则拒绝转换（reject），确保系统不会在组件异常时进入就绪状态。
+2. **成本追踪器防篡改**：`updateUsage()` 现在拒绝降低 token 计数的尝试（即 inputTokens 或 outputTokens 不允许减少），防止通过回溯性缩减用量来操控成本数据。
+
 ## 已知限制
 
 - TraceManager 不支持跨进程的分布式追踪关联

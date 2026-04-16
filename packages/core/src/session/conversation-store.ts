@@ -90,6 +90,8 @@ export interface ConversationStore {
   delete(sessionId: string): Promise<boolean>;
   /** List all session IDs that have stored conversations. */
   list(): Promise<string[]>;
+  /** Clear all stored conversations. Optional — not all backends support this. */
+  clear?(): Promise<void>;
 }
 
 /**
@@ -212,6 +214,10 @@ export function createInMemoryConversationStore(config?: ConversationStoreConfig
     },
     async list() {
       return [...store.keys()];
+    },
+    async clear() {
+      store.clear();
+      unboundedWarned = false;
     },
   };
 }

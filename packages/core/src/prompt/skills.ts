@@ -215,6 +215,32 @@ export function createSkillEngine(config?: SkillEngineConfig): SkillEngine {
         }
       }
 
+      // Detect cycles in stage transitions
+      function hasCycle(stageId: string, visited: Set<string>, path: Set<string>): boolean {
+        if (path.has(stageId)) return true;
+        if (visited.has(stageId)) return false;
+        visited.add(stageId);
+        path.add(stageId);
+        const stage = stageMap.get(stageId);
+        if (stage?.transitions) {
+          for (const t of stage.transitions) {
+            if (hasCycle(t.to, visited, path)) return true;
+          }
+        }
+        path.delete(stageId);
+        return false;
+      }
+
+      for (const stage of skill.stages) {
+        if (hasCycle(stage.id, new Set(), new Set())) {
+          throw new HarnessError(
+            `Cycle detected in skill "${skill.id}" stage transitions involving stage "${stage.id}"`,
+            HarnessErrorCode.CORE_INVALID_CONFIG,
+            'Remove circular references in stage transitions',
+          );
+        }
+      }
+
       stageMaps.set(skill.id, stageMap);
 
       skills.set(skill.id, skill);

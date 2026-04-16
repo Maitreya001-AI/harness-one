@@ -29,6 +29,7 @@ interface PipelineInternalData {
   failClosed: boolean;
   onEvent: ((event: GuardrailEvent) => void) | undefined;
   maxResults: number;
+  totalTimeoutMs: number;
 }
 
 /**
@@ -81,6 +82,8 @@ export function createPipeline(config: {
   onEvent?: (event: GuardrailEvent) => void;
   /** Default timeout (ms) for guards that don't specify their own timeoutMs. Default: 5000. Set to 0 to disable. */
   defaultTimeoutMs?: number;
+  /** Maximum total time (ms) for all guards combined. Default: 30000 (30s). Set to 0 to disable. */
+  totalTimeoutMs?: number;
   /** Maximum number of guardrail events to retain in results. Oldest non-error events are evicted when exceeded. Default: 1000. */
   maxResults?: number;
 }): GuardrailPipeline {
@@ -103,6 +106,7 @@ export function createPipeline(config: {
     failClosed: config.failClosed ?? true,
     onEvent: config.onEvent,
     maxResults: config.maxResults ?? 1000,
+    totalTimeoutMs: config.totalTimeoutMs ?? 30_000,
   };
   // CQ-031: the public `GuardrailPipeline` token is a plain opaque object.
   // Its internal state lives in the module-scoped `internalRegistry` WeakMap
@@ -176,8 +180,26 @@ async function runGuardrails(
   let currentCtx: GuardrailContext = ctx.meta ? { ...ctx, meta: { ...ctx.meta } } : { ...ctx };
   let lastModifyVerdict: GuardrailEvent['verdict'] | undefined;
   let hasModified = false;
+  const pipelineStart = performance.now();
 
   for (const entry of guards) {
+    if (pipeline.totalTimeoutMs > 0) {
+      const elapsed = performance.now() - pipelineStart;
+      if (elapsed >= pipeline.totalTimeoutMs) {
+        const timeoutVerdict: GuardrailEvent['verdict'] = pipeline.failClosed
+          ? { action: 'block', reason: `Guardrail pipeline total timeout exceeded (${pipeline.totalTimeoutMs}ms)` }
+          : { action: 'allow', reason: `Guardrail pipeline total timeout exceeded (fail-open, ${pipeline.totalTimeoutMs}ms)` };
+        const timeoutEvent: GuardrailEvent = {
+          guardrail: entry.name,
+          direction,
+          verdict: timeoutVerdict,
+          latencyMs: elapsed,
+        };
+        buffer.push(timeoutEvent);
+        pipeline.onEvent?.(timeoutEvent);
+        return { passed: !pipeline.failClosed, verdict: timeoutVerdict, results };
+      }
+    }
     const start = performance.now();
     let verdict: GuardrailEvent['verdict'];
     // Deep clone meta for each guard to prevent cross-guard mutation

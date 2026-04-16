@@ -5,7 +5,7 @@
  */
 
 import type { Document, DocumentChunk, IngestMetrics, RAGPipeline, RAGPipelineConfig } from './types.js';
-import { HarnessError, HarnessErrorCode} from '../core/errors.js';
+import { HarnessError, HarnessErrorCode, AbortedError } from '../core/errors.js';
 
 /** Fix 18: Result of an ingest operation with capacity signaling. */
 export interface IngestResult {
@@ -102,6 +102,10 @@ export function createRAGPipeline(config: RAGPipelineConfig): RAGPipeline {
   async function chunkAndIndex(documents: Document[], parentTraceId?: string): Promise<number> {
     const tm = config.traceManager;
 
+    if (config.signal?.aborted) {
+      throw new AbortedError();
+    }
+
     // Fix 22: Validate embedding before indexing if enabled
     try {
       await validateEmbeddingIfEnabled();
@@ -184,6 +188,10 @@ export function createRAGPipeline(config: RAGPipelineConfig): RAGPipeline {
     const failedChunks: string[] = [];
 
     for (let batchStart = 0; batchStart < chunks.length; batchStart += BATCH_SIZE) {
+      if (config.signal?.aborted) {
+        throw new AbortedError();
+      }
+
       const batchEnd = Math.min(batchStart + BATCH_SIZE, chunks.length);
       const batch = chunks.slice(batchStart, batchEnd);
 

@@ -483,6 +483,21 @@ export function createCostTracker(config?: {
 
       if (!existingRecord || existingIndex === -1) return undefined;
 
+      if (usage.inputTokens !== undefined && usage.inputTokens < existingRecord.inputTokens) {
+        throw new HarnessError(
+          `Cannot reduce inputTokens from ${existingRecord.inputTokens} to ${usage.inputTokens}`,
+          HarnessErrorCode.CORE_INVALID_INPUT,
+          'Token counts can only increase via updateUsage()',
+        );
+      }
+      if (usage.outputTokens !== undefined && usage.outputTokens < existingRecord.outputTokens) {
+        throw new HarnessError(
+          `Cannot reduce outputTokens from ${existingRecord.outputTokens} to ${usage.outputTokens}`,
+          HarnessErrorCode.CORE_INVALID_INPUT,
+          'Token counts can only increase via updateUsage()',
+        );
+      }
+
       // Build the updated record with merged token counts
       const updatedFields: Omit<TokenUsageRecord, 'estimatedCost' | 'timestamp'> = {
         traceId: existingRecord.traceId,

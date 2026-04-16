@@ -164,8 +164,14 @@ const injected = results.filter((r) => {
 4. **去重在嵌入之前** —— 重复 chunk 在 embedding API 调用之前过滤，避免浪费嵌入配额
 5. **查询缓存** —— 对相同查询文本复用嵌入向量，减少重复的嵌入 API 调用
 
+## Wave-8 Production Hardening
+
+1. **AbortSignal 支持**：`RAGPipelineConfig.signal` 新增可选的 `AbortSignal` 字段，允许调用方取消进行中的 ingest 操作。
+2. **CJK 词边界检测**：分块策略现在识别 CJK（中日韩）字符边界，并正确保留 surrogate pair（emoji），避免在 CJK 文本或 emoji 中间截断。
+3. **Retriever clear()**：内存检索器 `createInMemoryRetriever` 新增 `clear()` 方法，可重置所有已索引的 chunk 和缓存。
+
 ## 已知限制
 
 - `createInMemoryRetriever` 不支持持久化——进程重启后需重新索引
 - 余弦相似度为精确搜索，数据量大时性能随 chunk 数线性下降（无近似向量搜索）
-- `clear()` 仅清除流水线状态，不清除已创建的检索器内部数据（可重用检索器的场景需注意）
+- `clear()` 仅清除流水线状态；内存检索器可通过 `retriever.clear()` 单独重置索引和缓存（Wave-8 新增）

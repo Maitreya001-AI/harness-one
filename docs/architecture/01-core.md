@@ -249,6 +249,10 @@ AgentLoop 在超出 token 预算时裁剪历史对话。裁剪逻辑始终保留
 3. **token 非负 clamp**——`Math.max(0, ...)` 防止恶意 adapter 通过负数绕过预算检查
 4. **HarnessError 层级**——每个子类携带 `.code`（程序判断）+ `.suggestion`（人类可读修复建议）
 
+## Wave-8 Production Hardening
+
+1. **JSON Schema 递归深度限制**：`validate()` 现在强制 `MAX_VALIDATION_DEPTH=64` 的递归深度上限，防止病态 schema（如深度嵌套的 `$ref` 或递归定义）导致的栈溢出。
+
 ## 已知限制
 
 - 累计 token 检查在调用 LLM **之前**进行，不含当次调用的 token

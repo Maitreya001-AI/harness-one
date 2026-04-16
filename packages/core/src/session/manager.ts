@@ -346,15 +346,20 @@ export function createSessionManager(config?: {
 
     list(): Session[] {
       const result: Session[] = [];
+      const newlyExpired: SessionId[] = [];
       for (const session of sessions.values()) {
         if (session.status === 'active' && isExpired(session)) {
           session.status = 'expired';
-          emit('expired', session.id);
+          newlyExpired.push(session.id);
         }
         // Only return non-expired sessions — expired sessions are logically deleted.
         if (session.status !== 'expired') {
           result.push(toReadonly(session));
         }
+      }
+      // Emit events after iteration to avoid re-entrancy during Map iteration
+      for (const id of newlyExpired) {
+        emit('expired', id);
       }
       return result;
     },

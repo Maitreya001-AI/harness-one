@@ -11,16 +11,30 @@ import type { ChunkingStrategy, Document, DocumentChunk } from './types.js';
  * Fix 20: Find the nearest word boundary by searching backward from a position.
  * Returns the adjusted position that does not split a word.
  * If no whitespace is found, returns the original position.
+ *
+ * Wave-8: Also recognizes CJK character boundaries. CJK characters can be
+ * split at any character boundary since each character is a word.
  */
+const CJK_RANGE = /[\u2E80-\u9FFF\uF900-\uFAFF\uFE30-\uFE4F\u{20000}-\u{2FA1F}]/u;
+
 function findWordBoundary(text: string, position: number): number {
   if (position >= text.length) return position;
-  // If we're already at a whitespace or the next char is whitespace, no adjustment needed
   if (position === 0) return position;
-  // Check if we're at a word boundary already
+  // Guard against splitting surrogate pairs: if position lands on a low
+  // surrogate (second half of a pair), return as-is so the pair stays intact.
+  // Adjusting backward would skip the high surrogate entirely.
+  const code = text.charCodeAt(position);
+  if (code >= 0xDC00 && code <= 0xDFFF) return position;
+  // If we're at a whitespace or CJK boundary, no adjustment needed
   if (/\s/.test(text[position]) || /\s/.test(text[position - 1])) return position;
-  // Search backward for nearest whitespace
+  // CJK characters are self-delimiting — any position between them is a valid boundary
+  if (CJK_RANGE.test(text[position]) || CJK_RANGE.test(text[position - 1])) return position;
+  // Search backward for nearest whitespace or CJK character
   for (let i = position - 1; i > 0; i--) {
-    if (/\s/.test(text[i])) {
+    // Skip lone surrogates to avoid splitting emoji/supplementary characters
+    const c = text.charCodeAt(i);
+    if (c >= 0xD800 && c <= 0xDFFF) continue;
+    if (/\s/.test(text[i]) || CJK_RANGE.test(text[i])) {
       return i + 1;
     }
   }
