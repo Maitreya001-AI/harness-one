@@ -53,6 +53,8 @@ export function createRelay(config: {
   relayKey?: string;
   /** Fix 23: Optional callback invoked when corrupt data is detected during load. */
   onCorruption?: (id: string, error: Error) => void;
+  /** Optional logger for surfacing corruption warnings when onCorruption is not set. */
+  logger?: { warn: (msg: string, meta?: Record<string, unknown>) => void };
 }): ContextRelay {
   const store = config.store;
   const relayKey = config.relayKey ?? '__relay__';
@@ -65,17 +67,29 @@ export function createRelay(config: {
    * invalid JSON or schema mismatch). Corruption is forwarded to onCorruption
    * if provided — the caller decides whether to log, re-issue, or raise.
    */
+  const logger = config.logger;
+
+  function reportCorruption(entryId: string, error: Error): void {
+    if (onCorruption) {
+      onCorruption(entryId, error);
+    } else if (logger) {
+      try {
+        logger.warn('Relay state corruption detected', { entryId, error: error.message });
+      } catch { /* logger failure non-fatal */ }
+    }
+  }
+
   function parseRelayContent(entryId: string, content: string): VersionedRelayState | null {
     const parsed = parseJsonSafe(content);
     if (!parsed.ok) {
-      if (onCorruption) onCorruption(entryId, parsed.error);
+      reportCorruption(entryId, parsed.error);
       return null;
     }
     try {
       const validated = validateRelayState(parsed.value);
       return validated as VersionedRelayState;
     } catch (err) {
-      if (onCorruption) onCorruption(entryId, err instanceof Error ? err : new Error(String(err)));
+      reportCorruption(entryId, err instanceof Error ? err : new Error(String(err)));
       return null;
     }
   }

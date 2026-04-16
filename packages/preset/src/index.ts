@@ -7,8 +7,8 @@
  * @module
  */
 
-import { AgentLoop, HarnessError, createMiddlewareChain, HarnessErrorCode} from 'harness-one/core';
-import type { AgentAdapter, Message, AgentEvent, MiddlewareChain } from 'harness-one/core';
+import { createAgentLoop, HarnessError, createMiddlewareChain, HarnessErrorCode} from 'harness-one/core';
+import type { AgentAdapter, Message, AgentEvent, MiddlewareChain, AgentLoop } from 'harness-one/core';
 import { createTraceManager, createConsoleExporter, createCostTracker, createLogger } from 'harness-one/observe';
 import type { TraceExporter, TraceManager, CostTracker, ModelPricing, Logger } from 'harness-one/observe';
 import { createPromptBuilder } from 'harness-one/prompt';
@@ -289,6 +289,18 @@ export function createHarness(config: HarnessConfig): Harness {
       }
     }
   }
+  if (
+    config.maxAdapterRetries !== undefined &&
+    (!Number.isInteger(config.maxAdapterRetries) || config.maxAdapterRetries < 0)
+  ) {
+    throw new HarnessError('maxAdapterRetries must be a non-negative integer', HarnessErrorCode.CORE_INVALID_CONFIG, 'Use an integer >= 0');
+  }
+  if (
+    config.baseRetryDelayMs !== undefined &&
+    (!Number.isFinite(config.baseRetryDelayMs) || config.baseRetryDelayMs < 0)
+  ) {
+    throw new HarnessError('baseRetryDelayMs must be a non-negative finite number', HarnessErrorCode.CORE_INVALID_CONFIG, 'Use a value >= 0');
+  }
 
   // 1. Adapter — prefer injected adapter; fall back to provider-based factory
   const adapter: AgentAdapter = config.adapter ?? createAdapter(config as AnthropicHarnessConfig | OpenAIHarnessConfig);
@@ -378,7 +390,7 @@ export function createHarness(config: HarnessConfig): Harness {
 
   // 17. Agent loop — wire the shared traceManager so iteration/tool spans
   // appear alongside harness-level spans in a unified trace backend.
-  const loop = new AgentLoop({
+  const loop = createAgentLoop({
     adapter,
     traceManager: traces,
     ...(config.maxIterations !== undefined && { maxIterations: config.maxIterations }),
@@ -658,21 +670,21 @@ export function createHarness(config: HarnessConfig): Harness {
             await Promise.resolve(result as Promise<void>);
           }
         } catch (err) {
-          logger.warn('AgentLoop dispose error', { error: err });
+          try { logger.warn('AgentLoop dispose error', { error: err }); } catch { /* logger failure non-fatal */ }
         }
 
         // 2. Session manager (stops GC timer, clears session store).
         try {
           await Promise.resolve(sessions.dispose());
         } catch (err) {
-          logger.warn('SessionManager dispose error', { error: err });
+          try { logger.warn('SessionManager dispose error', { error: err }); } catch { /* logger failure non-fatal */ }
         }
 
         // 3. Middleware chain — drop references so closures can be GC'd.
         try {
           middleware.clear();
         } catch (err) {
-          logger.warn('Middleware clear error', { error: err });
+          try { logger.warn('Middleware clear error', { error: err }); } catch { /* logger failure non-fatal */ }
         }
 
         // 4. Trace manager — settles pendingExports, flushes, then races
@@ -682,7 +694,7 @@ export function createHarness(config: HarnessConfig): Harness {
         try {
           await traces.dispose();
         } catch (err) {
-          logger.warn('TraceManager dispose error', { error: err });
+          try { logger.warn('TraceManager dispose error', { error: err }); } catch { /* logger failure non-fatal */ }
         }
       })();
       return shutdownPromise;

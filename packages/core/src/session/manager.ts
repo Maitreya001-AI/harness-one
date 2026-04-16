@@ -139,7 +139,8 @@ export function createSessionManager(config?: {
       }
       while (pendingEvents.length > 0) {
         const queued = pendingEvents.shift() as SessionEvent;
-        for (const handler of eventHandlers) {
+        const snapshot = [...eventHandlers];
+        for (const handler of snapshot) {
           try { handler(queued); } catch {
             _droppedHandlerErrors++;
           }
@@ -308,6 +309,16 @@ export function createSessionManager(config?: {
           `Session not found: ${id}`,
           HarnessErrorCode.SESSION_NOT_FOUND,
           'Create a session before locking it',
+        );
+      }
+
+      if (session.status === 'expired' || (session.status === 'active' && isExpired(session))) {
+        session.status = 'expired';
+        emit('expired', key);
+        throw new HarnessError(
+          `Session has expired: ${id}`,
+          HarnessErrorCode.SESSION_EXPIRED,
+          'Create a new session',
         );
       }
 

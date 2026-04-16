@@ -69,7 +69,7 @@ vi.mock('harness-one/core', async (importOriginal) => {
   const original = await importOriginal<typeof import('harness-one/core')>();
   return {
     ...original,
-    AgentLoop: mocks.MockAgentLoop,
+    createAgentLoop: mocks.MockAgentLoop,
   };
 });
 

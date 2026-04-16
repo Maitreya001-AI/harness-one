@@ -422,17 +422,13 @@ describe('createInMemoryRetriever', () => {
   // ---- Edge cases ----
 
   describe('edge cases', () => {
-    it('handles mismatched embedding dimensions (returns score 0)', async () => {
+    it('throws on mismatched embedding dimensions', async () => {
       const retriever = createInMemoryRetriever({ embedding });
 
       // 2-dim embedding but mock produces 4-dim queries
       await retriever.index([chunk('c1', 'mismatch', [1, 0])]);
 
-      const results = await retriever.retrieve('test', { limit: 10 });
-      const result = results.find((r) => r.chunk.id === 'c1');
-      if (result) {
-        expect(result.score).toBe(0);
-      }
+      await expect(retriever.retrieve('test', { limit: 10 })).rejects.toThrow('dimension mismatch');
     });
 
     it('returns a frozen retriever object', () => {

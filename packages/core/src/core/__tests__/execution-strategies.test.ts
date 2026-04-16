@@ -37,7 +37,7 @@ describe('createSequentialStrategy', () => {
 
     const results = await strategy.execute(calls, handler);
 
-    expect(results[0]).toEqual({ toolCallId: '1', result: { error: 'boom' } });
+    expect(results[0]).toMatchObject({ toolCallId: '1', result: { error: 'boom' } });
   });
 });
 
@@ -119,7 +119,7 @@ describe('createParallelStrategy', () => {
     const results = await strategy.execute(calls, handler);
 
     expect(results[0]).toEqual({ toolCallId: '1', result: 'ok-1' });
-    expect(results[1]).toEqual({ toolCallId: '2', result: { error: 'kaboom' } });
+    expect(results[1]).toMatchObject({ toolCallId: '2', result: { error: 'kaboom' } });
     expect(results[2]).toEqual({ toolCallId: '3', result: 'ok-3' });
   });
 

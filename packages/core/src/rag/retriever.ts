@@ -98,7 +98,14 @@ export function createInMemoryRetriever(config: {
   }
 
   function dotProduct(a: readonly number[], b: readonly number[]): number {
-    if (a.length !== b.length || a.length === 0) return 0;
+    if (a.length === 0) return 0;
+    if (a.length !== b.length) {
+      throw new HarnessError(
+        `Embedding dimension mismatch: query has ${a.length} dimensions but indexed chunk has ${b.length}`,
+        HarnessErrorCode.RAG_EMBEDDING_MISMATCH,
+        'Ensure query and document embeddings use the same model',
+      );
+    }
     let dot = 0;
     for (let i = 0; i < a.length; i++) {
       dot += a[i] * b[i];
@@ -110,11 +117,12 @@ export function createInMemoryRetriever(config: {
   // Unique escaping ('|' between segments + 't='/'s=' labels) prevents
   // collisions across distinct (tenant, query) pairs.
   function buildCacheKey(query: string, tenant?: string, scope?: string): string {
+    const esc = (s: string): string => s.replace(/\\/g, '\\\\').replace(/\|/g, '\\|');
     const parts: string[] = [];
-    if (cacheVersion) parts.push(`v=${cacheVersion}`);
-    if (tenant !== undefined) parts.push(`t=${tenant}`);
-    if (scope !== undefined) parts.push(`s=${scope}`);
-    parts.push(`q=${query}`);
+    if (cacheVersion) parts.push(`v=${esc(cacheVersion)}`);
+    if (tenant !== undefined) parts.push(`t=${esc(tenant)}`);
+    if (scope !== undefined) parts.push(`s=${esc(scope)}`);
+    parts.push(`q=${esc(query)}`);
     return parts.join('|');
   }
 

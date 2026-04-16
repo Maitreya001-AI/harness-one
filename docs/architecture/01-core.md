@@ -253,6 +253,42 @@ AgentLoop 在超出 token 预算时裁剪历史对话。裁剪逻辑始终保留
 
 1. **JSON Schema 递归深度限制**：`validate()` 现在强制 `MAX_VALIDATION_DEPTH=64` 的递归深度上限，防止病态 schema（如深度嵌套的 `$ref` 或递归定义）导致的栈溢出。
 
+## Wave-9 Deep Architecture Audit (2026-04-16)
+
+跨 6 个维度的全面架构审计，产出 18 项生产级修复：
+
+### Core 模块
+1. **工具执行错误信息增强**：`execution-strategies.ts` 中 catch 块现在保留 `errorName` 字段，便于下游区分错误类型。Stack trace 被有意排除以遵守 F14 安全策略（防止泄漏到 LLM）。
+2. **工具结果序列化性能优化**：`iteration-runner.ts` 中 `safeStringifyToolResult` 的循环引用检测从 O(n²) 的 `Array.includes()` 改为 O(1) 的 `WeakSet`。
+3. **dispose() 状态翻转时序修正**：`agent-loop.ts` 中 `dispose()` 现在在 `finally` 块中设置 `_status = 'disposed'`，确保清理逻辑异常时状态仍正确转换。
+4. **createAgentLoop 工厂一致性**：preset 包现在统一使用 `createAgentLoop()` 而非 `new AgentLoop()`，与 ARCH-011 工厂模式对齐。
+
+### Session 模块
+5. **lock() TTL 检查**：`session/manager.ts` 中 `lock()` 现在在加锁前检查 TTL，防止锁定已过期的 session。
+6. **事件处理器迭代安全**：queued event 处理循环改为迭代 handler 快照，防止 handler 在迭代期间修改集合。
+
+### 观测模块
+7. **TraceManager 品牌类型**：`startSpan`/`addSpanEvent`/`setSpanAttributes`/`endSpan`/`endTrace`/`getTrace` 等方法参数增加 `TraceId | string` / `SpanId | string` 联合类型。
+8. **eviction 重入保护增强**：eviction 循环改为两遍制，捕获首轮 eviction 期间新增的 trace。
+
+### Preset 模块
+9. **新增 baseRetryDelayMs / maxAdapterRetries 验证**：`createHarness()` 现在拒绝非法的重试配置。
+10. **shutdown 序列 logger 防护**：shutdown DAG 中所有 `logger.warn()` 调用均包裹 try/catch，防止 logger 异常中断关闭流程。
+11. **env.ts 严格数值解析**：环境变量解析从 `parseInt` 改为 `Number()`，拒绝 `"5abc"` 等部分解析值。
+12. **SecurePreset lifecycle 时序修正**：`shutdown()`/`drain()` 中 `completeShutdown()` 移入 `finally` 块。
+
+### RAG 模块
+13. **文档加载器输入验证**：`createTextLoader` 在加载时校验所有元素为 string 类型。
+14. **嵌入维度不匹配抛错**：`dotProduct` 现在在维度不匹配时抛出 `RAG_EMBEDDING_MISMATCH` 而非静默返回 0。
+15. **缓存键转义**：retriever 缓存键中的管道符 `|` 和反斜杠现在正确转义，防止多租户场景下的键碰撞。
+
+### Guardrail / Rate Limiter
+16. **pipeline 配置数组 readonly**：`createPipeline` 的 `input`/`output` 配置改为 `readonly` 数组。
+17. **rate-limiter eviction 回调日志**：新增可选 `logger` 参数，eviction 回调异常时通过 logger 输出而非静默吞噬。
+
+### Memory 模块
+18. **relay 腐败数据可见性**：`createRelay` 新增可选 `logger` 参数，无 `onCorruption` 回调时通过 logger 输出腐败警告。
+
 ## 已知限制
 
 - 累计 token 检查在调用 LLM **之前**进行，不含当次调用的 token

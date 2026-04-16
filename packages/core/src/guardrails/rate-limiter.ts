@@ -59,6 +59,8 @@ export function createRateLimiter(config: {
    * more memory; `windowMs / 10` is a sensible default when enabled.
    */
   bucketMs?: number;
+  /** Optional logger. When set, callback errors and security warnings route through this logger. */
+  logger?: { warn: (msg: string, meta?: Record<string, unknown>) => void };
 }): { name: string; guard: Guardrail } {
   if (config.distributed) {
     throw new HarnessError(
@@ -109,8 +111,10 @@ export function createRateLimiter(config: {
         ) {
           try {
             onEviction({ key: oldest, lastSeen: evictedLastSeen });
-          } catch {
-            // Never let user callback break the guard.
+          } catch (err) {
+            if (config.logger) {
+              try { config.logger.warn('Rate limiter onEviction callback error', { key: oldest, error: err instanceof Error ? err.message : String(err) }); } catch { /* non-fatal */ }
+            }
           }
         }
       }

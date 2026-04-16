@@ -567,7 +567,7 @@ describe('createInMemoryRetriever', () => {
     expect(normalChunk).toBeDefined();
   });
 
-  it('handles mismatched embedding dimensions gracefully', async () => {
+  it('throws on mismatched embedding dimensions', async () => {
     // Create embedding model with 4 dimensions but index chunks with 2-dim embeddings
     const retriever = createInMemoryRetriever({ embedding });
 
@@ -576,14 +576,8 @@ describe('createInMemoryRetriever', () => {
     ];
 
     await retriever.index(chunks);
-    // Query embedding will be 4-dim, chunk embedding is 2-dim -> cosine returns 0
-    const results = await retriever.retrieve('test', { limit: 10 });
-
-    // Mismatched lengths should produce score of 0
-    const result = results.find((r) => r.chunk.id === 'c1');
-    if (result) {
-      expect(result.score).toBe(0);
-    }
+    // Query embedding will be 4-dim, chunk embedding is 2-dim -> should throw
+    await expect(retriever.retrieve('test', { limit: 10 })).rejects.toThrow('dimension mismatch');
   });
 });
 

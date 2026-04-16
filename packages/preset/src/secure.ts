@@ -139,13 +139,19 @@ export function createSecurePreset(config: HarnessConfig & SecurePresetOptions):
     // Override shutdown to coordinate with lifecycle state machine.
     async shutdown(): Promise<void> {
       lifecycle.beginDrain();
-      await harness.shutdown();
-      lifecycle.completeShutdown();
+      try {
+        await harness.shutdown();
+      } finally {
+        lifecycle.completeShutdown();
+      }
     },
     async drain(timeoutMs?: number): Promise<void> {
       lifecycle.beginDrain();
-      await harness.drain(timeoutMs);
-      lifecycle.completeShutdown();
+      try {
+        await harness.drain(timeoutMs);
+      } finally {
+        lifecycle.completeShutdown();
+      }
     },
   };
 }

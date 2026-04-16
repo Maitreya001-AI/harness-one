@@ -39,24 +39,24 @@ export interface TraceManager {
    */
   startTrace(name: string, metadata?: Record<string, unknown>): TraceId;
   /** Start a new span within a trace. Returns the span ID. */
-  startSpan(traceId: string, name: string, parentId?: string): SpanId;
+  startSpan(traceId: TraceId | string, name: string, parentId?: string): SpanId;
   /** Add an event to a span. */
-  addSpanEvent(spanId: string, event: Omit<SpanEvent, 'timestamp'>): void;
+  addSpanEvent(spanId: SpanId | string, event: Omit<SpanEvent, 'timestamp'>): void;
   /** Set attributes on a span. */
-  setSpanAttributes(spanId: string, attributes: Record<string, unknown>): void;
+  setSpanAttributes(spanId: SpanId | string, attributes: Record<string, unknown>): void;
   /**
    * SEC-016: Attach library-controlled metadata to a trace. Keys written here
    * land on `trace.systemMetadata` and are never redacted. `shouldExport()`
    * sampling hooks MUST read only `systemMetadata` so users can't manipulate
    * sampling decisions by injecting metadata keys.
    */
-  setTraceSystemMetadata(traceId: string, metadata: Record<string, unknown>): void;
+  setTraceSystemMetadata(traceId: TraceId | string, metadata: Record<string, unknown>): void;
   /** End a span. */
-  endSpan(spanId: string, status?: 'completed' | 'error'): void;
+  endSpan(spanId: SpanId | string, status?: 'completed' | 'error'): void;
   /** End a trace. */
-  endTrace(traceId: string, status?: 'completed' | 'error'): void;
+  endTrace(traceId: TraceId | string, status?: 'completed' | 'error'): void;
   /** Get a trace by ID. */
-  getTrace(traceId: string): Trace | undefined;
+  getTrace(traceId: TraceId | string): Trace | undefined;
   /**
    * Get spans that are still running (not yet ended). Useful for leak detection.
    *
@@ -459,20 +459,23 @@ export function createTraceManager(config?: {
   }
 
   function evictIfNeeded(): string[] {
-    // Re-entrance guard: prevent recursive eviction calls (Fix 3)
+    // Re-entrance guard: prevent recursive eviction calls (Fix 3).
+    // Callers that arrive while eviction is running will observe the
+    // guard and skip. After the primary eviction completes, the loop
+    // below re-checks once — catching any traces added during the run.
     if (isEvicting) return [];
     isEvicting = true;
 
     const allEvictedSpanIds: string[] = [];
 
     try {
-      // First, evict ended traces that are no longer in the LRU list.
-      // These have already been exported and are safe to remove.
-      if (traces.size > maxTraces) {
+      // Loop at most twice: once for the primary eviction and once for
+      // any traces admitted during the first pass.
+      for (let pass = 0; pass < 2 && traces.size > maxTraces; pass++) {
+        // First, evict ended traces that are no longer in the LRU list.
         for (const [id, trace] of traces) {
           if (traces.size <= maxTraces) break;
           if (trace.status !== 'running') {
-            // Finalize any still-running spans before removal (Fix 1)
             allEvictedSpanIds.push(...finalizeSpansForEviction(trace));
             for (const spanId of trace.spanIds) {
               spans.delete(spanId);
@@ -481,19 +484,17 @@ export function createTraceManager(config?: {
             traces.delete(id);
           }
         }
-      }
-      // Then, evict oldest running traces from the LRU order if still over capacity.
-      // PERF-029: shiftTraceOrder is O(1) — linked-list unlink-head.
-      while (traces.size > maxTraces && lruSize > 0) {
-        const oldest = shiftTraceOrder();
-        if (!oldest) break;
-        // Finalize any still-running spans before removal (Fix 1)
-        allEvictedSpanIds.push(...finalizeSpansForEviction(oldest));
-        for (const spanId of oldest.spanIds) {
-          spans.delete(spanId);
-          retryingSpanIds.delete(spanId);
+        // Then, evict oldest running traces from the LRU order.
+        while (traces.size > maxTraces && lruSize > 0) {
+          const oldest = shiftTraceOrder();
+          if (!oldest) break;
+          allEvictedSpanIds.push(...finalizeSpansForEviction(oldest));
+          for (const spanId of oldest.spanIds) {
+            spans.delete(spanId);
+            retryingSpanIds.delete(spanId);
+          }
+          traces.delete(oldest.id);
         }
-        traces.delete(oldest.id);
       }
     } finally {
       isEvicting = false;

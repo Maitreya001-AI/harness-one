@@ -422,20 +422,23 @@ export class AgentLoop {
 
   /** Dispose the loop, releasing resources and cancelling any pending operations. */
   dispose(): void {
-    this._status = 'disposed';
     // PERF-013: Remove external signal listener to prevent memory leaks when
     // the external signal outlives this loop instance. Wrap removal in
     // try/catch so an exception from the signal implementation cannot leave
     // the listener attached (it must always be detached to avoid a leak).
-    if (this._externalAbortHandler && this.externalSignal) {
-      try {
-        this.externalSignal.removeEventListener('abort', this._externalAbortHandler);
-      } catch {
-        // Non-fatal — we still drop our reference below.
+    try {
+      if (this._externalAbortHandler && this.externalSignal) {
+        try {
+          this.externalSignal.removeEventListener('abort', this._externalAbortHandler);
+        } catch {
+          // Non-fatal — we still drop our reference below.
+        }
+        this._externalAbortHandler = undefined;
       }
-      this._externalAbortHandler = undefined;
+      this.abortController.abort();
+    } finally {
+      this._status = 'disposed';
     }
-    this.abortController.abort();
   }
 
   /**

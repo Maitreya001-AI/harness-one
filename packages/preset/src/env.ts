@@ -35,19 +35,30 @@ export function createConfigFromEnv(
   const rawProvider = e['HARNESS_PROVIDER'];
   const provider = rawProvider === 'anthropic' || rawProvider === 'openai' ? rawProvider : undefined;
   const model = e['HARNESS_MODEL'];
-  const maxIterations = e['HARNESS_MAX_ITERATIONS']
-    ? parseInt(e['HARNESS_MAX_ITERATIONS'], 10)
-    : undefined;
-  const maxTotalTokens = e['HARNESS_MAX_TOKENS']
-    ? parseInt(e['HARNESS_MAX_TOKENS'], 10)
-    : undefined;
-  const budget = e['HARNESS_BUDGET'] ? parseFloat(e['HARNESS_BUDGET']) : undefined;
+  const maxIterations = (() => {
+    const raw = e['HARNESS_MAX_ITERATIONS']?.trim();
+    if (!raw) return undefined;
+    const val = Number(raw);
+    return Number.isInteger(val) && val > 0 ? val : undefined;
+  })();
+  const maxTotalTokens = (() => {
+    const raw = e['HARNESS_MAX_TOKENS']?.trim();
+    if (!raw) return undefined;
+    const val = Number(raw);
+    return Number.isInteger(val) && val > 0 ? val : undefined;
+  })();
+  const budget = (() => {
+    const raw = e['HARNESS_BUDGET']?.trim();
+    if (!raw) return undefined;
+    const val = Number(raw);
+    return Number.isFinite(val) && val > 0 ? val : undefined;
+  })();
 
   return {
     ...(provider !== undefined && { provider }),
     ...(model !== undefined && { model }),
-    ...(maxIterations !== undefined && !isNaN(maxIterations) && isFinite(maxIterations) && maxIterations > 0 && { maxIterations }),
-    ...(maxTotalTokens !== undefined && !isNaN(maxTotalTokens) && isFinite(maxTotalTokens) && maxTotalTokens > 0 && { maxTotalTokens }),
-    ...(budget !== undefined && !isNaN(budget) && isFinite(budget) && budget > 0 && { budget }),
+    ...(maxIterations !== undefined && { maxIterations }),
+    ...(maxTotalTokens !== undefined && { maxTotalTokens }),
+    ...(budget !== undefined && { budget }),
   } as Partial<HarnessConfig>;
 }

@@ -76,8 +76,8 @@ function getInternal(pipeline: GuardrailPipeline): PipelineInternalData {
  * ```
  */
 export function createPipeline(config: {
-  input?: Array<{ name: string; guard: Guardrail; timeoutMs?: number }>;
-  output?: Array<{ name: string; guard: Guardrail; timeoutMs?: number }>;
+  input?: readonly { readonly name: string; guard: Guardrail; readonly timeoutMs?: number }[];
+  output?: readonly { readonly name: string; guard: Guardrail; readonly timeoutMs?: number }[];
   failClosed?: boolean;
   onEvent?: (event: GuardrailEvent) => void;
   /** Default timeout (ms) for guards that don't specify their own timeoutMs. Default: 5000. Set to 0 to disable. */
@@ -90,7 +90,7 @@ export function createPipeline(config: {
   const defaultTimeoutMs = config.defaultTimeoutMs ?? 5000;
 
   // Apply default timeout to guards that don't specify their own
-  const applyDefaults = (entries: PipelineEntry[]): PipelineEntry[] =>
+  const applyDefaults = (entries: readonly PipelineEntry[]): PipelineEntry[] =>
     entries.map((entry) => {
       const resolved = entry.timeoutMs ?? (defaultTimeoutMs > 0 ? defaultTimeoutMs : undefined);
       const result: PipelineEntry = { name: entry.name, guard: entry.guard };

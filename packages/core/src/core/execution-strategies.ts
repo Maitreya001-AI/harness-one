@@ -14,7 +14,10 @@ export function createSequentialStrategy(): ExecutionStrategy {
         try {
           result = await handler(call);
         } catch (err) {
-          result = { error: err instanceof Error ? err.message : String(err) };
+          result = {
+            error: err instanceof Error ? err.message : String(err),
+            ...(err instanceof Error && { errorName: err.name }),
+          };
         }
         results.push({ toolCallId: call.id, result });
       }
@@ -73,7 +76,10 @@ export function createParallelStrategy(options?: {
             try {
               return await handler(e.call);
             } catch (err) {
-              return { error: err instanceof Error ? err.message : String(err) };
+              return {
+                error: err instanceof Error ? err.message : String(err),
+                ...(err instanceof Error && { errorName: err.name }),
+              };
             }
           }),
           maxConcurrency,
@@ -86,7 +92,10 @@ export function createParallelStrategy(options?: {
             toolCallId: entry.call.id,
             result: outcome.status === 'fulfilled'
               ? outcome.value
-              : { error: outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason) },
+              : {
+                  error: outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason),
+                  ...(outcome.reason instanceof Error && { errorName: outcome.reason.name }),
+                },
           };
         }
       }
@@ -102,7 +111,10 @@ export function createParallelStrategy(options?: {
         try {
           result = await handler(entry.call);
         } catch (err) {
-          result = { error: err instanceof Error ? err.message : String(err) };
+          result = {
+            error: err instanceof Error ? err.message : String(err),
+            ...(err instanceof Error && { errorName: err.name }),
+          };
         }
         results[entry.index] = { toolCallId: entry.call.id, result };
       }

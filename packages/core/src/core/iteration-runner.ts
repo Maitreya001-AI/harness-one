@@ -173,17 +173,15 @@ const MAX_TOOL_RESULT_DEPTH = 10;
  * Depth-limited replacer + 1 MiB byte cap + cycle detection.
  */
 function safeStringifyToolResult(value: unknown): string {
-  const stack: Array<object> = [];
+  const seen = new WeakSet<object>();
+  let depth = 0;
 
   const replacer = function (this: unknown, _key: string, val: unknown): unknown {
     if (val === null || typeof val !== 'object') return val;
-    if (this && typeof this === 'object') {
-      const parentIdx = stack.lastIndexOf(this as object);
-      if (parentIdx >= 0) stack.length = parentIdx + 1;
-    }
-    if (stack.includes(val as object)) return '[circular]';
-    if (stack.length >= MAX_TOOL_RESULT_DEPTH) return '[max depth exceeded]';
-    stack.push(val as object);
+    if (seen.has(val)) return '[circular]';
+    if (depth >= MAX_TOOL_RESULT_DEPTH) return '[max depth exceeded]';
+    seen.add(val);
+    depth++;
     return val;
   };
 
