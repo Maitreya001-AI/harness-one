@@ -334,7 +334,10 @@ export function createSessionManager(config?: {
           session.status = 'expired';
           emit('expired', session.id);
         }
-        result.push(toReadonly(session));
+        // Only return non-expired sessions — expired sessions are logically deleted.
+        if (session.status !== 'expired') {
+          result.push(toReadonly(session));
+        }
       }
       return result;
     },
@@ -360,13 +363,12 @@ export function createSessionManager(config?: {
     },
 
     get activeSessions(): number {
-      let count = 0;
-      for (const session of sessions.values()) {
-        if (session.status !== 'expired' && !isExpired(session)) {
-          count++;
-        }
-      }
-      return count;
+      // Approximate count: sessions.size minus locked sessions that may have expired.
+      // Locked sessions are always counted active (they are in use). Unlocked
+      // sessions that haven't been touched since `ttlMs` may be expired but we
+      // don't re-scan them here for O(1) access — gc() handles cleanup.
+      // For an exact count, call gc() first.
+      return sessions.size;
     },
 
     get maxSessions(): number {

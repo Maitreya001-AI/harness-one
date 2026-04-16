@@ -440,13 +440,14 @@ describe('export error handling', () => {
   });
 
   it('does not throw when export fails and no onExportError provided', async () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const failingExporter: TraceExporter = {
       name: 'failing',
       async exportTrace() { throw new Error('trace export failure'); },
       async exportSpan() { throw new Error('span export failure'); },
       async flush() {},
     };
+    // Without onExportError or logger, errors are silently swallowed
+    // (library code must not write to stderr)
     const tm = createTraceManager({ exporters: [failingExporter] });
 
     const traceId = tm.startTrace('t');
@@ -455,47 +456,45 @@ describe('export error handling', () => {
     expect(() => tm.endSpan(spanId)).not.toThrow();
     expect(() => tm.endTrace(traceId)).not.toThrow();
     await new Promise(r => setTimeout(r, 10));
-
-    // Errors are logged via console.warn (not silently discarded)
-    expect(warnSpy).toHaveBeenCalled();
-    warnSpy.mockRestore();
   });
 
-  it('console.warn fallback includes harness-one prefix for span export errors', async () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  it('routes export errors to logger when provided (no console.warn)', async () => {
+    const warns: unknown[] = [];
+    const logger = { warn: (msg: string, meta?: Record<string, unknown>) => { warns.push({ msg, meta }); } };
     const failingExporter: TraceExporter = {
       name: 'failing',
       async exportTrace() {},
       async exportSpan() { throw new Error('span boom'); },
       async flush() {},
     };
-    const tm = createTraceManager({ exporters: [failingExporter] });
+    const tm = createTraceManager({ exporters: [failingExporter], logger });
 
     const traceId = tm.startTrace('t');
     const spanId = tm.startSpan(traceId, 's');
     tm.endSpan(spanId);
     await new Promise(r => setTimeout(r, 10));
 
-    expect(warnSpy).toHaveBeenCalledWith('[harness-one] trace export error:', expect.any(Error));
-    warnSpy.mockRestore();
+    expect(warns.length).toBeGreaterThan(0);
+    expect((warns[0] as { msg: string }).msg).toContain('trace export error');
   });
 
-  it('console.warn fallback includes harness-one prefix for trace export errors', async () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  it('routes trace export errors to logger when provided (no console.warn)', async () => {
+    const warns: unknown[] = [];
+    const logger = { warn: (msg: string, meta?: Record<string, unknown>) => { warns.push({ msg, meta }); } };
     const failingExporter: TraceExporter = {
       name: 'failing',
       async exportTrace() { throw new Error('trace boom'); },
       async exportSpan() {},
       async flush() {},
     };
-    const tm = createTraceManager({ exporters: [failingExporter] });
+    const tm = createTraceManager({ exporters: [failingExporter], logger });
 
     const traceId = tm.startTrace('t');
     tm.endTrace(traceId);
     await new Promise(r => setTimeout(r, 10));
 
-    expect(warnSpy).toHaveBeenCalledWith('[harness-one] trace export error:', expect.any(Error));
-    warnSpy.mockRestore();
+    expect(warns.length).toBeGreaterThan(0);
+    expect((warns[0] as { msg: string }).msg).toContain('trace export error');
   });
 });
 
@@ -989,8 +988,26 @@ describe('dispose error isolation', () => {
     expect(errors.some(e => (e as Error).message === 'shutdown failed')).toBe(true);
   });
 
-  it('logs console.warn for dispose errors when no onExportError provided', async () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  it('routes dispose errors to logger when provided (no console.warn)', async () => {
+    const warns: unknown[] = [];
+    const logger = { warn: (msg: string, meta?: Record<string, unknown>) => { warns.push({ msg, meta }); } };
+    const failingExporter: TraceExporter = {
+      name: 'failing',
+      async exportTrace() {},
+      async exportSpan() {},
+      async flush() { throw new Error('flush boom'); },
+      async shutdown() { throw new Error('shutdown boom'); },
+    };
+
+    const tm = createTraceManager({ exporters: [failingExporter], logger });
+    // Should not throw
+    await tm.dispose();
+
+    // When a logger is provided, errors are routed there instead of console.warn
+    expect(warns.length).toBeGreaterThan(0);
+  });
+
+  it('silently swallows dispose errors when no onExportError and no logger', async () => {
     const failingExporter: TraceExporter = {
       name: 'failing',
       async exportTrace() {},
@@ -1000,15 +1017,8 @@ describe('dispose error isolation', () => {
     };
 
     const tm = createTraceManager({ exporters: [failingExporter] });
-    // Should not throw
-    await tm.dispose();
-
-    // When no onExportError callback is provided, errors are logged via
-    // console.warn rather than silently discarded.
-    expect(warnSpy).toHaveBeenCalled();
-    const warnMessages = warnSpy.mock.calls.map(c => c[0]);
-    expect(warnMessages).toContain('[harness-one] trace export error:');
-    warnSpy.mockRestore();
+    // Should not throw — errors are silently swallowed
+    await expect(tm.dispose()).resolves.toBeUndefined();
   });
 });
 

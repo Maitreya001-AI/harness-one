@@ -219,7 +219,9 @@ export function createCostTracker(config?: {
 }): CostTracker {
   const pricing = new Map<string, ModelPricing>();
   const records: TokenUsageRecord[] = [];
-  const alertHandlers: ((alert: CostAlert) => void)[] = [];
+  // PERF-040: Set-backed alert handler storage — O(1) unsubscribe, consistent
+  // with session/orchestrator event handler patterns (LM-012 / PERF-017).
+  const alertHandlers = new Set<(alert: CostAlert) => void>();
   let budget: number | undefined = config?.budget;
   const warningThreshold = config?.alertThresholds?.warning ?? 0.8;
   const criticalThreshold = config?.alertThresholds?.critical ?? 0.95;
@@ -569,10 +571,9 @@ export function createCostTracker(config?: {
     checkBudget: checkBudgetFn,
 
     onAlert(handler: (alert: CostAlert) => void): () => void {
-      alertHandlers.push(handler);
+      alertHandlers.add(handler);
       return () => {
-        const idx = alertHandlers.indexOf(handler);
-        if (idx >= 0) alertHandlers.splice(idx, 1);
+        alertHandlers.delete(handler);
       };
     },
 

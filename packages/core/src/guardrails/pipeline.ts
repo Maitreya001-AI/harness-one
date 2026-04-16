@@ -196,6 +196,10 @@ async function runGuardrails(
                 () => reject(new Error(`Guardrail "${entry.name}" timed out after ${entry.timeoutMs}ms`)),
                 entry.timeoutMs,
               );
+              // Ensure timer doesn't keep the process alive
+              if (typeof timer === 'object' && 'unref' in timer) {
+                (timer as NodeJS.Timeout).unref();
+              }
             }),
           ]);
         } finally {

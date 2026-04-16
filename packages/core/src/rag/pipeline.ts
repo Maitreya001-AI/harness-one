@@ -336,6 +336,17 @@ export function createRAGPipeline(config: RAGPipelineConfig): RAGPipeline {
     clear() {
       allChunks.length = 0;
       contentHashes.clear();
+      // Reset ingest metrics alongside data so they stay consistent.
+      attemptedCount = 0;
+      succeededCount = 0;
+      failedCount = 0;
+      for (const key of Object.keys(failureReasons)) delete failureReasons[key];
+      // Clear the retriever index if the retriever supports it, so stale
+      // embeddings don't pollute future queries.
+      const retriever = config.retriever as unknown as { clear?: () => void };
+      if (typeof retriever.clear === 'function') {
+        retriever.clear();
+      }
     },
 
     getIngestMetrics(): IngestMetrics {

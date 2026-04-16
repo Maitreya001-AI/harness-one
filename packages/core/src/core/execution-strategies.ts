@@ -33,10 +33,14 @@ export function createParallelStrategy(options?: {
   maxConcurrency?: number;
 }): ExecutionStrategy {
   const maxConcurrency = options?.maxConcurrency ?? 5;
+  if (!Number.isInteger(maxConcurrency) || maxConcurrency < 1) {
+    throw new Error('maxConcurrency must be a positive integer');
+  }
 
   return {
     async execute(calls, handler, strategyOptions) {
       const getMeta = strategyOptions?.getToolMeta;
+      const signal = strategyOptions?.signal;
 
       // Partition into parallel and sequential groups
       const parallelEntries: Array<{ index: number; call: ToolCallRequest }> = [];
@@ -57,6 +61,10 @@ export function createParallelStrategy(options?: {
       if (parallelEntries.length > 0) {
         const settled = await promiseAllSettledWithConcurrency(
           parallelEntries.map(e => async () => {
+            // Check abort signal before starting each tool call
+            if (signal?.aborted) {
+              return { error: 'Aborted' };
+            }
             try {
               return await handler(e.call);
             } catch (err) {
@@ -80,6 +88,11 @@ export function createParallelStrategy(options?: {
 
       // Execute sequential group one-by-one
       for (const entry of sequentialEntries) {
+        // Check abort signal before starting each sequential tool call
+        if (signal?.aborted) {
+          results[entry.index] = { toolCallId: entry.call.id, result: { error: 'Aborted' } };
+          continue;
+        }
         let result: unknown;
         try {
           result = await handler(entry.call);

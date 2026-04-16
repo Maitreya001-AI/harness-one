@@ -194,8 +194,10 @@ export function createTraceManager(config?: {
         // `createLazyAsync` already cleared the cached promise, so the next
         // call will retry from scratch.
         if (onExportError) onExportError(err);
-        else if (logger) logger.warn('[harness-one] exporter initialize failed', { exporter: exporter.name, error: err });
-        else console.warn('[harness-one] exporter initialize failed:', err);
+        else if (logger) {
+          try { logger.warn('[harness-one] exporter initialize failed', { exporter: exporter.name, error: err }); } catch { /* logger failure non-fatal */ }
+        }
+        // No console.warn fallback — library code must not write to stderr.
       });
   }
 
@@ -239,8 +241,10 @@ export function createTraceManager(config?: {
 
   function reportExportError(err: unknown): void {
     if (onExportError) onExportError(err);
-    else if (logger) logger.warn('[harness-one] trace export error', { error: err });
-    else console.warn('[harness-one] trace export error:', err);
+    else if (logger) {
+      try { logger.warn('[harness-one] trace export error', { error: err }); } catch { /* logger failure non-fatal */ }
+    }
+    // No console.warn fallback — library code must not write to stderr.
   }
 
   /**
@@ -859,11 +863,7 @@ export function createTraceManager(config?: {
       const flushResults = await Promise.allSettled(exporters.map(e => e.flush()));
       for (const result of flushResults) {
         if (result.status === 'rejected') {
-          if (onExportError) {
-            onExportError(result.reason);
-          } else {
-            console.warn('[harness-one] trace export error:', result.reason);
-          }
+          reportExportError(result.reason);
         }
       }
       // LM-001 / LM-015: Call `shutdown()` on each exporter with a bounded
@@ -881,18 +881,15 @@ export function createTraceManager(config?: {
             Promise.resolve(e.shutdown())
               .then(() => 'ok' as const)
               .catch((err: unknown) => {
-                if (onExportError) onExportError(err);
-                else console.warn('[harness-one] trace export error:', err);
+                reportExportError(err);
                 return 'error' as const;
               }),
             timeoutPromise,
           ]);
           if (outcome === 'timeout') {
-            const err = new Error(
-              `exporter "${e.name}" shutdown timed out after ${EXPORTER_SHUTDOWN_TIMEOUT_MS}ms`,
+            reportExportError(
+              new Error(`exporter "${e.name}" shutdown timed out after ${EXPORTER_SHUTDOWN_TIMEOUT_MS}ms`),
             );
-            if (onExportError) onExportError(err);
-            else console.warn('[harness-one] trace export error:', err);
           }
         } finally {
           if (timeoutHandle) clearTimeout(timeoutHandle);

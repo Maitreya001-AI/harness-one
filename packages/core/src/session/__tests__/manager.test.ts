@@ -127,9 +127,9 @@ describe('createSessionManager', () => {
       // Force time forward so the session is expired
       vi.spyOn(Date, 'now').mockReturnValue(session.createdAt + 100);
 
+      // list() now filters out expired sessions (they are logically deleted)
       const listed = sm.list();
-      expect(listed).toHaveLength(1);
-      expect(listed[0].status).toBe('expired');
+      expect(listed).toHaveLength(0);
 
       // Should have emitted an 'expired' event during list()
       const expiredEvent = events.find(e => e.type === 'expired');
@@ -153,8 +153,9 @@ describe('createSessionManager', () => {
       sm.onEvent(e => events.push(e));
 
       // Second call to list() should NOT re-emit expired since it's already expired
+      // Expired sessions are filtered out of list() results
       const listed = sm.list();
-      expect(listed[0].status).toBe('expired');
+      expect(listed).toHaveLength(0);
       const expiredEvents = events.filter(e => e.type === 'expired');
       expect(expiredEvents).toHaveLength(0);
       sm.dispose();
@@ -549,11 +550,10 @@ describe('createSessionManager', () => {
       const got = sm.get(session.id);
       expect(got).toBeUndefined();
 
-      // list() still shows expired sessions (for admin/debug visibility)
-      expect(sm.list()).toHaveLength(1);
-      expect(sm.list()[0].status).toBe('expired');
+      // list() filters out expired sessions (they are logically deleted)
+      expect(sm.list()).toHaveLength(0);
 
-      // gc removes expired sessions from memory
+      // gc removes expired sessions from internal storage
       const removed = sm.gc();
       expect(removed).toBe(1);
       expect(sm.list()).toHaveLength(0);

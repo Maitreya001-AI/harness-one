@@ -38,7 +38,8 @@ export function computeBackoffMs(attempt: number, config?: BackoffConfig): numbe
   const jitterFraction = config?.jitterFraction ?? 0.5;
   const random = config?.random ?? Math.random;
 
-  const exponential = Math.min(baseMs * Math.pow(2, attempt), maxMs);
+  const safeAttempt = Math.max(0, attempt);
+  const exponential = Math.min(baseMs * Math.pow(2, safeAttempt), maxMs);
   const jitter = exponential * (1 - jitterFraction + random() * jitterFraction);
   return Math.floor(jitter);
 }

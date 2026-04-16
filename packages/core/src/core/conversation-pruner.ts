@@ -42,6 +42,9 @@ export function pruneConversation(
   conversation: Message[],
   maxMessages: number,
 ): PruneResult {
+  if (maxMessages < 1) {
+    return { pruned: [], warning: 'maxMessages < 1; conversation fully pruned' };
+  }
   if (conversation.length <= maxMessages) {
     return { pruned: conversation };
   }

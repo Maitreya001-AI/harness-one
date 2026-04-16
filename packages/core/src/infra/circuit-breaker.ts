@@ -71,6 +71,13 @@ export function createCircuitBreaker(config?: CircuitBreakerConfig): CircuitBrea
   const resetTimeoutMs = config?.resetTimeoutMs ?? 30_000;
   const onStateChange = config?.onStateChange;
 
+  if (!Number.isInteger(failureThreshold) || failureThreshold < 1) {
+    throw new Error('failureThreshold must be a positive integer');
+  }
+  if (!Number.isFinite(resetTimeoutMs) || resetTimeoutMs < 1) {
+    throw new Error('resetTimeoutMs must be a positive number');
+  }
+
   let state: CircuitState = 'closed';
   let consecutiveFailures = 0;
   let lastFailureTime = 0;

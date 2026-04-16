@@ -60,6 +60,8 @@ export interface HarnessLifecycle {
   readonly beginDrain: () => void;
   readonly completeShutdown: () => void;
   readonly forceShutdown: () => void;
+  /** Release all registered health check references and transition to shutdown. */
+  readonly dispose: () => void;
 }
 
 export function createHarnessLifecycle(): HarnessLifecycle {
@@ -112,6 +114,11 @@ export function createHarnessLifecycle(): HarnessLifecycle {
     beginDrain: () => assertTransition('draining', ['ready']),
     completeShutdown: () => assertTransition('shutdown', ['draining']),
     forceShutdown: () => {
+      state = 'shutdown';
+    },
+    /** Release all registered health check references to prevent memory leaks. */
+    dispose: () => {
+      checks.clear();
       state = 'shutdown';
     },
   };

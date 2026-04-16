@@ -499,6 +499,7 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
       contextStore.clear();
       delegationChain.clear();
       delegationLocks.clear();
+      droppedMessages = 0;
     },
 
     getMetrics(): OrchestratorMetrics {

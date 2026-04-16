@@ -8,6 +8,31 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed — Wave-5H (deep architecture review — 23 fixes)
+
+**Input validation hardening:**
+- `createParallelStrategy` now validates `maxConcurrency >= 1` — previously accepted 0 (deadlock) or negative values.
+- `createCircuitBreaker` validates `failureThreshold >= 1` and `resetTimeoutMs >= 1` — previously accepted invalid values silently.
+- `createFallbackAdapter` rejects empty `adapters` array — previously caused cryptic `undefined` access at runtime.
+- `pruneConversation` safely handles `maxMessages < 1` — returns empty array with warning instead of crashing.
+- `computeBackoffMs` clamps negative `attempt` to 0 — prevents fractional delay from `Math.pow(2, -n)`.
+
+**Production-readiness (no console.warn in library code):**
+- `TraceManager` — all `console.warn` fallbacks removed from `reportExportError()`, `ensureInitialized()`, and `dispose()`. Export errors route to injected `logger` or `onExportError`; silently swallowed when neither is provided.
+- `CostTracker.alertHandlers` migrated from Array to Set (O(1) unsubscribe, consistent with session/orchestrator patterns).
+- Guardrail pipeline timeout timers now call `.unref()` to prevent hanging Node.js processes.
+
+**Concurrency safety:**
+- `FallbackAdapter.handleSuccess()` now executes under `switchLock` — prevents race between concurrent success and failure counter resets.
+- `createParallelStrategy` checks abort `signal` before starting each tool call — previously in-flight parallel tools ignored abort.
+
+**API consistency:**
+- `SessionManager.list()` now filters out expired sessions — previously leaked internal state (expired sessions with status 'expired' in results).
+- `SessionManager.activeSessions` simplified to O(1) — previously O(n) scan on every access.
+- `RAGPipeline.clear()` now resets `getIngestMetrics()` counters and calls `retriever.clear()` if available — previously left stale metrics and retriever index.
+- `HarnessLifecycle` gains `dispose()` method — releases registered health check references and transitions to shutdown.
+- `Orchestrator.dispose()` now resets `droppedMessages` counter.
+
 ### Fixed — Wave-5G follow-up (post-audit hardening)
 
 - **Timer leak in `output-parser.ts` `parseWithRetry()`** — `Promise.race` timeout handle is now always cleared via `try/finally`, matching the pattern in `self-healing.ts`. Previously, each retry iteration leaked one timer.

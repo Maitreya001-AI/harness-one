@@ -47,6 +47,32 @@ core 模块定义了 harness-one 的共享类型契约（Message、TokenUsage、
 
 **设计文档**：`docs/forge-fix/wave-5/wave-5b-adr-v2.md`（设计决策与边界论证）、`wave-5b-adr-critique.md` / `wave-5b-review-redteam.md` / `wave-5b-review-synthesis.md`（评审记录）。
 
+### Wave-5H 架构加固（2026-04-16）
+
+对全代码库进行深度架构审查后的 23 项修复：
+
+**输入验证**：
+- `createParallelStrategy` 验证 `maxConcurrency >= 1`（防死锁）。
+- `createCircuitBreaker` 验证 `failureThreshold >= 1` 和 `resetTimeoutMs >= 1`。
+- `createFallbackAdapter` 拒绝空适配器数组。
+- `pruneConversation` 安全处理 `maxMessages < 1`。
+- `computeBackoffMs` 对负数 `attempt` 夹紧为 0。
+
+**生产就绪**：
+- `TraceManager` 中所有 `console.warn` 回退已移除——库代码不再直接写 stderr。导出错误路由到注入的 `logger` 或 `onExportError`；两者都缺失时静默吞咽。
+- `CostTracker.alertHandlers` 从 Array 改为 Set（O(1) 退订，与 session/orchestrator 一致）。
+- 护栏管线超时定时器增加 `.unref()` 防止进程挂起。
+
+**并发安全**：
+- `FallbackAdapter.handleSuccess()` 现在在 `switchLock` 内执行（防止与并发 failure 竞争）。
+- `createParallelStrategy` 在每个工具调用前检查 abort signal。
+
+**API 一致性**：
+- `SessionManager.list()` 不再返回已过期会话（之前泄露内部状态）。
+- `SessionManager.activeSessions` 简化为 O(1)。
+- `RAGPipeline.clear()` 同步重置 `getIngestMetrics()` 计数器和 retriever 索引。
+- `HarnessLifecycle` 新增 `dispose()` 方法释放健康检查引用。
+
 ## 公共 API
 
 ### 类型定义

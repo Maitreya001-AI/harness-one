@@ -37,6 +37,13 @@ export interface FallbackAdapterConfig {
  */
 export function createFallbackAdapter(config: FallbackAdapterConfig): AgentAdapter {
   const adapters = [...config.adapters];
+  if (adapters.length === 0) {
+    throw new HarnessError(
+      'At least one adapter is required',
+      HarnessErrorCode.CORE_INVALID_CONFIG,
+      'Provide at least one adapter in the adapters array',
+    );
+  }
   const maxFailures = config.maxFailures ?? 3;
   let currentIndex = 0;
   let failureCount = 0;
@@ -66,8 +73,10 @@ export function createFallbackAdapter(config: FallbackAdapterConfig): AgentAdapt
     });
   }
 
-  function handleSuccess(): void {
-    failureCount = 0;
+  async function handleSuccess(): Promise<void> {
+    await switchLock.withLock(async () => {
+      failureCount = 0;
+    });
   }
 
   return {
@@ -81,7 +90,7 @@ export function createFallbackAdapter(config: FallbackAdapterConfig): AgentAdapt
         const adapterBefore = currentIndex;
         try {
           const result = await adapters[currentIndex].chat(params);
-          handleSuccess();
+          await handleSuccess();
           return result;
         } catch (err) {
           lastErr = err;
@@ -134,7 +143,7 @@ export function createFallbackAdapter(config: FallbackAdapterConfig): AgentAdapt
         }
         try {
           yield* adapter.stream(params);
-          handleSuccess();
+          await handleSuccess();
           return;
         } catch (err) {
           lastErr = err;
