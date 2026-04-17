@@ -16,6 +16,8 @@
  */
 
 import { HarnessError, HarnessErrorCode} from '../core/errors.js';
+import type { Logger } from '../observe/logger.js';
+import type { MetricCounter, MetricGauge, MetricsPort } from '../observe/metrics-port.js';
 import type { AgentMessage } from './types.js';
 
 /** Callback for when messages are dropped due to queue overflow. */
@@ -39,6 +41,22 @@ export interface MessageQueueConfig {
    * Default: false (backward compatible drop-oldest behavior).
    */
   readonly backpressure?: boolean;
+  /**
+   * Wave-13 B-5: Optional structured logger. When set, every queue-overflow
+   * drop emits a `warn` in addition to any user-supplied `onWarning`. When
+   * omitted, nothing is logged (no allocation).
+   */
+  readonly logger?: Logger;
+  /**
+   * Wave-13 B-5: MetricsPort for queue observability. When set, two
+   * instruments are emitted:
+   *  - `harness.orch.queue_depth` (gauge) — observed on every push,
+   *    labelled with `agent_id`.
+   *  - `harness.orch.queue_dropped` (counter) — incremented on every drop,
+   *    labelled with `agent_id`.
+   * When omitted, no metric traffic is produced.
+   */
+  readonly metrics?: MetricsPort;
 }
 
 /**
@@ -57,6 +75,12 @@ export class MessageQueue {
   private readonly onWarning: QueueWarningHandler | undefined;
   private readonly onEvent: QueueEventEmitter | undefined;
   private readonly backpressure: boolean;
+  /** Wave-13 B-5: structured logger for drop events. */
+  private readonly logger: Logger | undefined;
+  /** Wave-13 B-5: cached depth-gauge instrument; `undefined` when no metrics port. */
+  private readonly depthGauge: MetricGauge | undefined;
+  /** Wave-13 B-5: cached drop counter instrument. */
+  private readonly dropCounter: MetricCounter | undefined;
 
   constructor(config?: MessageQueueConfig) {
     this.maxQueueSize = config?.maxQueueSize ?? 1000;
@@ -66,6 +90,16 @@ export class MessageQueue {
     this.onWarning = config?.onWarning;
     this.onEvent = config?.onEvent;
     this.backpressure = config?.backpressure ?? false;
+    // Wave-13 B-5: resolve logger + lazy-cache metric instruments at
+    // construction time so the hot `push()` path avoids per-call lookups.
+    this.logger = config?.logger;
+    this.depthGauge = config?.metrics?.gauge('harness.orch.queue_depth', {
+      description: 'Current depth of a per-agent message queue',
+      unit: '1',
+    });
+    this.dropCounter = config?.metrics?.counter('harness.orch.queue_dropped', {
+      description: 'Count of messages dropped due to queue overflow, keyed by agent_id',
+    });
   }
 
   /** Create a queue for an agent. */
@@ -130,9 +164,33 @@ export class MessageQueue {
       if (this.onEvent) {
         this.onEvent({ type: 'message_dropped', agentId, droppedCount });
       }
+      // Wave-13 B-5: per-agent drop counter AND structured warn log. These
+      // fire on every drop (not only the first) so cumulative drop rates are
+      // observable in the metrics backend even when the user-supplied
+      // onWarning/onEvent handlers are absent or rate-limited.
+      this.dropCounter?.add(droppedCount, { agent_id: agentId });
+      if (this.logger) {
+        try {
+          this.logger.warn('message-queue drop', {
+            agent_id: agentId,
+            dropped_count: droppedCount,
+            max_queue_size: this.maxQueueSize,
+          });
+        } catch {
+          // Logger threw — swallow; drop path must not fail.
+        }
+      }
     }
 
     queue.push(message);
+
+    // Wave-13 B-5: emit depth gauge on every successful push so the metrics
+    // backend sees the saturation curve (not only the overflow events).
+    // Observations are keyed by agent_id so operators can alert on a
+    // specific inbox approaching `maxQueueSize`. Emitted AFTER the push so
+    // the reported depth matches the post-mutation queue length.
+    this.depthGauge?.record(queue.length, { agent_id: agentId });
+
     return true;
   }
 

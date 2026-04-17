@@ -763,3 +763,52 @@ describe('F24: Exit code constants', () => {
     expect(codes.size).toBe(3);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Wave-13 — Track M (CLI) fixes
+// ---------------------------------------------------------------------------
+
+describe('Wave-13 Track M — module-scoped immutability', () => {
+  it('Wave-13 M-1: ALL_MODULES is frozen at runtime', () => {
+    expect(Object.isFrozen(ALL_MODULES)).toBe(true);
+  });
+
+  it('Wave-13 M-1: ALL_MODULES.push() throws in strict mode', () => {
+    // TypeScript compile-time already blocks this for `readonly` tuples, but a
+    // non-TS consumer could still try to mutate. Object.freeze enforces the
+    // guard at runtime.
+    expect(() => {
+      (ALL_MODULES as unknown as string[]).push('rogue');
+    }).toThrow(TypeError);
+  });
+
+  it('Wave-13 M-1: ALL_MODULES element assignment is refused by freeze', () => {
+    expect(() => {
+      (ALL_MODULES as unknown as string[])[0] = 'hacked';
+    }).toThrow(TypeError);
+  });
+
+  it('Wave-13 M-1: MODULE_DESCRIPTIONS is frozen at runtime', () => {
+    expect(Object.isFrozen(MODULE_DESCRIPTIONS)).toBe(true);
+  });
+
+  it('Wave-13 M-1: MODULE_DESCRIPTIONS property assignment is refused', () => {
+    expect(() => {
+      (MODULE_DESCRIPTIONS as unknown as Record<string, string>).core = 'hacked';
+    }).toThrow(TypeError);
+  });
+
+  it('Wave-13 M-1: MODULE_DESCRIPTIONS property deletion is refused', () => {
+    expect(() => {
+      delete (MODULE_DESCRIPTIONS as unknown as Record<string, string>).core;
+    }).toThrow(TypeError);
+  });
+
+  it('Wave-13 M-1: spread of frozen ALL_MODULES still produces a mutable copy', () => {
+    const copy = [...ALL_MODULES];
+    expect(() => copy.push('new-module')).not.toThrow();
+    expect(copy).toContain('new-module');
+    // Original must remain untouched.
+    expect(ALL_MODULES).not.toContain('new-module');
+  });
+});

@@ -217,14 +217,27 @@ async function runGuardrails(
 
     try {
       if (entry.timeoutMs !== undefined) {
+        // Wave-13 E-6: per-guard fairness. If the pipeline has a total-timeout
+        // budget, clamp the guard-level timeout to the remaining budget so a
+        // greedy guard cannot burn the whole wall-clock and starve later
+        // guards. Emit a `guard_timeout` span event on every guard-level
+        // timeout so operators can see which guard tripped the clamp.
+        let effectiveTimeout = entry.timeoutMs;
+        if (pipeline.totalTimeoutMs > 0) {
+          const elapsedSoFar = performance.now() - pipelineStart;
+          const remaining = pipeline.totalTimeoutMs - elapsedSoFar;
+          if (remaining > 0 && remaining < effectiveTimeout) {
+            effectiveTimeout = remaining;
+          }
+        }
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {
           verdict = await Promise.race([
             Promise.resolve(entry.guard(guardCtx)),
             new Promise<never>((_, reject) => {
               timer = setTimeout(
-                () => reject(new Error(`Guardrail "${entry.name}" timed out after ${entry.timeoutMs}ms`)),
-                entry.timeoutMs,
+                () => reject(new Error(`Guardrail "${entry.name}" timed out after ${effectiveTimeout}ms`)),
+                effectiveTimeout,
               );
               // Ensure timer doesn't keep the process alive
               if (typeof timer === 'object' && 'unref' in timer) {
@@ -239,6 +252,24 @@ async function runGuardrails(
         verdict = await entry.guard(guardCtx);
       }
     } catch (err) {
+      // Wave-13 E-6: emit a `guard_timeout` span-event when the failure was a
+      // guard-level timeout. The span event is delivered via the same
+      // `onEvent` callback that receives verdict events; we piggy-back on
+      // the verdict-event shape by using a reserved `reason` prefix so
+      // consumers can filter it (and downstream tracing middleware can
+      // promote it to an OTel span event).
+      const errMsg = err instanceof Error ? err.message : String(err);
+      if (entry.timeoutMs !== undefined && errMsg.includes('timed out after')) {
+        const spanEvent: GuardrailEvent = {
+          guardrail: entry.name,
+          direction,
+          verdict: { action: 'block', reason: `guard_timeout: ${errMsg}` },
+          latencyMs: performance.now() - start,
+        };
+        // Emit to the onEvent sink only — do NOT push into the buffer, the
+        // verdict event below is the canonical record.
+        pipeline.onEvent?.(spanEvent);
+      }
       if (pipeline.failClosed) {
         const message = err instanceof Error ? err.message : String(err);
         verdict = { action: 'block', reason: `Guardrail error: ${message}` };

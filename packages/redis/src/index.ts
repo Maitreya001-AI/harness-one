@@ -80,6 +80,15 @@ export interface RedisStoreConfig {
    * Defaults to a `console.warn`-backed shim so warnings remain visible.
    */
   readonly logger?: RedisStoreLogger;
+  /**
+   * Wave-13 K-1: When `true`, `query()` preserves the historical behaviour
+   * of returning a partial result set when an `MGET` sub-batch fails —
+   * failed batches are skipped with a warning. When `false` (the default),
+   * a batch failure throws `HarnessError(MEMORY_CORRUPT)` so callers can
+   * treat partial results as a hard error instead of silently shipping an
+   * incomplete list. Defaults to `false`.
+   */
+  readonly partialOk?: boolean;
 }
 
 /**
@@ -119,6 +128,10 @@ export function createRedisStore(config: RedisStoreConfig): RedisMemoryStore {
   // Wave-5F T13: delegate default logger to core's redaction-enabled singleton.
   // `RedisStoreLogger` only needs `.warn`, which the core Logger satisfies.
   const logger: RedisStoreLogger = config.logger ?? createDefaultLogger();
+  // Wave-13 K-1: default to strict failure semantics so partial results never
+  // silently reach the caller. Opt-in `partialOk: true` restores legacy
+  // behaviour for callers that can tolerate a degraded batch.
+  const partialOk = config.partialOk === true;
 
   if (!client) {
     throw new HarnessError('Redis client is required', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide a valid ioredis client instance');
@@ -219,9 +232,21 @@ export function createRedisStore(config: RedisStoreConfig): RedisMemoryStore {
         try {
           values = await client.mget(...keys);
         } catch (err) {
-          // Connection failure mid-batch: skip this chunk and continue
-          logger.warn('[harness-one/redis] batch read failed, results may be partial', {
+          // Wave-13 K-1: by default, an MGET sub-batch failure is a hard
+          // error so partial result sets never leak to the caller. Opt-in
+          // `partialOk: true` restores the legacy "warn + skip chunk"
+          // semantics for callers that explicitly accept degraded reads.
+          if (!partialOk) {
+            throw new HarnessError(
+              `query() aborted: MGET batch ${Math.floor(i / batchSize)} failed — partial results suppressed`,
+              HarnessErrorCode.MEMORY_CORRUPT,
+              'Set `partialOk: true` in the RedisStoreConfig if partial results are acceptable, otherwise verify Redis connectivity.',
+              err instanceof Error ? err : undefined,
+            );
+          }
+          logger.warn('[harness-one/redis] batch read failed, results may be partial (partialOk=true)', {
             batchSize: batch.length,
+            batchIndex: Math.floor(i / batchSize),
             error: err instanceof Error ? err.message : String(err),
           });
           continue;
@@ -270,22 +295,64 @@ export function createRedisStore(config: RedisStoreConfig): RedisMemoryStore {
      * F10: The read-modify-write cycle is protected against concurrent
      * mutations. If another client modifies the key between WATCH and EXEC,
      * the transaction returns `null` and we retry (up to 3 attempts).
+     *
+     * Wave-13 P0-7: Hardened around the WATCH/UNWATCH contract.
+     *   (a) All data that does NOT depend on the read (i.e. the updates bag
+     *       and the serialisation overhead) is prepared BEFORE WATCH, so the
+     *       WATCH → GET → MULTI → EXEC window is as tight as possible.
+     *   (b) Every error path (not-found, corrupt, unexpected throw from
+     *       GET / parse / JSON.stringify / EXEC) runs UNWATCH via a
+     *       `safeUnwatch` helper that never re-throws.
+     *   (c) No `await` sits between MULTI pipeline construction and EXEC —
+     *       the pipeline is built synchronously and EXEC is the next `await`.
+     *   (d) A failed EXEC (returns null) runs UNWATCH defensively before the
+     *       next iteration re-WATCHes, so a client driver that left the
+     *       session in a watched state can't accumulate stale watches.
      */
     async update(id: string, updates: Partial<Pick<MemoryEntry, 'content' | 'grade' | 'metadata' | 'tags'>>) {
       const key = entryKey(id);
       const MAX_RETRIES = 3;
 
+      // Wave-13 P0-7 (a): compute anything that does not depend on the
+      // watched value ahead of WATCH. `updates` is an object reference only;
+      // spreading it here pre-caches structure shape for v8 and shortens the
+      // WATCH/EXEC window.
+      const now = () => Date.now();
+
+      const safeUnwatch = async (): Promise<void> => {
+        try {
+          await client.unwatch();
+        } catch (err) {
+          // UNWATCH is best-effort — a transient connection failure just
+          // means the server will expire our watch on its own. Log at warn
+          // so the signal isn't completely swallowed.
+          logger.warn('[harness-one/redis] UNWATCH failed', {
+            entryId: id,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      };
+
       for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
         await client.watch(key);
 
-        const raw = await client.get(key);
+        let raw: string | null;
+        try {
+          raw = await client.get(key);
+        } catch (err) {
+          // (b): any throw from GET must release WATCH before propagating.
+          await safeUnwatch();
+          throw err;
+        }
+
         if (!raw) {
-          try { await client.unwatch(); } catch { /* unwatch failure is non-fatal; the watch will timeout */ }
+          await safeUnwatch();
           throw new HarnessError(`Memory entry not found: ${id}`, HarnessErrorCode.MEMORY_NOT_FOUND);
         }
+
         const existing = parseEntryFromRedis(raw, id, logger);
         if (!existing) {
-          try { await client.unwatch(); } catch { /* unwatch failure is non-fatal; the watch will timeout */ }
+          await safeUnwatch();
           throw new HarnessError(
             `Corrupted memory entry: ${id}`,
             HarnessErrorCode.MEMORY_DATA_CORRUPTION,
@@ -293,26 +360,41 @@ export function createRedisStore(config: RedisStoreConfig): RedisMemoryStore {
           );
         }
 
-        const updated: MemoryEntry = {
-          ...existing,
-          ...updates,
-          updatedAt: Date.now(),
-        };
+        // (c): build the pipeline synchronously — no `await` between
+        // MULTI and EXEC. All value-computation happens here so the server
+        // sees WATCH → GET → MULTI → EXEC with no interleaved round-trips.
+        let value: string;
+        try {
+          const updated: MemoryEntry = {
+            ...existing,
+            ...updates,
+            updatedAt: now(),
+          };
+          value = JSON.stringify(updated);
 
-        const value = JSON.stringify(updated);
-        const pipeline = client.multi();
-        if (defaultTTL) {
-          pipeline.set(key, value, 'EX', defaultTTL);
-        } else {
-          pipeline.set(key, value);
-        }
-        pipeline.sadd(indexKey, id);
-        const result = await pipeline.exec();
+          const pipeline = client.multi();
+          if (defaultTTL) {
+            pipeline.set(key, value, 'EX', defaultTTL);
+          } else {
+            pipeline.set(key, value);
+          }
+          pipeline.sadd(indexKey, id);
+          const result = await pipeline.exec();
 
-        if (result !== null) {
-          return updated; // Success — no conflict
+          if (result !== null) {
+            return updated; // Success — no conflict, WATCH is auto-released by EXEC
+          }
+          // (d): EXEC returned null — WATCH detected a concurrent modification.
+          // EXEC auto-releases the watch, but UNWATCH is idempotent and cheap;
+          // calling it keeps the session state consistent if the driver
+          // retained any watch metadata.
+          await safeUnwatch();
+        } catch (err) {
+          // (b): any throw between MULTI build and EXEC must release WATCH.
+          await safeUnwatch();
+          throw err;
         }
-        // result is null → WATCH detected a concurrent modification, retry
+        // result was null → retry on next loop iteration.
       }
 
       throw new HarnessError(

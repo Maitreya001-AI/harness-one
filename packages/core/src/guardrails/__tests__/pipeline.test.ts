@@ -289,7 +289,21 @@ describe('pipeline edge cases', () => {
     });
     const resultOpen = await runInput(pipelineOpen, { content: 'hello' });
     expect(resultOpen.passed).toBe(true);
-    expect(eventsOpen).toHaveLength(2);
+    // Wave-13 E-6: a `guard_timeout` span event is now emitted alongside the
+    // existing fail-open verdict event for the timed-out guard, so the total
+    // event count is 3 (span + fail-open + allow) instead of 2.
+    const verdictEvents = eventsOpen.filter(
+      (e) =>
+        typeof e.verdict.reason !== 'string' ||
+        !e.verdict.reason.startsWith('guard_timeout:'),
+    );
+    expect(verdictEvents).toHaveLength(2);
+    const spanEvents = eventsOpen.filter(
+      (e) =>
+        typeof e.verdict.reason === 'string' &&
+        e.verdict.reason.startsWith('guard_timeout:'),
+    );
+    expect(spanEvents).toHaveLength(1);
   });
 
   it('PermissionLevel is passed through context to guardrails', async () => {

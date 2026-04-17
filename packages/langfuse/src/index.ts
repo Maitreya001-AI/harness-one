@@ -7,7 +7,7 @@
  */
 
 import type { Langfuse } from 'langfuse';
-import type { TraceExporter, Trace, Span } from 'harness-one/observe';
+import type { TraceExporter, Trace, Span, InstrumentationPort, MetricsPort } from 'harness-one/observe';
 import type { PromptBackend, PromptTemplate } from 'harness-one/prompt';
 import type { CostTracker, ModelPricing, Logger } from 'harness-one/observe';
 import type { TokenUsageRecord, CostAlert } from 'harness-one/observe';
@@ -120,6 +120,27 @@ export interface LangfuseExporterConfig {
   readonly sanitize?: (attributes: Record<string, unknown>) => Record<string, unknown>;
   /** Maximum number of trace entries to retain in the LRU map. Defaults to 1000. */
   readonly maxTraceMapSize?: number;
+  /**
+   * Wave-13 I-2: Optional instrumentation port used to tag the offending span
+   * with an `exporter_error` event before an export failure is re-thrown.
+   * Typically this is the same `TraceManager` that owns the span — it
+   * structurally satisfies `InstrumentationPort` without extra wiring. When
+   * omitted, the exporter still throws; it simply cannot annotate the span.
+   */
+  readonly instrumentation?: InstrumentationPort;
+  /**
+   * Wave-13 I-3: Optional metrics port for flush-batch failure counters.
+   * When provided, the exporter emits
+   * `harness.langfuse.flush_failures` (counter, incremented on each
+   * `flush()` rejection). Defaults to no-op.
+   */
+  readonly metrics?: MetricsPort;
+  /**
+   * Wave-13 I-3: Optional logger. When supplied, flush failures are surfaced
+   * via `logger.warn` in addition to the metric counter, so operators can see
+   * batch failures without wiring a metrics backend.
+   */
+  readonly logger?: Pick<Logger, 'warn' | 'error' | 'debug'>;
 }
 
 /**
@@ -130,12 +151,40 @@ export interface LangfuseExporterConfig {
  * - Other spans map to generic Langfuse spans.
  */
 export function createLangfuseExporter(config: LangfuseExporterConfig): TraceExporter {
-  const { client } = config;
+  const { client, instrumentation, metrics, logger } = config;
 
   // Track Langfuse trace objects so spans can attach to the correct parent.
   const MAX_TRACE_MAP_SIZE = config.maxTraceMapSize ?? 1000;
   const traceMap = new Map<string, ReturnType<typeof client.trace>>();
   const traceTimestamps = new Map<string, number>();
+
+  // Wave-13 I-3: Lazy metric handles — only materialised if a metrics port
+  // was supplied, so the no-op path stays allocation-free.
+  const flushFailureCounter = metrics?.counter('harness.langfuse.flush_failures', {
+    description: 'Count of Langfuse flush() rejections',
+  });
+
+  // Wave-13 I-2: Tag the currently-exporting span with an `exporter_error`
+  // event before the error propagates. `addSpanEvent` in the core
+  // TraceManager throws if the span is already ended; we catch so the
+  // observability path never shadows the real export error.
+  function tagSpanExportError(spanId: string, err: unknown): void {
+    if (!instrumentation) return;
+    const errorCode =
+      err instanceof HarnessError ? err.code : 'unknown';
+    try {
+      instrumentation.addSpanEvent(spanId, {
+        name: 'exporter_error',
+        attributes: {
+          exporter: 'langfuse',
+          error_code: errorCode,
+        },
+      });
+    } catch {
+      // Deliberately swallow — if the span is ended / evicted / missing
+      // we still need to re-throw the original export failure.
+    }
+  }
 
   function touchTrace(traceId: string): void {
     // Delete-then-reinsert to maintain insertion-order = access-order in the Map.
@@ -192,11 +241,16 @@ export function createLangfuseExporter(config: LangfuseExporterConfig): TraceExp
           traceMap.delete(trace.id);
           traceTimestamps.delete(trace.id);
         }
+        // Wave-13 I-2: Tag the *root* trace span (trace.id acts as spanId when
+        // harness emits a trace-level diagnostic) before re-throw. Failure
+        // paths inside trace export are rare but should be observable.
+        tagSpanExportError(trace.id, err);
         throw err;
       }
     },
 
     async exportSpan(span: Span): Promise<void> {
+      try {
       let lfTrace = traceMap.get(span.traceId);
       if (!lfTrace) {
         lfTrace = client.trace({ id: span.traceId, name: 'unknown' });
@@ -266,10 +320,36 @@ export function createLangfuseExporter(config: LangfuseExporterConfig): TraceExp
           },
         });
       }
+      } catch (err) {
+        // Wave-13 I-2: Annotate the offending span so downstream tools can
+        // surface *which* span caused the export failure. We deliberately
+        // tag before re-throwing so the trace-manager still sees the error.
+        tagSpanExportError(span.id, err);
+        throw err;
+      }
     },
 
+    /**
+     * Flush any events buffered by the Langfuse client. Awaits
+     * `client.flushAsync()` (Wave-13 I-1) so callers reliably see drained
+     * state. Wave-13 I-3 emits a counter + log on rejection.
+     */
     async flush(): Promise<void> {
-      await client.flushAsync();
+      try {
+        // Wave-13 I-1: Previously this was fire-and-forget, so callers of
+        // `flush()` could proceed while events were still in-flight. Returning
+        // the promise makes the contract match the name.
+        await client.flushAsync();
+      } catch (err) {
+        // Wave-13 I-3: Surface flush failures via metric + optional log.
+        flushFailureCounter?.add(1, { exporter: 'langfuse' });
+        if (logger) {
+          logger.warn('[harness-one/langfuse] flush failed', {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        throw err;
+      }
     },
 
     /**
@@ -731,6 +811,24 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): La
       budget = newBudget;
       // OBS-003: New budget => new dedupe window.
       emittedBudgetExceeded.clear();
+    },
+
+    /**
+     * Wave-13 C-1: async-serialised pricing update. Mirrors the core CostTracker
+     * contract so this Langfuse-backed tracker satisfies the same interface.
+     * Wraps the existing synchronous setPricing — Langfuse pricing state is
+     * still single-writer, but the Promise-returning shape lets callers
+     * compose updates with other concurrency-safe code paths uniformly.
+     */
+    async updatePricing(newPricing: ModelPricing[]): Promise<void> {
+      tracker.setPricing(newPricing);
+    },
+
+    /**
+     * Wave-13 C-1: async-serialised budget update. See `updatePricing` notes.
+     */
+    async updateBudget(newBudget: number): Promise<void> {
+      tracker.setBudget(newBudget);
     },
 
     checkBudget(): CostAlert | null {

@@ -113,6 +113,12 @@ export enum HarnessErrorCode {
   /** Circuit breaker is OPEN — fast-failing to prevent cascade failures. */
   ADAPTER_CIRCUIT_OPEN = 'ADAPTER_CIRCUIT_OPEN',
   /**
+   * Adapter request payload exceeded a configured size cap (Wave-13). Used
+   * for per-call wire-size limits (tool-argument bytes, message bytes) that
+   * are distinct from cumulative token budgets.
+   */
+  ADAPTER_PAYLOAD_OVERSIZED = 'ADAPTER_PAYLOAD_OVERSIZED',
+  /**
    * Escape mechanism: third-party adapter subclasses (`@harness-one/openai`,
    * `@harness-one/anthropic`, etc.) throw with `code = ADAPTER_CUSTOM` and
    * populate `details.adapterCode: string` with their own sub-code.
@@ -146,6 +152,16 @@ export enum HarnessErrorCode {
   ORCH_STAGE_NOT_FOUND = 'ORCH_STAGE_NOT_FOUND',
   ORCH_TOPIC_NOT_FOUND = 'ORCH_TOPIC_NOT_FOUND',
   ORCH_UNKNOWN_STRATEGY = 'ORCH_UNKNOWN_STRATEGY',
+  /**
+   * Orchestrator delegation chain reached its in-flight cap (Wave-13). Guards
+   * against unbounded delegation Map growth when delegated tasks never settle.
+   */
+  ORCH_DELEGATION_LIMIT = 'ORCH_DELEGATION_LIMIT',
+  /**
+   * Orchestrator shared-context map reached its size cap (Wave-13). Guards
+   * against unbounded growth of `setSharedContext` writes.
+   */
+  ORCH_CONTEXT_LIMIT = 'ORCH_CONTEXT_LIMIT',
 
   // ── LOCK_* — async-lock primitives ──────────────────────────────────────
   LOCK_ABORTED = 'LOCK_ABORTED',

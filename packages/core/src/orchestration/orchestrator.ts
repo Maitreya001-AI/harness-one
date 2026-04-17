@@ -98,6 +98,21 @@ export interface OrchestratorConfig {
    * When omitted, metadata is returned as-is (deep-cloned but not filtered).
    */
   readonly redactMetadata?: (metadata: Record<string, unknown>) => Record<string, unknown>;
+  /**
+   * Wave-13 P0-4: cap on total delegation-chain entries (cumulative size of
+   * all inner Sets across all delegators). Prevents a stuck orchestrator
+   * from growing `delegationChain` without bound when delegations never
+   * settle into unregistration. Default: 10_000. Breaches throw
+   * {@link HarnessErrorCode.ORCH_DELEGATION_LIMIT}.
+   */
+  readonly maxDelegationChainEntries?: number;
+  /**
+   * Wave-13 P0-5: cap on shared-context store entries. Prevents unbounded
+   * growth of `sharedContext.set()` writes in long-running orchestrators.
+   * Default: 10_000. Breaches throw
+   * {@link HarnessErrorCode.ORCH_CONTEXT_LIMIT} with a remediation hint.
+   */
+  readonly maxSharedContextEntries?: number;
 }
 
 /** OBS-009: Metrics snapshot for an orchestrator instance. */
@@ -121,6 +136,8 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
   const mode: OrchestrationMode = config?.mode ?? 'peer';
   const strategy: DelegationStrategy | undefined = config?.strategy;
   const maxAgents = config?.maxAgents ?? Infinity;
+  const maxDelegationChainEntries = config?.maxDelegationChainEntries ?? 10_000;
+  const maxSharedContextEntries = config?.maxSharedContextEntries ?? 10_000;
 
   interface MutableAgentRegistration {
     id: string;
@@ -291,8 +308,27 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
           `Avoid keys in {${Array.from(FORBIDDEN_CONTEXT_KEYS).join(', ')}}`,
         );
       }
+      // Wave-13 P0-5: bound the contextStore size. Previously any user of
+      // `sharedContext.set()` could grow the map indefinitely in a
+      // long-running orchestrator — here we enforce a cap with a remediation
+      // hint. Overwriting an existing key never counts against the cap.
+      if (!contextStore.has(normalized) && contextStore.size >= maxSharedContextEntries) {
+        throw new HarnessError(
+          `Orchestrator shared-context reached the configured cap of ${maxSharedContextEntries} entries`,
+          HarnessErrorCode.ORCH_CONTEXT_LIMIT,
+          'Call sharedContext.delete() to evict stale keys, or raise maxSharedContextEntries.',
+        );
+      }
       contextStore.set(normalized, value);
       emit({ type: 'context_updated', key: normalized });
+    },
+    /**
+     * Wave-13 P0-5 ergonomic companion: explicitly evict a key so long-running
+     * orchestrators can reclaim space without wholesale clear(). Returns true
+     * if the key existed.
+     */
+    delete(key: string): boolean {
+      return contextStore.delete(normalizeContextKey(key));
     },
     entries(): ReadonlyMap<string, unknown> {
       return new Map(contextStore);
@@ -469,7 +505,24 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
             }
 
             // Record the delegation: delegatedFrom -> selectedId
-            if (!delegationChain.has(delegatedFrom)) {
+            // Wave-13 P0-4: cap total entries across all inner Sets. This
+            // guards against unbounded delegationChain growth when
+            // delegations never complete (no unregister) — a previously
+            // silent path to OOM in long-running orchestrators.
+            const existingChain = delegationChain.get(delegatedFrom);
+            const wouldBeNew = existingChain === undefined || !existingChain.has(selectedId);
+            if (wouldBeNew) {
+              let totalEntries = 0;
+              for (const s of delegationChain.values()) totalEntries += s.size;
+              if (totalEntries >= maxDelegationChainEntries) {
+                throw new HarnessError(
+                  `Orchestrator delegation-chain reached the configured cap of ${maxDelegationChainEntries} entries`,
+                  HarnessErrorCode.ORCH_DELEGATION_LIMIT,
+                  'Unregister completed agents or raise maxDelegationChainEntries.',
+                );
+              }
+            }
+            if (existingChain === undefined) {
               delegationChain.set(delegatedFrom, new Set());
             }
             (delegationChain.get(delegatedFrom) as Set<string>).add(selectedId);

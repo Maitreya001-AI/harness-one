@@ -15,6 +15,8 @@ import {
   type Redactor,
 } from '../infra/redact.js';
 import { createLazyAsync, type LazyAsync } from '../infra/lazy-async.js';
+import { sanitizeStackTrace } from './logger.js';
+import type { MetricsPort } from './metrics-port.js';
 import type { Trace, Span, SpanEvent, SpanEventSeverity, TraceExporter } from './types.js';
 
 /** Retry telemetry aggregates exposed via `getRetryMetrics()`. */
@@ -144,8 +146,13 @@ export function createTraceManager(config?: {
    * Optional structured logger for trace-manager internal warnings. When set,
    * export errors without an onExportError callback route through this logger
    * instead of `console.warn`. Lets ops silence or redirect warnings at runtime.
+   * Wave-13 C-5: accepts an optional `debug` method for low-severity signals
+   * (dead-trace attempts, LRU 80% warnings).
    */
-  logger?: { warn: (msg: string, meta?: Record<string, unknown>) => void };
+  logger?: {
+    warn: (msg: string, meta?: Record<string, unknown>) => void;
+    debug?: (msg: string, meta?: Record<string, unknown>) => void;
+  };
   /**
    * Global sampling rate (0-1). When set and no per-exporter `shouldExport`
    * hook is provided, each trace is sampled on `endTrace()`. Runtime-adjustable
@@ -180,11 +187,37 @@ export function createTraceManager(config?: {
    * are known to be safe (e.g. tests, trusted internal sinks).
    */
   redact?: RedactConfig | false;
+  /**
+   * Wave-13 C-5: Opt-in strict mode for span creation against a dead/missing
+   * trace. Default `false` preserves the historical no-silent-no-op behaviour
+   * (returns a dead span id and increments a diagnostic counter). When set to
+   * `true`, `startSpan()` throws `HarnessError(TRACE_NOT_FOUND)` so callers can
+   * detect misuse immediately. This is additive and non-breaking.
+   */
+  strictSpanCreation?: boolean;
+  /**
+   * Wave-13 C-3 / C-10: Optional metrics sink for trace-manager internals.
+   * Emits counters for dead-trace span creation attempts, trace LRU evictions,
+   * and span LRU evictions. Defaults to no-op.
+   */
+  metrics?: MetricsPort;
 }): TraceManager {
   const exporters = config?.exporters ?? [];
   const maxTraces = config?.maxTraces ?? 1000;
   const onExportError = config?.onExportError;
   const logger = config?.logger;
+  const strictSpanCreation = config?.strictSpanCreation ?? false;
+  // Wave-13 C-3 / C-10: resolve optional metric instruments once.
+  const metricsPort = config?.metrics;
+  const deadTraceSpanCounter = metricsPort?.counter('harness.trace.dead_span_attempts.total', {
+    description: 'startSpan() calls that targeted a dead or missing trace',
+  });
+  const traceEvictionCounter = metricsPort?.counter('harness.trace.evictions.total', {
+    description: 'Traces evicted from the LRU',
+  });
+  const spanEvictionCounter = metricsPort?.counter('harness.trace.span_evictions.total', {
+    description: 'Spans evicted by trace LRU pressure',
+  });
   let samplingRate = config?.defaultSamplingRate ?? 1;
   // P1-19: default 30s flush deadline. `0` disables the cap.
   const flushTimeoutMs = config?.flushTimeoutMs ?? 30_000;
@@ -434,6 +467,16 @@ export function createTraceManager(config?: {
   let lruTail: MutableTrace | null = null;
   let lruSize = 0;
   let isEvicting = false; // Re-entrance guard for eviction (Fix 3)
+  // Wave-13 C-10: one-shot warning state for the 80%-capacity signal.
+  let spanHighWaterWarned = false;
+  // Wave-13 C-7: All LRU mutation helpers below run synchronously — there is
+  // no `await` between read and write, so they are already atomic on the JS
+  // event loop. The re-entrance guard `isEvicting` suffices for this layer.
+  // The C-7 audit recommendation ("async-lock all LRU mutations") only
+  // applies once mutations become async-accessible; we deliberately do not
+  // add a lock here because it would mis-signal an invariant the code does
+  // not need. Any future change that introduces `await` inside
+  // appendTraceOrder/removeTraceOrder/shiftTraceOrder MUST add the lock.
   /**
    * LM-016: Dead trace IDs — returned by `startTrace()` when every configured
    * exporter reports `isHealthy() === false`. The trace is NEVER admitted to
@@ -549,10 +592,16 @@ export function createTraceManager(config?: {
         for (const [id, trace] of traces) {
           if (traces.size <= maxTraces) break;
           if (trace.status !== 'running') {
-            allEvictedSpanIds.push(...finalizeSpansForEviction(trace));
+            const evictedSpans = finalizeSpansForEviction(trace);
+            allEvictedSpanIds.push(...evictedSpans);
             for (const spanId of trace.spanIds) {
               spans.delete(spanId);
               retryingSpanIds.delete(spanId);
+            }
+            // Wave-13 C-10: metric per evicted trace + span count.
+            traceEvictionCounter?.add(1, { reason: 'ended' });
+            if (trace.spanIds.length > 0) {
+              spanEvictionCounter?.add(trace.spanIds.length, { reason: 'trace_evicted' });
             }
             traces.delete(id);
           }
@@ -561,10 +610,15 @@ export function createTraceManager(config?: {
         while (traces.size > maxTraces && lruSize > 0) {
           const oldest = shiftTraceOrder();
           if (!oldest) break;
-          allEvictedSpanIds.push(...finalizeSpansForEviction(oldest));
+          const evictedSpans = finalizeSpansForEviction(oldest);
+          allEvictedSpanIds.push(...evictedSpans);
           for (const spanId of oldest.spanIds) {
             spans.delete(spanId);
             retryingSpanIds.delete(spanId);
+          }
+          traceEvictionCounter?.add(1, { reason: 'lru' });
+          if (oldest.spanIds.length > 0) {
+            spanEvictionCounter?.add(oldest.spanIds.length, { reason: 'trace_evicted' });
           }
           traces.delete(oldest.id);
         }
@@ -573,7 +627,59 @@ export function createTraceManager(config?: {
       isEvicting = false;
     }
 
+    // Wave-13 C-10: warn at 80% capacity so operators see pressure before
+    // eviction kicks in. One-shot per crossing (not re-triggered until the
+    // size drops below threshold).
+    if (traces.size >= Math.floor(maxTraces * 0.8) && !spanHighWaterWarned) {
+      spanHighWaterWarned = true;
+      if (logger) {
+        try {
+          logger.warn('[harness-one/trace-manager] trace map above 80% capacity', {
+            traces: traces.size,
+            spans: spans.size,
+            maxTraces,
+          });
+        } catch { /* non-fatal */ }
+      }
+    } else if (traces.size < Math.floor(maxTraces * 0.8) && spanHighWaterWarned) {
+      spanHighWaterWarned = false;
+    }
+
     return allEvictedSpanIds;
+  }
+
+  /**
+   * Wave-13 C-4: Invoke `exporter.flush()` with a per-exporter deadline so a
+   * single slow exporter can no longer block the aggregate `flush()` beyond
+   * `perExporterTimeoutMs`. A `0` timeout disables the cap for the legacy
+   * wait-forever path.
+   */
+  function flushExporterBounded(
+    exporter: TraceExporter,
+    perExporterTimeoutMs: number,
+  ): Promise<void> {
+    if (perExporterTimeoutMs <= 0) {
+      return Promise.resolve(exporter.flush()).then(() => undefined);
+    }
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<'timeout'>((resolve) => {
+      timeoutHandle = setTimeout(() => resolve('timeout'), perExporterTimeoutMs);
+    });
+    return Promise.race([
+      Promise.resolve(exporter.flush()).then(() => 'ok' as const),
+      timeoutPromise,
+    ])
+      .then((outcome) => {
+        if (outcome === 'timeout') {
+          const msg = `[harness-one/trace-manager] exporter "${exporter.name}" flush() timed out after ${perExporterTimeoutMs}ms`;
+          if (logger) {
+            try { logger.warn(msg, { exporter: exporter.name, perExporterTimeoutMs }); } catch { /* non-fatal */ }
+          }
+        }
+      })
+      .finally(() => {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+      });
   }
 
   /**
@@ -716,12 +822,27 @@ export function createTraceManager(config?: {
       // operation treats as a no-op. Mirrors startTrace's evict-at-birth
       // semantics so callers don't need special-casing.
       if (deadTraceIds.has(traceId)) {
+        // Wave-13 C-5: no longer a silent no-op. Either throw (strict) or
+        // emit an observable counter + debug log (lenient default).
+        if (strictSpanCreation) {
+          throw new HarnessError(
+            `Trace is dead (all exporters unhealthy at startTrace time): ${traceId}`,
+            HarnessErrorCode.TRACE_NOT_FOUND,
+            'Ensure at least one exporter reports isHealthy() === true before starting traces',
+          );
+        }
+        deadTraceSpanCounter?.add(1, { reason: 'trace_dead' });
+        if (logger) {
+          try { (logger as { debug?: (m: string, meta?: Record<string, unknown>) => void }).debug?.('[harness-one/trace-manager] startSpan on dead trace', { traceId, name }); } catch { /* logger non-fatal */ }
+        }
         const deadSpanId = asSpanId(`${DEAD_SPAN_PREFIX}${genSpanId()}`);
         deadSpanIds.add(deadSpanId);
         return deadSpanId;
       }
       const trace = traces.get(traceId);
       if (!trace) {
+        // Wave-13 C-5: missing-trace now observable even in strict=false path.
+        deadTraceSpanCounter?.add(1, { reason: 'trace_missing' });
         throw new HarnessError(
           `Trace not found: ${traceId}`,
           HarnessErrorCode.TRACE_NOT_FOUND,
@@ -949,12 +1070,58 @@ export function createTraceManager(config?: {
       // P1-19: wrap the whole settle-loop in a Promise.race with an abortable
       // timeout so a stuck exporter cannot hang shutdown. `flushTimeoutMs === 0`
       // disables the cap (legacy wait-forever behaviour).
+      //
+      // Wave-13 C-6: ensure every lazy-init promise is tracked by
+      // pendingExports BEFORE we settle, so flush waits for in-flight
+      // exporter initialize() calls too.
+      for (const e of exporters) {
+        if (!e.initialize) continue;
+        const initPromise = ensureInitialized(e);
+        if (!pendingExports.has(initPromise)) {
+          trackExport(initPromise);
+        }
+      }
       await waitForPendingWithTimeout('flush');
-      await Promise.all(exporters.map(e => e.flush()));
+      // Wave-13 C-4: Replace Promise.all with Promise.allSettled + per-exporter
+      // deadline so the slowest exporter cannot block flush(). Timed-out
+      // exporters are logged but NOT re-thrown — flush must remain best-effort.
+      const perExporterTimeout = flushTimeoutMs > 0 && exporters.length > 0
+        ? Math.max(1, Math.floor(flushTimeoutMs / exporters.length))
+        : 0;
+      const flushResults = await Promise.allSettled(
+        exporters.map(e => flushExporterBounded(e, perExporterTimeout)),
+      );
+      for (let i = 0; i < flushResults.length; i++) {
+        const r = flushResults[i];
+        if (r.status === 'rejected') {
+          reportExportError(r.reason);
+        }
+      }
     },
 
     async initialize(): Promise<void> {
-      await Promise.all(exporters.map(e => ensureInitialized(e)));
+      // Wave-13 C-4: use allSettled so one slow exporter doesn't block the
+      // others, AND track every init promise in pendingExports so flush()
+      // awaits them if called concurrently.
+      const initPromises: Promise<void>[] = [];
+      for (const e of exporters) {
+        const p = ensureInitialized(e);
+        trackExport(p);
+        initPromises.push(p);
+      }
+      const results = await Promise.allSettled(initPromises);
+      for (let i = 0; i < results.length; i++) {
+        const r = results[i];
+        if (r.status === 'rejected') {
+          const exporter = exporters[i];
+          const name = exporter?.name ?? 'unknown';
+          if (logger) {
+            try { logger.warn('[harness-one/trace-manager] exporter initialize failed', { exporter: name, error: r.reason }); } catch { /* non-fatal */ }
+          } else if (onExportError) {
+            try { onExportError(r.reason); } catch { /* non-fatal */ }
+          }
+        }
+      }
     },
 
     setSamplingRate(rate: number): void {
@@ -1077,6 +1244,42 @@ export function createConsoleExporter(config?: { verbose?: boolean; output?: (li
       // Nothing to flush for console
     },
   };
+}
+
+/**
+ * Wave-13 C-11: Shared helper that applies the same absolute-path stack
+ * sanitisation the logger uses, returning a plain `{ name, message, stack }`
+ * JSON envelope suitable for exporter boundaries (Langfuse/OTel/…). Exporters
+ * that receive raw `Error` instances can call this to avoid leaking developer
+ * machine paths into downstream trace backends.
+ *
+ * Non-Error inputs (`null`, strings, plain objects) are returned as `{ name,
+ * message }` with best-effort coercion, never throwing.
+ *
+ * The `cwd` option overrides the detection used by `sanitizeStackTrace` —
+ * useful in exporters that want to pin to a deployment root rather than the
+ * runtime cwd.
+ */
+export function sanitizeErrorForExport(
+  err: unknown,
+  opts?: { readonly cwd?: string },
+): { readonly name: string; readonly message: string; readonly stack?: string } {
+  if (err instanceof Error) {
+    const stack = typeof err.stack === 'string'
+      ? sanitizeStackTrace(err.stack, opts)
+      : undefined;
+    return stack !== undefined
+      ? { name: err.name, message: err.message, stack }
+      : { name: err.name, message: err.message };
+  }
+  if (err === null) return { name: 'Null', message: 'null' };
+  if (err === undefined) return { name: 'Undefined', message: 'undefined' };
+  if (typeof err === 'string') return { name: 'Error', message: err };
+  try {
+    return { name: 'Error', message: JSON.stringify(err) };
+  } catch {
+    return { name: 'Error', message: String(err) };
+  }
 }
 
 /**

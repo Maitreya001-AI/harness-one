@@ -343,6 +343,8 @@ export interface CostTracker {
     // @deprecated
     setPricing(pricing: ModelPricing[]): void;
     shouldStop(): boolean;
+    updateBudget(budget: number): Promise<void>;
+    updatePricing(pricing: ModelPricing[]): Promise<void>;
     updateUsage(traceId: string, usage: Partial<Omit<TokenUsageRecord, 'estimatedCost' | 'timestamp' | 'traceId' | 'model'>>): TokenUsageRecord | undefined;
 }
 
@@ -370,6 +372,7 @@ export function createCostTracker(config?: {
     }) => void;
     logger?: Logger;
     alertDedupeWindowMs?: number;
+    metrics?: MetricsPort;
 }): CostTracker;
 
 // Warning: (ae-forgotten-export) The symbol "LoggerConfig" needs to be exported by the entry point index.d.ts
@@ -415,6 +418,7 @@ interface CreateRegistryConfig {
     maxCallsPerSession?: number;
     // (undocumented)
     maxCallsPerTurn?: number;
+    maxTotalArgBytesPerTurn?: number;
     permissions?: {
         check: (toolName: string, context?: Record<string, unknown>) => boolean;
     };
@@ -432,7 +436,9 @@ export function createSessionManager(config?: {
     gcIntervalMs?: number;
     logger?: {
         warn: (msg: string, meta?: Record<string, unknown>) => void;
+        error?: (msg: string, meta?: Record<string, unknown>) => void;
     };
+    maxMetadataBytes?: number;
 }): SessionManager;
 
 // @public
@@ -442,10 +448,13 @@ export function createTraceManager(config?: {
     onExportError?: (error: unknown) => void;
     logger?: {
         warn: (msg: string, meta?: Record<string, unknown>) => void;
+        debug?: (msg: string, meta?: Record<string, unknown>) => void;
     };
     defaultSamplingRate?: number;
     flushTimeoutMs?: number;
     redact?: RedactConfig | false;
+    strictSpanCreation?: boolean;
+    metrics?: MetricsPort;
 }): TraceManager;
 
 // @public
@@ -618,6 +627,7 @@ export enum HarnessErrorCode {
     ADAPTER_NETWORK = "ADAPTER_NETWORK",
     // (undocumented)
     ADAPTER_PARSE = "ADAPTER_PARSE",
+    ADAPTER_PAYLOAD_OVERSIZED = "ADAPTER_PAYLOAD_OVERSIZED",
     // (undocumented)
     ADAPTER_RATE_LIMIT = "ADAPTER_RATE_LIMIT",
     ADAPTER_UNAVAILABLE = "ADAPTER_UNAVAILABLE",
@@ -720,8 +730,10 @@ export enum HarnessErrorCode {
     ORCH_BOUNDARY_READ_DENIED = "ORCH_BOUNDARY_READ_DENIED",
     // (undocumented)
     ORCH_BOUNDARY_WRITE_DENIED = "ORCH_BOUNDARY_WRITE_DENIED",
+    ORCH_CONTEXT_LIMIT = "ORCH_CONTEXT_LIMIT",
     // (undocumented)
     ORCH_DELEGATION_CYCLE = "ORCH_DELEGATION_CYCLE",
+    ORCH_DELEGATION_LIMIT = "ORCH_DELEGATION_LIMIT",
     // (undocumented)
     ORCH_DUPLICATE_AGENT = "ORCH_DUPLICATE_AGENT",
     // (undocumented)
@@ -877,6 +889,13 @@ export interface Logger {
     error(message: string, meta?: Readonly<Record<string, unknown>>): void;
     // (undocumented)
     info(message: string, meta?: Readonly<Record<string, unknown>>): void;
+    isDebugEnabled?(): boolean;
+    // (undocumented)
+    isErrorEnabled?(): boolean;
+    // (undocumented)
+    isInfoEnabled?(): boolean;
+    // (undocumented)
+    isWarnEnabled?(): boolean;
     // (undocumented)
     warn(message: string, meta?: Readonly<Record<string, unknown>>): void;
 }
@@ -958,8 +977,9 @@ export interface MemoryStore {
     count(): Promise<number>;
     // (undocumented)
     delete(id: string): Promise<boolean>;
-    // (undocumented)
-    query(filter: MemoryFilter): Promise<MemoryEntry[]>;
+    query(filter: MemoryFilter, opts?: {
+        signal?: AbortSignal;
+    }): Promise<MemoryEntry[]>;
     // (undocumented)
     read(id: string): Promise<MemoryEntry | null>;
     searchByVector?(options: VectorSearchOptions): Promise<Array<MemoryEntry & {
@@ -995,6 +1015,54 @@ interface MessageMeta {
     readonly timestamp?: number;
     // (undocumented)
     readonly tokens?: number;
+}
+
+// @public
+type MetricAttributes = Readonly<Record<string, string | number | boolean | undefined>>;
+
+// @public
+interface MetricCounter {
+    // Warning: (ae-forgotten-export) The symbol "MetricAttributes" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    add(value: number, attrs?: MetricAttributes): void;
+}
+
+// @public
+interface MetricGauge {
+    // (undocumented)
+    record(value: number, attrs?: MetricAttributes): void;
+}
+
+// @public
+interface MetricHistogram {
+    // (undocumented)
+    record(value: number, attrs?: MetricAttributes): void;
+}
+
+// @public
+interface MetricsPort {
+    // Warning: (ae-forgotten-export) The symbol "MetricCounter" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    counter(name: string, options?: {
+        description?: string;
+        unit?: string;
+    }): MetricCounter;
+    // Warning: (ae-forgotten-export) The symbol "MetricGauge" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    gauge(name: string, options?: {
+        description?: string;
+        unit?: string;
+    }): MetricGauge;
+    // Warning: (ae-forgotten-export) The symbol "MetricHistogram" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    histogram(name: string, options?: {
+        description?: string;
+        unit?: string;
+    }): MetricHistogram;
 }
 
 // @public
@@ -1093,6 +1161,7 @@ export interface ResilientLoopConfig {
 interface ResolvedRegistryConfig {
     maxCallsPerSession: number;
     maxCallsPerTurn: number;
+    maxTotalArgBytesPerTurn: number;
     timeoutMs: number | undefined;
 }
 
@@ -1167,9 +1236,15 @@ export interface SessionManager {
     create(metadata?: Record<string, unknown>): Session;
     destroy(id: string): void;
     dispose(): void;
+    readonly droppedEventCount: number;
     readonly droppedEvents: number;
     gc(): number;
     get(id: string): Session | undefined;
+    getLastHandlerError(): {
+        error: unknown;
+        eventType: SessionEvent['type'];
+    } | undefined;
+    readonly handlerErrorCount: number;
     list(): Session[];
     lock(id: string): {
         unlock: () => void;
@@ -1563,11 +1638,12 @@ export interface VectorSearchOptions {
 
 // Warnings were encountered during analysis:
 //
-// dist/cost-tracker-lzfbsGRC.d.ts:416:5 - (ae-forgotten-export) The symbol "RedactConfig" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-lzfbsGRC.d.ts:703:5 - (ae-forgotten-export) The symbol "EvictionStrategyName" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-lzfbsGRC.d.ts:703:5 - (ae-forgotten-export) The symbol "EvictionStrategy" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-Bo6UNM_h.d.ts:281:5 - (ae-forgotten-export) The symbol "EvictionStrategyName" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-Bo6UNM_h.d.ts:281:5 - (ae-forgotten-export) The symbol "EvictionStrategy" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-Bo6UNM_h.d.ts:321:5 - (ae-forgotten-export) The symbol "MetricsPort" needs to be exported by the entry point index.d.ts
 // dist/pipeline-CCesF6ow.d.ts:95:5 - (ae-forgotten-export) The symbol "GuardrailEvent" needs to be exported by the entry point index.d.ts
-// dist/resilience-D3CJ22bA.d.ts:253:5 - (ae-forgotten-export) The symbol "MiddlewareContext" needs to be exported by the entry point index.d.ts
+// dist/resilience-BKyEbB5z.d.ts:253:5 - (ae-forgotten-export) The symbol "MiddlewareContext" needs to be exported by the entry point index.d.ts
+// dist/trace-manager-C2MOK58G.d.ts:477:5 - (ae-forgotten-export) The symbol "RedactConfig" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 

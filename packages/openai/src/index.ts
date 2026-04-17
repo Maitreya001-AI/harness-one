@@ -151,8 +151,56 @@ function filterExtra(
  *
  * Usage:
  *   createOpenAIAdapter({ ...providers.groq, apiKey: '...', model: 'llama-3.3-70b-versatile' })
+ *
+ * Wave-13 G-3: `providers` is a `Proxy` over the underlying `_providers`
+ * record that (a) returns a frozen `{ baseURL }` view for every read so
+ * callers cannot do `providers.groq.baseURL = 'https://evil.test'`, (b)
+ * refuses any direct mutation (set / delete / defineProperty / setPrototypeOf
+ * / preventExtensions changes) and (c) surfaces providers registered after
+ * module-init through `registerProvider()` so the registration API keeps
+ * working. This is a strictly tighter invariant than pre-Wave-13 where
+ * `providers` was a plain `Readonly<Record<...>>` view — TypeScript accepted
+ * the read-only marker but runtime mutation was silently allowed.
  */
-export const providers: Readonly<Record<string, { baseURL: string }>> = _providers;
+function _deepFrozenEntry(entry: { baseURL: string } | undefined): Readonly<{ baseURL: string }> | undefined {
+  if (entry === undefined) return undefined;
+  // Return a fresh frozen object each time rather than freezing `_providers`
+  // in place — that would break `registerProvider`'s in-place update.
+  return Object.freeze({ baseURL: entry.baseURL });
+}
+
+export const providers: Readonly<Record<string, { readonly baseURL: string }>> = new Proxy(
+  _providers as unknown as Readonly<Record<string, { readonly baseURL: string }>>,
+  {
+    get(target, prop: string | symbol): Readonly<{ baseURL: string }> | undefined {
+      if (typeof prop !== 'string') return undefined;
+      return _deepFrozenEntry((target as unknown as Record<string, { baseURL: string }>)[prop]);
+    },
+    set(): boolean {
+      throw new TypeError(
+        "Cannot assign to a property of the read-only 'providers' registry. Use registerProvider() to add entries.",
+      );
+    },
+    defineProperty(): boolean {
+      throw new TypeError(
+        "Cannot define properties on the read-only 'providers' registry. Use registerProvider() to add entries.",
+      );
+    },
+    deleteProperty(): boolean {
+      throw new TypeError("Cannot delete properties from the read-only 'providers' registry.");
+    },
+    setPrototypeOf(): boolean {
+      throw new TypeError("Cannot change prototype of the 'providers' registry.");
+    },
+    preventExtensions(): boolean {
+      // Already effectively non-extensible via set/defineProperty traps.
+      return true;
+    },
+    isExtensible(): boolean {
+      return false;
+    },
+  },
+);
 
 /**
  * Register a custom OpenAI-compatible provider or override an existing one.
@@ -186,11 +234,56 @@ export const providers: Readonly<Record<string, { baseURL: string }>> = _provide
  * @throws {HarnessError} with code `INVALID_CONFIG` on any validation failure,
  *   `PROVIDER_REGISTRY_SEALED` if called after `sealProviders()`.
  */
+/**
+ * Options accepted by {@link registerProvider}.
+ *
+ * Wave-13 G-2: adds `trustedOrigins` so deployment bootstraps can pin the set
+ * of hosts that are acceptable targets for custom provider registration. An
+ * attacker who lands a second `registerProvider()` call with a hostile but
+ * syntactically valid URL still fails fast because the origin is not on the
+ * whitelist.
+ */
+export interface RegisterProviderOptions {
+  readonly force?: boolean;
+  readonly allowOverride?: boolean;
+  /**
+   * Wave-13 G-2: optional whitelist of acceptable `URL.origin` values
+   * (scheme + host + port). When set and the parsed `baseURL.origin` is not
+   * in the list, `registerProvider()` throws
+   * `HarnessError(PROVIDER_REGISTRY_SEALED)` before mutating the registry.
+   *
+   * Matching is case-sensitive and exact — provide normalized origins, e.g.
+   * `['https://api.groq.com', 'https://api.openai.com']`.
+   */
+  readonly trustedOrigins?: readonly string[];
+}
+
+export function registerProvider(
+  name: keyof typeof providers,
+): void;
 export function registerProvider(
   name: string,
   config: { baseURL: string },
-  options?: { readonly force?: boolean; readonly allowOverride?: boolean },
+  options?: RegisterProviderOptions,
+): void;
+export function registerProvider(
+  name: string,
+  config?: { baseURL: string },
+  options?: RegisterProviderOptions,
 ): void {
+  // Wave-13 G-4: shorthand overload — `registerProvider('groq')` uses the
+  // bundled `providers` const. Fails loudly if the name isn't bundled.
+  if (config === undefined) {
+    const bundled = _providers[name];
+    if (bundled === undefined) {
+      throw new HarnessError(
+        `registerProvider: "${name}" is not a bundled provider; pass { baseURL } explicitly`,
+        HarnessErrorCode.CORE_INVALID_CONFIG,
+        `Known bundled providers: ${Object.keys(_providers).join(', ')}. Supply { baseURL } for custom providers.`,
+      );
+    }
+    config = { baseURL: bundled.baseURL };
+  }
   // Wave-12 P2-11: reentrancy guard. `registerProvider` / `sealProviders`
   // MUST be called serially from a single init path. If another caller is
   // mid-mutation when we enter, throw distinctly so the race surfaces.
@@ -245,6 +338,21 @@ export function registerProvider(
         HarnessErrorCode.CORE_INVALID_CONFIG,
         'Use an https:// URL. Plain http:// is only allowed for localhost / 127.0.0.1 development endpoints.',
       );
+    }
+
+    // Wave-13 G-2: enforce trusted-origins whitelist when the caller supplied
+    // one. Rejected registrations use `PROVIDER_REGISTRY_SEALED` so ops can
+    // alert on a single error code regardless of whether the origin was
+    // rejected because the registry was sealed or because the whitelist
+    // didn't include the parsed origin.
+    if (options?.trustedOrigins !== undefined && options.trustedOrigins.length > 0) {
+      if (!options.trustedOrigins.includes(parsed.origin)) {
+        throw new HarnessError(
+          `registerProvider: origin "${parsed.origin}" is not in trustedOrigins whitelist`,
+          HarnessErrorCode.PROVIDER_REGISTRY_SEALED,
+          `Add "${parsed.origin}" to trustedOrigins, or pick a baseURL whose origin matches one of: ${options.trustedOrigins.join(', ')}.`,
+        );
+      }
     }
 
     // L4: Warn on private network URLs that may indicate misconfiguration.
@@ -601,27 +709,56 @@ function toHarnessMessage(
 }
 
 /**
- * Models for which we've already emitted a zero-token warning in non-stream
- * chat responses. Module-scoped so we dedupe across all adapter instances in
- * the process (same policy as stream path).
+ * Wave-13 G-1 (P0-3): per-instance zero-usage warn-once dedupe.
  *
- * Wave-12 P1-11: bounded to `_ZERO_USAGE_WARN_CAP` entries with a simple FIFO
- * eviction policy. A long-running server that rotates through many distinct
- * model names could otherwise grow this set without bound. We use `Set`'s
- * insertion-ordered iteration to evict the oldest entry when we hit the cap.
+ * Prior to Wave-13 this was a single module-scoped `Set` shared by every
+ * adapter instance in the process. In multi-tenant deployments that meant
+ * tenant A's warning silenced tenant B's alert for the same model name — an
+ * observability hole that made cost-tracking drift between tenants invisible.
+ *
+ * The factory below creates a fresh bounded LRU set per `createOpenAIAdapter`
+ * call, sized at `_ZERO_USAGE_WARN_CAP` (1000 — larger than before because the
+ * dedupe is no longer shared, so per-instance models accumulate more slowly).
  */
-const _zeroUsageWarnedModels: Set<string> = new Set();
-const _ZERO_USAGE_WARN_CAP = 256;
+const _ZERO_USAGE_WARN_CAP = 1_000;
 
-function _recordZeroUsageWarned(model: string): void {
-  if (_zeroUsageWarnedModels.has(model)) return;
-  if (_zeroUsageWarnedModels.size >= _ZERO_USAGE_WARN_CAP) {
-    // Evict the oldest entry (Set iteration is insertion-ordered).
-    const oldest = _zeroUsageWarnedModels.values().next().value;
-    if (oldest !== undefined) _zeroUsageWarnedModels.delete(oldest);
-  }
-  _zeroUsageWarnedModels.add(model);
+interface InstanceWarnedState {
+  has(model: string): boolean;
+  record(model: string): void;
 }
+
+function createInstanceWarnedState(cap = _ZERO_USAGE_WARN_CAP): InstanceWarnedState {
+  const warned = new Set<string>();
+  return {
+    has(model: string): boolean {
+      return warned.has(model);
+    },
+    record(model: string): void {
+      if (warned.has(model)) return;
+      if (warned.size >= cap) {
+        // LRU behavior: evict oldest insertion when at capacity.
+        const oldest = warned.values().next().value;
+        if (oldest !== undefined) warned.delete(oldest);
+      }
+      warned.add(model);
+    },
+  };
+}
+
+/**
+ * Wave-13 G-1: module-scoped fallback maintained only for backwards
+ * compatibility with `_resetOpenAIWarnState()` tests that exercised the
+ * legacy global dedupe. New adapter instances use `createInstanceWarnedState`
+ * inside the factory closure instead, so cross-tenant contamination is
+ * eliminated. This set is intentionally never written to by production code
+ * paths in Wave-13+ — only `_resetOpenAIWarnState` clears it for test-parity
+ * on the legacy surface. Marked for removal in a future breaking wave.
+ *
+ * @deprecated Use the per-instance warned state seeded inside
+ * `createOpenAIAdapter()`. Retained only so `_resetOpenAIWarnState()` keeps
+ * its signature for existing tests.
+ */
+const _globalZeroUsageWarnedModelsDeprecated: Set<string> = new Set();
 
 /**
  * Wave-12 P0-2: guarded narrow on the OpenAI SDK stream's private
@@ -662,6 +799,10 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
   // singleton instead of a hand-rolled console.warn/error fallback.
   const logger: Pick<Logger, 'warn' | 'error'> = config.logger ?? createDefaultLogger();
   const tokenizer = config.countTokens;
+  // Wave-13 G-1 (P0-3): per-instance zero-usage warned-models LRU. Scoped
+  // to this adapter instance so a single tenant's "rare model" warn does
+  // not silence every other tenant's first-touch alert for the same model.
+  const zeroUsageWarned = createInstanceWarnedState();
 
   return {
     name: `openai:${model}`,
@@ -698,10 +839,12 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
       }
 
       // SPEC-015: warn once per model when non-stream usage data is missing.
+      // Wave-13 G-1: dedupe is scoped to this adapter instance via
+      // `zeroUsageWarned`, not to the whole module.
       const usage = response.usage;
       const missingInput = usage?.prompt_tokens === undefined || usage?.prompt_tokens === null;
       const missingOutput = usage?.completion_tokens === undefined || usage?.completion_tokens === null;
-      if ((missingInput || missingOutput) && !_zeroUsageWarnedModels.has(model)) {
+      if ((missingInput || missingOutput) && !zeroUsageWarned.has(model)) {
         // Wave-12 P2-9: guard the warn metadata behind an optional
         // `isWarnEnabled()` gate when the host logger exposes one. The Logger
         // base type in `@harness-one/core/observe` does not define it today
@@ -709,9 +852,9 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
         const maybeGate = (logger as { isWarnEnabled?: () => boolean }).isWarnEnabled;
         const warnEnabled = typeof maybeGate === 'function' ? maybeGate.call(logger) : true;
         if (warnEnabled) {
-          _recordZeroUsageWarned(model);
+          zeroUsageWarned.record(model);
           logger.warn(
-            `[harness-one/openai] chat() response for model "${model}" had missing prompt/completion token counts — cost tracking will under-report. (This warning is emitted once per model.)`,
+            `[harness-one/openai] chat() response for model "${model}" had missing prompt/completion token counts — cost tracking will under-report. (This warning is emitted once per model per adapter instance.)`,
           );
         }
       }
@@ -879,6 +1022,11 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
  * @internal
  */
 export function _resetOpenAIWarnState(): void {
-  _zeroUsageWarnedModels.clear();
+  // Wave-13 G-1: per-instance warned state is no longer reachable from outside
+  // the factory closure, so this helper only clears the module-scoped caches
+  // that still exist (the unknown-schema-key dedupe + the deprecated global
+  // zero-usage set retained for legacy test parity). Tests that need to
+  // re-exercise per-instance dedupe behaviour should create a fresh adapter.
+  _globalZeroUsageWarnedModelsDeprecated.clear();
   _unknownSchemaKeyWarned.clear();
 }

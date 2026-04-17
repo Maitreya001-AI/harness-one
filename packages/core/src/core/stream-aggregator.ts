@@ -178,9 +178,15 @@ export class StreamAggregator {
           if (existing.argsBytes > this.options.maxToolArgBytes) {
             yield {
               type: 'error',
+              // Wave-13 P0-1: per-call wire-size limits use the dedicated
+              // ADAPTER_PAYLOAD_OVERSIZED code rather than the cumulative
+              // CORE_TOKEN_BUDGET_EXCEEDED — they are operationally distinct
+              // (one is configuration-bound, the other is request-state-bound)
+              // and downstream retry/alerting heuristics MUST be able to tell
+              // them apart.
               error: new HarnessError(
                 `Tool call "${existing.name}" arguments exceeded maximum size (${this.options.maxToolArgBytes} bytes)`,
-                HarnessErrorCode.CORE_TOKEN_BUDGET_EXCEEDED,
+                HarnessErrorCode.ADAPTER_PAYLOAD_OVERSIZED,
                 'Reduce tool call argument size or increase maxToolArgBytes',
               ),
             };
@@ -194,9 +200,13 @@ export class StreamAggregator {
           if (this.accumulatedToolCalls.size >= maxToolCalls) {
             yield {
               type: 'error',
+              // Wave-13 P0-2: a per-iteration configuration cap on tool-call
+              // count is an invalid-state condition, NOT a token budget
+              // exhaustion. Use CORE_INVALID_STATE so ops dashboards don't
+              // lump this into cumulative-budget alerts.
               error: new HarnessError(
                 `Exceeded maximum number of tool calls (${maxToolCalls})`,
-                HarnessErrorCode.CORE_TOKEN_BUDGET_EXCEEDED,
+                HarnessErrorCode.CORE_INVALID_STATE,
                 'Reduce the number of tool calls or increase maxToolCalls',
               ),
             };

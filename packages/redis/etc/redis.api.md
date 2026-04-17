@@ -22,6 +22,7 @@ export interface RedisStoreConfig {
     readonly client: Redis;
     readonly defaultTTL?: number;
     readonly logger?: RedisStoreLogger;
+    readonly partialOk?: boolean;
     readonly prefix?: string;
     readonly tenantId?: string;
 }

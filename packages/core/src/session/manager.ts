@@ -32,9 +32,21 @@ export interface SessionManager {
   readonly maxSessions: number;
   /** Number of events dropped due to reentrant event queue overflow. */
   readonly droppedEvents: number;
+  /** Alias for `droppedEvents` — dedicated per-drop counter (Wave-13 E-2). */
+  readonly droppedEventCount: number;
+  /** Cumulative count of errors thrown by registered event handlers. */
+  readonly handlerErrorCount: number;
 
   /** Register an event handler. Returns an unsubscribe function. */
   onEvent(handler: (event: SessionEvent) => void): () => void;
+
+  /**
+   * Wave-13 E-1: diagnostic accessor returning the most recent event-handler
+   * error, along with the event type that triggered it. Returns `undefined`
+   * when no handler has thrown. Intended for debugging / health reporting —
+   * not for control-flow decisions (the error is best-effort only).
+   */
+  getLastHandlerError(): { error: unknown; eventType: SessionEvent['type'] } | undefined;
 
   /** Dispose the manager (clears auto-GC interval). */
   dispose(): void;
@@ -67,13 +79,30 @@ export function createSessionManager(config?: {
   maxSessions?: number;
   ttlMs?: number;
   gcIntervalMs?: number;
-  /** Optional structured logger for surfacing event-drop warnings. */
-  logger?: { warn: (msg: string, meta?: Record<string, unknown>) => void };
+  /**
+   * Optional structured logger for surfacing event-drop warnings and
+   * event-handler exceptions (Wave-13 E-1/E-2).
+   */
+  logger?: {
+    warn: (msg: string, meta?: Record<string, unknown>) => void;
+    error?: (msg: string, meta?: Record<string, unknown>) => void;
+  };
+  /**
+   * Wave-13 E-3: maximum byte size of per-session metadata (stringified via
+   * JSON). When set and the size is exceeded at `create()` time, the creation
+   * is rejected with `CORE_INVALID_INPUT`. Defaults to `undefined` (no cap).
+   *
+   * This complements the deep-clone performed on every read in `toReadonly()`
+   * — a documented size ceiling at write time prevents pathological metadata
+   * from dominating the clone cost per access.
+   */
+  maxMetadataBytes?: number;
 }): SessionManager {
   const maxSessions = config?.maxSessions ?? 100;
   const ttlMs = config?.ttlMs ?? 5 * 60 * 1000;
   const gcIntervalMs = config?.gcIntervalMs ?? 60000;
   const logger = config?.logger;
+  const maxMetadataBytes = config?.maxMetadataBytes;
 
   if (maxSessions < 1) {
     throw new HarnessError('maxSessions must be >= 1', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide a positive maxSessions value');
@@ -114,11 +143,22 @@ export function createSessionManager(config?: {
   const pendingEvents: SessionEvent[] = [];
   // OBS-010: Counters are intentionally write-only to keep event emission
   // allocation-free. Consumers surface them via the `SessionManager` if needed.
-   
+
   let _droppedHandlerErrors = 0;
+  // Wave-13 E-1: keep the most recent handler error so operators can pull
+  // it out of `getLastHandlerError()` for diagnosis.
+  let _lastHandlerError: { error: unknown; eventType: SessionEvent['type'] } | undefined;
 
   let _droppedEvents = 0;
-  let _droppedWarned = false;
+  // Wave-13 E-2: rate-limit the queue-overflow warn() to at most 1 per second
+  // by remembering when we last emitted. Every single drop still increments
+  // `_droppedEvents` so counter-consumers see the real number.
+  // Two independent windows: pure-drop and priority-eviction convey different
+  // operational signals (lost low-priority audit data vs admitted high-priority
+  // event), so each is rate-limited separately.
+  const DROP_WARN_INTERVAL_MS = 1000;
+  let _lastDropWarnAt = 0;
+  let _lastEvictionWarnAt = 0;
 
   // SEC-002: Use cryptographically secure random IDs instead of a predictable
   // counter + timestamp combination. Predictable session IDs enable
@@ -158,13 +198,20 @@ export function createSessionManager(config?: {
           if (lowIdx !== -1) {
             pendingEvents.splice(lowIdx, 1);
             _droppedEvents++;
-            if (logger) {
+            // Wave-13 E-2: emit a warn on every eviction, rate-limited to
+            // 1/sec via an INDEPENDENT window so a flood of low-priority
+            // drops (handled below) doesn't suppress high-signal eviction
+            // warnings from the same second.
+            const nowMs = Date.now();
+            if (logger && nowMs - _lastEvictionWarnAt >= DROP_WARN_INTERVAL_MS) {
+              _lastEvictionWarnAt = nowMs;
               try {
                 logger.warn(
                   '[harness-one/session-manager] low-priority event evicted to admit high-priority event',
                   {
                     evictedType: 'low',
                     admittedType: type,
+                    droppedEventCount: _droppedEvents,
                   },
                 );
               } catch { /* logger failure non-fatal */ }
@@ -174,14 +221,22 @@ export function createSessionManager(config?: {
           }
         }
         _droppedEvents++;
-        if (!_droppedWarned && logger) {
-          _droppedWarned = true;
-          try {
-            logger.warn('[harness-one/session-manager] event dropped — pending queue overflow', {
-              maxPendingEvents: MAX_PENDING_EVENTS,
-              droppedType: type,
-            });
-          } catch { /* logger failure non-fatal */ }
+        // Wave-13 E-2: warn on EVERY drop (not just the first), but rate-
+        // limit to 1/sec using a timestamp comparison (no timers needed).
+        // The counter is always incremented so operators can observe the
+        // true drop rate via `droppedEventCount`.
+        if (logger) {
+          const nowMs = Date.now();
+          if (nowMs - _lastDropWarnAt >= DROP_WARN_INTERVAL_MS) {
+            _lastDropWarnAt = nowMs;
+            try {
+              logger.warn('[harness-one/session-manager] event dropped — pending queue overflow', {
+                maxPendingEvents: MAX_PENDING_EVENTS,
+                droppedType: type,
+                droppedEventCount: _droppedEvents,
+              });
+            } catch { /* logger failure non-fatal */ }
+          }
         }
         return;
       }
@@ -191,18 +246,41 @@ export function createSessionManager(config?: {
     emitting = true;
     try {
       for (const handler of eventHandlers) {
-        try { handler(event); } catch {
-          // Prevent misbehaving handler from breaking event delivery.
-          // Logged as a dropped handler error rather than silently swallowed.
+        try { handler(event); } catch (err) {
+          // Wave-13 E-1: prevent misbehaving handler from breaking event
+          // delivery, but don't silently swallow — log via injected logger
+          // when present and preserve the last error for diagnostic access.
           _droppedHandlerErrors++;
+          _lastHandlerError = { error: err, eventType: event.type };
+          if (logger) {
+            const logFn = logger.error ?? logger.warn;
+            try {
+              logFn('[harness-one/session-manager] event handler threw', {
+                eventType: event.type,
+                error: err instanceof Error ? err.message : String(err),
+                handlerErrorCount: _droppedHandlerErrors,
+              });
+            } catch { /* logger failure non-fatal */ }
+          }
         }
       }
       while (pendingEvents.length > 0) {
         const queued = pendingEvents.shift() as SessionEvent;
         const snapshot = [...eventHandlers];
         for (const handler of snapshot) {
-          try { handler(queued); } catch {
+          try { handler(queued); } catch (err) {
             _droppedHandlerErrors++;
+            _lastHandlerError = { error: err, eventType: queued.type };
+            if (logger) {
+              const logFn = logger.error ?? logger.warn;
+              try {
+                logFn('[harness-one/session-manager] event handler threw', {
+                  eventType: queued.type,
+                  error: err instanceof Error ? err.message : String(err),
+                  handlerErrorCount: _droppedHandlerErrors,
+                });
+              } catch { /* logger failure non-fatal */ }
+            }
           }
         }
       }
@@ -302,6 +380,22 @@ export function createSessionManager(config?: {
     return out;
   }
 
+  /**
+   * Convert a mutable session to a readonly snapshot.
+   *
+   * **Wave-13 E-3 — performance warning:** `metadata` is deep-cloned on every
+   * call. For large or frequently-accessed sessions, this can dominate
+   * `access()` / `get()` / `list()` latency. The real fix requires breaking
+   * the public contract (e.g., returning a Proxy or a frozen-but-shared view);
+   * we deliberately keep deep-clone semantics to preserve isolation guarantees
+   * from Wave-12 P1-16. Callers concerned about clone cost should:
+   *
+   *   1. Configure `maxMetadataBytes` to cap the input side at creation.
+   *   2. Prefer `get()` over `access()` when lastAccessedAt doesn't need to
+   *      change.
+   *   3. Avoid stuffing large blobs into `metadata`; use an out-of-band
+   *      key/value store keyed by `session.id` instead.
+   */
   function toReadonly(ms: MutableSession): Session {
     return {
       id: ms.id,
@@ -310,6 +404,35 @@ export function createSessionManager(config?: {
       metadata: deepCloneMetadata(ms.metadata),
       status: ms.status,
     };
+  }
+
+  /**
+   * Wave-13 E-3: enforce an optional byte cap on metadata at set time (rather
+   * than clone time). Uses `JSON.stringify` + UTF-8 byte length as a proxy for
+   * serialized size. Throws `CORE_INVALID_INPUT` when exceeded so the caller
+   * can trim the payload before it ever enters the manager.
+   */
+  function assertMetadataSize(metadata: Record<string, unknown>): void {
+    if (maxMetadataBytes === undefined || maxMetadataBytes <= 0) return;
+    let serialized: string;
+    try {
+      serialized = JSON.stringify(metadata);
+    } catch (err) {
+      throw new HarnessError(
+        'Session metadata is not JSON-serializable',
+        HarnessErrorCode.CORE_INVALID_INPUT,
+        'Remove cyclic or non-serializable values from metadata',
+        err instanceof Error ? err : undefined,
+      );
+    }
+    const byteLen = Buffer.byteLength(serialized, 'utf8');
+    if (byteLen > maxMetadataBytes) {
+      throw new HarnessError(
+        `Session metadata exceeds maxMetadataBytes (${byteLen} > ${maxMetadataBytes} bytes)`,
+        HarnessErrorCode.CORE_INVALID_INPUT,
+        'Reduce metadata size or raise maxMetadataBytes',
+      );
+    }
   }
 
   // Auto-GC interval
@@ -338,11 +461,15 @@ export function createSessionManager(config?: {
       }
       const id = genId();
       const now = Date.now();
+      // Wave-13 E-3: enforce optional byte cap at creation time so we never
+      // store metadata that will be expensive to clone on every read.
+      const initialMetadata = metadata ? { ...metadata } : {};
+      assertMetadataSize(initialMetadata);
       const session: MutableSession = {
         id,
         createdAt: now,
         lastAccessedAt: now,
-        metadata: metadata ? { ...metadata } : {},
+        metadata: initialMetadata,
         status: 'active',
       };
       sessions.set(id, session);
@@ -508,6 +635,18 @@ export function createSessionManager(config?: {
 
     get droppedEvents(): number {
       return _droppedEvents;
+    },
+
+    get droppedEventCount(): number {
+      return _droppedEvents;
+    },
+
+    get handlerErrorCount(): number {
+      return _droppedHandlerErrors;
+    },
+
+    getLastHandlerError(): { error: unknown; eventType: SessionEvent['type'] } | undefined {
+      return _lastHandlerError;
     },
 
     onEvent(handler: (event: SessionEvent) => void): () => void {

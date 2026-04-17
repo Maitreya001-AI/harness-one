@@ -47,7 +47,7 @@ export function maturityLabel(usedCount: number, c: {
 }): string;
 
 // @public (undocumented)
-export const MODULE_DESCRIPTIONS: Record<ModuleName, string>;
+export const MODULE_DESCRIPTIONS: Readonly<Record<ModuleName, string>>;
 
 // @public (undocumented)
 export type ModuleName = (typeof ALL_MODULES)[number];

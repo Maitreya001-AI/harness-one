@@ -5,8 +5,10 @@
 ```ts
 
 import { CostTracker } from 'harness-one/observe';
+import { InstrumentationPort } from 'harness-one/observe';
 import { Langfuse } from 'langfuse';
 import { Logger } from 'harness-one/observe';
+import { MetricsPort } from 'harness-one/observe';
 import { PromptBackend } from 'harness-one/prompt';
 import { TraceExporter } from 'harness-one/observe';
 
@@ -48,7 +50,10 @@ export interface LangfuseCostTrackerStats {
 // @public
 export interface LangfuseExporterConfig {
     readonly client: Langfuse;
+    readonly instrumentation?: InstrumentationPort;
+    readonly logger?: Pick<Logger, 'warn' | 'error' | 'debug'>;
     readonly maxTraceMapSize?: number;
+    readonly metrics?: MetricsPort;
     readonly sanitize?: (attributes: Record<string, unknown>) => Record<string, unknown>;
 }
 

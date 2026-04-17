@@ -399,6 +399,10 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
     // [2] Adapter call (delegated to AdapterCaller; per-call onRetry binds
     //     to the current iteration span so adapter_retry events land on the
     //     right span without a side-channel).
+    //
+    // Wave-13 D-4: the adapter_retry span event now carries `backoff_ms` and
+    // `retry_number` so operators can correlate retry latency with backoff
+    // strategy tuning without re-deriving either from other attributes.
     const result = yield* config.adapterCaller.call(
       ctx.conversation,
       ctx.cumulativeStreamBytes.value,
@@ -412,6 +416,8 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
             errorCategory: info.errorCategory,
             path: info.path,
             ...(info.errorPreview !== undefined ? { error: info.errorPreview } : {}),
+            ...(info.backoffMs !== undefined ? { backoff_ms: info.backoffMs } : {}),
+            ...(info.retryNumber !== undefined ? { retry_number: info.retryNumber } : {}),
           },
         });
       },
@@ -420,12 +426,24 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
     if (!result.ok) {
       const { error: err, errorCategory, path } = result;
       if (ctx.iterationSpanId && tm) {
+        // Wave-13 D-5/D-6: attach cumulative retry metrics and (on timeout)
+        // the configured budget + adapter name so incident responders can
+        // distinguish "timeout after N ms across K retries" from a single
+        // hard-fail attempt without parsing error messages.
         tm.setSpanAttributes(ctx.iterationSpanId, {
           errorCategory,
           path,
           ...(path === 'chat'
             ? { error: (err instanceof Error ? err.message : String(err)).slice(0, 500) }
             : {}),
+          ...(result.totalBackoffMs !== undefined
+            ? { total_backoff_ms: result.totalBackoffMs }
+            : {}),
+          ...(result.totalDurationMs !== undefined
+            ? { total_duration_ms: result.totalDurationMs }
+            : {}),
+          ...(result.timeoutMs !== undefined ? { timeout_ms: result.timeoutMs } : {}),
+          ...(result.adapterName !== undefined ? { adapter: result.adapterName } : {}),
         });
       }
 
@@ -472,6 +490,15 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
             : 0,
         path: result.path,
         attempts: result.attempts,
+        // Wave-13 D-6: also annotate the happy path so retry-cost analysis
+        // can differentiate "succeeded after N retries" from "succeeded on
+        // first try" without cross-referencing adapter_retry events.
+        ...(result.totalBackoffMs !== undefined
+          ? { total_backoff_ms: result.totalBackoffMs }
+          : {}),
+        ...(result.totalDurationMs !== undefined
+          ? { total_duration_ms: result.totalDurationMs }
+          : {}),
       });
     }
 

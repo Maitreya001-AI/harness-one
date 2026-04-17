@@ -58,7 +58,13 @@ export interface MemoryStore {
 
   write(entry: Omit<MemoryEntry, 'id' | 'createdAt' | 'updatedAt'>): Promise<MemoryEntry>;
   read(id: string): Promise<MemoryEntry | null>;
-  query(filter: MemoryFilter): Promise<MemoryEntry[]>;
+  /**
+   * Filter/query entries. Wave-13 E-5: accepts an optional `opts.signal`
+   * `AbortSignal`. When aborted, implementations SHOULD throw
+   * `HarnessError(CORE_ABORTED)` at the next batch/check boundary.
+   * The signature is backwards compatible — `opts` is optional.
+   */
+  query(filter: MemoryFilter, opts?: { signal?: AbortSignal }): Promise<MemoryEntry[]>;
   update(id: string, updates: Partial<Pick<MemoryEntry, 'content' | 'grade' | 'metadata' | 'tags'>>): Promise<MemoryEntry>;
   delete(id: string): Promise<boolean>;
   compact(policy: CompactionPolicy): Promise<CompactionResult>;
@@ -326,7 +332,22 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
       return entries.get(id) ?? null;
     },
 
-    async query(filter) {
+    async query(filter, opts) {
+      // Wave-13 E-5: honor AbortSignal. Check at entry and again after each
+      // filter stage so long-running queries over large stores can be
+      // interrupted promptly.
+      const signal = opts?.signal;
+      const throwIfAborted = (): void => {
+        if (signal?.aborted) {
+          throw new HarnessError(
+            'Memory query aborted',
+            HarnessErrorCode.CORE_ABORTED,
+            'The provided AbortSignal was aborted before query completion',
+          );
+        }
+      };
+      throwIfAborted();
+
       // Use secondary indexes to narrow candidate set when possible.
       // Start with candidate IDs from the most selective indexed filter,
       // then intersect with other indexed filters.
@@ -375,6 +396,7 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
         }
       }
 
+      throwIfAborted();
       // Apply remaining filters that are not indexed
       if (filter.since !== undefined) {
         results = results.filter((e) => e.updatedAt >= (filter.since as number));
@@ -387,6 +409,7 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
         results = results.filter((e) => e.metadata?.['sessionId'] === filter.sessionId);
       }
 
+      throwIfAborted();
       results.sort((a, b) => b.updatedAt - a.updatedAt);
 
       if (filter.offset !== undefined && filter.offset > 0) {

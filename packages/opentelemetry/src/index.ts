@@ -9,7 +9,7 @@
 
 import type { Tracer, Span as OTelSpan } from '@opentelemetry/api';
 import { trace as otelTrace, SpanStatusCode, context as otelContext } from '@opentelemetry/api';
-import type { TraceExporter, Trace, Span } from 'harness-one/observe';
+import type { TraceExporter, Trace, Span, MetricsPort } from 'harness-one/observe';
 
 /**
  * OBS-011: Mapping from harness-one cache-monitor metric names to
@@ -35,9 +35,14 @@ const CACHE_ATTR_RENAME: Record<string, string> = {
  * F18b: Minimal logger interface accepted by the OTel exporter.
  * When provided, parent-linking warnings and diagnostics are routed here
  * instead of falling back to `console.warn`.
+ *
+ * Wave-13 J-3: Adds optional `debug` so parent-fallback events can be
+ * surfaced without spamming `warn`. Both methods are optional so existing
+ * `warn`-only loggers continue to satisfy the type.
  */
 export interface OTelExporterLogger {
   warn: (message: string, context?: Record<string, unknown>) => void;
+  debug?: (message: string, context?: Record<string, unknown>) => void;
 }
 
 /** Configuration for the OpenTelemetry exporter. */
@@ -58,13 +63,16 @@ export interface OTelExporterConfig {
    */
   readonly maxEvictedParents?: number;
   /**
-   * Wave-12 P1-9: **Deprecated and ignored.** Time-based expiry was removed
-   * because it races with child-span arrival: a parent could expire while its
-   * child was being exported, orphaning the subtree. Retention is now purely
-   * size-based (LRU on `maxEvictedParents`). The option is kept on the type
-   * so existing callers still typecheck; supplying it has no effect.
+   * @deprecated Wave-12 P1-9 — **no-op, kept for API/source compatibility.**
    *
-   * @deprecated no-op since Wave-12; size-based LRU is the only retention policy.
+   * Time-based expiry was removed because it races with child-span arrival:
+   * a parent could expire while its child was being exported, orphaning the
+   * subtree. Retention is now purely size-based (LRU on `maxEvictedParents`).
+   * Supplying this option has no runtime effect; `maxEvictedParents` is the
+   * only retention knob. Wave-13 J-1 reaffirmed the `@deprecated` tag so
+   * downstream tsc / IDE tooling surfaces the deprecation at the call site.
+   *
+   * @see maxEvictedParents
    */
   readonly evictedParentsTtlMs?: number;
   /** Maximum number of active spans to retain before LRU eviction. Defaults to 10000. */
@@ -90,6 +98,18 @@ export interface OTelExporterConfig {
    * widens the payload surface and should be opt-in.
    */
   readonly stringifyComplexAttributes?: boolean;
+  /**
+   * Wave-13 J-3: Optional metrics port. When supplied, the exporter emits:
+   *
+   *  - `harness.otel.parent_fallback` (counter) — incremented each time a
+   *    child span's parent was found in the `evictedParents` LRU cache
+   *    rather than in the live `spanMap`. High rates indicate
+   *    `maxEvictedParents` should be increased (deep trees) or that parent
+   *    spans are ending too early relative to their children.
+   *
+   * Defaults to no-op when omitted.
+   */
+  readonly metrics?: MetricsPort;
 }
 
 /** OBS-004: Runtime counter exposed by the exporter for dropped attributes. */
@@ -99,15 +119,23 @@ export interface OTelDroppedAttributeMetrics {
 }
 
 /**
+ * Wave-13 J-2: Named return type for {@link createOTelExporter}. Extracted
+ * from an anonymous intersection so downstream consumers can type-reference
+ * the exporter, and future additive methods (e.g. parent-fallback counters)
+ * can be declared on a single surface.
+ */
+export interface OTelTraceExporter extends TraceExporter {
+  /** OBS-004: inspect dropped-attribute counters. */
+  readonly getDroppedAttributeMetrics: () => OTelDroppedAttributeMetrics;
+}
+
+/**
  * Create a TraceExporter that maps harness-one spans to OpenTelemetry spans.
  *
  * Requires an OTel SDK to be configured (e.g., @opentelemetry/sdk-trace-node).
  * This adapter bridges harness-one spans into the OTel API.
  */
-export function createOTelExporter(config?: OTelExporterConfig): TraceExporter & {
-  /** OBS-004: inspect dropped-attribute counters. */
-  readonly getDroppedAttributeMetrics: () => OTelDroppedAttributeMetrics;
-} {
+export function createOTelExporter(config?: OTelExporterConfig): OTelTraceExporter {
   const serviceName = config?.serviceName ?? 'harness-one';
   const tracer = config?.tracer ?? otelTrace.getTracer(serviceName);
   const maxEvictedParents = config?.maxEvictedParents ?? 1000;
@@ -118,6 +146,15 @@ export function createOTelExporter(config?: OTelExporterConfig): TraceExporter &
   const logger = config?.logger;
   // Wave-12 P2-12: opt-in JSON-stringify fallback for non-primitive attributes.
   const stringifyComplexAttributes = config?.stringifyComplexAttributes ?? false;
+  // Wave-13 J-3: lazy metric handle — only materialised when a metrics port
+  // was supplied, so the common no-metric path stays allocation-free.
+  const parentFallbackCounter = config?.metrics?.counter(
+    'harness.otel.parent_fallback',
+    {
+      description:
+        'Number of child spans whose parent was found in the evictedParents LRU rather than the live spanMap.',
+    },
+  );
 
   // OBS-004: Track dropped-attribute counts for operator visibility.
   let droppedAttributes = 0;
@@ -294,10 +331,37 @@ export function createOTelExporter(config?: OTelExporterConfig): TraceExporter &
     },
 
     async exportSpan(harnessSpan: Span): Promise<void> {
-      // Check spanMap first, then fall back to evictedParents for already-evicted spans
-      let parentOTelSpan = harnessSpan.parentId
-        ? (spanMap.get(harnessSpan.parentId) ?? getEvictedParent(harnessSpan.parentId))
-        : undefined;
+      // Check spanMap first, then fall back to evictedParents for already-evicted spans.
+      // Wave-13 J-3: split the lookup so we can observe when the fallback
+      // cache actually resolved the parent. Previously this was silent —
+      // operators had no signal that `maxEvictedParents` might be
+      // undersized until child spans started appearing orphaned.
+      let parentOTelSpan: OTelSpan | undefined;
+      let parentFromEvictedCache = false;
+      if (harnessSpan.parentId) {
+        const live = spanMap.get(harnessSpan.parentId);
+        if (live) {
+          parentOTelSpan = live;
+        } else {
+          const fallback = getEvictedParent(harnessSpan.parentId);
+          if (fallback) {
+            parentOTelSpan = fallback;
+            parentFromEvictedCache = true;
+          }
+        }
+      }
+
+      if (parentFromEvictedCache && harnessSpan.parentId) {
+        parentFallbackCounter?.add(1, {
+          exporter: 'opentelemetry',
+          source: 'evicted_parents_cache',
+        });
+        logger?.debug?.('otel parent fallback', {
+          parent_id: harnessSpan.parentId,
+          source: 'evicted_parents_cache',
+          child_id: harnessSpan.id,
+        });
+      }
 
       // If parentId was specified but neither map has it, log a warning.
       // The span still gets linked under the trace root below (CQ-002) so the

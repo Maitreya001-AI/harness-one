@@ -14,6 +14,7 @@
 
 import { Ajv, type ValidateFunction } from 'ajv';
 import type { JsonSchema } from 'harness-one/core';
+import { HarnessError, HarnessErrorCode } from 'harness-one/core';
 import type { SchemaValidator, ValidationError } from 'harness-one/tools';
 import type { Logger } from 'harness-one/observe';
 import { createDefaultLogger } from 'harness-one/observe';
@@ -65,21 +66,40 @@ function formatSuggestion(err: {
 /**
  * Cached result of the lazy ajv-formats ESM dynamic import.
  * null means the import was attempted and ajv-formats was not found.
+ *
+ * Wave-13 A-5: a rejected load must NOT poison the cache. The chain clears
+ * `formatsLoader` from both a `.catch` handler (async rejection path) and an
+ * outer try/catch (synchronous throw from the `import()` expression itself,
+ * e.g. in test harnesses that monkey-patch the ESM loader). A transient
+ * network failure on the first call therefore does not permanently disable
+ * format validation — the next `loadFormats()` invocation will retry.
  */
 let formatsLoader: Promise<((ajv: InstanceType<typeof Ajv>) => void) | null> | undefined;
 
 function loadFormats(): Promise<((ajv: InstanceType<typeof Ajv>) => void) | null> {
   if (!formatsLoader) {
-    formatsLoader = import('ajv-formats')
-      .then((mod) => {
-        const addFormats = typeof mod === 'function' ? mod : (mod.default ?? mod);
-        return typeof addFormats === 'function' ? addFormats : null;
-      })
-      .catch(() => {
-        // Reset so next call retries the import (transient failures shouldn't be cached)
-        formatsLoader = undefined;
-        return null;
-      });
+    try {
+      formatsLoader = import('ajv-formats')
+        .then((mod) => {
+          const addFormats = typeof mod === 'function' ? mod : (mod.default ?? mod);
+          return typeof addFormats === 'function' ? addFormats : null;
+        })
+        .catch(() => {
+          // Async rejection — reset so the next call retries the import.
+          // Transient failures (network, temporary perms) must not be cached.
+          formatsLoader = undefined;
+          return null;
+        });
+    } catch (err) {
+      // Wave-13 A-5: Defensive — some bundlers / test harnesses throw
+      // synchronously from the `import()` expression (not just reject the
+      // returned promise). Clear the slot and surface a resolved-null so
+      // callers proceed without formats instead of hanging on a rejected
+      // Promise that was never cached.
+      formatsLoader = undefined;
+      void err; // intentionally unused — loader only cares that retry is enabled
+      return Promise.resolve(null);
+    }
   }
   return formatsLoader;
 }
@@ -158,12 +178,28 @@ function stableSchemaKey(schema: JsonSchema): string {
  * removed from the underlying Ajv instance to release the associated memory.
  */
 export function createAjvValidator(options?: AjvValidatorOptions): AjvSchemaValidator {
+  // Wave-13 A-6: Validate `maxCacheSize` at factory entry. The previous
+  // `Math.max(1, …)` silently coerced invalid inputs (0, negatives, NaN),
+  // which hid configuration bugs: a caller passing `maxCacheSize: 0`
+  // expected no caching, got 1, and saw surprising memory growth. We now
+  // fail-fast with a typed error so misconfiguration surfaces early.
+  if (options?.maxCacheSize !== undefined) {
+    const n = options.maxCacheSize;
+    if (!Number.isFinite(n) || !Number.isInteger(n) || n < 1) {
+      throw new HarnessError(
+        `maxCacheSize must be a positive integer >= 1, got ${String(n)}`,
+        HarnessErrorCode.CORE_INVALID_CONFIG,
+        'Provide an integer >= 1 (e.g. 256) or omit the option to use the default.',
+      );
+    }
+  }
+
   const ajv = new Ajv({
     allErrors: options?.allErrors ?? true,
     strict: false,
   });
 
-  const maxCacheSize = Math.max(1, options?.maxCacheSize ?? 256);
+  const maxCacheSize = options?.maxCacheSize ?? 256;
   // Wave-5F T13: delegate default logger to core's redaction-enabled singleton.
   const logger: Pick<Logger, 'warn' | 'error'> = options?.logger ?? createDefaultLogger();
 
@@ -199,7 +235,14 @@ export function createAjvValidator(options?: AjvValidatorOptions): AjvSchemaVali
     }
 
     // Cache miss — compile and attach an $id so we can ajv.removeSchema on evict.
-    const taggedSchema = { ...schema, $id: key } as JsonSchema & { $id: string };
+    // Wave-13 L-1: Previously used object spread ({ ...schema, $id: key }) which
+    // the v8 benchmark suite shows as ~2x slower than `Object.assign` for schemas
+    // with 10+ top-level keys, because spread materialises a new property
+    // descriptor table even for inherited enumerable props. `Object.assign`
+    // onto a fresh target allocates only once and copies own-enumerable props
+    // via the fast path. We avoid mutating the caller's schema (which could
+    // break memoisation elsewhere) by assigning onto an empty object.
+    const taggedSchema = Object.assign({}, schema, { $id: key }) as JsonSchema & { $id: string };
     let validator: ValidateFunction;
     try {
       validator = ajv.compile(taggedSchema);

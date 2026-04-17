@@ -653,7 +653,9 @@ describe('createRedisStore', () => {
   // ── Mid-batch connection failure handling ──────────────────────────────
 
   it('query returns partial results when mget fails mid-batch', async () => {
-    const store = createRedisStore({ client: redis, prefix: 'test' });
+    // Wave-13 K-1: Opt in to legacy partial-ok semantics — defaults changed to
+    // strict (throw on any MGET sub-batch failure).
+    const store = createRedisStore({ client: redis, prefix: 'test', partialOk: true });
 
     // Write enough entries to span multiple batches (>100)
     // We'll simulate this by directly manipulating the mock to have many IDs
@@ -700,7 +702,8 @@ describe('createRedisStore', () => {
   });
 
   it('query does not throw when mget fails on first batch', async () => {
-    const store = createRedisStore({ client: redis, prefix: 'test' });
+    // Wave-13 K-1: explicit opt-in to partial-ok semantics.
+    const store = createRedisStore({ client: redis, prefix: 'test', partialOk: true });
 
     const mockRedis = redis as unknown as {
       smembers: ReturnType<typeof vi.fn>;
@@ -884,7 +887,8 @@ describe('createRedisStore', () => {
   it('batch read failure includes structured metadata in logs (M6)', async () => {
     const warnFn = vi.fn();
     const customLogger = { warn: warnFn };
-    const store = createRedisStore({ client: redis, prefix: 'test', logger: customLogger });
+    // Wave-13 K-1: partial-ok preserves warn-and-continue semantics for the M6 test.
+    const store = createRedisStore({ client: redis, prefix: 'test', logger: customLogger, partialOk: true });
 
     const mockRedis = redis as unknown as {
       smembers: ReturnType<typeof vi.fn>;
@@ -972,6 +976,144 @@ describe('createRedisStore', () => {
     const result = await store.compact({ maxAge: 100000 });
     // Should have compacted entries from the first batch (100 entries)
     expect(result.removed).toBe(100);
+  });
+
+  // ── Wave-13 — Track K (Redis) fixes ───────────────────────────────────────
+
+  it('Wave-13 P0-7: update() calls UNWATCH when the key is missing (error path)', async () => {
+    const store = createRedisStore({ client: redis, prefix: 'test' });
+    const mockRedis = redis as unknown as {
+      unwatch: ReturnType<typeof vi.fn>;
+    };
+    await expect(store.update('missing-id', { content: 'x' })).rejects.toMatchObject({
+      code: 'MEMORY_NOT_FOUND',
+    });
+    expect(mockRedis.unwatch).toHaveBeenCalled();
+  });
+
+  it('Wave-13 P0-7: update() calls UNWATCH when parse fails (corruption path)', async () => {
+    const store = createRedisStore({ client: redis, prefix: 'test' });
+    const mockRedis = redis as unknown as {
+      unwatch: ReturnType<typeof vi.fn>;
+      _store: Map<string, string>;
+      _sets: Map<string, Set<string>>;
+    };
+    // Seed a corrupt JSON payload
+    mockRedis._store.set('test:default:bad', '{"not":"memory"}'); // parse-ok but shape-bad
+    const indexKey = 'test:default:__keys__';
+    const existing = mockRedis._sets.get(indexKey) ?? new Set<string>();
+    existing.add('bad');
+    mockRedis._sets.set(indexKey, existing);
+
+    await expect(store.update('bad', { content: 'x' })).rejects.toMatchObject({
+      code: 'MEMORY_DATA_CORRUPTION',
+    });
+    expect(mockRedis.unwatch).toHaveBeenCalled();
+  });
+
+  it('Wave-13 P0-7: update() calls UNWATCH when client.get throws', async () => {
+    const store = createRedisStore({ client: redis, prefix: 'test' });
+    const mockRedis = redis as unknown as {
+      get: ReturnType<typeof vi.fn>;
+      unwatch: ReturnType<typeof vi.fn>;
+    };
+    mockRedis.get.mockRejectedValueOnce(new Error('boom'));
+    await expect(store.update('id', { content: 'x' })).rejects.toThrow('boom');
+    expect(mockRedis.unwatch).toHaveBeenCalled();
+  });
+
+  it('Wave-13 P0-7: update() uses WATCH -> GET -> MULTI -> EXEC with no intervening awaits between MULTI and EXEC', async () => {
+    // Verify call ordering: for a successful update() the sequence must be
+    // watch(key), get(key), multi(), <pipeline commands>, exec(). This is the
+    // canonical optimistic-lock shape.
+    const store = createRedisStore({ client: redis, prefix: 'test' });
+    const written = await store.write({ key: 'k', content: 'v', grade: 'useful' });
+
+    const calls: string[] = [];
+    const mockRedis = redis as unknown as {
+      watch: ReturnType<typeof vi.fn>;
+      get: ReturnType<typeof vi.fn>;
+      multi: ReturnType<typeof vi.fn>;
+      unwatch: ReturnType<typeof vi.fn>;
+    };
+    mockRedis.watch.mockImplementationOnce(async () => { calls.push('watch'); return 'OK'; });
+    const origGet = mockRedis.get.getMockImplementation();
+    mockRedis.get.mockImplementationOnce(async (k: string) => {
+      calls.push('get');
+      return origGet ? await origGet(k) : null;
+    });
+    const origMulti = mockRedis.multi.getMockImplementation();
+    mockRedis.multi.mockImplementationOnce(() => {
+      calls.push('multi');
+      const pipeline = origMulti!() as { exec: ReturnType<typeof vi.fn> };
+      const origExec = pipeline.exec;
+      pipeline.exec = vi.fn(async () => {
+        calls.push('exec');
+        return origExec();
+      });
+      return pipeline;
+    });
+
+    await store.update(written.id, { content: 'updated' });
+    // Order: watch → get → multi → exec (no extra awaits interleaved).
+    expect(calls).toEqual(['watch', 'get', 'multi', 'exec']);
+  });
+
+  it('Wave-13 K-1: query() throws HarnessError(MEMORY_CORRUPT) by default when mget fails', async () => {
+    const store = createRedisStore({ client: redis, prefix: 'test' });
+    const mockRedis = redis as unknown as {
+      mget: ReturnType<typeof vi.fn>;
+      _store: Map<string, string>;
+      _sets: Map<string, Set<string>>;
+    };
+    const indexKey = 'test:default:__keys__';
+    const keySet = new Set<string>();
+    for (let i = 0; i < 3; i++) {
+      const entry = {
+        id: `id_${i}`, key: `k_${i}`, content: 'c', grade: 'useful',
+        createdAt: Date.now(), updatedAt: Date.now(),
+      };
+      mockRedis._store.set(`test:default:id_${i}`, JSON.stringify(entry));
+      keySet.add(`id_${i}`);
+    }
+    mockRedis._sets.set(indexKey, keySet);
+    mockRedis.mget.mockRejectedValueOnce(new Error('ECONNRESET'));
+
+    await expect(store.query({})).rejects.toMatchObject({
+      code: 'MEMORY_CORRUPT',
+    });
+  });
+
+  it('Wave-13 K-1: partialOk=true restores legacy skip-and-continue behaviour', async () => {
+    const store = createRedisStore({ client: redis, prefix: 'test', partialOk: true });
+    const mockRedis = redis as unknown as {
+      mget: ReturnType<typeof vi.fn>;
+      _store: Map<string, string>;
+      _sets: Map<string, Set<string>>;
+    };
+    const indexKey = 'test:default:__keys__';
+    const keySet = new Set<string>();
+    for (let i = 0; i < 3; i++) {
+      const entry = {
+        id: `id_${i}`, key: `k_${i}`, content: 'c', grade: 'useful',
+        createdAt: Date.now(), updatedAt: Date.now(),
+      };
+      mockRedis._store.set(`test:default:id_${i}`, JSON.stringify(entry));
+      keySet.add(`id_${i}`);
+    }
+    mockRedis._sets.set(indexKey, keySet);
+    mockRedis.mget.mockRejectedValueOnce(new Error('ECONNRESET'));
+
+    const result = await store.query({});
+    expect(result).toEqual([]);
+  });
+
+  it('Wave-13 K-2: createRedisStore() returns a RedisMemoryStore with repair()', async () => {
+    const store = createRedisStore({ client: redis, prefix: 'test' });
+    // Compile-time + runtime guard: `repair()` must be directly callable.
+    expect(typeof store.repair).toBe('function');
+    const res = await store.repair();
+    expect(res).toEqual({ repaired: 0 });
   });
 });
 

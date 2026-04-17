@@ -182,6 +182,22 @@ export function createContextBoundary(
         }
         context.set(key, value);
       },
+      /**
+       * Wave-13 P0-5: delete respects write policy — same check as set,
+       * since deletion is a mutation.
+       */
+      delete(key: string): boolean {
+        const policy = policyMap.get(agentId);
+        if (policy && !canWrite(policy, key)) {
+          recordViolation({ type: 'write_denied', agentId, key, timestamp: Date.now() });
+          throw new HarnessError(
+            `Agent "${agentId}" denied write access to key "${key}"`,
+            HarnessErrorCode.ORCH_BOUNDARY_WRITE_DENIED,
+            'Check the BoundaryPolicy for this agent',
+          );
+        }
+        return context.delete(key);
+      },
       entries(): ReadonlyMap<string, unknown> {
         const policy = policyMap.get(agentId);
         if (!policy) return context.entries();

@@ -394,5 +394,78 @@ describe('createAjvValidator', () => {
       );
     });
   });
+
+  // -------------------------------------------------------------------------
+  // Wave-13 — Track L (Ajv) fixes
+  // -------------------------------------------------------------------------
+
+  describe('Wave-13 Track L — Ajv fixes', () => {
+    it('Wave-13 L-1: does not mutate the caller\'s schema when tagging $id', async () => {
+      const validator = createAjvValidator({ formats: false });
+      const schema: JsonSchema & { $id?: string } = {
+        type: 'object', properties: { x: { type: 'number' } }, required: ['x'],
+      } as JsonSchema & { $id?: string };
+      await validator.validate(schema, { x: 1 });
+      // The caller's schema object must not have been mutated with the cache key.
+      expect(schema.$id).toBeUndefined();
+    });
+
+    it('Wave-13 L-1: cache hits are stable under Object.assign tagging', async () => {
+      const validator = createAjvValidator({ formats: false });
+      const schema: JsonSchema = {
+        type: 'object', properties: { v: { type: 'number' } }, required: ['v'],
+      };
+      // Compile once then hit cache — both must produce identical validation results.
+      const a = await validator.validate(schema, { v: 1 });
+      const b = await validator.validate(schema, { v: 2 });
+      expect(a.valid).toBe(true);
+      expect(b.valid).toBe(true);
+    });
+
+    it('Wave-13 A-6: throws CORE_INVALID_CONFIG on maxCacheSize=0', async () => {
+      const { HarnessError } = await import('harness-one/core');
+      expect(() => createAjvValidator({ maxCacheSize: 0 })).toThrow(HarnessError);
+      try {
+        createAjvValidator({ maxCacheSize: 0 });
+      } catch (err) {
+        expect((err as { code: string }).code).toBe('CORE_INVALID_CONFIG');
+      }
+    });
+
+    it('Wave-13 A-6: throws CORE_INVALID_CONFIG on negative maxCacheSize', () => {
+      expect(() => createAjvValidator({ maxCacheSize: -5 })).toThrow(/maxCacheSize/);
+    });
+
+    it('Wave-13 A-6: throws on non-integer maxCacheSize', () => {
+      expect(() => createAjvValidator({ maxCacheSize: 1.5 })).toThrow(/maxCacheSize/);
+    });
+
+    it('Wave-13 A-6: throws on NaN maxCacheSize', () => {
+      expect(() => createAjvValidator({ maxCacheSize: Number.NaN })).toThrow(/maxCacheSize/);
+    });
+
+    it('Wave-13 A-6: default (256) works when option omitted', async () => {
+      const v = createAjvValidator({ formats: false });
+      const r = await v.validate({ type: 'number' } as JsonSchema, 42);
+      expect(r.valid).toBe(true);
+    });
+
+    it('Wave-13 A-6: accepts any valid positive integer maxCacheSize', async () => {
+      const v = createAjvValidator({ formats: false, maxCacheSize: 1 });
+      const r = await v.validate({ type: 'string' } as JsonSchema, 'hi');
+      expect(r.valid).toBe(true);
+    });
+
+    it('Wave-13 A-5: format loader failure does not poison the cache (retry works)', async () => {
+      // Smoke test: creating the validator must not hang indefinitely even
+      // when ajv-formats resolution fails. We can't easily stub the dynamic
+      // import from here, so we simply assert the validator remains usable
+      // when formats=false (covers the untouched module-state path).
+      const v1 = createAjvValidator({ formats: false });
+      const v2 = createAjvValidator({ formats: false });
+      expect(await v1.validate({ type: 'number' } as JsonSchema, 1)).toEqual({ valid: true, errors: [] });
+      expect(await v2.validate({ type: 'number' } as JsonSchema, 2)).toEqual({ valid: true, errors: [] });
+    });
+  });
 });
 

@@ -4,13 +4,12 @@
 
 ```ts
 
+import { MetricsPort } from 'harness-one/observe';
 import { TraceExporter } from 'harness-one/observe';
 import { Tracer } from '@opentelemetry/api';
 
 // @public
-export function createOTelExporter(config?: OTelExporterConfig): TraceExporter & {
-    readonly getDroppedAttributeMetrics: () => OTelDroppedAttributeMetrics;
-};
+export function createOTelExporter(config?: OTelExporterConfig): OTelTraceExporter;
 
 // @public
 export interface OTelDroppedAttributeMetrics {
@@ -22,11 +21,12 @@ export interface OTelDroppedAttributeMetrics {
 
 // @public
 export interface OTelExporterConfig {
-    // @deprecated
+    // @deprecated (undocumented)
     readonly evictedParentsTtlMs?: number;
     readonly logger?: OTelExporterLogger;
     readonly maxEvictedParents?: number;
     readonly maxSpans?: number;
+    readonly metrics?: MetricsPort;
     readonly onDroppedAttribute?: (info: {
         key: string;
         type: string;
@@ -40,7 +40,14 @@ export interface OTelExporterConfig {
 // @public
 export interface OTelExporterLogger {
     // (undocumented)
+    debug?: (message: string, context?: Record<string, unknown>) => void;
+    // (undocumented)
     warn: (message: string, context?: Record<string, unknown>) => void;
+}
+
+// @public
+export interface OTelTraceExporter extends TraceExporter {
+    readonly getDroppedAttributeMetrics: () => OTelDroppedAttributeMetrics;
 }
 
 // (No @packageDocumentation comment for this package)

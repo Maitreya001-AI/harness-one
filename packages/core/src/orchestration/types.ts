@@ -72,6 +72,12 @@ export interface SharedContext {
   get(key: string): unknown;
   /** Set a value by key. */
   set(key: string, value: unknown): void;
+  /**
+   * Wave-13 P0-5: explicitly evict a key. Useful to reclaim space against
+   * the `maxSharedContextEntries` cap in long-running orchestrators.
+   * Returns true when the key existed.
+   */
+  delete(key: string): boolean;
   /** Get all entries as a readonly map. */
   entries(): ReadonlyMap<string, unknown>;
 }

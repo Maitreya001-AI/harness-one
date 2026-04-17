@@ -20,6 +20,26 @@ import { HarnessError, HarnessErrorCode} from './errors.js';
 const UNAVAILABLE_RE = /(^|[\s:])5\d\d(\s|$|:)|bad[\s_-]?gateway|service[\s_-]?unavailable|gateway[\s_-]?timeout/i;
 
 /**
+ * Wave-13 D-7: pre-compiled regex unions for the remaining classifier
+ * categories. Replaces 5–7 sequential `String.prototype.includes()` scans
+ * with a single regex test per category. Classification ORDER semantics
+ * are preserved by branching in the same order as the historical
+ * `.includes()` chain (rate-limit → auth → unavailable → network → parse).
+ */
+const RATE_LIMIT_RE = /rate|429|too many/i;
+const AUTH_RE = /auth|401|api key|unauthorized/i;
+const NETWORK_RE = /timeout|econnrefused|network|fetch/i;
+const PARSE_RE = /parse|json|malformed/i;
+
+/**
+ * Optional logger shape consumed by Wave-13 D-8 (silent-fallback visibility).
+ * Debug-level only — not every unclassified error is actionable.
+ */
+interface ClassifierLogger {
+  readonly debug?: (msg: string, meta?: Record<string, unknown>) => void;
+}
+
+/**
  * Classify an adapter error into a category string based on its message content.
  *
  * Returns one of:
@@ -37,8 +57,11 @@ const UNAVAILABLE_RE = /(^|[\s:])5\d\d(\s|$|:)|bad[\s_-]?gateway|service[\s_-]?u
  * - `'ADAPTER_ERROR'` — fallback for unrecognized errors
  *
  * @param err - The error to classify (may be any value)
+ * @param logger - Optional structured logger; Wave-13 D-8 emits a
+ *   `debug('adapter error not classified', {...})` on the fallback path so
+ *   operators can surface previously-silent unknown errors without noise.
  */
-export function categorizeAdapterError(err: unknown): HarnessErrorCode {
+export function categorizeAdapterError(err: unknown, logger?: ClassifierLogger): HarnessErrorCode {
   // T10 (Wave-5A): guardrail hard-block takes priority over message-based
   // heuristics — the structured error code is the authoritative signal.
   // GUARDRAIL_VIOLATION is NEVER retryable; callers should not add this
@@ -47,13 +70,23 @@ export function categorizeAdapterError(err: unknown): HarnessErrorCode {
     return HarnessErrorCode.GUARD_VIOLATION;
   }
   const msg = err instanceof Error ? err.message.toLowerCase() : '';
-  if (msg.includes('rate') || msg.includes('429') || msg.includes('too many')) return HarnessErrorCode.ADAPTER_RATE_LIMIT;
-  if (msg.includes('auth') || msg.includes('401') || msg.includes('api key') || msg.includes('unauthorized')) return HarnessErrorCode.ADAPTER_AUTH;
+  // Wave-13 D-7: single pre-compiled regex per category replaces the
+  // historical .includes() chains. Order of the branches is load-bearing:
+  // the first match wins, matching the pre-D-7 semantics exactly.
+  if (RATE_LIMIT_RE.test(msg)) return HarnessErrorCode.ADAPTER_RATE_LIMIT;
+  if (AUTH_RE.test(msg)) return HarnessErrorCode.ADAPTER_AUTH;
   // Wave-12 P1-1: 5xx upstream-unavailable takes priority over the generic
   // `timeout`/`fetch` network bucket because "gateway timeout" would otherwise
   // fall through to ADAPTER_NETWORK (which is NOT in the default retry list).
   if (UNAVAILABLE_RE.test(msg)) return HarnessErrorCode.ADAPTER_UNAVAILABLE;
-  if (msg.includes('timeout') || msg.includes('econnrefused') || msg.includes('network') || msg.includes('fetch')) return HarnessErrorCode.ADAPTER_NETWORK;
-  if (msg.includes('parse') || msg.includes('json') || msg.includes('malformed')) return HarnessErrorCode.ADAPTER_PARSE;
+  if (NETWORK_RE.test(msg)) return HarnessErrorCode.ADAPTER_NETWORK;
+  if (PARSE_RE.test(msg)) return HarnessErrorCode.ADAPTER_PARSE;
+  // Wave-13 D-8: surface the silent-fallback case at debug-level so ops
+  // can tell "classifier didn't recognise this message" apart from
+  // "adapter explicitly returned ADAPTER_ERROR". Slice to 200 chars to
+  // keep log lines bounded on pathological stack traces.
+  logger?.debug?.('adapter error not classified', {
+    error_message: msg.slice(0, 200),
+  });
   return HarnessErrorCode.ADAPTER_ERROR;
 }

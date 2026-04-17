@@ -19,7 +19,7 @@ export interface AnthropicAdapterConfig {
 }
 
 // @public
-export type AnthropicMalformedToolUsePolicy = 'warn' | 'throw' | ((raw: string, err: Error) => Record<string, unknown> | null);
+export type AnthropicMalformedToolUsePolicy = 'warn' | 'throw' | ((raw: string, err: Error) => Record<string, unknown> | null | undefined);
 
 // @public
 export function createAnthropicAdapter(config: AnthropicAdapterConfig): AgentAdapter;

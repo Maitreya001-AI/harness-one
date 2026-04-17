@@ -310,9 +310,15 @@ describe('createMiddlewareChain', () => {
       }
     });
 
-    it('preserves HarnessError thrown from middleware (does not double-wrap)', async () => {
+    it('wraps HarnessError thrown from middleware with CORE_MIDDLEWARE_ERROR (Wave-13 D-1)', async () => {
+      // Wave-13 D-1: previously the middleware chain re-threw a HarnessError
+      // verbatim. The new contract wraps every middleware boundary failure
+      // with `CORE_MIDDLEWARE_ERROR` so observers can trace the boundary in
+      // the cause chain. The original HarnessError is preserved as `.cause`
+      // so consumers that switch on the inner code can still inspect it via
+      // `(err.cause as HarnessError).code`.
       const chain = createMiddlewareChain();
-      const original = new HarnessError('custom error', 'CUSTOM_CODE', 'fix it');
+      const original = new HarnessError('custom error', HarnessErrorCode.CORE_INVALID_INPUT, 'fix it');
 
       chain.use(async () => {
         throw original;
@@ -322,8 +328,13 @@ describe('createMiddlewareChain', () => {
         await chain.execute({ type: 'chat' }, async () => 'ok');
         expect.fail('Should have thrown');
       } catch (err) {
-        expect(err).toBe(original);
-        expect((err as HarnessError).code).toBe('CUSTOM_CODE');
+        expect(err).toBeInstanceOf(HarnessError);
+        expect((err as HarnessError).code).toBe(HarnessErrorCode.CORE_MIDDLEWARE_ERROR);
+        // Original is preserved as cause so consumers can still inspect.
+        expect((err as HarnessError).cause).toBe(original);
+        expect(((err as HarnessError).cause as HarnessError).code).toBe(
+          HarnessErrorCode.CORE_INVALID_INPUT,
+        );
       }
     });
 

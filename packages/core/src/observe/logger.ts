@@ -32,6 +32,16 @@ export interface Logger {
   error(message: string, meta?: Readonly<Record<string, unknown>>): void;
   /** Create a child logger that inherits and extends base metadata. */
   child(meta: Readonly<Record<string, unknown>>): Logger;
+  /**
+   * Wave-13 C-8: Level-enabled companion checks. Let hot-path callers skip
+   * metadata allocation when the level gate would drop the record. Optional
+   * for backward compatibility — adapters and ports that previously shipped
+   * with only `isWarnEnabled` can opt into the full quartet over time.
+   */
+  isDebugEnabled?(): boolean;
+  isInfoEnabled?(): boolean;
+  isWarnEnabled?(): boolean;
+  isErrorEnabled?(): boolean;
 }
 
 /** Configuration for the logger factory. */
@@ -157,6 +167,40 @@ export function createSafeReplacer(opts?: {
 }): (key: string, value: unknown) => unknown {
   const seen = new WeakSet<object>();
   const sanitizeStack = opts?.sanitizeStack;
+  // Wave-13 C-9: Recursive helper that materialises an Error (plus its
+  // `cause` chain) into a plain `{ name, message, stack, cause? }` envelope
+  // with stack sanitisation applied at every level. A cycle guard prevents
+  // infinite recursion if `cause` forms a loop (rare but observed in the
+  // wild).
+  const MAX_CAUSE_DEPTH = 8;
+  function renderError(err: Error, depth: number, visited: WeakSet<Error>): Record<string, unknown> {
+    if (visited.has(err)) {
+      return { name: err.name, message: '[Circular]' };
+    }
+    visited.add(err);
+    const rawStack = err.stack;
+    const out: Record<string, unknown> = {
+      name: err.name,
+      message: err.message,
+    };
+    if (typeof rawStack === 'string') {
+      out.stack = sanitizeStack ? sanitizeStack(rawStack) : rawStack;
+    }
+    const rawCause = (err as Error & { cause?: unknown }).cause;
+    if (rawCause !== undefined && depth < MAX_CAUSE_DEPTH) {
+      if (rawCause instanceof Error) {
+        out.cause = renderError(rawCause, depth + 1, visited);
+      } else {
+        // Non-Error causes still get stack sanitisation if they expose a
+        // `stack` string (common in abuse-of-cause callers).
+        out.cause = rawCause;
+      }
+    } else if (rawCause !== undefined) {
+      out.cause = '[MaxCauseDepthExceeded]';
+    }
+    return out;
+  }
+
   return (key: string, value: unknown): unknown => {
     // P2-14: Apply the stack sanitizer whenever we emit a `stack` string
     // field — not just when the value is an Error. The upstream redactor
@@ -169,12 +213,10 @@ export function createSafeReplacer(opts?: {
       return sanitizeStack(value);
     }
     if (value instanceof Error) {
-      const rawStack = value.stack;
-      return {
-        name: value.name,
-        message: value.message,
-        stack: sanitizeStack && typeof rawStack === 'string' ? sanitizeStack(rawStack) : rawStack,
-      };
+      // Wave-13 C-9: recursively redact the `cause` chain. Prior behaviour
+      // only emitted the top-level error's fields and dropped `cause`
+      // entirely, hiding the root-cause context from log aggregators.
+      return renderError(value, 0, new WeakSet<Error>());
     }
     if (value instanceof Date) {
       return value.toISOString();
@@ -318,6 +360,12 @@ export function createLogger(config?: LoggerConfig): Logger {
       error: (msg, meta) => log('error', msg, meta),
       child: (meta: Readonly<Record<string, unknown>>) =>
         createLoggerWithMeta({ ...baseMeta, ...meta }),
+      // Wave-13 C-8: level-enabled companions so hot-path callers can cheaply
+      // gate metadata allocation.
+      isDebugEnabled: () => shouldLog('debug'),
+      isInfoEnabled: () => shouldLog('info'),
+      isWarnEnabled: () => shouldLog('warn'),
+      isErrorEnabled: () => shouldLog('error'),
     };
   }
 

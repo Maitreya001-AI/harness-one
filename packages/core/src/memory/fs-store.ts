@@ -121,8 +121,20 @@ export function createFileSystemStore(config: {
       return io.readEntry(id);
     },
 
-    async query(filter) {
+    async query(filter, opts) {
       await io.ensureDir();
+      // Wave-13 E-5: honor AbortSignal between batches.
+      const signal = opts?.signal;
+      const throwIfAborted = (): void => {
+        if (signal?.aborted) {
+          throw new HarnessError(
+            'Memory query aborted',
+            HarnessErrorCode.CORE_ABORTED,
+            'The provided AbortSignal was aborted before query completion',
+          );
+        }
+      };
+      throwIfAborted();
       // Stream entries in batches instead of loading all into memory.
       // Apply filters during read to minimize peak memory usage.
       const hasFilter = filter.grade !== undefined || (filter.tags && filter.tags.length > 0)
@@ -137,6 +149,8 @@ export function createFileSystemStore(config: {
         const searchTerm = filter.search?.toLowerCase();
         const batchSize = 50;
         for (let i = 0; i < allFiles.length; i += batchSize) {
+          // Wave-13 E-5: abort-check between each 50-entry batch.
+          throwIfAborted();
           const batch = allFiles.slice(i, i + batchSize);
           const entries = await Promise.all(
             batch.map(file => io.readEntry(file.replace('.json', '')))

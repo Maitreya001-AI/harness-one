@@ -35,9 +35,22 @@ export type { AgentLoopTraceManager } from './trace-interface.js';
 /**
  * ARCH-006: Iteration-level instrumentation hook. Every method is optional;
  * a hook only needs to declare the events it cares about. Hooks are invoked
- * synchronously from the `AgentLoop`. If a hook throws, the error is logged
- * (when a `logger` is configured) and swallowed — hooks must never break
- * the loop.
+ * synchronously from the `AgentLoop`.
+ *
+ * **Exception contract (Wave-13 D-11):** All hooks MUST NOT throw. If a hook
+ * throws, the exception is logged (when a `logger` is configured — at
+ * `warn` level with the event name and error message) and swallowed; the
+ * loop continues as if the hook had returned normally. A throwing hook will
+ * NEVER propagate to the consumer of `AgentLoop.run()`, NEVER short-circuit
+ * subsequent hooks in the same registration list, and NEVER corrupt the
+ * iteration state. The single exception is when `strictHooks: true` is
+ * passed on the config — intended for tests — in which case the error is
+ * re-thrown so hook failures are immediately visible.
+ *
+ * Implementers should therefore treat hook callbacks as observer-only: any
+ * state mutation a hook performs on external systems is the hook author's
+ * responsibility; the loop neither retries on failure nor waits for
+ * asynchronous completion (hooks are invoked synchronously).
  *
  * @example
  * ```ts
@@ -51,13 +64,25 @@ export type { AgentLoopTraceManager } from './trace-interface.js';
  * ```
  */
 export interface AgentLoopHook {
-  /** Fires before any work in an iteration (right after the iteration counter increments). */
+  /**
+   * Fires before any work in an iteration (right after the iteration counter
+   * increments). MUST NOT throw — exceptions are logged and swallowed.
+   */
   onIterationStart?(info: { iteration: number }): void;
-  /** Fires once per tool call yielded to the consumer, before tool execution. */
+  /**
+   * Fires once per tool call yielded to the consumer, before tool execution.
+   * MUST NOT throw — exceptions are logged and swallowed.
+   */
   onToolCall?(info: { iteration: number; toolCall: ToolCallRequest }): void;
-  /** Fires after the adapter returns usage for the iteration. */
+  /**
+   * Fires after the adapter returns usage for the iteration. MUST NOT throw
+   * — exceptions are logged and swallowed.
+   */
   onCost?(info: { iteration: number; usage: TokenUsage }): void;
-  /** Fires at the end of the iteration. `done` indicates whether the loop is terminating. */
+  /**
+   * Fires at the end of the iteration. `done` indicates whether the loop is
+   * terminating. MUST NOT throw — exceptions are logged and swallowed.
+   */
   onIterationEnd?(info: { iteration: number; done: boolean }): void;
 }
 
@@ -430,7 +455,15 @@ export class AgentLoop {
     this.abortController.abort();
   }
 
-  /** Dispose the loop, releasing resources and cancelling any pending operations. */
+  /**
+   * Dispose the loop, releasing resources and cancelling any pending operations.
+   *
+   * Wave-13 D-10: when the execution strategy implements the optional
+   * `dispose()` method, we forward the call (fire-and-forget) so long-lived
+   * strategies (worker pools, persistent queues, etc.) can release their
+   * resources at loop shutdown. Errors from strategy dispose are swallowed —
+   * the loop's own teardown must not be blocked by strategy-specific failures.
+   */
   dispose(): void {
     // PERF-013: Remove external signal listener to prevent memory leaks when
     // the external signal outlives this loop instance. Wrap removal in
@@ -446,6 +479,23 @@ export class AgentLoop {
         this._externalAbortHandler = undefined;
       }
       this.abortController.abort();
+      // Wave-13 D-10: forward dispose to the execution strategy when present.
+      // Fire-and-forget: strategy dispose is async but we keep dispose()
+      // synchronous to preserve the pre-Wave-13 signature. Any rejection is
+      // silenced via `.catch()` — teardown errors are best-effort.
+      const strategyDispose = this.executionStrategy.dispose;
+      if (typeof strategyDispose === 'function') {
+        try {
+          const p = strategyDispose.call(this.executionStrategy);
+          if (p && typeof (p as Promise<void>).catch === 'function') {
+            (p as Promise<void>).catch(() => {
+              /* strategy teardown failure — non-fatal */
+            });
+          }
+        } catch {
+          /* synchronous throw from dispose — non-fatal */
+        }
+      }
     } finally {
       this._status = 'disposed';
     }

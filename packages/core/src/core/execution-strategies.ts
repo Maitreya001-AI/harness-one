@@ -2,6 +2,31 @@ import type { ToolCallRequest, ExecutionStrategy, ToolExecutionResult } from './
 import { HarnessError, HarnessErrorCode } from './errors.js';
 
 /**
+ * Wave-13 D-10: declaration merging adds an optional `dispose` member to the
+ * structural `ExecutionStrategy` contract so long-running strategies (e.g.
+ * worker pools, persistent queues) can release resources at AgentLoop
+ * shutdown. The merge lives in this file — alongside the built-in strategy
+ * factories — rather than in `types.ts` to avoid a cross-file behavioural
+ * change; the semantics are identical for the TypeScript compiler either way.
+ *
+ * Existing built-in strategies (`createSequentialStrategy`, `createParallelStrategy`)
+ * do not need `dispose` because they hold no per-instance resources; the
+ * field stays optional so they remain source-compatible.
+ *
+ * AgentLoop.dispose() forwards into `strategy.dispose?.()` when present.
+ */
+declare module './types.js' {
+  interface ExecutionStrategy {
+    /**
+     * Optional teardown hook. Called once by AgentLoop.dispose() (or by
+     * consumers that own the strategy lifecycle). Implementations MUST be
+     * idempotent — multiple dispose calls are allowed and must not throw.
+     */
+    dispose?(): Promise<void>;
+  }
+}
+
+/**
  * Sequential execution strategy (current default behavior).
  * Executes tool calls one-by-one in order.
  */

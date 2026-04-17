@@ -44,21 +44,37 @@ const ANTHROPIC_EXTRA_ALLOW_LIST = new Set<string>([
 
 /**
  * Policy for how the adapter reacts when an assistant `toolCalls[].arguments`
- * string is not parseable as a JSON object (Wave-12 P1-3).
+ * string is not parseable as a JSON object (Wave-12 P1-3, Wave-13 H-2).
  *
  * - `'warn'` (default, backwards compatible): emit `logger.warn(...)`, substitute
  *   an empty object, continue. Preserves Wave-5F behavior.
  * - `'throw'`: throw `HarnessError(ADAPTER_ERROR)` with the raw argument string
- *   preserved on the error's `context` via its message. Fail fast for operators
+ *   preserved on the error's `context` via its message (Wave-13 H-1: uses a
+ *   head+tail preview for payloads over 400 chars). Fail fast for operators
  *   who would rather observe malformed LLM output than mask it.
- * - Custom callback: receive `(raw, err)` and return the replacement input
- *   object, or `null` to fall back to the empty-object default. The raw
- *   argument string is always available for inspection/logging here.
+ * - Custom callback: receive `(raw, err)` and return one of:
+ *     * A `Record<string, unknown>` — used verbatim as the replacement
+ *       `tool_use.input`.
+ *     * `null` — explicitly requests the empty-object default (`{}`). Useful
+ *       when the callback wants to suppress the throw for specific error
+ *       shapes while still producing a sane payload for the provider.
+ *     * `undefined` — defer to the default policy (throw
+ *       `HarnessError(ADAPTER_ERROR)`). Treat `undefined` as "I couldn't
+ *       decide; do what `'throw'` would have done". This mirrors the
+ *       language-level convention that `undefined` returns mean "the function
+ *       had nothing to say" — callers who do want the empty-object fallback
+ *       MUST return `null` explicitly.
+ *
+ * Wave-13 H-2: before this wave the contract did not distinguish `null` from
+ * `undefined`; both fell through to `{}`. Callers who wanted fail-fast
+ * semantics from a custom callback had to throw themselves. The new
+ * `undefined` → default-throw path closes that gap without breaking
+ * callers who already return `null`.
  */
 export type AnthropicMalformedToolUsePolicy =
   | 'warn'
   | 'throw'
-  | ((raw: string, err: Error) => Record<string, unknown> | null);
+  | ((raw: string, err: Error) => Record<string, unknown> | null | undefined);
 
 /** Configuration for the Anthropic adapter. */
 export interface AnthropicAdapterConfig {
@@ -86,6 +102,14 @@ export interface AnthropicAdapterConfig {
    * strings returned by the LLM. Defaults to `'warn'` for backwards compatibility
    * with Wave-5F callers (warn + substitute `{}`). Set to `'throw'` to fail
    * fast, or provide a callback to produce a custom replacement object.
+   *
+   * Wave-13 H-2: callback return value semantics are now explicit:
+   *   - `Record<string, unknown>` — used verbatim as the replacement input.
+   *   - `null` — substitute empty object `{}` (previous behaviour).
+   *   - `undefined` — defer to the default 'throw' policy, as if the caller
+   *     had configured `'throw'`. Use this to fail fast on specific cases
+   *     without writing a throw inside the callback.
+   * See {@link AnthropicMalformedToolUsePolicy} for the full contract.
    */
   readonly onMalformedToolUse?: AnthropicMalformedToolUsePolicy;
   /**
@@ -202,12 +226,24 @@ function resolveToolUseInput(
   }
 
   // Malformed path — apply policy.
-  const preview = tc.arguments.length > 200 ? tc.arguments.slice(0, 200) + '…' : tc.arguments;
+  //
+  // Wave-13 H-1: the default 'warn' path still uses a head-only preview
+  // (truncation ellipsis at 200 chars). But the 'throw' path now uses a
+  // head+tail preview for arguments longer than 400 chars so error messages
+  // surface tail-region corruption (e.g. a malformed closing brace) that was
+  // previously invisible. Below 400 chars we keep the single head-only form —
+  // there's no tail worth reporting separately.
+  const raw = tc.arguments;
+  const warnPreview = raw.length > 200 ? raw.slice(0, 200) + '…' : raw;
+  const throwPreview =
+    raw.length > 400
+      ? `${raw.slice(0, 200)} ... ${raw.slice(-200)}`
+      : raw;
 
   if (policy === 'throw') {
     throw new HarnessError(
       `[harness-one/anthropic] tool_use input for "${tc.name}" was not valid JSON and onMalformedToolUse='throw'. ` +
-      `Raw (first 200 chars): ${preview}`,
+      `Raw (length=${raw.length}, head+tail preview): ${throwPreview}`,
       HarnessErrorCode.ADAPTER_ERROR,
       'Set onMalformedToolUse to \'warn\' to fall back to {} or supply a callback to produce a replacement object.',
       parseErr,
@@ -216,6 +252,18 @@ function resolveToolUseInput(
 
   if (typeof policy === 'function') {
     const replacement = policy(tc.arguments, parseErr);
+    // Wave-13 H-2: distinguish `undefined` (defer to default throw policy)
+    // from `null` (explicit empty-object request).
+    if (replacement === undefined) {
+      throw new HarnessError(
+        `[harness-one/anthropic] onMalformedToolUse callback returned undefined for "${tc.name}"; ` +
+        `deferring to default 'throw' policy. Return null to request the empty-object fallback, ` +
+        `or an object to supply a custom replacement. Raw (length=${tc.arguments.length}, head+tail preview): ${throwPreview}`,
+        HarnessErrorCode.ADAPTER_ERROR,
+        'Return an object or null from onMalformedToolUse. undefined now means "defer to default" (throw).',
+        parseErr,
+      );
+    }
     const resolved: Record<string, unknown> =
       replacement !== null && typeof replacement === 'object' && !Array.isArray(replacement)
         ? (replacement as Record<string, unknown>)
@@ -236,7 +284,7 @@ function resolveToolUseInput(
       parsed !== undefined && (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed))
         ? `[harness-one/anthropic] tool_use input for "${tc.name}" was not a JSON object (got ${parsed === null ? 'null' : Array.isArray(parsed) ? 'array' : typeof parsed}); substituting empty object.`
         : `[harness-one/anthropic] tool_use input for "${tc.name}" was not valid JSON; substituting empty object. ` +
-          `Parse error: ${parseErr.message}. Raw (first 200 chars): ${preview}`;
+          `Parse error: ${parseErr.message}. Raw (first 200 chars): ${warnPreview}`;
     // Preserve the historical single-argument shape so existing callers
     // matching on `.calls[0][0]` remain green.
     logger.warn(msg);

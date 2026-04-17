@@ -59,12 +59,25 @@ export async function* toSSEStream(events: AsyncIterable<AgentEvent>): AsyncGene
       // Primary stringify failed — common for circular refs or throwing
       // getters. Fall back to an `error` envelope. If the fallback also
       // throws (exotic), yield the pre-computed hardcoded byte constant.
+      //
+      // Wave-13 D-9: clamp the reason string defensively. `String(err)` can
+      // throw (exotic `.toString()` throwers) — we pre-coerce inside a try
+      // and slice to 200 chars so a maliciously large error message cannot
+      // blow up the SSE envelope. The outer try/catch still covers the
+      // pathological `String()` throw case by falling through to the
+      // hardcoded fallback chunk.
+      let reason: string;
+      try {
+        reason = String(err).slice(0, 200);
+      } catch {
+        reason = 'unserializable error';
+      }
       try {
         yield {
           event: 'error',
           data: JSON.stringify({
             error: 'Event serialization failed',
-            reason: String(err),
+            reason,
           }),
         };
       } catch {

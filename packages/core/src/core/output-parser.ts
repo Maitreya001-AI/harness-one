@@ -39,6 +39,21 @@ function primitiveKey(schema: unknown): string {
   return `${t}:${String(schema)}`;
 }
 
+/**
+ * Wave-13 D-12: hoist the JSON-parser regex literals to module-level
+ * constants so they compile exactly once per process instead of on every
+ * `parse()` call. The parser is on the hot path for structured-output
+ * workflows; the previous inline literals forced the JS engine to allocate
+ * a fresh `RegExp` per parse (or, at best, rely on engine-level caching
+ * which is not guaranteed across V8 versions).
+ *
+ * Patterns are PRE-D-12 identical; only their lifetime changed.
+ */
+const CRLF_RE = /\r\n/g;
+const CODE_BLOCK_RE = /```(?:json)?\s*([\s\S]*?)```/;
+const UNCLOSED_BLOCK_OPEN_RE = /```(?:json)?\s*[\s\S]+/;
+const UNCLOSED_BLOCK_PAIR_RE = /```[\s\S]*```/;
+
 /** @internal Exposed for tests that want to reset the stringify cache. */
 export function __resetSchemaStringCache(): void {
   schemaPrimitiveStringCache.clear();
@@ -122,10 +137,12 @@ export function createJsonOutputParser<T = unknown>(schema?: JsonSchema): Output
       // proxies on some runtimes, clipboard-pasted markdown, etc.). Without
       // normalization, `"```json\r\n\r\n```"` would leave only `\r` inside
       // the capture group and evade the "empty code block" check.
-      const normalized = text.replace(/\r\n/g, '\n');
+      // Wave-13 D-12: `CRLF_RE` is now module-scoped to avoid re-compilation.
+      const normalized = text.replace(CRLF_RE, '\n');
 
       // Try to extract JSON from markdown code blocks first
-      const jsonMatch = normalized.match(/```(?:json)?\s*([\s\S]*?)```/);
+      // Wave-13 D-12: `CODE_BLOCK_RE` is now module-scoped.
+      const jsonMatch = normalized.match(CODE_BLOCK_RE);
       if (jsonMatch) {
         const inner = jsonMatch[1].trim();
         if (inner === '') {
@@ -138,8 +155,9 @@ export function createJsonOutputParser<T = unknown>(schema?: JsonSchema): Output
         return parseJsonOrThrow<T>(inner, 'code block');
       }
 
-      // Check for unclosed code block (``` without closing ```)
-      if (/```(?:json)?\s*[\s\S]+/.test(normalized) && !/```[\s\S]*```/.test(normalized)) {
+      // Check for unclosed code block (``` without closing ```).
+      // Wave-13 D-12: both regexes are now module-scoped.
+      if (UNCLOSED_BLOCK_OPEN_RE.test(normalized) && !UNCLOSED_BLOCK_PAIR_RE.test(normalized)) {
         throw new HarnessError(
           'Unclosed markdown code block',
           HarnessErrorCode.CORE_PARSE_UNCLOSED_CODEBLOCK,

@@ -8,7 +8,15 @@ import { HarnessError, HarnessErrorCode} from 'harness-one';
 
 // ── Module definitions ────────────────────────────────────────────────────────
 
-export const ALL_MODULES = [
+// Wave-13 M-1: `Object.freeze` + `as const` makes these module-scoped
+// registries immutable at both compile time (readonly tuple / Readonly
+// record) and runtime (frozen object). Previously they were `as const`
+// but not runtime-frozen, so a downstream consumer could mutate the
+// array / object and silently corrupt every other caller in the same
+// process. The cast keeps the tuple literal type intact after
+// `Object.freeze`, which returns `Readonly<T>` and loses tuple
+// narrowing without this annotation.
+export const ALL_MODULES = Object.freeze([
   'core',
   'prompt',
   'context',
@@ -21,11 +29,17 @@ export const ALL_MODULES = [
   'evolve',
   'orchestration',
   'rag',
-] as const;
+] as const);
 
 export type ModuleName = (typeof ALL_MODULES)[number];
 
-export const MODULE_DESCRIPTIONS: Record<ModuleName, string> = {
+// Wave-13 M-1: Frozen so a rogue import cannot `delete
+// MODULE_DESCRIPTIONS.core` or overwrite a description at runtime. The
+// `as const` preserves literal string types; `Object.freeze` enforces
+// runtime immutability. Together they match the contract surfaced via
+// `Record<ModuleName, string>` — callers treat it as read-only, and now
+// the runtime agrees.
+export const MODULE_DESCRIPTIONS: Readonly<Record<ModuleName, string>> = Object.freeze({
   core: 'Agent Loop -- LLM adapter, tool dispatch, safety valves',
   prompt: 'Prompt Engineering -- builder, registry, skills, disclosure',
   context: 'Context Engineering -- token budgets, packing, cache stability',
@@ -38,7 +52,7 @@ export const MODULE_DESCRIPTIONS: Record<ModuleName, string> = {
   evolve: 'Continuous Evolution -- component registry, drift detection, architecture rules',
   orchestration: 'Agent Orchestration -- multi-agent coordination, delegation, handoff, boundaries',
   rag: 'Retrieval-Augmented Generation -- loaders, chunking, embeddings, retrievers, pipeline',
-};
+} as const);
 
 // ── Argument parser ───────────────────────────────────────────────────────────
 

@@ -8,6 +8,145 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed — Wave-13 (eight-angle audit — 70+ production-grade fixes)
+
+Driven by eight parallel deep-audit agents (architecture, concurrency, error
+handling, API design, performance, observability, tests, security) against the
+post-Wave-12 baseline — see `docs/forge-fix/wave-13/research-report.md`
+for the full finding set and `docs/forge-fix/wave-13/` for track-level plans.
+
+**P0 — data loss / crash / isolation:**
+- `stream-aggregator` per-call tool-argument size cap now throws
+  `ADAPTER_PAYLOAD_OVERSIZED` (previously misclassified as cumulative
+  `CORE_TOKEN_BUDGET_EXCEEDED`); max-tool-call count uses `CORE_INVALID_STATE`
+  so downstream retry/alerting heuristics can distinguish wire-size caps from
+  token-budget exhaustion.
+- OpenAI adapter module-scoped `_zeroUsageWarnedModels` moved into per-instance
+  bounded-LRU state — prevents cross-tenant warning-dedupe contamination.
+- Orchestrator `delegationChain` cap (`maxDelegationChainEntries`, default
+  10 000) stops unbounded map growth when delegations never complete.
+- Orchestrator `contextStore` cap (`maxSharedContextEntries`, default 10 000)
+  + new `sharedContext.delete(key)` method for long-running tenants.
+- Cost-tracker eviction rewritten from O(n²) backward-scan to amortised O(1)
+  via `traceIdIndex: Map<string, number[]>` + `evictionBias` offset.
+- Redis `update()` hardened: data prepared before `WATCH`, `UNWATCH` on every
+  error path, no `await` between `MULTI` and `EXEC`.
+
+**P1 — resilience, observability, API hardening:**
+- `CircuitOpenError` now extends `HarnessError` with
+  `ADAPTER_CIRCUIT_OPEN` code; `onStateChange` callback receives a context
+  object carrying consecutive-failure count and last-failure error.
+- `computeBackoffMs` validates `maxMs ≤ 600 000 ms`, `baseMs ≤ 300 000 ms`,
+  `jitterFraction ∈ [0, 1]`; new optional `maxAbsoluteJitterMs` cap.
+- `async-lock` `dispose()` + abort handler race eliminated via per-waiter
+  `aborted` flag — double-reject no longer possible.
+- Agent-pool emits depth gauge on every `acquireAsync`, warn + counter before
+  `POOL_QUEUE_FULL`, info log on `resize()`, warn + counter on dispose-error,
+  span event on `POOL_TIMEOUT`.
+- Message-queue emits depth gauge on every push, drop counter on overflow;
+  structured warn when logger is injected.
+- Middleware now wraps thrown `HarnessError`s with `CORE_MIDDLEWARE_ERROR`
+  preserving the original as `.cause` so observability retains the
+  middleware-boundary context; throwing `onError` callbacks are themselves
+  try/catch-guarded.
+- Adapter-caller orphaned post-timeout rejections now debug-logged; retry
+  span events carry `backoff_ms` / `retry_number`; timeout failures set
+  `timeout_ms` / `adapter` span attributes; exhaustion span carries
+  `total_backoff_ms` / `total_duration_ms`.
+- Error-classifier replaces the `.includes()` chain with four pre-compiled
+  regexes; fallback path debug-logs the unclassified message.
+- `ExecutionStrategy.dispose?()` optional hook added; `AgentLoop.dispose()`
+  forwards to the strategy.
+- `AgentLoopHook` JSDoc now states the must-not-throw contract explicitly.
+- Session-manager handler errors route through `logger.error` with
+  `{eventType, error, handlerErrorCount}`; `getLastHandlerError()` getter
+  added; drop warnings rate-limited to ≥1s but counter increments on every
+  drop.
+- Tool registry gains `maxTotalArgBytesPerTurn` (default 10 MiB) — DoS
+  amplification via oversized tool-call arguments now fails fast with
+  `ADAPTER_PAYLOAD_OVERSIZED`.
+- `MemoryStore.query()` accepts `opts.signal?: AbortSignal`; fs-store checks
+  every 50-entry batch; aborts throw `CORE_ABORTED`.
+- Guardrail pipeline: per-guard `effectiveTimeout = min(remaining_global,
+  guard_timeoutMs)`; emits `guard_timeout` span event.
+- Guardrail `utf8ByteLength` short-circuits with upper-bound estimate when
+  `s.length * 4 > cap`, skipping `TextEncoder.encode` allocation in the
+  rejection path.
+- Cost-tracker adds async-serialised `updatePricing()` / `updateBudget()`
+  companions to the synchronous setters; explicit field assignment replaces
+  conditional-spread allocations in `updateUsage`; budget alerts emit
+  `harness.cost.alerts.total` counter, `logger.warn`, and a running
+  `harness.cost.utilization` gauge.
+- TraceManager `flush()` / `initialize()` swapped `Promise.all` →
+  `Promise.allSettled` with per-exporter timeout so one stuck exporter no
+  longer blocks shutdown. Dead-trace `startSpan` increments a counter +
+  debug-logs instead of silently no-oping (`strictSpanCreation` flag throws
+  `TRACE_NOT_FOUND`). Lazy exporter init tracked in `pendingExports` so
+  `flush()` awaits it. LRU eviction emits counter + one-shot warn at 80%
+  capacity.
+- Logger gains `isInfoEnabled?()`, `isErrorEnabled?()`, `isDebugEnabled?()`
+  companions; `createSafeReplacer` now renders `Error.cause` chains
+  recursively (cycle-guarded, depth-capped at 8) with stack-sanitisation at
+  every layer. New `sanitizeErrorForExport(err)` helper.
+- Preset promotes `shutdown()` to the `Harness` interface, defaults
+  `adapterTimeoutMs` to 60 s, wraps `onSessionId` callback throws, exports
+  `HarnessConfigBase`, adds optional `type` discriminator on
+  `HarnessConfig`, exports `DRAIN_DEFAULT_TIMEOUT_MS`.
+- OpenAI adapter `registerProvider()` accepts optional `trustedOrigins`
+  whitelist guarding against malicious redirects; `providers` const
+  delivered through a `Proxy` that returns frozen objects; `registerProvider(name)`
+  shorthand resolves baseURL from bundled `providers`.
+- Anthropic `onMalformedToolUse` semantics clarified: callback return value
+  `null` → empty `{}`, `undefined` → default throw policy. Throw-policy
+  preview shows head + tail for payloads over 400 chars.
+- Langfuse exporter `flush()` now awaits `client.flushAsync()`; export
+  failures tag the offending span with `exporter_error` event; flush-batch
+  failures emit counter + warn.
+- OTel exporter extracts `OTelTraceExporter` named interface; tags
+  `evictedParentsTtlMs` with `@deprecated`; evicted-parent cache fallback
+  increments counter + debug-logs.
+- Redis `query()` default throws `MEMORY_CORRUPT` on partial MGET failure
+  (`partialOk?: boolean` preserves legacy skip-and-continue); `RedisMemoryStore`
+  interface explicitly exported with `repair()` surfaced.
+- Ajv `compileWithCache` avoids the per-miss object-spread allocation; format
+  loader cache clears on rejection so transient failures can retry;
+  `maxCacheSize` validated at factory entry.
+- CLI `ALL_MODULES` and `MODULE_DESCRIPTIONS` frozen at module load.
+
+**New API (non-breaking, all additive):**
+- `HarnessErrorCode.ADAPTER_PAYLOAD_OVERSIZED`, `ORCH_DELEGATION_LIMIT`,
+  `ORCH_CONTEXT_LIMIT`
+- `SharedContext.delete(key: string): boolean`
+- `OrchestratorConfig.maxDelegationChainEntries?`,
+  `maxSharedContextEntries?`
+- `ExecutionStrategy.dispose?()`
+- `MemoryStore.query(pred, opts?: { signal?: AbortSignal })`
+- `CircuitStateChangeContext { consecutiveFailures, lastFailureError?,
+  lastFailureTimeMs? }`
+- `BackoffConfig.maxAbsoluteJitterMs?`; `BACKOFF_MAX_MS_CEILING`,
+  `BACKOFF_BASE_MS_CEILING` exports
+- `Logger.isInfoEnabled?()`, `isErrorEnabled?()`, `isDebugEnabled?()`,
+  `sanitizeErrorForExport()` helper
+- `AgentPoolConfig.logger?`, `metrics?`, `traceManager?`, `poolId?`
+- `MessageQueueConfig.logger?`, `metrics?`
+- `CreateRegistryConfig.maxTotalArgBytesPerTurn?`
+- `SessionManagerConfig.logger.error?`, `maxMetadataBytes?`;
+  `SessionManager.getLastHandlerError()`, `handlerErrorCount`,
+  `droppedEventCount`
+- `RegisterProviderOptions.trustedOrigins?`
+- `TraceManagerConfig.strictSpanCreation?`
+- `OTelTraceExporter` named interface
+- `RedisStoreConfig.partialOk?`
+- `AnthropicAdapterConfig.onMalformedToolUse` accepts callback returning
+  `Record<string, unknown> | null | undefined` with documented semantics
+- Preset `HarnessConfigBase` exported; `adapterTimeoutMs?` field;
+  `DRAIN_DEFAULT_TIMEOUT_MS`, `DEFAULT_ADAPTER_TIMEOUT_MS`
+- Langfuse `LangfuseCostTracker.updatePricing()`, `updateBudget()`
+
+**Coverage:** 4288 tests passing (+214 Wave-13 tests). Typecheck clean across
+all 12 workspaces. Lint clean. Build succeeds. `api:update` regenerated all
+baselines.
+
 ### Fixed — Wave-12 (deep architecture research — 62 production-grade fixes)
 
 Driven by a six-angle parallel audit (concurrency, error handling, API design,

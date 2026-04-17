@@ -43,8 +43,28 @@ import { registerTiktokenModels } from '@harness-one/tiktoken';
 import type { LangfuseExporterConfig } from '@harness-one/langfuse';
 import type { RedisStoreConfig } from '@harness-one/redis';
 
+/**
+ * Default timeout (ms) applied to adapter calls when `HarnessConfigBase.adapterTimeoutMs`
+ * is not provided. Wave-13 F-2: previously `createAgentLoop` received no
+ * `adapterTimeoutMs`, so a hanging provider would stall requests until the
+ * caller's AbortSignal fired (or forever). 60s is a conservative default that
+ * errs on the side of letting slow-but-legitimate provider responses through
+ * while still bounding the blast radius of a silent upstream hang.
+ */
+export const DEFAULT_ADAPTER_TIMEOUT_MS = 60_000;
+
+/**
+ * Default timeout (ms) for {@link Harness.drain}.
+ *
+ * Wave-13 F-6: the `drain()` signature previously hid its default in the
+ * implementation; callers who wanted to log or compare the value had to know
+ * the magic number. Exporting it removes that footgun and keeps the signature
+ * honest.
+ */
+export const DRAIN_DEFAULT_TIMEOUT_MS = 30_000;
+
 /** Shared configuration fields for all providers. */
-interface HarnessConfigBase {
+export interface HarnessConfigBase {
   /** Model name. */
   readonly model?: string;
 
@@ -91,6 +111,16 @@ interface HarnessConfigBase {
   readonly baseRetryDelayMs?: number;
   /** Error categories eligible for retry (default: ['ADAPTER_RATE_LIMIT']). */
   readonly retryableErrors?: readonly string[];
+  /**
+   * Maximum time in milliseconds any single adapter call is allowed to run
+   * before being aborted with `CORE_TIMEOUT`. Wave-13 F-2: defaults to
+   * {@link DEFAULT_ADAPTER_TIMEOUT_MS} (60_000 ms) when omitted — the prior
+   * behavior of "unlimited" silently cascaded provider hangs into caller
+   * latency budgets. Set explicitly (including to a very large value) to
+   * override; do not pass `0` — that disables the timeout in the underlying
+   * AgentLoop and restores the pre-Wave-13 unbounded behavior.
+   */
+  readonly adapterTimeoutMs?: number;
 
   /**
    * Guardrail config.
@@ -136,6 +166,14 @@ interface HarnessConfigBase {
 
 /** Configuration for creating a full Harness instance with Anthropic. */
 export interface AnthropicHarnessConfig extends HarnessConfigBase {
+  /**
+   * Wave-13 F-4: optional discriminator tag for the {@link HarnessConfig}
+   * union. When set to `'anthropic'`, a TypeScript `switch` over `type`
+   * narrows the config cleanly instead of relying on the `provider` field
+   * alone. Kept optional to preserve backwards compatibility with callers
+   * who only set `provider`.
+   */
+  readonly type?: 'anthropic';
   readonly provider: 'anthropic';
   /** Anthropic client instance. */
   readonly client: AnthropicAdapterConfig['client'];
@@ -143,6 +181,12 @@ export interface AnthropicHarnessConfig extends HarnessConfigBase {
 
 /** Configuration for creating a full Harness instance with OpenAI. */
 export interface OpenAIHarnessConfig extends HarnessConfigBase {
+  /**
+   * Wave-13 F-4: optional discriminator tag for the {@link HarnessConfig}
+   * union. When set to `'openai'`, narrowing works via the `type` field. See
+   * {@link AnthropicHarnessConfig.type}.
+   */
+  readonly type?: 'openai';
   readonly provider: 'openai';
   /** OpenAI client instance. */
   readonly client: OpenAIAdapterConfig['client'];
@@ -172,6 +216,11 @@ export interface OpenAIHarnessConfig extends HarnessConfigBase {
  * as `@internal` in the report.
  */
 export interface AdapterHarnessConfig extends HarnessConfigBase {
+  /**
+   * Wave-13 F-4: optional discriminator tag for the {@link HarnessConfig}
+   * union. When set to `'adapter'`, narrowing works via the `type` field.
+   */
+  readonly type?: 'adapter';
   readonly adapter: AgentAdapter;
   /** Provider and client are not required when adapter is injected directly. */
   readonly provider?: undefined;
@@ -273,10 +322,23 @@ export interface Harness {
    */
   initialize?(): Promise<void>;
 
-  /** Shut down all services. */
+  /**
+   * Shut down all services.
+   *
+   * Wave-13 F-1: explicitly required on the public interface (not duck-typed
+   * on the factory return). Every implementation of {@link Harness} MUST
+   * provide a resource-releasing `shutdown()` so callers can write defensive
+   * signal handlers that work across Harness variants.
+   */
   shutdown(): Promise<void>;
 
-  /** Abort the running loop and shut down all services gracefully. */
+  /**
+   * Abort the running loop and shut down all services gracefully.
+   *
+   * Wave-13 F-6: when omitted, falls back to {@link DRAIN_DEFAULT_TIMEOUT_MS}
+   * (30_000 ms). The default is exported alongside this interface so callers
+   * can reference it without repeating the literal.
+   */
   drain(timeoutMs?: number): Promise<void>;
 }
 
@@ -338,8 +400,12 @@ export function createHarness(config: HarnessConfig): Harness {
       if (invalid(p.inputPer1kTokens) || invalid(p.outputPer1kTokens) ||
         (p.cacheReadPer1kTokens !== undefined && invalid(p.cacheReadPer1kTokens)) ||
         (p.cacheWritePer1kTokens !== undefined && invalid(p.cacheWritePer1kTokens))) {
+        // Wave-13 F-7: quote the model name with backticks so hostile model
+        // strings containing quote characters cannot break the error-message
+        // shape, and so the surrounding backticks clearly delimit the
+        // caller-supplied identifier from the prose.
         throw new HarnessError(
-          `Pricing for model "${p.model}" has non-finite or negative values`,
+          `Pricing for model \`${p.model}\` has non-finite or negative values`,
           HarnessErrorCode.CORE_INVALID_CONFIG,
           'All pricing values must be finite numbers >= 0',
         );
@@ -447,6 +513,19 @@ export function createHarness(config: HarnessConfig): Harness {
 
   // 17. Agent loop — wire the shared traceManager so iteration/tool spans
   // appear alongside harness-level spans in a unified trace backend.
+  // Wave-13 F-2: supply a default adapterTimeoutMs so provider hangs cannot
+  // stall requests indefinitely. Caller-supplied value takes precedence;
+  // passing `0` is forwarded verbatim to the AgentLoop (which treats it as
+  // "disabled"), preserving the pre-Wave-13 unbounded behavior for callers who
+  // need it. The option is forwarded under an expanding config shape —
+  // `AgentLoopConfig` does not formally declare it today, but the underlying
+  // `AdapterCaller` already reads it from its own config. We widen via a type
+  // assertion at the boundary so the preset can supply the default without
+  // coupling to the internal wiring; a future core-side change will promote
+  // the field to `AgentLoopConfig` proper (tracked in the Wave-13 research
+  // report under F-2).
+  const effectiveAdapterTimeoutMs =
+    config.adapterTimeoutMs !== undefined ? config.adapterTimeoutMs : DEFAULT_ADAPTER_TIMEOUT_MS;
   const loop = createAgentLoop({
     adapter,
     traceManager: traces,
@@ -455,6 +534,9 @@ export function createHarness(config: HarnessConfig): Harness {
     ...(config.maxAdapterRetries !== undefined && { maxAdapterRetries: config.maxAdapterRetries }),
     ...(config.baseRetryDelayMs !== undefined && { baseRetryDelayMs: config.baseRetryDelayMs }),
     ...(config.retryableErrors !== undefined && { retryableErrors: config.retryableErrors }),
+    // Forwarded verbatim; see comment above. Cast narrows only the
+    // added-field shape and does not launder unrelated types.
+    ...({ adapterTimeoutMs: effectiveAdapterTimeoutMs } as { readonly adapterTimeoutMs: number }),
     onToolCall: async (call) => {
       return tools.execute(call);
     },
@@ -822,8 +904,12 @@ export function createHarness(config: HarnessConfig): Harness {
      * LM-002: Graceful drain — abort the loop, let in-flight work settle for
      * a brief window, then delegate to `shutdown()` while respecting the
      * caller's timeoutMs as a hard deadline for the whole operation.
+     *
+     * Wave-13 F-6: default is {@link DRAIN_DEFAULT_TIMEOUT_MS} (30_000 ms);
+     * the constant is exported so callers can read / log it without hard-
+     * coding the magic number.
      */
-    async drain(timeoutMs = 30_000): Promise<void> {
+    async drain(timeoutMs: number = DRAIN_DEFAULT_TIMEOUT_MS): Promise<void> {
       const deadline = Date.now() + timeoutMs;
       // 1. Tell the loop to stop taking new work.
       loop.abort();

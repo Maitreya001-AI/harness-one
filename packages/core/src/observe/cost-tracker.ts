@@ -6,8 +6,10 @@
 
 import type { TokenUsageRecord, CostAlert } from './types.js';
 import { HarnessError, HarnessErrorCode} from '../core/errors.js';
+import { createAsyncLock } from '../infra/async-lock.js';
 import { safeWarn } from '../infra/safe-log.js';
 import type { Logger } from './logger.js';
+import type { MetricsPort } from './metrics-port.js';
 import {
   type EvictionStrategy,
   type EvictionStrategyName,
@@ -67,6 +69,14 @@ export interface CostTracker {
    * compatibility.
    */
   setPricing(pricing: ModelPricing[]): void;
+  /**
+   * Wave-13 C-1: Concurrency-safe pricing update. Serialises against
+   * `updateBudget()` and every concurrent `updatePricing()` via an internal
+   * async lock so callers running multiple fiber-style updaters do not
+   * interleave writes mid-record. Prefer this over the deprecated
+   * `setPricing()` for post-construction mutation.
+   */
+  updatePricing(pricing: ModelPricing[]): Promise<void>;
   /** Record token usage and return the record with computed cost. */
   recordUsage(usage: Omit<TokenUsageRecord, 'estimatedCost' | 'timestamp'>): TokenUsageRecord;
   /**
@@ -102,6 +112,13 @@ export interface CostTracker {
    * backward compatibility and logs a `@deprecated` warning on first call.
    */
   setBudget(budget: number): void;
+  /**
+   * Wave-13 C-1: Concurrency-safe budget update. Serialises against
+   * `updatePricing()` and concurrent `updateBudget()` via an internal async
+   * lock. Prefer this over the deprecated `setBudget()` for post-construction
+   * mutation.
+   */
+  updateBudget(budget: number): Promise<void>;
   /** Check if budget thresholds have been crossed. */
   checkBudget(): CostAlert | null;
   /** Register an alert handler. Returns a cleanup function to unsubscribe. */
@@ -239,6 +256,13 @@ export function createCostTracker(config?: {
    * Set to `0` to disable dedupe (legacy alert-every-call behaviour).
    */
   alertDedupeWindowMs?: number;
+  /**
+   * Wave-13 C-3: Optional metrics port used to emit a running
+   * `harness.cost.utilization` gauge on every `recordUsage()` call plus a
+   * `harness.cost.alerts.total` counter when an alert fires. Defaults to
+   * a no-op sink so existing callers see no behaviour change.
+   */
+  metrics?: MetricsPort;
 }): CostTracker {
   const pricing = new Map<string, ModelPricing>();
   const records: TokenUsageRecord[] = [];
@@ -255,6 +279,17 @@ export function createCostTracker(config?: {
   const warnUnpricedModels = config?.warnUnpricedModels ?? true;
   const onOverflow = config?.onOverflow;
   const logger = config?.logger;
+  // Wave-13 C-3: lazy-resolved metric instruments. We intentionally resolve
+  // them once per tracker so implementations that cache by name keep a stable
+  // identity; no-op sinks cost nothing.
+  const metricsPort = config?.metrics;
+  const costUtilizationGauge = metricsPort?.gauge('harness.cost.utilization', {
+    description: 'Fraction of budget consumed (0..1+) reported after every recordUsage()',
+    unit: '1',
+  });
+  const costAlertCounter = metricsPort?.counter('harness.cost.alerts.total', {
+    description: 'Count of emitted budget alerts by type',
+  });
   // P2-13: alert dedupe bookkeeping. Tracks the last emission timestamp per
   // alert type; an alert re-fires only once the dedupe window has passed.
   const alertDedupeWindowMs = config?.alertDedupeWindowMs ?? 500;
@@ -315,6 +350,14 @@ export function createCostTracker(config?: {
   // Fix 5: Use KahanSum utility for running total
   const runningSum = new KahanSum();
 
+  // Wave-13 C-1: Internal async lock serialising post-construction mutators
+  // (`updatePricing`, `updateBudget`). The synchronous hot path
+  // (`recordUsage`, `updateUsage`, `checkBudget`) is single-JS-tick and
+  // doesn't yield, so it cannot observe a partially-applied update — but
+  // concurrent `await updatePricing(...)` calls from separate fibers CAN
+  // interleave without serialisation, hence the lock.
+  const mutationLock = createAsyncLock();
+
   // Fix 4: Track cumulative per-model costs separately from the buffer.
   // modelTotals accumulates costs permanently (not affected by buffer eviction),
   // ensuring getCostByModel() stays consistent with getTotalCost().
@@ -323,9 +366,27 @@ export function createCostTracker(config?: {
   // PERF-03: Secondary index for O(1) getCostByTrace lookups
   const traceTotals = new Map<string, KahanSum>();
 
-  // C1/PERF-040: Secondary index mapping traceId → latest records array index
-  // for O(1) lookups in updateUsage() instead of O(n) backward scan.
-  const traceIdIndex = new Map<string, number>();
+  // Wave-13 P0-6: Secondary index mapping traceId → SORTED array of record
+  // indices that currently belong to that trace. Earlier versions stored only
+  // the latest index (scalar) and had to do an O(n) backward scan after every
+  // `records.shift()` to find the next-most-recent index when the evicted slot
+  // was index 0 — O(n²) under streaming load.
+  //
+  // New layout:
+  //   - Every recordUsage() pushes `records.length - 1` onto the traceId's list.
+  //   - updateUsage() uses `list[list.length - 1]` for the freshest index.
+  //   - On buffer eviction (records.shift()) the head-most index is slot 0, so
+  //     the affected traceId's list shifts its front (O(1) amortised), while
+  //     every OTHER traceId's list only needs each element decremented by 1.
+  //     Decrement is implemented via a single integer offset applied at read
+  //     time — so the amortised cost of eviction becomes O(unique traces on
+  //     evicted record) rather than O(records).
+  //
+  // `evictionBias` is the cumulative number of shifts that have happened. All
+  // indices stored in `traceIdIndex` arrays are RAW (original push order); the
+  // effective slot for a raw value `r` is `r - evictionBias`.
+  const traceIdIndex = new Map<string, number[]>();
+  let evictionBias = 0;
 
   if (config?.pricing) {
     for (const p of config.pricing) {
@@ -370,9 +431,34 @@ export function createCostTracker(config?: {
       }
       lastAlertTs[alert.type] = now;
     }
+    // Wave-13 C-3: emit a structured warn + metric alongside every alert so
+    // budget crossings surface in logs / observability backends, not just
+    // via the user `onAlert()` callback (which may be unset).
+    if (logger) {
+      try {
+        logger.warn('[harness-one/cost-tracker] budget alert', {
+          type: alert.type,
+          percent_used: alert.percentUsed,
+          current_cost: alert.currentCost,
+          budget: alert.budget,
+        });
+      } catch { /* logger failure non-fatal */ }
+    }
+    costAlertCounter?.add(1, { type: alert.type });
     for (const handler of alertHandlers) {
       handler(alert);
     }
+  }
+
+  /**
+   * Wave-13 C-3: utility — report the current utilization fraction to the
+   * metrics port after every recordUsage()/updateUsage() call, even when no
+   * alert fires. Operators get a continuous signal rather than a sawtooth of
+   * threshold crossings.
+   */
+  function reportUtilization(): void {
+    if (!costUtilizationGauge || budget === undefined || budget <= 0) return;
+    costUtilizationGauge.record(runningSum.total / budget);
   }
 
   // Issue 1: Standalone functions using closure references instead of `this`
@@ -459,6 +545,15 @@ export function createCostTracker(config?: {
       }
     },
 
+    async updatePricing(newPricing: ModelPricing[]): Promise<void> {
+      // Wave-13 C-1: serialise against concurrent updatePricing/updateBudget.
+      await mutationLock.withLock(async () => {
+        for (const p of newPricing) {
+          pricing.set(p.model, p);
+        }
+      });
+    },
+
     recordUsage(usage: Omit<TokenUsageRecord, 'estimatedCost' | 'timestamp'>): TokenUsageRecord {
       // Strict-mode validation: fail loudly when the adapter has failed to
       // populate model or token counts. Permissive default preserves the
@@ -497,9 +592,13 @@ export function createCostTracker(config?: {
       };
       records.push(record);
 
-      // C1: Update traceId → index for O(1) updateUsage() lookups
+      // Wave-13 P0-6: Append raw (pre-bias) index to this traceId's sorted list.
+      // Raw index space is monotone; effective slot = raw - evictionBias.
       if (usage.traceId) {
-        traceIdIndex.set(usage.traceId, records.length - 1);
+        const rawIdx = records.length - 1 + evictionBias;
+        const list = traceIdIndex.get(usage.traceId);
+        if (list) list.push(rawIdx);
+        else traceIdIndex.set(usage.traceId, [rawIdx]);
       }
 
       // Fix 5: Use KahanSum for running total
@@ -535,30 +634,26 @@ export function createCostTracker(config?: {
         // untouched; sliding-window strategies (`lru`) decrement them here.
         evictionStrategy.onRecordEvicted(evicted, modelTotals, traceTotals);
 
-        // C1: After shift, all indices in traceIdIndex are off by 1.
-        // Decrement every stored index. Remove entries pointing to the
-        // evicted slot (index would become -1).
-        for (const [tid, idx] of traceIdIndex) {
-          if (idx === 0) {
-            // The evicted record was the latest for this traceId —
-            // scan for the next occurrence or remove the entry.
-            let found = false;
-            for (let j = records.length - 1; j >= 0; j--) {
-              if (records[j].traceId === tid) {
-                traceIdIndex.set(tid, j);
-                found = true;
-                break;
-              }
-            }
-            if (!found) traceIdIndex.delete(tid);
-          } else {
-            traceIdIndex.set(tid, idx - 1);
+        // Wave-13 P0-6: O(1) amortised eviction bookkeeping. The evicted
+        // record occupied effective slot 0 → raw index == evictionBias. Only
+        // the affected traceId's list needs surgery: its head entry (the
+        // minimum raw index) is popped; every other traceId is unchanged in
+        // raw space. `evictionBias` is bumped so getters translate correctly.
+        if (evicted.traceId) {
+          const list = traceIdIndex.get(evicted.traceId);
+          if (list && list.length > 0 && list[0] === evictionBias) {
+            list.shift();
+            if (list.length === 0) traceIdIndex.delete(evicted.traceId);
           }
         }
+        evictionBias++;
       }
 
       // Check budget alerts after recording
       if (budget !== undefined) {
+        // Wave-13 C-3: report utilization on every update, not only on
+        // threshold crossings.
+        reportUtilization();
         const alert = checkBudgetFn();
         if (alert) {
           emitAlert(alert);
@@ -569,9 +664,14 @@ export function createCostTracker(config?: {
     },
 
     updateUsage(traceId: string, usage: Partial<Omit<TokenUsageRecord, 'estimatedCost' | 'timestamp' | 'traceId' | 'model'>>): TokenUsageRecord | undefined {
-      // C1/PERF-040: O(1) lookup via secondary traceId → index map
-      const existingIndex = traceIdIndex.get(traceId);
-      if (existingIndex === undefined) return undefined;
+      // Wave-13 P0-6: the freshest raw index lives at the tail of the list.
+      // Translate via evictionBias to the live buffer slot. Any stale index
+      // below bias would indicate a bookkeeping bug — treat as miss.
+      const list = traceIdIndex.get(traceId);
+      if (!list || list.length === 0) return undefined;
+      const rawIdx = list[list.length - 1];
+      const existingIndex = rawIdx - evictionBias;
+      if (existingIndex < 0 || existingIndex >= records.length) return undefined;
       const existingRecord = records[existingIndex];
       if (!existingRecord) return undefined;
 
@@ -590,23 +690,27 @@ export function createCostTracker(config?: {
         );
       }
 
-      // Build the updated record with merged token counts
+      // Wave-13 C-2: explicit field assignment avoids the conditional-spread
+      // pattern that allocated `{}` / `{cacheReadTokens: ...}` temporaries on
+      // every call. Uses a `Partial<...>` scratch object so optional fields
+      // are only written when they carry a value (respecting the project-wide
+      // `exactOptionalPropertyTypes: true` tsconfig).
       const updatedFields: Omit<TokenUsageRecord, 'estimatedCost' | 'timestamp'> = {
         traceId: existingRecord.traceId,
         model: existingRecord.model,
         inputTokens: usage.inputTokens ?? existingRecord.inputTokens,
         outputTokens: usage.outputTokens ?? existingRecord.outputTokens,
-        ...(usage.cacheReadTokens !== undefined
-          ? { cacheReadTokens: usage.cacheReadTokens }
-          : existingRecord.cacheReadTokens !== undefined
-            ? { cacheReadTokens: existingRecord.cacheReadTokens }
-            : {}),
-        ...(usage.cacheWriteTokens !== undefined
-          ? { cacheWriteTokens: usage.cacheWriteTokens }
-          : existingRecord.cacheWriteTokens !== undefined
-            ? { cacheWriteTokens: existingRecord.cacheWriteTokens }
-            : {}),
       };
+      if (usage.cacheReadTokens !== undefined) {
+        (updatedFields as { cacheReadTokens?: number }).cacheReadTokens = usage.cacheReadTokens;
+      } else if (existingRecord.cacheReadTokens !== undefined) {
+        (updatedFields as { cacheReadTokens?: number }).cacheReadTokens = existingRecord.cacheReadTokens;
+      }
+      if (usage.cacheWriteTokens !== undefined) {
+        (updatedFields as { cacheWriteTokens?: number }).cacheWriteTokens = usage.cacheWriteTokens;
+      } else if (existingRecord.cacheWriteTokens !== undefined) {
+        (updatedFields as { cacheWriteTokens?: number }).cacheWriteTokens = existingRecord.cacheWriteTokens;
+      }
 
       const newCost = computeCost(updatedFields);
       const oldCost = existingRecord.estimatedCost;
@@ -686,6 +790,13 @@ export function createCostTracker(config?: {
       budget = newBudget;
     },
 
+    async updateBudget(newBudget: number): Promise<void> {
+      // Wave-13 C-1: serialise against concurrent updatePricing/updateBudget.
+      await mutationLock.withLock(async () => {
+        budget = newBudget;
+      });
+    },
+
     checkBudget: checkBudgetFn,
 
     onAlert(handler: (alert: CostAlert) => void): () => void {
@@ -701,6 +812,8 @@ export function createCostTracker(config?: {
       modelTotals.clear();
       traceTotals.clear();
       traceIdIndex.clear();
+      // Wave-13 P0-6: reset the bias so fresh records start at raw index 0.
+      evictionBias = 0;
       // P2-13: reset dedupe state so alerts can re-fire after an explicit
       // reset (tests + operator-driven "checkpoint" workflows).
       lastAlertTs.warning = 0;

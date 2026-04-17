@@ -30,6 +30,12 @@ export interface ResolvedRegistryConfig {
   maxCallsPerSession: number;
   /** Per-call timeout in ms (default: 30_000). `undefined` disables timeout. */
   timeoutMs: number | undefined;
+  /**
+   * Wave-13 E-4: cumulative byte cap on tool-call arguments within a single
+   * turn (default: 10 MiB). Exceeding the cap throws `ADAPTER_PAYLOAD_OVERSIZED`.
+   * Reset on `resetTurn()`.
+   */
+  maxTotalArgBytesPerTurn: number;
 }
 
 /** A registry that manages tool definitions and executes tool calls. */
@@ -70,6 +76,12 @@ export interface CreateRegistryConfig {
   /** Optional timeout in milliseconds for tool execution. */
   timeoutMs?: number;
   /**
+   * Wave-13 E-4: cumulative cap on tool-argument bytes per turn. Default
+   * 10 MiB. When exceeded, `execute()` throws `ADAPTER_PAYLOAD_OVERSIZED`.
+   * Reset on `resetTurn()` / `resetSession()`.
+   */
+  maxTotalArgBytesPerTurn?: number;
+  /**
    * Wave-5A: capability allow-list enforced at `register()` time. Tools
    * declaring a capability outside this list are rejected with
    * `TOOL_CAPABILITY_DENIED`. Default: `['readonly']` (fail-closed).
@@ -96,6 +108,8 @@ export function createRegistry(config?: CreateRegistryConfig): ToolRegistry {
   const customValidator = config?.validator;
   const permissions = config?.permissions;
   const timeoutMs = config?.timeoutMs ?? 30_000;
+  // Wave-13 E-4: per-turn cumulative argument byte cap. 10 MiB default.
+  const maxTotalArgBytesPerTurn = config?.maxTotalArgBytesPerTurn ?? 10 * 1024 * 1024;
   // T09: capability allow-list. Default fail-closed to `readonly` only.
   const allowedCapabilities = new Set<ToolCapabilityValue>(
     config?.allowedCapabilities ?? ['readonly'],
@@ -103,6 +117,8 @@ export function createRegistry(config?: CreateRegistryConfig): ToolRegistry {
   const logger = config?.logger;
   let turnCalls = 0;
   let sessionCalls = 0;
+  // Wave-13 E-4: cumulative arg bytes consumed this turn.
+  let turnArgBytes = 0;
 
   function register(tool: ToolDefinition): void {
     if (!TOOL_NAME_RE.test(tool.name)) {
@@ -220,7 +236,8 @@ export function createRegistry(config?: CreateRegistryConfig): ToolRegistry {
     // guard) cannot DoS the event loop with oversized payloads.
     const MAX_ARG_BYTES = 5 * 1024 * 1024; // 5 MiB, matching AgentLoop default
     let params: unknown;
-    if (Buffer.byteLength(call.arguments, 'utf8') > MAX_ARG_BYTES) {
+    const argByteLen = Buffer.byteLength(call.arguments, 'utf8');
+    if (argByteLen > MAX_ARG_BYTES) {
       turnCalls--;
       sessionCalls--;
       return toolError(
@@ -229,6 +246,22 @@ export function createRegistry(config?: CreateRegistryConfig): ToolRegistry {
         'Reduce the size of tool call arguments',
       );
     }
+    // Wave-13 E-4: cumulative per-turn argument byte cap. Rate-limiting the
+    // call count alone doesn't stop an attacker from issuing a handful of
+    // calls whose combined payloads DoS a shared pipeline stage (e.g.,
+    // parallel-fanout adapters). Check BEFORE incrementing so the counter
+    // reflects admitted calls only, and throw HarnessError to make the
+    // violation explicit to supervising loops.
+    if (turnArgBytes + argByteLen > maxTotalArgBytesPerTurn) {
+      turnCalls--;
+      sessionCalls--;
+      throw new HarnessError(
+        `Cumulative tool-argument bytes exceeded per-turn cap (${turnArgBytes + argByteLen} > ${maxTotalArgBytesPerTurn} bytes)`,
+        HarnessErrorCode.ADAPTER_PAYLOAD_OVERSIZED,
+        'Reduce per-call argument size, raise maxTotalArgBytesPerTurn, or call resetTurn() to start a new turn',
+      );
+    }
+    turnArgBytes += argByteLen;
     try {
       params = JSON.parse(call.arguments);
     } catch (err) {
@@ -434,11 +467,15 @@ export function createRegistry(config?: CreateRegistryConfig): ToolRegistry {
 
   function resetTurn(): void {
     turnCalls = 0;
+    // Wave-13 E-4: reset per-turn byte counter on turn boundaries.
+    turnArgBytes = 0;
   }
 
   function resetSession(): void {
     sessionCalls = 0;
     turnCalls = 0;
+    // Wave-13 E-4: session reset implies a new turn.
+    turnArgBytes = 0;
   }
 
   function getConfig(): ResolvedRegistryConfig {
@@ -446,6 +483,7 @@ export function createRegistry(config?: CreateRegistryConfig): ToolRegistry {
       maxCallsPerTurn: maxPerTurn,
       maxCallsPerSession: maxPerSession,
       timeoutMs,
+      maxTotalArgBytesPerTurn,
     };
   }
 

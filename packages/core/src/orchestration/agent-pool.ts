@@ -8,7 +8,50 @@ import type { AgentLoop } from '../core/agent-loop.js';
 import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import { prefixedSecureId } from '../infra/ids.js';
 import { computeJitterMs } from '../infra/backoff.js';
+import type { Logger } from '../observe/logger.js';
+import type { MetricsPort } from '../observe/metrics-port.js';
+import type { TraceManager } from '../observe/trace-manager.js';
 import type { AgentPool, PoolConfig, PooledAgent, PoolStats } from './types.js';
+
+/**
+ * Wave-13 B-1..B-4: Optional observability wiring for the agent pool. These
+ * fields are additive to {@link PoolConfig} — when absent, the pool behaves
+ * exactly as before (no-op logger/metrics calls). The fields live on the
+ * factory config parameter (widened via intersection type on
+ * {@link createAgentPool}) so we don't need to modify the closed
+ * {@link PoolConfig} surface in `types.ts`.
+ */
+export interface AgentPoolObservabilityConfig {
+  /**
+   * Wave-13 B-1..B-3: Structured logger for queue-depth / resize / dispose
+   * signals. When omitted, corresponding log lines are skipped entirely
+   * (no allocation).
+   */
+  readonly logger?: Logger;
+  /**
+   * Wave-13 B-1..B-3: MetricsPort for pool gauges and counters:
+   *  - `harness.pool.queue_depth` (gauge) — emitted on every `acquireAsync()`.
+   *  - `harness.pool.queue_full` (counter) — incremented per
+   *    POOL_QUEUE_FULL throw.
+   *  - `harness.pool.size` (gauge) — emitted on every `resize()`.
+   *  - `harness.pool.dispose_errors` (counter) — incremented per underlying
+   *    `loop.dispose()` rejection.
+   */
+  readonly metrics?: MetricsPort;
+  /**
+   * Wave-13 B-4: Optional trace manager. When provided together with
+   * `acquireAsync({ spanId })`, a `pool_acquire_timeout` span event is
+   * attached before the POOL_TIMEOUT rejection, carrying queue depth and
+   * active-agent counts for observability.
+   */
+  readonly traceManager?: TraceManager;
+  /**
+   * Wave-13 B-1..B-3: Pool identifier surfaced as the `pool_id` log
+   * attribute and metric label. Helpful when multiple pools share a single
+   * logger/metrics backend. Defaults to `'default'`.
+   */
+  readonly poolId?: string;
+}
 
 interface PoolEntry {
   agent: PooledAgent;
@@ -39,6 +82,12 @@ export interface AcquireAsyncOptions {
   readonly timeoutMs?: number;
   readonly signal?: AbortSignal;
   readonly role?: string;
+  /**
+   * Wave-13 B-4: Optional span id to attach a `pool_acquire_timeout` event
+   * to before rejecting with POOL_TIMEOUT. Only consulted when the pool was
+   * configured with a `traceManager`; otherwise silently ignored.
+   */
+  readonly spanId?: string;
 }
 
 /**
@@ -52,7 +101,9 @@ export interface AcquireAsyncOptions {
  * pool.release(agent);
  * ```
  */
-export function createAgentPool(config: PoolConfig): AgentPool & {
+export function createAgentPool(
+  config: PoolConfig & AgentPoolObservabilityConfig,
+): AgentPool & {
   /**
    * Async acquire with optional timeout and AbortSignal. Queues the request
    * when the pool is exhausted. On abort (CQ-017), the pending entry is
@@ -71,6 +122,29 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
   // growth under sustained acquire bursts. Default matches research-report
   // recommendation (1000). `<= 0` disables queuing entirely.
   const maxPendingQueueSize = config.maxPendingQueueSize ?? 1000;
+
+  // Wave-13 B-1..B-4: optional observability wiring.
+  const logger: Logger | undefined = config.logger;
+  const metrics: MetricsPort | undefined = config.metrics;
+  const traceManager: TraceManager | undefined = config.traceManager;
+  const poolId: string = config.poolId ?? 'default';
+
+  // Lazy instrument handles — only materialised when a MetricsPort is wired.
+  // We cache the returned instrument references in case backends reuse them.
+  const queueDepthGauge = metrics?.gauge('harness.pool.queue_depth', {
+    description: 'Current pending-queue depth of an agent pool',
+    unit: '1',
+  });
+  const queueFullCounter = metrics?.counter('harness.pool.queue_full', {
+    description: 'Count of POOL_QUEUE_FULL rejections',
+  });
+  const sizeGauge = metrics?.gauge('harness.pool.size', {
+    description: 'Current total agent count after resize',
+    unit: '1',
+  });
+  const disposeErrorCounter = metrics?.counter('harness.pool.dispose_errors', {
+    description: 'Count of underlying AgentLoop.dispose() rejections',
+  });
 
   const entries = new Map<string, PoolEntry>();
   let disposed = false;
@@ -122,6 +196,36 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
    * synchronous today; awaiting `Promise.resolve(result)` keeps the call
    * site future-proof for adapters that may return a promise.
    */
+  /**
+   * Wave-13 B-3: Best-effort redaction of a thrown dispose error for logging.
+   * Avoids leaking full stack traces through the logger boundary while still
+   * surfacing enough for operators to correlate with traces.
+   */
+  function sanitizeDisposeError(err: unknown): Readonly<Record<string, unknown>> {
+    if (err instanceof Error) {
+      return { name: err.name, message: err.message };
+    }
+    return { value: String(err) };
+  }
+
+  function reportDisposeError(err: unknown): void {
+    totalDisposeErrors++;
+    // Wave-13 B-3: log + counter on every dispose failure (previously the
+    // error was only reflected in the `disposeErrors` stats counter).
+    if (logger) {
+      try {
+        logger.warn('agent dispose failed', {
+          pool_id: poolId,
+          error: sanitizeDisposeError(err),
+          total_errors: totalDisposeErrors,
+        });
+      } catch {
+        // Logger itself threw — nothing more we can do.
+      }
+    }
+    disposeErrorCounter?.add(1, { pool_id: poolId });
+  }
+
   async function disposeEntry(entry: PoolEntry): Promise<void> {
     clearIdleTimer(entry);
     try {
@@ -129,10 +233,10 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
       if (result !== undefined) {
         await Promise.resolve(result as unknown as Promise<void>);
       }
-    } catch {
+    } catch (err) {
       // Individual agent dispose errors should not abort the pool teardown —
-      // tracked via totalDisposeErrors for observability (OBS-010).
-      totalDisposeErrors++;
+      // tracked via totalDisposeErrors for observability (OBS-010 + B-3).
+      reportDisposeError(err);
     }
     entries.delete(entry.agent.id);
   }
@@ -140,17 +244,17 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
   /**
    * Fire-and-forget variant for call sites that cannot easily go async
    * (idle-timer expiry, resize(), release()). Errors are tracked via
-   * totalDisposeErrors for observability (OBS-010).
+   * totalDisposeErrors for observability (OBS-010 + Wave-13 B-3).
    */
   function disposeEntrySync(entry: PoolEntry): void {
     clearIdleTimer(entry);
     try {
       const result = entry.agent.loop.dispose?.() as unknown;
       if (result && typeof (result as { catch?: unknown }).catch === 'function') {
-        (result as Promise<void>).catch(() => { totalDisposeErrors++; });
+        (result as Promise<void>).catch((err) => { reportDisposeError(err); });
       }
-    } catch {
-      totalDisposeErrors++;
+    } catch (err) {
+      reportDisposeError(err);
     }
     entries.delete(entry.agent.id);
   }
@@ -291,6 +395,26 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
           // instead of growing the queue unboundedly. Includes current/max in
           // the error context bag so ops can tune `maxPendingQueueSize`.
           if (pendingQueue.length >= maxPendingQueueSize) {
+            // Wave-13 B-1: warn + counter BEFORE throwing so operators see the
+            // saturation event even if the caller doesn't surface the thrown
+            // HarnessError. Emits structured context keys aligned with the
+            // other pool log lines (pool_id, pending_queue_depth, active,
+            // idle) so downstream alerts can filter cleanly.
+            const snapshotFull = getStats();
+            if (logger) {
+              try {
+                logger.warn('pool acquire queue full', {
+                  pool_id: poolId,
+                  pending_queue_depth: pendingQueue.length,
+                  max_pending_queue_size: maxPendingQueueSize,
+                  active: snapshotFull.active,
+                  idle: snapshotFull.idle,
+                });
+              } catch {
+                // Logger threw — fall through to the HarnessError path.
+              }
+            }
+            queueFullCounter?.add(1, { pool_id: poolId });
             throw new HarnessError(
               `Agent pool pending-queue full (${pendingQueue.length}/${maxPendingQueueSize})`,
               HarnessErrorCode.POOL_QUEUE_FULL,
@@ -315,6 +439,28 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
               if (idx >= 0) {
                 pendingQueue.splice(idx, 1);
                 pending.cleanup();
+                // Wave-13 B-4: Attach a span event with queue-depth and
+                // active-agent counts BEFORE the rejection so tracing
+                // backends can tie the timeout to the pool saturation state
+                // at the moment of failure. Skipped silently when either the
+                // trace manager or span id is absent.
+                if (traceManager && opts.spanId) {
+                  try {
+                    const snapshotTimeout = getStats();
+                    traceManager.addSpanEvent(opts.spanId, {
+                      name: 'pool_acquire_timeout',
+                      attributes: {
+                        pool_id: poolId,
+                        timeout_ms: timeoutMs,
+                        queue_depth: pendingQueue.length,
+                        active_agents: snapshotTimeout.active,
+                      },
+                    });
+                  } catch {
+                    // Trace manager threw (e.g. dead span) — timeout path
+                    // must not be blocked by observability failures.
+                  }
+                }
                 reject(new HarnessError(
                   `Timed out waiting for agent (${timeoutMs}ms)`,
                   HarnessErrorCode.POOL_TIMEOUT,
@@ -357,6 +503,27 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
             };
 
             pendingQueue.push(pending);
+
+            // Wave-13 B-1: surface queue depth + active/idle snapshot for
+            // observability. Debug level keeps noise low for healthy pools
+            // while still making saturation traceable in debug builds. Gauge
+            // is always emitted because metrics backends filter/aggregate
+            // themselves.
+            const snapshotQueued = getStats();
+            if (logger) {
+              try {
+                logger.debug('pool acquire queued', {
+                  pool_id: poolId,
+                  pending_queue_depth: pendingQueue.length,
+                  active: snapshotQueued.active,
+                  idle: snapshotQueued.idle,
+                });
+              } catch {
+                // Logger threw — swallow; the resolve/reject path must not
+                // be blocked by observability failures.
+              }
+            }
+            queueDepthGauge?.record(pendingQueue.length, { pool_id: poolId });
           });
         }
         throw err;
@@ -396,6 +563,26 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
 
       // Trim idle agents if over target
       const stats = getStats();
+
+      // Wave-13 B-2: Structured log + gauge on entry to make autoscaling
+      // visible. The log carries the from/to values and a snapshot of
+      // active/idle so operators can diagnose why a resize succeeded or was
+      // bounded by `max`. The gauge records the final total once the resize
+      // settles (emitted after mutation below).
+      if (logger) {
+        try {
+          logger.info('pool resize', {
+            pool_id: poolId,
+            from: stats.total,
+            to: target,
+            active: stats.active,
+            idle: stats.idle,
+          });
+        } catch {
+          // Logger threw — resize must proceed regardless.
+        }
+      }
+
       if (stats.total > target) {
         let toRemove = stats.total - target;
         for (const entry of entries.values()) {
@@ -414,6 +601,11 @@ export function createAgentPool(config: PoolConfig): AgentPool & {
           startIdleTimer(entry);
         }
       }
+
+      // Wave-13 B-2: emit the final pool size as a gauge observation so the
+      // metrics backend sees both pre- and post-resize values (the pre-value
+      // is carried in the `from` log field).
+      sizeGauge?.record(entries.size, { pool_id: poolId });
     },
 
     async drain(timeoutMs = 30_000): Promise<void> {

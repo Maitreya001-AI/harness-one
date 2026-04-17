@@ -29,16 +29,25 @@ export interface OpenAIAdapterConfig {
 
 // @public
 export const providers: Readonly<Record<string, {
-    baseURL: string;
+    readonly baseURL: string;
 }>>;
 
-// @public
+// @public (undocumented)
+export function registerProvider(name: keyof typeof providers): void;
+
+// @public (undocumented)
 export function registerProvider(name: string, config: {
     baseURL: string;
-}, options?: {
-    readonly force?: boolean;
+}, options?: RegisterProviderOptions): void;
+
+// @public
+export interface RegisterProviderOptions {
+    // (undocumented)
     readonly allowOverride?: boolean;
-}): void;
+    // (undocumented)
+    readonly force?: boolean;
+    readonly trustedOrigins?: readonly string[];
+}
 
 // @internal
 export function _resetOpenAIWarnState(): void;

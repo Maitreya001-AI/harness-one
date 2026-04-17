@@ -29,7 +29,6 @@ import { ToolRegistry } from 'harness-one/tools';
 import { TraceExporter } from 'harness-one/observe';
 import { TraceManager } from 'harness-one/observe';
 
-// Warning: (ae-forgotten-export) The symbol "HarnessConfigBase" needs to be exported by the entry point index.d.ts
 // Warning: (ae-internal-missing-underscore) The name "AdapterHarnessConfig" should be prefixed with an underscore because the declaration is marked as @internal
 //
 // @internal
@@ -39,6 +38,7 @@ export interface AdapterHarnessConfig extends HarnessConfigBase {
     // (undocumented)
     readonly client?: undefined;
     readonly provider?: undefined;
+    readonly type?: 'adapter';
 }
 
 // @public
@@ -46,6 +46,7 @@ export interface AnthropicHarnessConfig extends HarnessConfigBase {
     readonly client: AnthropicAdapterConfig['client'];
     // (undocumented)
     readonly provider: 'anthropic';
+    readonly type?: 'anthropic';
 }
 
 // @public
@@ -59,6 +60,12 @@ export function createSecurePreset(config: HarnessConfig & SecurePresetOptions):
 
 // @public
 export function createShutdownHandler(harness: Pick<Harness, 'drain'>, options?: ShutdownHandlerOptions): () => void;
+
+// @public
+export const DEFAULT_ADAPTER_TIMEOUT_MS = 60000;
+
+// @public
+export const DRAIN_DEFAULT_TIMEOUT_MS = 30000;
 
 // @public
 export interface Harness {
@@ -102,8 +109,9 @@ export interface Harness {
 export type HarnessConfig = AdapterHarnessConfig | AnthropicHarnessConfig | OpenAIHarnessConfig;
 
 // @public
-interface HarnessConfigBase {
+export interface HarnessConfigBase {
     readonly adapter?: AgentAdapter;
+    readonly adapterTimeoutMs?: number;
     readonly baseRetryDelayMs?: number;
     readonly budget?: number;
     readonly exporters?: TraceExporter[];
@@ -145,6 +153,7 @@ export interface OpenAIHarnessConfig extends HarnessConfigBase {
     readonly client: OpenAIAdapterConfig['client'];
     // (undocumented)
     readonly provider: 'openai';
+    readonly type?: 'openai';
 }
 
 // @public

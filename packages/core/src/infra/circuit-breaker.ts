@@ -30,8 +30,28 @@ export interface CircuitBreakerConfig {
   /**
    * Optional callback invoked on state transitions. Useful for logging
    * or metrics without coupling to a specific logger.
+   *
+   * Wave-13 Obs-P0-3: callback now receives a `context` object carrying
+   * the failure count and (when available) the failing error so operators
+   * can correlate trips to upstream incidents without instrumenting the
+   * caller. The context is `undefined` for transitions not driven by a
+   * failure (e.g. lazy `open → half_open` on read).
    */
-  readonly onStateChange?: (from: CircuitState, to: CircuitState) => void;
+  readonly onStateChange?: (
+    from: CircuitState,
+    to: CircuitState,
+    context?: CircuitStateChangeContext,
+  ) => void;
+}
+
+/**
+ * Context attached to {@link CircuitBreakerConfig.onStateChange} when the
+ * transition is failure-driven. Wave-13 Obs-P0-3.
+ */
+export interface CircuitStateChangeContext {
+  readonly consecutiveFailures: number;
+  readonly lastFailureError?: Error;
+  readonly lastFailureTimeMs?: number;
 }
 
 /** Public surface of the circuit breaker. */
@@ -51,10 +71,26 @@ export interface CircuitBreaker {
   readonly reset: () => void;
 }
 
-/** Error thrown when attempting to call through an open circuit. */
-export class CircuitOpenError extends Error {
+/**
+ * Error thrown when attempting to call through an open circuit.
+ *
+ * Wave-13 A-1: extends {@link HarnessError} with code
+ * {@link HarnessErrorCode.ADAPTER_CIRCUIT_OPEN} so the circuit-breaker
+ * failure participates in the canonical error taxonomy. Code paths that
+ * key on `error.code` (retry policies, alerting heuristics) now classify
+ * circuit-breaker rejections uniformly with other adapter errors.
+ *
+ * The class name is preserved for backwards compatibility with any test
+ * that uses `instanceof CircuitOpenError`, and `instanceof HarnessError`
+ * now also matches.
+ */
+export class CircuitOpenError extends HarnessError {
   constructor(message?: string) {
-    super(message ?? 'Circuit breaker is OPEN — fast-failing to prevent cascade');
+    super(
+      message ?? 'Circuit breaker is OPEN — fast-failing to prevent cascade',
+      HarnessErrorCode.ADAPTER_CIRCUIT_OPEN,
+      'Wait for the breaker to enter HALF_OPEN; reduce upstream pressure or fix the root cause.',
+    );
     this.name = 'CircuitOpenError';
   }
 }
@@ -91,6 +127,8 @@ export function createCircuitBreaker(config?: CircuitBreakerConfig): CircuitBrea
   let state: CircuitState = 'closed';
   let consecutiveFailures = 0;
   let lastFailureTime = 0;
+  /** Wave-13 Obs-P0-3: captured so onStateChange can surface the root cause. */
+  let lastFailureError: Error | undefined;
   /**
    * P0-5 (Wave-12): Promise-based single-slot mutex guarding the half-open
    * probe slot. Prior flag-based guard had a check/set interleaving window
@@ -104,25 +142,32 @@ export function createCircuitBreaker(config?: CircuitBreakerConfig): CircuitBrea
    */
   let halfOpenProbe: Promise<unknown> | null = null;
 
-  function transition(next: CircuitState): void {
+  function transition(next: CircuitState, context?: CircuitStateChangeContext): void {
     if (state === next) return;
     const prev = state;
     state = next;
-    try { onStateChange?.(prev, next); } catch { /* intentionally swallowed — monitoring callbacks must not break state transitions */ }
+    try { onStateChange?.(prev, next, context); } catch { /* intentionally swallowed — monitoring callbacks must not break state transitions */ }
   }
 
   function recordSuccess(): void {
     consecutiveFailures = 0;
+    lastFailureError = undefined;
     halfOpenProbe = null;
     if (state !== 'closed') transition('closed');
   }
 
-  function recordFailure(): void {
+  function recordFailure(err?: Error): void {
     consecutiveFailures++;
     lastFailureTime = Date.now();
+    if (err !== undefined) lastFailureError = err;
     halfOpenProbe = null;
     if (state === 'half_open' || consecutiveFailures >= failureThreshold) {
-      transition('open');
+      const context: CircuitStateChangeContext = {
+        consecutiveFailures,
+        lastFailureTimeMs: lastFailureTime,
+        ...(lastFailureError !== undefined ? { lastFailureError } : {}),
+      };
+      transition('open', context);
     }
   }
 
@@ -166,7 +211,7 @@ export function createCircuitBreaker(config?: CircuitBreakerConfig): CircuitBrea
         recordSuccess();
         return result;
       } catch (err) {
-        recordFailure();
+        recordFailure(err instanceof Error ? err : new Error(String(err)));
         throw err;
       } finally {
         // Ensure the sentinel is resolved so any Promise-awaiting callers

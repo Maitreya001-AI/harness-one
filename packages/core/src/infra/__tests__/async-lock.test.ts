@@ -177,4 +177,181 @@ describe('createAsyncLock', () => {
       expect(typeof he.suggestion).toBe('string');
     }
   });
+
+  // Wave-13 A-4: Prevent double-reject race between dispose() and a waiter's
+  // own AbortSignal handler, and ensure abort listeners are detached so they
+  // cannot accumulate on long-lived signals.
+  describe('Wave-13 A-4: dispose + abort race', () => {
+    it('Wave-13 A-4: concurrent dispose + signal abort does not double-settle', async () => {
+      const lock = createAsyncLock();
+      // Hold the lock so subsequent acquires queue up.
+      const release = await lock.acquire();
+
+      // Attach unhandled rejection tracker to catch any stray errors from
+      // a second reject call (Node prints the first settle; extras surface
+      // as unhandledrejection on some runtimes).
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown): void => {
+        unhandled.push(reason);
+      };
+      process.on('unhandledRejection', onUnhandled);
+
+      try {
+        // Build 3 waiters, each with its own abort signal.
+        const controllers = [
+          new AbortController(),
+          new AbortController(),
+          new AbortController(),
+        ];
+        const promises = controllers.map((c) => lock.acquire({ signal: c.signal }));
+        // Attach catch handlers so Node does not warn if we lose the race.
+        const settlements = promises.map((p) =>
+          p.then(
+            () => ({ kind: 'resolved' as const }),
+            (err: unknown) => ({ kind: 'rejected' as const, err }),
+          ),
+        );
+
+        // Fire dispose() and aborts in the same microtask window.
+        // Note: dispose is synchronous and will drain the queue before the
+        // abort handlers see their signal as aborted (handlers are queued
+        // as microtasks by `EventTarget`).
+        lock.dispose();
+        for (const c of controllers) c.abort();
+
+        const results = await Promise.all(settlements);
+
+        // All three must reject exactly once with LOCK_ABORTED.
+        for (const r of results) {
+          expect(r.kind).toBe('rejected');
+          expect(r.kind === 'rejected' && r.err).toBeInstanceOf(HarnessError);
+          expect(
+            r.kind === 'rejected' && (r.err as HarnessError).code,
+          ).toBe(HarnessErrorCode.LOCK_ABORTED);
+        }
+
+        // No stray unhandled rejections from a double-reject.
+        // Wait a microtask tick so any queued unhandled rejection would surface.
+        await new Promise((r) => setImmediate(r));
+        expect(unhandled).toEqual([]);
+
+        // Cleanly release the original holder.
+        release();
+      } finally {
+        process.off('unhandledRejection', onUnhandled);
+      }
+    });
+
+    it('Wave-13 A-4: abort after dispose() is a no-op (no second reject, listener detached)', async () => {
+      const lock = createAsyncLock();
+      const release = await lock.acquire();
+      const ac = new AbortController();
+      const p = lock.acquire({ signal: ac.signal });
+      // Attach a catch so Node does not log the rejection.
+      const settlement = p.then(
+        () => ({ kind: 'resolved' as const }),
+        (err: unknown) => ({ kind: 'rejected' as const, err }),
+      );
+
+      lock.dispose();
+      // Subsequent abort must be a no-op: promise is already settled, and
+      // the handler should early-return because `waiter.aborted === true`.
+      ac.abort();
+
+      const result = await settlement;
+      expect(result.kind).toBe('rejected');
+      expect(result.kind === 'rejected' && (result.err as HarnessError).code).toBe(
+        HarnessErrorCode.LOCK_ABORTED,
+      );
+      release();
+    });
+
+    it('Wave-13 A-4: dispose() after abort() is a no-op for already-aborted waiter', async () => {
+      const lock = createAsyncLock();
+      const release = await lock.acquire();
+      const ac = new AbortController();
+      const p = lock.acquire({ signal: ac.signal });
+      const settlement = p.then(
+        () => ({ kind: 'resolved' as const }),
+        (err: unknown) => ({ kind: 'rejected' as const, err }),
+      );
+
+      // Abort first — this rejects the waiter and removes it from the queue.
+      ac.abort();
+      const aborted = await settlement;
+      expect(aborted.kind).toBe('rejected');
+
+      // Dispose afterwards must not try to reject the already-aborted waiter
+      // (it is no longer in the queue anyway). It must be safe and idempotent.
+      expect(() => lock.dispose()).not.toThrow();
+      release();
+    });
+
+    it('Wave-13 A-4: abort listener is removed on both resolution paths (dispose + handoff)', async () => {
+      // Track add/remove of abort listeners on a single controller across
+      // its full lifecycle. If the lock leaks listeners, the count will
+      // stay > 0 after resolution.
+      const lock = createAsyncLock();
+      const release = await lock.acquire();
+      const ac = new AbortController();
+
+      let addCount = 0;
+      let removeCount = 0;
+      const origAdd = ac.signal.addEventListener.bind(ac.signal);
+      const origRemove = ac.signal.removeEventListener.bind(ac.signal);
+      ac.signal.addEventListener = ((...args: Parameters<typeof origAdd>) => {
+        if (args[0] === 'abort') addCount++;
+        return origAdd(...args);
+      }) as typeof origAdd;
+      ac.signal.removeEventListener = ((...args: Parameters<typeof origRemove>) => {
+        if (args[0] === 'abort') removeCount++;
+        return origRemove(...args);
+      }) as typeof origRemove;
+
+      // Waiter will be settled by dispose().
+      const p = lock.acquire({ signal: ac.signal });
+      const settlement = p.then(
+        () => ({ kind: 'resolved' as const }),
+        (err: unknown) => ({ kind: 'rejected' as const, err }),
+      );
+      lock.dispose();
+      const result = await settlement;
+      expect(result.kind).toBe('rejected');
+      expect(addCount).toBeGreaterThan(0);
+      expect(removeCount).toBeGreaterThanOrEqual(addCount);
+      release();
+    });
+
+    it('Wave-13 A-4: mixed queue — some waiters aborted, some disposed', async () => {
+      const lock = createAsyncLock();
+      const release = await lock.acquire();
+
+      const acA = new AbortController();
+      const acB = new AbortController();
+      // A will be aborted before dispose; B and plain will be handled by dispose.
+      const pA = lock.acquire({ signal: acA.signal });
+      const pB = lock.acquire({ signal: acB.signal });
+      const pPlain = lock.acquire();
+
+      const sA = pA.then(() => 'A-res' as const, (e: unknown) => ({ err: e }));
+      const sB = pB.then(() => 'B-res' as const, (e: unknown) => ({ err: e }));
+      const sPlain = pPlain.then(() => 'P-res' as const, (e: unknown) => ({ err: e }));
+
+      acA.abort();
+      // Give microtasks a chance so A settles first.
+      await Promise.resolve();
+      lock.dispose();
+      // Fire acB after dispose to exercise the post-dispose abort guard on B.
+      acB.abort();
+
+      const [rA, rB, rP] = await Promise.all([sA, sB, sPlain]);
+      // All three rejected with LOCK_ABORTED.
+      for (const r of [rA, rB, rP]) {
+        expect(typeof r).toBe('object');
+        expect((r as { err: HarnessError }).err).toBeInstanceOf(HarnessError);
+        expect((r as { err: HarnessError }).err.code).toBe(HarnessErrorCode.LOCK_ABORTED);
+      }
+      release();
+    });
+  });
 });

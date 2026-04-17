@@ -41,6 +41,10 @@ export interface AdapterCallOnceFail {
   readonly ok: false;
   readonly error: HarnessError | Error;
   readonly errorCategory: HarnessErrorCode;
+  /** Wave-13 D-5: set when the error was a chat-path timeout. */
+  readonly timeoutMs?: number;
+  /** Wave-13 D-5: adapter.name captured at failure time for span attribution. */
+  readonly adapterName?: string;
 }
 
 /** Discriminated union returned by {@link AdapterCaller.callOnce}. */
@@ -56,6 +60,10 @@ export interface AdapterCallOk {
   readonly path: 'chat' | 'stream';
   /** How many retries were burned (for observer attribution). */
   readonly attempts: number;
+  /** Wave-13 D-6: cumulative backoff time spent sleeping across all retries (ms). */
+  readonly totalBackoffMs?: number;
+  /** Wave-13 D-6: total wall-clock time from first attempt to success (ms). */
+  readonly totalDurationMs?: number;
 }
 
 /** Failed adapter turn result; `errorCategory` includes synthetic `HarnessErrorCode.CORE_ABORTED`. */
@@ -65,6 +73,14 @@ export interface AdapterCallFail {
   readonly errorCategory: HarnessErrorCode;
   readonly path: 'chat' | 'stream';
   readonly attempts: number;
+  /** Wave-13 D-6: cumulative backoff time spent sleeping across all retries (ms). */
+  readonly totalBackoffMs?: number;
+  /** Wave-13 D-6: total wall-clock time from first attempt to terminal failure (ms). */
+  readonly totalDurationMs?: number;
+  /** Wave-13 D-5: set when the terminal error was a non-streaming chat timeout. */
+  readonly timeoutMs?: number;
+  /** Wave-13 D-5: adapter.name captured at failure time for span attribution. */
+  readonly adapterName?: string;
 }
 
 /** Discriminated union returned by {@link AdapterCaller.call}. */
@@ -86,6 +102,18 @@ export interface AdapterRetryInfo {
   readonly path: 'chat' | 'stream';
   /** REQUIRED on chat path; UNDEFINED on stream path. Sliced to ≤500 chars. */
   readonly errorPreview?: string;
+  /**
+   * Wave-13 D-4: computed backoff delay (ms) for this retry attempt. Callers
+   * emit this as a span attribute (`backoff_ms`) and/or a histogram metric
+   * (`harness.adapter.retry_backoff_ms`) with `error_category` label.
+   */
+  readonly backoffMs?: number;
+  /**
+   * Wave-13 D-4: 1-based retry counter (= attempt + 1) for human-facing
+   * telemetry where "retry #1" / "retry #2" is clearer than the 0-based
+   * attempt index used internally.
+   */
+  readonly retryNumber?: number;
 }
 
 /**
@@ -128,6 +156,15 @@ export interface AdapterCallerConfig {
    * and is intentionally out of scope for this timeout.
    */
   readonly adapterTimeoutMs?: number;
+  /**
+   * Wave-13 D-3 / D-8: optional structured logger. When provided, AdapterCaller
+   * emits debug-level diagnostics for ops-visible abnormal conditions that
+   * were previously silent (orphaned post-timeout adapter rejections,
+   * fallback error-classification). Intentionally debug-level to avoid noise.
+   */
+  readonly logger?: {
+    debug?: (msg: string, meta?: Record<string, unknown>) => void;
+  };
 }
 
 /** Public surface of the adapter caller. */
@@ -184,14 +221,17 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
    * Sleep for exponential backoff with jitter. Rejects with AbortedError
    * if `config.signal` fires during the wait. Extracted from former
    * `AgentLoop.backoff` (L1216-L1253).
+   *
+   * Wave-13 D-4/D-6: returns the delay used so the caller can accumulate
+   * a cumulative backoff total and publish per-retry observability.
    */
-  function backoff(attempt: number): Promise<void> {
+  function backoff(attempt: number): { delay: number; promise: Promise<void> } {
     const delay = computeBackoffMs(attempt, {
       baseMs: config.baseRetryDelayMs,
       jitterFraction: 0.25,
     });
 
-    return new Promise<void>((resolve, reject) => {
+    const promise = new Promise<void>((resolve, reject) => {
       if (config.signal.aborted) {
         reject(new AbortedError());
         return;
@@ -231,6 +271,7 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
         (timer as NodeJS.Timeout).unref();
       }
     });
+    return { delay, promise };
   }
 
   async function callOnce(
@@ -299,9 +340,17 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
           // timeout; without this the Node process prints an
           // UnhandledPromiseRejection when the adapter finally throws
           // its own AbortError after we've already resolved/rejected.
+          //
+          // Wave-13 D-3: emit a debug log so ops can detect abnormal upstream
+          // behaviour (e.g. adapter not honouring the abort signal). Kept at
+          // debug-level — not every orphan rejection is actionable.
           if (timedOut) {
-            chatPromise.catch(() => {
-              /* orphaned post-timeout adapter rejection */
+            chatPromise.catch((err: unknown) => {
+              config.logger?.debug?.('adapter orphan after timeout', {
+                error: String(err).slice(0, 200),
+                adapter: config.adapter.name ?? 'unknown',
+                timeoutMs,
+              });
             });
           }
         }
@@ -332,17 +381,21 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
       // path rejected — `categorizeAdapterError` would otherwise coerce it
       // back to ADAPTER_UNKNOWN.
       if (err instanceof HarnessError && err.code === HarnessErrorCode.CORE_TIMEOUT) {
+        // Wave-13 D-5: carry the timeout budget and adapter name so the
+        // calling span can attribute the timeout without parsing the message.
         return {
           ok: false,
           error: err,
           errorCategory: HarnessErrorCode.CORE_TIMEOUT,
+          ...(config.adapterTimeoutMs !== undefined && { timeoutMs: config.adapterTimeoutMs }),
+          adapterName: config.adapter.name ?? 'unknown',
         };
       }
       const error = err instanceof Error ? err : new Error(String(err));
       return {
         ok: false,
         error,
-        errorCategory: categorizeAdapterError(err),
+        errorCategory: categorizeAdapterError(err, config.logger),
       };
     }
   }
@@ -359,6 +412,12 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
       // Per-call onRetry supplied by IterationRunner so the active iteration
       // span id is captured at call time without a side-channel.
       const fireRetry = onRetry;
+      // Wave-13 D-6: accumulate across all retry attempts so the final result
+      // (success, terminal failure, or abort) can carry the cumulative
+      // breakdown as span attributes. Measured from the START of call() so
+      // `totalDurationMs` includes both adapter wall-clock and backoff sleeps.
+      const callStartedAt = Date.now();
+      let totalBackoffMs = 0;
 
       for (let attempt = 0; attempt <= config.maxAdapterRetries; attempt++) {
         // Check abort before each retry attempt. On attempt 0 the top-of-loop
@@ -370,6 +429,8 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
             errorCategory: HarnessErrorCode.CORE_ABORTED,
             path,
             attempts: attempt,
+            totalBackoffMs,
+            totalDurationMs: Date.now() - callStartedAt,
           };
         }
 
@@ -384,6 +445,8 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
               errorCategory: HarnessErrorCode.ADAPTER_CIRCUIT_OPEN,
               path,
               attempts: attempt,
+              totalBackoffMs,
+              totalDurationMs: Date.now() - callStartedAt,
             };
           }
         }
@@ -429,6 +492,8 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
                     bytesRead: streamResult.bytesRead,
                     path: 'stream',
                     attempts: attempt,
+                    totalBackoffMs,
+                    totalDurationMs: Date.now() - callStartedAt,
                   };
                 }
                 // Stream attempt failed — decide retry vs terminal.
@@ -441,9 +506,20 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
                   // should see only the FINAL terminal error, not one per
                   // failed attempt.
                   pendingError = undefined;
-                  fireRetry?.({ attempt, errorCategory, path: 'stream' });
+                  // Wave-13 D-4: compute backoff BEFORE firing the retry hook
+                  // so the hook receives the actual sleep duration for span
+                  // attribution. Capture delay via the { delay, promise } tuple.
+                  const bo = backoff(attempt);
+                  fireRetry?.({
+                    attempt,
+                    errorCategory,
+                    path: 'stream',
+                    backoffMs: bo.delay,
+                    retryNumber: attempt + 1,
+                  });
                   try {
-                    await backoff(attempt);
+                    await bo.promise;
+                    totalBackoffMs += bo.delay;
                   } catch {
                     // Abort fired during backoff — loop to top; attempt>0
                     // abort check will convert to ABORTED on next iteration.
@@ -461,6 +537,8 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
                   errorCategory,
                   path: 'stream',
                   attempts: attempt,
+                  totalBackoffMs,
+                  totalDurationMs: Date.now() - callStartedAt,
                 };
               }
               const evt = step.value;
@@ -503,6 +581,8 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
             bytesRead: 0,
             path: 'chat',
             attempts: attempt,
+            totalBackoffMs,
+            totalDurationMs: Date.now() - callStartedAt,
           };
         }
         const { error: err, errorCategory } = r;
@@ -511,9 +591,20 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
           && attempt < config.maxAdapterRetries
         ) {
           const errorPreview = (err instanceof Error ? err.message : String(err)).slice(0, 500);
-          fireRetry?.({ attempt, errorCategory, path: 'chat', errorPreview });
+          // Wave-13 D-4: compute backoff BEFORE firing the retry hook so the
+          // hook observer sees the actual sleep duration and retry #.
+          const bo = backoff(attempt);
+          fireRetry?.({
+            attempt,
+            errorCategory,
+            path: 'chat',
+            errorPreview,
+            backoffMs: bo.delay,
+            retryNumber: attempt + 1,
+          });
           try {
-            await backoff(attempt);
+            await bo.promise;
+            totalBackoffMs += bo.delay;
           } catch {
             // Abort fired during backoff — loop to top; next iteration
             // will surface ABORTED via the attempt>0 abort check.
@@ -522,12 +613,20 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
         }
         // Not retryable or retries exhausted. AdapterCaller does NOT yield
         // on chat failure — the caller wraps and yields.
+        //
+        // Wave-13 D-5/D-6: propagate timeout metadata (if any) and cumulative
+        // retry metrics so the caller's span can carry
+        // `timeout_ms` / `adapter` / `total_backoff_ms` / `total_duration_ms`.
         return {
           ok: false,
           error: err,
           errorCategory,
           path: 'chat',
           attempts: attempt,
+          totalBackoffMs,
+          totalDurationMs: Date.now() - callStartedAt,
+          ...(r.timeoutMs !== undefined && { timeoutMs: r.timeoutMs }),
+          ...(r.adapterName !== undefined && { adapterName: r.adapterName }),
         };
       }
 
@@ -545,6 +644,8 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
         errorCategory: HarnessErrorCode.ADAPTER_UNKNOWN,
         path,
         attempts: config.maxAdapterRetries + 1,
+        totalBackoffMs,
+        totalDurationMs: Date.now() - callStartedAt,
       };
     },
   };
