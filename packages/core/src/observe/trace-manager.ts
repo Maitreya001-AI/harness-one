@@ -15,8 +15,9 @@ import {
   type Redactor,
 } from '../infra/redact.js';
 import { createLazyAsync, type LazyAsync } from '../infra/lazy-async.js';
-import { sanitizeStackTrace } from './logger.js';
 import type { MetricsPort } from './metrics-port.js';
+import { TraceLruList } from './trace-lru-list.js';
+import { createSpanAttributeKeyWarner } from './span-attribute-keys.js';
 import type { Trace, Span, SpanEvent, SpanEventSeverity, TraceExporter } from './types.js';
 
 /** Retry telemetry aggregates exposed via `getRetryMetrics()`. */
@@ -289,43 +290,8 @@ export function createTraceManager(config?: {
       });
   }
 
-  /**
-   * ARCH-009: Reserved span-attribute prefixes. Keys outside this allow-list
-   * AND outside the `user.*` namespace produce a one-time-per-key warning so
-   * consumers can either:
-   *   - rename the key to `user.foo` to opt out, or
-   *   - request a new reserved prefix in a future release.
-   *
-   * This is intentionally permissive — non-prefixed keys are still accepted
-   * verbatim. The only effect is the warning. Use a `Set` lookup so the
-   * hot path stays O(1) per attribute.
-   */
-  const RESERVED_PREFIXES = [
-    'system.', 'error.', 'cost.', 'user.', 'harness.', 'eviction.', 'chunk.',
-  ] as const;
-  const RESERVED_KEYS = new Set([
-    'iteration', 'attempt', 'model', 'inputTokens', 'outputTokens',
-    'cacheReadTokens', 'cacheWriteTokens', 'path', 'latencyMs', 'passed',
-    'verdict', 'reason', 'events', 'parentId', 'errorCategory',
-    'errorMessage', 'errorName', 'error', 'streaming', 'conversationLength',
-    'adapter', 'toolCount', 'toolName', 'toolCallId', 'input', 'output',
-    'usage', 'metadata', 'status', 'spanCount', 'message',
-  ]);
-  const warnedAttrKeys = new Set<string>();
-
-  function maybeWarnAttributeKey(key: string): void {
-    if (warnedAttrKeys.has(key)) return;
-    if (RESERVED_KEYS.has(key)) return;
-    for (const prefix of RESERVED_PREFIXES) {
-      if (key.startsWith(prefix)) return;
-    }
-    warnedAttrKeys.add(key);
-    const msg = `[harness-one/trace-manager] span attribute key "${key}" does not match a reserved prefix (system.*, error.*, cost.*, user.*, harness.*). Consider prefixing with "user." to silence this warning.`;
-    if (logger) {
-      try { logger.warn(msg, { key }); } catch { /* logger threw — ignore */ }
-    }
-    // Intentionally silent fallback: the warning is advisory, not fatal.
-  }
+  // ARCH-009: Reserved span-attribute prefix warner (once per unique key).
+  const maybeWarnAttributeKey = createSpanAttributeKeyWarner(logger);
 
   function reportExportError(err: unknown): void {
     if (onExportError) onExportError(err);
@@ -442,41 +408,27 @@ export function createTraceManager(config?: {
      */
     sampled: boolean;
     /**
-     * PERF-029: doubly-linked-list pointers that implement the LRU order.
-     * `prev`/`next` link into `lruHead` / `lruTail` so `appendTraceOrder()`
-     * (link-at-tail) and `shiftTraceOrder()` (unlink-head) are both O(1).
-     * Previously we kept a parallel string[] + Map<string, number> index and
-     * rebuilt the index on every head-shift — O(n) per eviction.
+     * PERF-029: embedded {@link LruNode} pointers. Owned and mutated by
+     * {@link TraceLruList}; consumers must not touch them directly.
      */
     lruPrev: MutableTrace | null;
     lruNext: MutableTrace | null;
-    /**
-     * PERF-029: membership flag. True when the node is currently linked into
-     * the LRU list (not yet evicted/ended). Avoids walking the list to decide
-     * whether a `removeTraceOrder(id)` call has work to do.
-     */
     inLru: boolean;
   }
 
   const traces = new Map<string, MutableTrace>();
   const spans = new Map<string, MutableSpan>();
-  // PERF-029: doubly-linked-list LRU. `lruHead` is the oldest entry (evict
-  // first). `lruTail` is the most recently added. Traversal is never needed —
-  // all mutations happen in O(1) via the per-trace prev/next pointers.
-  let lruHead: MutableTrace | null = null;
-  let lruTail: MutableTrace | null = null;
-  let lruSize = 0;
+  // PERF-029: intrusive doubly-linked LRU extracted to `./trace-lru-list.ts`.
+  // Head is the oldest entry (evict first); tail is the most recently added.
+  //
+  // Wave-13 C-7: list mutations run synchronously — there is no `await`
+  // between read and write, so they are already atomic on the JS event loop.
+  // `isEvicting` below guards eviction re-entrance. Any future change that
+  // introduces `await` inside the list operations MUST add an async-lock.
+  const lru = new TraceLruList<MutableTrace>();
   let isEvicting = false; // Re-entrance guard for eviction (Fix 3)
   // Wave-13 C-10: one-shot warning state for the 80%-capacity signal.
   let spanHighWaterWarned = false;
-  // Wave-13 C-7: All LRU mutation helpers below run synchronously — there is
-  // no `await` between read and write, so they are already atomic on the JS
-  // event loop. The re-entrance guard `isEvicting` suffices for this layer.
-  // The C-7 audit recommendation ("async-lock all LRU mutations") only
-  // applies once mutations become async-accessible; we deliberately do not
-  // add a lock here because it would mis-signal an invariant the code does
-  // not need. Any future change that introduces `await` inside
-  // appendTraceOrder/removeTraceOrder/shiftTraceOrder MUST add the lock.
   /**
    * LM-016: Dead trace IDs — returned by `startTrace()` when every configured
    * exporter reports `isHealthy() === false`. The trace is NEVER admitted to
@@ -506,53 +458,6 @@ export function createTraceManager(config?: {
   }
   function genSpanId(): SpanId {
     return asSpanId(prefixedSecureId('sp'));
-  }
-
-  /**
-   * PERF-029: Link `trace` at the tail of the LRU list in O(1).
-   */
-  function appendTraceOrder(trace: MutableTrace): void {
-    if (trace.inLru) return;
-    trace.lruPrev = lruTail;
-    trace.lruNext = null;
-    if (lruTail) {
-      lruTail.lruNext = trace;
-    } else {
-      lruHead = trace;
-    }
-    lruTail = trace;
-    trace.inLru = true;
-    lruSize++;
-  }
-
-  /**
-   * PERF-029: Unlink `trace` from the LRU list in O(1) regardless of position.
-   * Replaces the old swap-remove on a parallel array + index rebuild.
-   */
-  function removeTraceOrder(trace: MutableTrace): void {
-    if (!trace.inLru) return;
-    const prev = trace.lruPrev;
-    const next = trace.lruNext;
-    if (prev) prev.lruNext = next;
-    else lruHead = next;
-    if (next) next.lruPrev = prev;
-    else lruTail = prev;
-    trace.lruPrev = null;
-    trace.lruNext = null;
-    trace.inLru = false;
-    lruSize--;
-  }
-
-  /**
-   * PERF-029: Unlink and return the oldest LRU entry in O(1). Previously this
-   * shifted the first id off a string[] and rebuilt the indexing Map for every
-   * remaining entry — O(n) per eviction.
-   */
-  function shiftTraceOrder(): MutableTrace | undefined {
-    const head = lruHead;
-    if (!head) return undefined;
-    removeTraceOrder(head);
-    return head;
   }
 
   /**
@@ -607,8 +512,8 @@ export function createTraceManager(config?: {
           }
         }
         // Then, evict oldest running traces from the LRU order.
-        while (traces.size > maxTraces && lruSize > 0) {
-          const oldest = shiftTraceOrder();
+        while (traces.size > maxTraces && lru.size > 0) {
+          const oldest = lru.shiftOldest();
           if (!oldest) break;
           const evictedSpans = finalizeSpansForEviction(oldest);
           allEvictedSpanIds.push(...evictedSpans);
@@ -807,7 +712,7 @@ export function createTraceManager(config?: {
         inLru: false,
       };
       traces.set(id, mutable);
-      appendTraceOrder(mutable);
+      lru.append(mutable);
       // LM-007: Actively evict even if exporters are fully healthy — otherwise
       // `maxTraces` is only ever reached after a trace ends, letting the map
       // grow when N concurrent running traces exceed capacity. With active
@@ -1024,7 +929,7 @@ export function createTraceManager(config?: {
       trace.status = status ?? 'completed';
 
       // PERF-029: O(1) linked-list unlink; previously O(n) index rebuild.
-      removeTraceOrder(trace);
+      lru.remove(trace);
 
       // Export — respects isHealthy(), shouldExport(), lazy initialize(), and sampling.
       // F12: pass the sampling decision made at trace-start so concurrent
@@ -1197,9 +1102,7 @@ export function createTraceManager(config?: {
       traces.clear();
       spans.clear();
       // PERF-029: reset the linked-list LRU state.
-      lruHead = null;
-      lruTail = null;
-      lruSize = 0;
+      lru.clear();
       retryingSpanIds.clear();
       deadTraceIds.clear();
       deadSpanIds.clear();
@@ -1211,90 +1114,4 @@ export function createTraceManager(config?: {
   };
 }
 
-/**
- * Create a console exporter for traces and spans.
- *
- * @example
- * ```ts
- * const exporter = createConsoleExporter({ verbose: true });
- * const tm = createTraceManager({ exporters: [exporter] });
- * ```
- */
-export function createConsoleExporter(config?: { verbose?: boolean; output?: (line: string) => void }): TraceExporter {
-  const verbose = config?.verbose ?? false;
-  // eslint-disable-next-line no-console
-  const output = config?.output ?? console.log;
-  return {
-    name: 'console',
-    async exportTrace(trace: Trace): Promise<void> {
-      if (verbose) {
-        output(`[trace] ${JSON.stringify(trace, null, 2)}`);
-      } else {
-        output(`[trace] ${trace.name} (${trace.status}) ${trace.spans.length} spans`);
-      }
-    },
-    async exportSpan(span: Span): Promise<void> {
-      if (verbose) {
-        output(`[span] ${JSON.stringify(span, null, 2)}`);
-      } else {
-        output(`[span] ${span.name} (${span.status})`);
-      }
-    },
-    async flush(): Promise<void> {
-      // Nothing to flush for console
-    },
-  };
-}
-
-/**
- * Wave-13 C-11: Shared helper that applies the same absolute-path stack
- * sanitisation the logger uses, returning a plain `{ name, message, stack }`
- * JSON envelope suitable for exporter boundaries (Langfuse/OTel/…). Exporters
- * that receive raw `Error` instances can call this to avoid leaking developer
- * machine paths into downstream trace backends.
- *
- * Non-Error inputs (`null`, strings, plain objects) are returned as `{ name,
- * message }` with best-effort coercion, never throwing.
- *
- * The `cwd` option overrides the detection used by `sanitizeStackTrace` —
- * useful in exporters that want to pin to a deployment root rather than the
- * runtime cwd.
- */
-export function sanitizeErrorForExport(
-  err: unknown,
-  opts?: { readonly cwd?: string },
-): { readonly name: string; readonly message: string; readonly stack?: string } {
-  if (err instanceof Error) {
-    const stack = typeof err.stack === 'string'
-      ? sanitizeStackTrace(err.stack, opts)
-      : undefined;
-    return stack !== undefined
-      ? { name: err.name, message: err.message, stack }
-      : { name: err.name, message: err.message };
-  }
-  if (err === null) return { name: 'Null', message: 'null' };
-  if (err === undefined) return { name: 'Undefined', message: 'undefined' };
-  if (typeof err === 'string') return { name: 'Error', message: err };
-  try {
-    return { name: 'Error', message: JSON.stringify(err) };
-  } catch {
-    return { name: 'Error', message: String(err) };
-  }
-}
-
-/**
- * Create a no-op exporter (useful for testing).
- *
- * @example
- * ```ts
- * const exporter = createNoOpExporter();
- * ```
- */
-export function createNoOpExporter(): TraceExporter {
-  return {
-    name: 'noop',
-    async exportTrace(): Promise<void> {},
-    async exportSpan(): Promise<void> {},
-    async flush(): Promise<void> {},
-  };
-}
+export { createConsoleExporter, createNoOpExporter } from './trace-builtins.js';

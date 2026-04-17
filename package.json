@@ -2,7 +2,13 @@
   "name": "harness-one-monorepo",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@10.24.0",
+  "engines": {
+    "node": ">=18",
+    "pnpm": ">=9"
+  },
   "scripts": {
+    "preinstall": "node tools/check-pnpm.mjs",
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "test:coverage": "pnpm -r test -- --coverage",

@@ -1,8 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  createTraceManager,
-  sanitizeErrorForExport,
-} from '../trace-manager.js';
+import { createTraceManager } from '../trace-manager.js';
 import { HarnessError } from '../../core/errors.js';
 import type { TraceExporter } from '../types.js';
 import type { MetricsPort } from '../metrics-port.js';
@@ -210,32 +207,4 @@ describe('Wave-13 trace-manager fixes', () => {
     });
   });
 
-  describe('Wave-13 C-11: sanitizeErrorForExport helper', () => {
-    it('sanitises absolute paths in Error.stack', () => {
-      const err = new Error('boom');
-      const fakeCwd = '/tmp/harness-test-cwd';
-      // Force a stack that contains the fake cwd.
-      err.stack = `Error: boom\n    at fn (${fakeCwd}/packages/core/src/foo.ts:1:1)`;
-      const out = sanitizeErrorForExport(err, { cwd: fakeCwd });
-      expect(out.name).toBe('Error');
-      expect(out.message).toBe('boom');
-      expect(out.stack).toBeDefined();
-      expect(out.stack).not.toContain(fakeCwd);
-      expect(out.stack).toContain('packages/core/src/foo.ts:1:1');
-    });
-
-    it('handles non-Error inputs safely', () => {
-      expect(sanitizeErrorForExport('plain string')).toEqual({ name: 'Error', message: 'plain string' });
-      expect(sanitizeErrorForExport(null)).toEqual({ name: 'Null', message: 'null' });
-      expect(sanitizeErrorForExport(undefined)).toEqual({ name: 'Undefined', message: 'undefined' });
-      expect(sanitizeErrorForExport({ foo: 1 }).message).toContain('foo');
-    });
-
-    it('returns Error without a stack if the stack is missing', () => {
-      const err = new Error('no stack');
-      delete (err as { stack?: string }).stack;
-      const out = sanitizeErrorForExport(err);
-      expect(out.stack).toBeUndefined();
-    });
-  });
 });

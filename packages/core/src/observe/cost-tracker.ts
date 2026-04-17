@@ -15,6 +15,7 @@ import {
   type EvictionStrategyName,
   getEvictionStrategy,
 } from './cost-tracker-eviction.js';
+import { KahanSum, priceUsage, hasNonFiniteTokens } from './cost-math.js';
 export type { EvictionStrategy, EvictionStrategyName } from './cost-tracker-eviction.js';
 export { overflowBucketStrategy, lruStrategy, getEvictionStrategy } from './cost-tracker-eviction.js';
 
@@ -157,34 +158,7 @@ export interface CostTracker {
  * if (sum.total > budget) stop();
  * ```
  */
-export class KahanSum {
-  private _total = 0;
-  private _compensation = 0;
-
-  /** Add a value to the running sum. */
-  add(x: number): void {
-    const y = x - this._compensation;
-    const t = this._total + y;
-    this._compensation = (t - this._total) - y;
-    this._total = t;
-  }
-
-  /** Subtract a value from the running sum. */
-  subtract(x: number): void {
-    this.add(-x);
-  }
-
-  /** Get the current accumulated total. */
-  get total(): number {
-    return this._total;
-  }
-
-  /** Reset the sum to zero. */
-  reset(): void {
-    this._total = 0;
-    this._compensation = 0;
-  }
-}
+export { KahanSum } from './cost-math.js';
 
 /**
  * Create a new CostTracker instance.
@@ -395,28 +369,14 @@ export function createCostTracker(config?: {
   }
 
   function computeCost(usage: Omit<TokenUsageRecord, 'estimatedCost' | 'timestamp'>): number {
-    const p = pricing.get(usage.model);
-    if (!p) return 0;
-
-    // Guard against NaN/Infinity tokens propagating through budget enforcement.
-    if (!Number.isFinite(usage.inputTokens) || !Number.isFinite(usage.outputTokens)) {
+    if (hasNonFiniteTokens(usage)) {
       safeWarn(
         logger,
         `[harness-one/cost-tracker] Non-finite token count for model "${usage.model}" (input=${usage.inputTokens}, output=${usage.outputTokens}). Returning cost 0.`,
       );
       return 0;
     }
-
-    let cost = 0;
-    cost += (usage.inputTokens / 1000) * p.inputPer1kTokens;
-    cost += (usage.outputTokens / 1000) * p.outputPer1kTokens;
-    if (usage.cacheReadTokens && p.cacheReadPer1kTokens) {
-      cost += (usage.cacheReadTokens / 1000) * p.cacheReadPer1kTokens;
-    }
-    if (usage.cacheWriteTokens && p.cacheWritePer1kTokens) {
-      cost += (usage.cacheWriteTokens / 1000) * p.cacheWritePer1kTokens;
-    }
-    return Math.round(cost * 1_000_000) / 1_000_000;  // Round to 6 decimal places (micro-dollar precision)
+    return priceUsage(usage, pricing.get(usage.model));
   }
 
   function emitAlert(alert: CostAlert): void {

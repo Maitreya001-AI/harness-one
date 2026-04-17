@@ -889,12 +889,6 @@ export interface Logger {
     error(message: string, meta?: Readonly<Record<string, unknown>>): void;
     // (undocumented)
     info(message: string, meta?: Readonly<Record<string, unknown>>): void;
-    isDebugEnabled?(): boolean;
-    // (undocumented)
-    isErrorEnabled?(): boolean;
-    // (undocumented)
-    isInfoEnabled?(): boolean;
-    // (undocumented)
     isWarnEnabled?(): boolean;
     // (undocumented)
     warn(message: string, meta?: Readonly<Record<string, unknown>>): void;
@@ -1638,12 +1632,12 @@ export interface VectorSearchOptions {
 
 // Warnings were encountered during analysis:
 //
-// dist/cost-tracker-Bo6UNM_h.d.ts:281:5 - (ae-forgotten-export) The symbol "EvictionStrategyName" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-Bo6UNM_h.d.ts:281:5 - (ae-forgotten-export) The symbol "EvictionStrategy" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-Bo6UNM_h.d.ts:321:5 - (ae-forgotten-export) The symbol "MetricsPort" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-7sEeOum3.d.ts:278:5 - (ae-forgotten-export) The symbol "EvictionStrategyName" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-7sEeOum3.d.ts:278:5 - (ae-forgotten-export) The symbol "EvictionStrategy" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-7sEeOum3.d.ts:318:5 - (ae-forgotten-export) The symbol "MetricsPort" needs to be exported by the entry point index.d.ts
 // dist/pipeline-CCesF6ow.d.ts:95:5 - (ae-forgotten-export) The symbol "GuardrailEvent" needs to be exported by the entry point index.d.ts
-// dist/resilience-BKyEbB5z.d.ts:253:5 - (ae-forgotten-export) The symbol "MiddlewareContext" needs to be exported by the entry point index.d.ts
-// dist/trace-manager-C2MOK58G.d.ts:477:5 - (ae-forgotten-export) The symbol "RedactConfig" needs to be exported by the entry point index.d.ts
+// dist/resilience-PlLF2tvt.d.ts:253:5 - (ae-forgotten-export) The symbol "MiddlewareContext" needs to be exported by the entry point index.d.ts
+// dist/trace-manager-CI3Oj-LO.d.ts:477:5 - (ae-forgotten-export) The symbol "RedactConfig" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 

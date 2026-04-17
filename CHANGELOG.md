@@ -516,7 +516,7 @@ research agents audited angles the prior 147 / 50 / 123 issue waves had
 not entered: concurrency correctness, architectural elegance, hot-path
 latency, type safety, and lifecycle / multi-tenant safety. 68 unique
 findings were distilled from 80 raw reports — see
-`docs/RESEARCH-2026-04-13-wave4.md` for the full provenance.
+`docs/history/RESEARCH-2026-04-13-wave4.md` for the full provenance.
 
 **3,543 → 3,678 tests** (+135); typecheck + lint clean across all 9
 packages. 0 breaking changes under the 0.x minor contract — surface
@@ -674,7 +674,7 @@ changes are gated behind `@deprecated` and scheduled for 0.5.0.
 
 ### Docs
 
-- `docs/RESEARCH-2026-04-13-wave4.md` — the five-agent synthesis
+- `docs/history/RESEARCH-2026-04-13-wave4.md` — the five-agent synthesis
   report driving this release. Includes per-cluster severity breakdown
   (P0 14 / P1 33 / P2 21), raw transcripts, and next-wave
   recommendations.
@@ -1055,7 +1055,7 @@ preset package.
 ## [0.1.2] — 2026-04-12
 
 47 production-readiness issues resolved from comprehensive audit
-(see `AUDIT-2026-04-12.md` and `docs/forge-fix/audit-47-fixes-20260412/`).
+(see `docs/history/AUDIT-2026-04-12.md` and `docs/forge-fix/audit-47-fixes-20260412/`).
 All 3104 tests pass; ~54 regression tests added.
 
 ### Fixed
@@ -1130,7 +1130,7 @@ All 3104 tests pass; ~54 regression tests added.
 
 ### Documentation
 
-- `AUDIT-2026-04-12.md` — full audit report (47 issues with fixes).
+- `docs/history/AUDIT-2026-04-12.md` — full audit report (47 issues with fixes).
 - `docs/forge-fix/audit-47-fixes-20260412/summary.md` — fix summary by
   group with test counts.
 - `docs/architecture/06-observe.md` — CostTracker `maxModels` /

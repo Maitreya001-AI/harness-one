@@ -24,7 +24,8 @@ import type { ExecutionStrategy, Message, TokenUsage, ToolCallRequest } from './
 import type { AgentEvent, DoneReason } from './events.js';
 import { assertNever } from './events.js';
 import { AbortedError, HarnessError, TokenBudgetExceededError, HarnessErrorCode} from './errors.js';
-import type { AgentLoopHook } from './agent-loop.js';
+import type { AgentLoopHook } from './agent-loop-types.js';
+import { createHookDispatcher } from './hook-dispatcher.js';
 import type { AdapterCaller } from './adapter-caller.js';
 import type { AgentLoopTraceManager } from './trace-interface.js';
 import type { GuardrailPipeline } from '../guardrails/pipeline.js';
@@ -253,37 +254,11 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
     return config.abortController.signal.aborted;
   }
 
-  /** Run all registered hooks for `event`; swallow + log per-hook errors. */
-  function runHook<E extends keyof AgentLoopHook>(
-    event: E,
-    info: Parameters<NonNullable<AgentLoopHook[E]>>[0],
-  ): void {
-    if (config.hooks.length === 0) return;
-    for (const hook of config.hooks) {
-      const fn = hook[event];
-      if (typeof fn !== 'function') continue;
-      try {
-        (fn as (i: typeof info) => void).call(hook, info);
-      } catch (err) {
-        if (config.strictHooks) {
-          throw err;
-        }
-        if (config.logger) {
-          try {
-            config.logger.warn('[harness-one/agent-loop] hook threw', {
-              event,
-              error: err instanceof Error ? err.message : String(err),
-            });
-          } catch {
-            // Logger itself failed — fall back to console.error.
-            try { console.error('[harness-one/agent-loop] hook threw:', err); } catch { /* */ }
-          }
-        } else {
-          try { console.error('[harness-one/agent-loop] hook threw:', err); } catch { /* */ }
-        }
-      }
-    }
-  }
+  const runHook = createHookDispatcher({
+    hooks: config.hooks,
+    ...(config.strictHooks !== undefined && { strictHooks: config.strictHooks }),
+    ...(config.logger !== undefined && { logger: config.logger }),
+  });
 
   /** Close the active iteration span and clear the slot on the context. */
   function endSpan(ctx: IterationContext, status?: 'completed' | 'error'): void {

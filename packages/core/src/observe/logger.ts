@@ -33,15 +33,13 @@ export interface Logger {
   /** Create a child logger that inherits and extends base metadata. */
   child(meta: Readonly<Record<string, unknown>>): Logger;
   /**
-   * Wave-13 C-8: Level-enabled companion checks. Let hot-path callers skip
-   * metadata allocation when the level gate would drop the record. Optional
-   * for backward compatibility — adapters and ports that previously shipped
-   * with only `isWarnEnabled` can opt into the full quartet over time.
+   * Optional level gate consulted by hot-path callers (OpenAI + Anthropic
+   * adapters) before allocating expensive meta payloads they'd otherwise
+   * hand to `warn()`. The other levels don't ship a companion check because
+   * no adapter currently gates on them — add the specific gate you need
+   * when a real caller shows up.
    */
-  isDebugEnabled?(): boolean;
-  isInfoEnabled?(): boolean;
   isWarnEnabled?(): boolean;
-  isErrorEnabled?(): boolean;
 }
 
 /** Configuration for the logger factory. */
@@ -360,12 +358,9 @@ export function createLogger(config?: LoggerConfig): Logger {
       error: (msg, meta) => log('error', msg, meta),
       child: (meta: Readonly<Record<string, unknown>>) =>
         createLoggerWithMeta({ ...baseMeta, ...meta }),
-      // Wave-13 C-8: level-enabled companions so hot-path callers can cheaply
-      // gate metadata allocation.
-      isDebugEnabled: () => shouldLog('debug'),
-      isInfoEnabled: () => shouldLog('info'),
+      // Level-enabled companion for hot-path callers that want to skip
+      // expensive metadata construction before hitting warn().
       isWarnEnabled: () => shouldLog('warn'),
-      isErrorEnabled: () => shouldLog('error'),
     };
   }
 

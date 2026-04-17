@@ -14,7 +14,7 @@ Closes 47 findings from the 2026-04-13 **new-perspective deep-research
 audit** (wave 4). Five parallel research agents ran against angles the
 prior 147/50/123 audits had not entered: concurrency correctness,
 architectural elegance, hot-path latency, type safety, and lifecycle /
-multi-tenant safety. See `docs/RESEARCH-2026-04-13-wave4.md` for the
+multi-tenant safety. See `docs/history/RESEARCH-2026-04-13-wave4.md` for the
 full source report.
 
 **3,543 → 3,678 tests** (+135); typecheck + lint clean across 9 packages.

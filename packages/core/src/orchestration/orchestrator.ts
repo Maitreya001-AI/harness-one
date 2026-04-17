@@ -38,10 +38,24 @@ export function normalizeContextKey(key: string): string {
   return key.normalize('NFKC').toLowerCase();
 }
 
-/** Orchestrator for managing multi-agent coordination. */
-export interface AgentOrchestrator {
+// ──────────────────────────────────────────────────────────────────────────
+// Facet interfaces — narrow contracts that `AgentOrchestrator` composes.
+//
+// Consumers that only need one concern (e.g. a component that just reads
+// the registry) can accept the minimal facet rather than the full
+// orchestrator. The facets are *purely* a type-level slicing; the
+// runtime impl still satisfies all of them via the composite interface
+// below.
+// ──────────────────────────────────────────────────────────────────────────
+
+/** CRUD over the agent registration table. */
+export interface AgentRegistry {
   /** Register an agent. */
-  register(id: string, name: string, options?: { parentId?: string; metadata?: Record<string, unknown> }): AgentRegistration;
+  register(
+    id: string,
+    name: string,
+    options?: { parentId?: string; metadata?: Record<string, unknown> },
+  ): AgentRegistration;
   /** Remove an agent. */
   unregister(id: string): boolean;
   /** Get agent by ID. */
@@ -50,29 +64,59 @@ export interface AgentOrchestrator {
   listAgents(filter?: { status?: AgentStatus; parentId?: string }): AgentRegistration[];
   /** Update agent status. */
   setStatus(id: string, status: AgentStatus): void;
+  /** Get children of an agent (hierarchical mode). */
+  getChildren(parentId: string): AgentRegistration[];
+}
+
+/** Agent-to-agent messaging (inbox + broadcast). */
+export interface AgentMessageBus {
   /** Send a message between agents. */
   send(message: Omit<AgentMessage, 'timestamp'>): void;
   /** Get messages for an agent (inbox). */
-  getMessages(agentId: string, options?: { type?: AgentMessage['type']; since?: number }): AgentMessage[];
+  getMessages(
+    agentId: string,
+    options?: { type?: AgentMessage['type']; since?: number },
+  ): AgentMessage[];
   /** Broadcast a message to all agents (or children of a parent). */
-  broadcast(from: string, content: string, options?: { parentId?: string; metadata?: Record<string, unknown> }): void;
+  broadcast(
+    from: string,
+    content: string,
+    options?: { parentId?: string; metadata?: Record<string, unknown> },
+  ): void;
+}
+
+/** Task delegation + orchestration mode introspection. */
+export interface AgentDelegator {
   /** Delegate a task using the configured strategy. Returns the selected agent ID or undefined. */
   delegate(task: DelegationTask): Promise<string | undefined>;
+  /** Get the orchestration mode. */
+  readonly mode: OrchestrationMode;
+}
+
+/** Lifecycle, shared state, and observability hooks on the orchestrator. */
+export interface OrchestratorLifecycle {
   /** Get the shared context. */
   readonly context: SharedContext;
   /** Subscribe to orchestrator events. Returns unsubscribe function. */
   onEvent(handler: (event: OrchestratorEvent) => void): () => void;
-  /** Get children of an agent (hierarchical mode). */
-  getChildren(parentId: string): AgentRegistration[];
   /** Dispose the orchestrator, clearing all agents, queues, and handlers. */
   dispose(): void;
   /** Dispose the orchestrator after waiting for in-flight delegations. */
   drainAndDispose(timeoutMs?: number): Promise<void>;
-  /** Get the orchestration mode. */
-  readonly mode: OrchestrationMode;
   /** OBS-009: Runtime metrics snapshot (includes cumulative message drops). */
   getMetrics(): OrchestratorMetrics;
 }
+
+/**
+ * Orchestrator for managing multi-agent coordination. Composes the four
+ * narrower facets — consumers that only need a subset should accept that
+ * specific facet (e.g. `AgentRegistry`) rather than the full interface.
+ */
+export interface AgentOrchestrator
+  extends AgentRegistry,
+    AgentMessageBus,
+    AgentDelegator,
+    OrchestratorLifecycle {}
 
 /** Configuration for creating an orchestrator. */
 export interface OrchestratorConfig {

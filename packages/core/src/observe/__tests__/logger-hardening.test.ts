@@ -1,31 +1,20 @@
 import { describe, it, expect } from 'vitest';
 import { createLogger, createSafeReplacer } from '../logger.js';
 
-describe('Wave-13 logger fixes', () => {
-  describe('Wave-13 C-8: level-enabled companion checks', () => {
-    it('isDebugEnabled/isInfoEnabled/isWarnEnabled/isErrorEnabled return correct gating', () => {
-      const warn = createLogger({ level: 'warn' });
-      expect(warn.isDebugEnabled?.()).toBe(false);
-      expect(warn.isInfoEnabled?.()).toBe(false);
-      expect(warn.isWarnEnabled?.()).toBe(true);
-      expect(warn.isErrorEnabled?.()).toBe(true);
-
-      const debug = createLogger({ level: 'debug' });
-      expect(debug.isDebugEnabled?.()).toBe(true);
-      expect(debug.isInfoEnabled?.()).toBe(true);
-      expect(debug.isWarnEnabled?.()).toBe(true);
-      expect(debug.isErrorEnabled?.()).toBe(true);
+describe('logger hardening', () => {
+  describe('isWarnEnabled level gate', () => {
+    it('reflects the logger level', () => {
+      expect(createLogger({ level: 'warn' }).isWarnEnabled?.()).toBe(true);
+      expect(createLogger({ level: 'error' }).isWarnEnabled?.()).toBe(false);
     });
 
-    it('level-check companions remain available on child loggers', () => {
+    it('is available on child loggers', () => {
       const parent = createLogger({ level: 'error' });
-      const child = parent.child({ reqId: 'x' });
-      expect(child.isInfoEnabled?.()).toBe(false);
-      expect(child.isErrorEnabled?.()).toBe(true);
+      expect(parent.child({ reqId: 'x' }).isWarnEnabled?.()).toBe(false);
     });
   });
 
-  describe('Wave-13 C-9: error cause chain redaction + sanitisation', () => {
+  describe('error cause chain redaction + sanitisation', () => {
     it('renders Error.cause recursively into the serialised output', () => {
       const lines: string[] = [];
       const logger = createLogger({

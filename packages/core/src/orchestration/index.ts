@@ -31,7 +31,17 @@ export type {
 export { spawnSubAgent } from './spawn.js';
 
 // Orchestrator
-export type { AgentOrchestrator, OrchestratorConfig } from './orchestrator.js';
+export type {
+  AgentOrchestrator,
+  OrchestratorConfig,
+  // Facets (narrow contracts; consumers should depend on the smallest one
+  // they need rather than the full AgentOrchestrator).
+  AgentRegistry,
+  AgentMessageBus,
+  AgentDelegator,
+  OrchestratorLifecycle,
+  OrchestratorMetrics,
+} from './orchestrator.js';
 export { createOrchestrator } from './orchestrator.js';
 
 // Strategies
