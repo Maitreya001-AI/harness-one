@@ -9,6 +9,7 @@ import { InstrumentationPort } from 'harness-one/observe';
 import { Langfuse } from 'langfuse';
 import { Logger } from 'harness-one/observe';
 import { MetricsPort } from 'harness-one/observe';
+import { ModelPricing } from 'harness-one/observe';
 import { PromptBackend } from 'harness-one/prompt';
 import { TraceExporter } from 'harness-one/observe';
 
@@ -29,6 +30,7 @@ export interface LangfuseCostTracker extends CostTracker {
 
 // @public
 export interface LangfuseCostTrackerConfig {
+    readonly budget?: number;
     readonly client: Langfuse;
     readonly criticalThreshold?: number;
     readonly logger?: Logger;
@@ -37,6 +39,7 @@ export interface LangfuseCostTrackerConfig {
         op: 'flush' | 'record';
         details?: unknown;
     }) => void;
+    readonly pricing?: ModelPricing[];
     readonly warningThreshold?: number;
 }
 

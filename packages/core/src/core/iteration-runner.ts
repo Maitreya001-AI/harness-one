@@ -1,21 +1,17 @@
 /**
  * IterationRunner — runs exactly one agent iteration.
  *
- * Wave-5B Step 3: extracted from `AgentLoop.run()` (former L642-L997). Owns
- * the in-iteration choreography: input guardrail → adapter call delegation
- * → post-call abort/budget checks → output guardrail (when no tool calls)
- * → tool execution via `ExecutionStrategy` → tool_output guardrails →
+ * Owns the in-iteration choreography: input guardrail → adapter call
+ * delegation → post-call abort/budget checks → output guardrail (when no tool
+ * calls) → tool execution via `ExecutionStrategy` → tool_output guardrails →
  * conversation mutation. Pre-iteration checks (initial abort, max-iterations,
- * pre-call token budget) STAY in `run()`.
+ * pre-call token budget) STAY in `AgentLoop.run()`.
  *
- * **Statelessness invariant** (ADR §2.3 / §9 R8 / R9): IterationRunner
- * carries NO per-run state on its closure. Every mutable counter — cumulative
- * usage, tool-call counter, span id, end-fired flag — lives on
- * {@link IterationContext}, which is freshly allocated per `run()`. Reusing
- * a single IterationRunner across multiple runs is safe because there is
- * nothing to reset.
- *
- * See `docs/forge-fix/wave-5/wave-5b-adr-v2.md` §2.3, §3, §4, §6, §7 Step 3.
+ * **Statelessness invariant**: IterationRunner carries NO per-run state on
+ * its closure. Every mutable counter — cumulative usage, tool-call counter,
+ * span id, end-fired flag — lives on {@link IterationContext}, which is
+ * freshly allocated per `run()`. Reusing a single IterationRunner across
+ * multiple runs is safe because there is nothing to reset.
  *
  * @module
  */
@@ -28,8 +24,7 @@ import type { AgentLoopHook } from './agent-loop-types.js';
 import { createHookDispatcher } from './hook-dispatcher.js';
 import type { AdapterCaller } from './adapter-caller.js';
 import type { AgentLoopTraceManager } from './trace-interface.js';
-import type { GuardrailPipeline } from '../guardrails/pipeline.js';
-import { runInput, runOutput, runToolOutput } from '../guardrails/pipeline.js';
+import type { GuardrailPipeline } from './guardrail-port.js';
 import { findLatestUserMessage, pickBlockingGuardName } from './guardrail-helpers.js';
 
 // ---------------------------------------------------------------------------
@@ -60,7 +55,7 @@ export type IterationOutcome =
  * Freshly allocated by `AgentLoop.run()` for each run; the runner carries
  * no equivalent state. The orchestrator FORWARDS values from this context
  * back to its instance fields after each iteration so `getMetrics()` and
- * the `usage` getter remain accurate (see ADR §7 Step 3 field migration).
+ * the `usage` getter remain accurate.
  */
 export interface IterationContext {
   /** Caller-owned mutable conversation buffer. runIteration pushes assistant + tool messages. */
@@ -69,7 +64,7 @@ export interface IterationContext {
   iteration: number;
   /** Cumulative stream bytes across prior iterations; runIteration updates in place. */
   readonly cumulativeStreamBytes: { value: number };
-  /** Active iteration span id; runIteration manages endSpan; run()'s outer finally also reads this (R5). */
+  /** Active iteration span id; runIteration manages endSpan; run()'s outer finally also reads this. */
   iterationSpanId: string | undefined;
   /** Trace id for starting child tool spans. */
   readonly traceId: string | undefined;
@@ -118,15 +113,15 @@ export interface IterationRunner {
 }
 
 // ---------------------------------------------------------------------------
-// Private bailOut input shapes (discriminated union — ADR §4)
+// Private bailOut input shapes (discriminated union)
 // ---------------------------------------------------------------------------
 
 type ErrorBail = {
   /**
-   * `'max_iterations'` is intentionally absent: per ADR-v2 §4, the
-   * max-iterations terminal is emitted by `AgentLoop`'s `emitTerminal`
-   * path, not through `bailOut`. Narrowing here prevents a future code
-   * path from accidentally routing it through the runner.
+   * `'max_iterations'` is intentionally absent: the max-iterations terminal
+   * is emitted by `AgentLoop`'s `emitTerminal` path, not through `bailOut`.
+   * Narrowing here prevents a future code path from accidentally routing it
+   * through the runner.
    */
   readonly reason: 'error' | 'aborted';
   readonly errorEvent?: Extract<AgentEvent, { type: 'error' }>;
@@ -147,7 +142,7 @@ type GuardrailBail = {
 
 type BudgetBail = {
   readonly reason: 'token_budget';
-  /** Required — today's L780 yields the message before the error. */
+  /** Required — we yield the message before the error. */
   readonly messageEvent: Extract<AgentEvent, { type: 'message' }>;
   readonly errorEvent: Extract<AgentEvent, { type: 'error' }>;
 };
@@ -169,23 +164,21 @@ const MAX_TOOL_RESULT_BYTES = 1 * 1024 * 1024;
 /** Maximum object nesting depth for tool-result serialization. */
 const MAX_TOOL_RESULT_DEPTH = 10;
 /**
- * Wave-12 P2-8 truncation marker appended when the serialized result
- * exceeds {@link MAX_TOOL_RESULT_BYTES}. Consumers/LLMs can detect the
- * marker to know the result was cut; the prefix of the payload is still
- * useful context.
+ * Truncation marker appended when the serialized result exceeds
+ * {@link MAX_TOOL_RESULT_BYTES}. Consumers/LLMs can detect the marker to know
+ * the result was cut; the prefix of the payload is still useful context.
  */
 const TRUNCATION_MARKER = '...[truncated: result exceeded 1MiB]';
 
 /**
- * PERF-004 / Wave-12 P2-8: defensive serialization for tool-call results.
+ * Defensive serialization for tool-call results.
  *
  * Depth-limited replacer (default depth 10) tracks TRUE nesting via the
- * replacer's `this` binding (the container object). The previous
- * implementation incremented a shared counter on every key visit, which
- * over-counted siblings and mis-triggered the depth guard on wide
- * objects. Cycles are broken via `WeakSet`. After serialize, oversized
- * payloads are truncated with a marker instead of dropped entirely so
- * the LLM still sees useful context.
+ * replacer's `this` binding (the container object) — a shared counter would
+ * over-count siblings and mis-trigger the depth guard on wide objects.
+ * Cycles are broken via `WeakSet`. After serialize, oversized payloads are
+ * truncated with a marker instead of dropped entirely so the LLM still sees
+ * useful context.
  */
 function safeStringifyToolResult(value: unknown): string {
   const seen = new WeakSet<object>();
@@ -223,8 +216,8 @@ function safeStringifyToolResult(value: unknown): string {
   }
   if (serialized === undefined) return '[result not serializable]';
   if (serialized.length > MAX_TOOL_RESULT_BYTES) {
-    // Wave-12 P2-8: truncate with marker instead of discarding entirely.
-    // Subtract the marker length so the final string stays within budget.
+    // Truncate with marker instead of discarding entirely. Subtract the
+    // marker length so the final string stays within budget.
     return (
       serialized.slice(0, MAX_TOOL_RESULT_BYTES - TRUNCATION_MARKER.length) +
       TRUNCATION_MARKER
@@ -339,11 +332,11 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
   async function* runIteration(
     ctx: IterationContext,
   ): AsyncGenerator<AgentEvent, IterationOutcome> {
-    // [1] Input guardrail (Wave-5A hook point).
+    // [1] Input guardrail.
     if (config.inputPipeline) {
       const latestUser = findLatestUserMessage(ctx.conversation);
       if (latestUser !== undefined) {
-        const result = await runInput(config.inputPipeline, { content: latestUser });
+        const result = await config.inputPipeline.runInput({ content: latestUser });
         if (!result.passed && result.verdict.action === 'block') {
           const guardName = pickBlockingGuardName(result, 'input');
           const reason = result.verdict.reason;
@@ -373,11 +366,9 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
 
     // [2] Adapter call (delegated to AdapterCaller; per-call onRetry binds
     //     to the current iteration span so adapter_retry events land on the
-    //     right span without a side-channel).
-    //
-    // Wave-13 D-4: the adapter_retry span event now carries `backoff_ms` and
-    // `retry_number` so operators can correlate retry latency with backoff
-    // strategy tuning without re-deriving either from other attributes.
+    //     right span without a side-channel). The adapter_retry span event
+    //     carries `backoff_ms` and `retry_number` so operators can correlate
+    //     retry latency with backoff strategy tuning.
     const result = yield* config.adapterCaller.call(
       ctx.conversation,
       ctx.cumulativeStreamBytes.value,
@@ -401,10 +392,10 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
     if (!result.ok) {
       const { error: err, errorCategory, path } = result;
       if (ctx.iterationSpanId && tm) {
-        // Wave-13 D-5/D-6: attach cumulative retry metrics and (on timeout)
-        // the configured budget + adapter name so incident responders can
-        // distinguish "timeout after N ms across K retries" from a single
-        // hard-fail attempt without parsing error messages.
+        // Attach cumulative retry metrics and (on timeout) the configured
+        // budget + adapter name so incident responders can distinguish
+        // "timeout after N ms across K retries" from a single hard-fail
+        // attempt without parsing error messages.
         tm.setSpanAttributes(ctx.iterationSpanId, {
           errorCategory,
           path,
@@ -446,7 +437,7 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
         return yield* bailOut(ctx, { reason: 'error', errorEvent });
       }
       // path === 'stream' — StreamHandler already yielded the {type:'error'}
-      // event inside handle(); re-yielding would double-emit (ADR §9 R1).
+      // event inside handle(); re-yielding would double-emit.
       return yield* bailOut(ctx, { reason: 'error', errorAlreadyYielded: true });
     }
 
@@ -465,9 +456,9 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
             : 0,
         path: result.path,
         attempts: result.attempts,
-        // Wave-13 D-6: also annotate the happy path so retry-cost analysis
-        // can differentiate "succeeded after N retries" from "succeeded on
-        // first try" without cross-referencing adapter_retry events.
+        // Also annotate the happy path so retry-cost analysis can
+        // differentiate "succeeded after N retries" from "succeeded on first
+        // try" without cross-referencing adapter_retry events.
         ...(result.totalBackoffMs !== undefined
           ? { total_backoff_ms: result.totalBackoffMs }
           : {}),
@@ -513,7 +504,7 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
     if (!toolCalls || toolCalls.length === 0) {
       if (config.outputPipeline) {
         const finalContent = assistantMsg.content ?? '';
-        const outputResult = await runOutput(config.outputPipeline, {
+        const outputResult = await config.outputPipeline.runOutput({
           content: finalContent,
         });
         if (!outputResult.passed && outputResult.verdict.action === 'block') {
@@ -642,12 +633,11 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
         resultContent = '[Object could not be serialized]';
       }
 
-      // Tool-output guardrail (Wave-5A hook point) — block REWRITES the
-      // tool result into a stub; loop continues. No bailOut, no abort.
+      // Tool-output guardrail — block REWRITES the tool result into a stub;
+      // loop continues. No bailOut, no abort.
       if (config.outputPipeline) {
         const originTool = toolCalls.find((c) => c.id === execResult.toolCallId);
-        const toolGuardResult = await runToolOutput(
-          config.outputPipeline,
+        const toolGuardResult = await config.outputPipeline.runToolOutput(
           resultContent,
           originTool?.name,
         );
@@ -689,7 +679,7 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
 
     // [8] Iteration completed normally; fire onIterationEnd(done=false), keep
     //     the span open for the orchestrator to close on its next pass through
-    //     the while loop (matches today's L611 "end previous iteration span").
+    //     the while loop.
     fireIterationEnd(ctx, false);
     return { kind: 'continue' };
   }

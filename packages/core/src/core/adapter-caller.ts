@@ -2,21 +2,17 @@
  * Adapter caller — executes one adapter turn (streaming or non-streaming)
  * with retry-with-backoff and returns a unified discriminated result.
  *
- * Wave-5B Step 2 scope: the module now owns the full retry-with-backoff
- * loop (formerly in `AgentLoop.run()` L622-L739) and branches on the
- * configured `streaming` flag to delegate to either {@link StreamHandler}
- * or `adapter.chat`. The Step-1 `callOnce` surface remains exported as a
- * thin internal helper folded into the chat branch.
+ * Owns the full retry-with-backoff loop and branches on the configured
+ * `streaming` flag to delegate to either {@link StreamHandler} or
+ * `adapter.chat`. `callOnce` is also exported as a thin helper folded into
+ * the chat branch.
  *
- * Asymmetry note (ADR §9 R1): StreamHandler yields the `{type:'error'}`
- * event itself on stream failure; AdapterCaller MUST NOT re-yield in
- * that case. On chat failure, AdapterCaller also does NOT yield — the
- * caller (run()'s inline bail today, IterationRunner's bailOut in
- * Step 3) is responsible for yielding the wrapped error event. Net
- * effect: exactly one `{type:'error'}` event per failed adapter turn.
- *
- * See `docs/forge-fix/wave-5/wave-5b-adr-v2.md` §2.1, §5, §7 Step 2,
- * §9 R1, §9 R2.
+ * **Error-yielding asymmetry**: StreamHandler yields the `{type:'error'}`
+ * event itself on stream failure; AdapterCaller MUST NOT re-yield in that
+ * case. On chat failure, AdapterCaller also does NOT yield — the caller
+ * (IterationRunner's bailOut) is responsible for yielding the wrapped error
+ * event. Net effect: exactly one `{type:'error'}` event per failed adapter
+ * turn.
  *
  * @module
  */
@@ -29,21 +25,21 @@ import { computeBackoffMs } from '../infra/backoff.js';
 import { type CircuitBreaker, CircuitOpenError } from '../infra/circuit-breaker.js';
 import type { StreamHandler } from './stream-handler.js';
 
-/** Successful single-attempt adapter call result (Step 1 shape; retained). */
+/** Successful single-attempt adapter call result. */
 export interface AdapterCallOnceOk {
   readonly ok: true;
   readonly message: Message;
   readonly usage: TokenUsage;
 }
 
-/** Failed single-attempt adapter call result (Step 1 shape; retained). */
+/** Failed single-attempt adapter call result. */
 export interface AdapterCallOnceFail {
   readonly ok: false;
   readonly error: HarnessError | Error;
   readonly errorCategory: HarnessErrorCode;
-  /** Wave-13 D-5: set when the error was a chat-path timeout. */
+  /** Set when the error was a chat-path timeout. */
   readonly timeoutMs?: number;
-  /** Wave-13 D-5: adapter.name captured at failure time for span attribution. */
+  /** adapter.name captured at failure time for span attribution. */
   readonly adapterName?: string;
 }
 
@@ -60,9 +56,9 @@ export interface AdapterCallOk {
   readonly path: 'chat' | 'stream';
   /** How many retries were burned (for observer attribution). */
   readonly attempts: number;
-  /** Wave-13 D-6: cumulative backoff time spent sleeping across all retries (ms). */
+  /** Cumulative backoff time spent sleeping across all retries (ms). */
   readonly totalBackoffMs?: number;
-  /** Wave-13 D-6: total wall-clock time from first attempt to success (ms). */
+  /** Total wall-clock time from first attempt to success (ms). */
   readonly totalDurationMs?: number;
 }
 
@@ -73,13 +69,13 @@ export interface AdapterCallFail {
   readonly errorCategory: HarnessErrorCode;
   readonly path: 'chat' | 'stream';
   readonly attempts: number;
-  /** Wave-13 D-6: cumulative backoff time spent sleeping across all retries (ms). */
+  /** Cumulative backoff time spent sleeping across all retries (ms). */
   readonly totalBackoffMs?: number;
-  /** Wave-13 D-6: total wall-clock time from first attempt to terminal failure (ms). */
+  /** Total wall-clock time from first attempt to terminal failure (ms). */
   readonly totalDurationMs?: number;
-  /** Wave-13 D-5: set when the terminal error was a non-streaming chat timeout. */
+  /** Set when the terminal error was a non-streaming chat timeout. */
   readonly timeoutMs?: number;
-  /** Wave-13 D-5: adapter.name captured at failure time for span attribution. */
+  /** adapter.name captured at failure time for span attribution. */
   readonly adapterName?: string;
 }
 
@@ -90,11 +86,10 @@ export type AdapterCallResult = AdapterCallOk | AdapterCallFail;
  * Observer callback info for each retry decision. Invoked BEFORE the
  * backoff sleep, once per retry decision.
  *
- * `errorPreview` is REQUIRED on the chat path and UNDEFINED on the
- * stream path — mirrors today's agent-loop.ts L702 (chat retry span
- * event) vs L658 (stream retry span event). The asymmetry is
- * intentional: StreamResult carries only the already-wrapped error,
- * not the original throw, so a preview would be duplicative.
+ * `errorPreview` is REQUIRED on the chat path and UNDEFINED on the stream
+ * path. The asymmetry is intentional: StreamResult carries only the
+ * already-wrapped error, not the original throw, so a preview would be
+ * duplicative.
  */
 export interface AdapterRetryInfo {
   readonly attempt: number;
@@ -103,15 +98,15 @@ export interface AdapterRetryInfo {
   /** REQUIRED on chat path; UNDEFINED on stream path. Sliced to ≤500 chars. */
   readonly errorPreview?: string;
   /**
-   * Wave-13 D-4: computed backoff delay (ms) for this retry attempt. Callers
-   * emit this as a span attribute (`backoff_ms`) and/or a histogram metric
+   * Computed backoff delay (ms) for this retry attempt. Callers emit this as
+   * a span attribute (`backoff_ms`) and/or a histogram metric
    * (`harness.adapter.retry_backoff_ms`) with `error_category` label.
    */
   readonly backoffMs?: number;
   /**
-   * Wave-13 D-4: 1-based retry counter (= attempt + 1) for human-facing
-   * telemetry where "retry #1" / "retry #2" is clearer than the 0-based
-   * attempt index used internally.
+   * 1-based retry counter (= attempt + 1) for human-facing telemetry where
+   * "retry #1" / "retry #2" is clearer than the 0-based attempt index used
+   * internally.
    */
   readonly retryNumber?: number;
 }
@@ -143,24 +138,23 @@ export interface AdapterCallerConfig {
    */
   readonly circuitBreaker?: CircuitBreaker;
   /**
-   * Wave-12 P1-4: optional per-adapter-invocation timeout in milliseconds
-   * applied to the non-streaming `adapter.chat()` path.
+   * Optional per-adapter-invocation timeout in milliseconds applied to the
+   * non-streaming `adapter.chat()` path.
    *
-   * Default: `undefined` — **unlimited** (matches pre-Wave-12 behaviour).
-   * Callers that want the non-streaming adapter promise to be bounded
-   * should set a positive value; when exceeded, the chat is aborted via
-   * an internal `AbortController` chained with `config.signal`, and the
-   * call resolves with `HarnessErrorCode.CORE_TIMEOUT`.
+   * Default: `undefined` — **unlimited**. Callers that want the non-streaming
+   * adapter promise to be bounded should set a positive value; when exceeded,
+   * the chat is aborted via an internal `AbortController` chained with
+   * `config.signal`, and the call resolves with `HarnessErrorCode.CORE_TIMEOUT`.
    *
-   * Streaming has its own size-based safeguards in `StreamAggregator`
-   * and is intentionally out of scope for this timeout.
+   * Streaming has its own size-based safeguards in `StreamAggregator` and is
+   * intentionally out of scope for this timeout.
    */
   readonly adapterTimeoutMs?: number;
   /**
-   * Wave-13 D-3 / D-8: optional structured logger. When provided, AdapterCaller
-   * emits debug-level diagnostics for ops-visible abnormal conditions that
-   * were previously silent (orphaned post-timeout adapter rejections,
-   * fallback error-classification). Intentionally debug-level to avoid noise.
+   * Optional structured logger. When provided, AdapterCaller emits
+   * debug-level diagnostics for ops-visible abnormal conditions that would
+   * otherwise be silent (orphaned post-timeout adapter rejections, fallback
+   * error-classification). Intentionally debug-level to avoid noise.
    */
   readonly logger?: {
     debug?: (msg: string, meta?: Record<string, unknown>) => void;
@@ -176,14 +170,14 @@ export interface AdapterCaller {
    * NOTHING (return-only). Internal retry loop consumes abort during
    * backoff and surfaces it as `{ok:false, errorCategory:HarnessErrorCode.CORE_ABORTED}`.
    *
-   * Asymmetry (ADR §9 R1): StreamHandler yields `{type:'error'}` itself
-   * on stream failure; AdapterCaller does NOT re-yield. On chat
+   * **Error-yielding asymmetry**: StreamHandler yields `{type:'error'}`
+   * itself on stream failure; AdapterCaller does NOT re-yield. On chat
    * failure, AdapterCaller also does NOT yield — the caller wraps and
    * yields. Net: exactly one `{type:'error'}` event per failed turn.
    *
-   * Wave-5B Step 3: per-call `onRetry` is supplied by `IterationRunner`
-   * so the active iteration span id is captured at call time without
-   * leaking mutable state onto AdapterCaller's closure.
+   * Per-call `onRetry` is supplied by `IterationRunner` so the active
+   * iteration span id is captured at call time without leaking mutable state
+   * onto AdapterCaller's closure.
    */
   call(
     conversation: readonly Message[],
@@ -192,10 +186,10 @@ export interface AdapterCaller {
   ): AsyncGenerator<AgentEvent, AdapterCallResult>;
 
   /**
-   * Execute a single non-streaming adapter turn without retry. Thin
-   * wrapper around `adapter.chat`; retained from Step 1 for callers
-   * that want to own the retry policy externally. Never throws:
-   * errors are caught, categorized, and returned as `{ok:false}`.
+   * Execute a single non-streaming adapter turn without retry. Thin wrapper
+   * around `adapter.chat`; for callers that want to own the retry policy
+   * externally. Never throws: errors are caught, categorized, and returned
+   * as `{ok:false}`.
    */
   callOnce(conversation: readonly Message[]): Promise<AdapterCallOnceResult>;
 }
@@ -209,21 +203,18 @@ export interface AdapterCaller {
  */
 export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): AdapterCaller {
   /**
-   * Wave-12 P1-17: precompute a `Set<string>` for O(1) `retryableErrors`
-   * membership checks on the hot retry path. Replaces two `includes()`
-   * linear scans per retry decision (one per call path — chat and stream).
+   * Precompute a `Set<string>` for O(1) `retryableErrors` membership checks
+   * on the hot retry path (replaces linear `includes()` per retry decision).
    * The public API keeps accepting `readonly string[]` so callers remain
    * source-compatible.
    */
   const retryableErrorSet = new Set<string>(config.retryableErrors);
 
   /**
-   * Sleep for exponential backoff with jitter. Rejects with AbortedError
-   * if `config.signal` fires during the wait. Extracted from former
-   * `AgentLoop.backoff` (L1216-L1253).
-   *
-   * Wave-13 D-4/D-6: returns the delay used so the caller can accumulate
-   * a cumulative backoff total and publish per-retry observability.
+   * Sleep for exponential backoff with jitter. Rejects with AbortedError if
+   * `config.signal` fires during the wait. Returns the delay used so the
+   * caller can accumulate a cumulative backoff total and publish per-retry
+   * observability.
    */
   function backoff(attempt: number): { delay: number; promise: Promise<void> } {
     const delay = computeBackoffMs(attempt, {
@@ -238,11 +229,10 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
       }
 
       let settled = false;
-      // Wave-12 P2-1: hoist the timer handle so the abort listener can
-      // reference it BEFORE the timer is armed. Previously the listener
-      // was registered AFTER `setTimeout` returned, leaving a micro-race
-      // where a synchronously-fired abort between the two statements would
-      // not cancel the timer; the abort listener is now installed first.
+      // Hoist the timer handle so the abort listener can reference it BEFORE
+      // the timer is armed. Registering the listener AFTER `setTimeout`
+      // returns leaves a micro-race where a synchronously-fired abort between
+      // the two statements would not cancel the timer.
       // eslint-disable-next-line prefer-const -- late-bound; onAbort closes over it before assignment
       let timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -255,7 +245,7 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
         }
       };
 
-      // Register abort listener BEFORE arming the timer (P2-1).
+      // Register abort listener BEFORE arming the timer.
       config.signal.addEventListener('abort', onAbort, { once: true });
 
       timer = setTimeout(() => {
@@ -278,9 +268,9 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
     conversation: readonly Message[],
   ): Promise<AdapterCallOnceResult> {
     const chatFn = async (): Promise<AdapterCallOnceResult> => {
-      // Wave-12 P1-4: when `adapterTimeoutMs` is set, chain an internal
-      // AbortController with `config.signal` and race `adapter.chat` against
-      // an abortable timeout. Unset = unlimited (pre-Wave-12 semantics).
+      // When `adapterTimeoutMs` is set, chain an internal AbortController
+      // with `config.signal` and race `adapter.chat` against an abortable
+      // timeout. Unset = unlimited.
       if (config.adapterTimeoutMs !== undefined && config.adapterTimeoutMs > 0) {
         const timeoutMs = config.adapterTimeoutMs;
         const internalAbort = new AbortController();
@@ -338,12 +328,11 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
           }
           // Swallow any rejection from the now-orphaned chatPromise on
           // timeout; without this the Node process prints an
-          // UnhandledPromiseRejection when the adapter finally throws
-          // its own AbortError after we've already resolved/rejected.
-          //
-          // Wave-13 D-3: emit a debug log so ops can detect abnormal upstream
-          // behaviour (e.g. adapter not honouring the abort signal). Kept at
-          // debug-level — not every orphan rejection is actionable.
+          // UnhandledPromiseRejection when the adapter finally throws its own
+          // AbortError after we've already resolved/rejected. Emit a debug
+          // log so ops can detect abnormal upstream behaviour (e.g. adapter
+          // not honouring the abort signal) — kept at debug-level because
+          // not every orphan rejection is actionable.
           if (timedOut) {
             chatPromise.catch((err: unknown) => {
               config.logger?.debug?.('adapter orphan after timeout', {
@@ -377,12 +366,12 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
           errorCategory: HarnessErrorCode.ADAPTER_CIRCUIT_OPEN,
         };
       }
-      // Wave-12 P1-4: preserve CORE_TIMEOUT classification when the timeout
-      // path rejected — `categorizeAdapterError` would otherwise coerce it
-      // back to ADAPTER_UNKNOWN.
+      // Preserve CORE_TIMEOUT classification when the timeout path rejected —
+      // `categorizeAdapterError` would otherwise coerce it back to
+      // ADAPTER_UNKNOWN.
       if (err instanceof HarnessError && err.code === HarnessErrorCode.CORE_TIMEOUT) {
-        // Wave-13 D-5: carry the timeout budget and adapter name so the
-        // calling span can attribute the timeout without parsing the message.
+        // Carry the timeout budget and adapter name so the calling span can
+        // attribute the timeout without parsing the message.
         return {
           ok: false,
           error: err,
@@ -412,16 +401,16 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
       // Per-call onRetry supplied by IterationRunner so the active iteration
       // span id is captured at call time without a side-channel.
       const fireRetry = onRetry;
-      // Wave-13 D-6: accumulate across all retry attempts so the final result
-      // (success, terminal failure, or abort) can carry the cumulative
-      // breakdown as span attributes. Measured from the START of call() so
+      // Accumulate across all retry attempts so the final result (success,
+      // terminal failure, or abort) can carry the cumulative breakdown as
+      // span attributes. Measured from the START of call() so
       // `totalDurationMs` includes both adapter wall-clock and backoff sleeps.
       const callStartedAt = Date.now();
       let totalBackoffMs = 0;
 
       for (let attempt = 0; attempt <= config.maxAdapterRetries; attempt++) {
         // Check abort before each retry attempt. On attempt 0 the top-of-loop
-        // check in run() already fired; skipping here matches today's L632.
+        // check in run() already fired; skip here to avoid double-check.
         if (attempt > 0 && config.signal.aborted) {
           return {
             ok: false,
@@ -453,26 +442,24 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
 
         if (config.streaming) {
           // Streaming branch — delegate to StreamHandler. We iterate its
-          // generator manually (rather than `yield*`) so we can SWALLOW
-          // the terminal `{type:'error'}` event when a retry is going to
-          // follow. The ADR §9 R1 invariant is: the consumer sees
-          // EXACTLY ONE `{type:'error'}` per failed adapter turn, even
-          // across retries. StreamHandler yields the error per-attempt
-          // to preserve today's observer-visible stream semantics; the
-          // caller (AdapterCaller) is responsible for coalescing.
+          // generator manually (rather than `yield*`) so we can SWALLOW the
+          // terminal `{type:'error'}` event when a retry is going to follow.
+          // Invariant: the consumer sees EXACTLY ONE `{type:'error'}` per
+          // failed adapter turn, even across retries. StreamHandler yields
+          // the error per-attempt to preserve observer-visible stream
+          // semantics; AdapterCaller coalesces them.
           const streamGen = config.streamHandler.handle(
             conversation,
             cumulativeStreamBytesSoFar,
           );
           let pendingError: Extract<AgentEvent, { type: 'error' }> | undefined;
 
-          // MF-1 (Wave-5B follow-up): wrap the manual pump in try/finally so
-          // consumer `.return()` on the outer `run()` generator forwards
-          // iterator-close into StreamHandler. Without this, the `for await`
-          // inside StreamHandler stays suspended on the adapter's chunk until
-          // the abort signal fires, leaking file handles/sockets/timers for
-          // adapters that don't cooperate promptly with `config.signal`.
-          // See wave-5b-review-redteam.md §M-1.
+          // Wrap the manual pump in try/finally so consumer `.return()` on
+          // the outer `run()` generator forwards iterator-close into
+          // StreamHandler. Without this, the `for await` inside StreamHandler
+          // stays suspended on the adapter's chunk until the abort signal
+          // fires, leaking file handles/sockets/timers for adapters that
+          // don't cooperate promptly with `config.signal`.
           try {
             // Pump: pass through text_delta / tool_call_delta / warning
             // unchanged; buffer the single terminal error event so we can
@@ -506,9 +493,8 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
                   // should see only the FINAL terminal error, not one per
                   // failed attempt.
                   pendingError = undefined;
-                  // Wave-13 D-4: compute backoff BEFORE firing the retry hook
-                  // so the hook receives the actual sleep duration for span
-                  // attribution. Capture delay via the { delay, promise } tuple.
+                  // Compute backoff BEFORE firing the retry hook so the hook
+                  // receives the actual sleep duration for span attribution.
                   const bo = backoff(attempt);
                   fireRetry?.({
                     attempt,
@@ -526,9 +512,9 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
                   }
                   break; // exit pump-while; outer for-loop runs next attempt
                 }
-                // Terminal failure: forward the buffered error event
-                // verbatim so the observer-visible stream matches today's
-                // "yield then return" ordering (ADR §2.2 / §9 R1).
+                // Terminal failure: forward the buffered error event verbatim
+                // so the observer-visible stream preserves "yield then return"
+                // ordering.
                 config.circuitBreaker?.recordFailure();
                 if (pendingError) yield pendingError;
                 return {
@@ -591,8 +577,8 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
           && attempt < config.maxAdapterRetries
         ) {
           const errorPreview = (err instanceof Error ? err.message : String(err)).slice(0, 500);
-          // Wave-13 D-4: compute backoff BEFORE firing the retry hook so the
-          // hook observer sees the actual sleep duration and retry #.
+          // Compute backoff BEFORE firing the retry hook so the hook observer
+          // sees the actual sleep duration and retry #.
           const bo = backoff(attempt);
           fireRetry?.({
             attempt,
@@ -612,11 +598,10 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
           continue;
         }
         // Not retryable or retries exhausted. AdapterCaller does NOT yield
-        // on chat failure — the caller wraps and yields.
-        //
-        // Wave-13 D-5/D-6: propagate timeout metadata (if any) and cumulative
-        // retry metrics so the caller's span can carry
-        // `timeout_ms` / `adapter` / `total_backoff_ms` / `total_duration_ms`.
+        // on chat failure — the caller wraps and yields. Propagate timeout
+        // metadata (if any) and cumulative retry metrics so the caller's
+        // span can carry `timeout_ms` / `adapter` / `total_backoff_ms` /
+        // `total_duration_ms`.
         return {
           ok: false,
           error: err,
@@ -631,9 +616,8 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
       }
 
       // Unreachable: the for-loop always returns (success, retryable
-      // exhaustion, or non-retryable). Defensive branch preserves the
-      // pre-Wave-5B "should not reach here" semantics from agent-loop.ts
-      // L739-L746 (unreachable bail).
+      // exhaustion, or non-retryable). Defensive branch keeps the
+      // "should not reach here" contract explicit for future maintainers.
       return {
         ok: false,
         error: new HarnessError(

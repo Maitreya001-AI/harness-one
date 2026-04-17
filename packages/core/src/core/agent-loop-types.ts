@@ -12,7 +12,7 @@
 
 import type { AgentAdapter, ExecutionStrategy, ToolCallRequest, ToolSchema, TokenUsage } from './types.js';
 import type { AgentLoopTraceManager } from './trace-interface.js';
-import type { GuardrailPipeline } from '../guardrails/pipeline.js';
+import type { GuardrailPipeline } from './guardrail-port.js';
 
 /**
  * ARCH-006: Iteration-level instrumentation hook. Every method is optional;

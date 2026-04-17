@@ -16,7 +16,7 @@ import { validateToolCall } from './validate.js';
 import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import { safeWarn } from '../infra/safe-log.js';
 import { unrefTimeout } from '../infra/timers.js';
-import type { Logger } from '../observe/logger.js';
+import type { Logger } from '../infra/logger.js';
 
 /**
  * Resolved registry configuration — reflects the defaults applied by

@@ -74,3 +74,16 @@ export type {
   HarnessHealthCheck,
 } from './lifecycle.js';
 export { createHarnessLifecycle } from './lifecycle.js';
+
+// Secret redaction primitives — hoisted from `infra/redact.ts` so adapter
+// packages (langfuse, openai, ...) can reuse the canonical implementation
+// instead of inlining their own copies.
+export type { RedactConfig, Redactor } from '../infra/redact.js';
+export {
+  createRedactor,
+  redactValue,
+  sanitizeAttributes,
+  REDACTED_VALUE,
+  DEFAULT_SECRET_PATTERN,
+  POLLUTING_KEYS,
+} from '../infra/redact.js';

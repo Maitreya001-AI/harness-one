@@ -150,20 +150,20 @@ describe('createCostTracker', () => {
     });
   });
 
-  describe('setBudget', () => {
-    it('sets budget after creation', () => {
+  describe('updateBudget', () => {
+    it('sets budget after creation via updateBudget()', async () => {
       const tracker = createCostTracker({ pricing });
-      tracker.setBudget(0.001);
+      await tracker.updateBudget(0.001);
       tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
       const alert = tracker.checkBudget();
       expect(alert).not.toBeNull();
     });
   });
 
-  describe('setPricing', () => {
-    it('adds pricing after creation', () => {
+  describe('updatePricing', () => {
+    it('adds pricing after creation via updatePricing()', async () => {
       const tracker = createCostTracker();
-      tracker.setPricing(pricing);
+      await tracker.updatePricing(pricing);
       const record = tracker.recordUsage({
         traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0,
       });
@@ -547,9 +547,9 @@ describe('createCostTracker', () => {
     });
   });
 
-  // Fix 6: setBudget alert timing documentation
-  describe('setBudget alert timing', () => {
-    it('alerts are not re-evaluated immediately on budget change', () => {
+  // Fix 6: updateBudget alert timing documentation
+  describe('updateBudget alert timing', () => {
+    it('alerts are not re-evaluated immediately on budget change', async () => {
       const handler = vi.fn();
       const tracker = createCostTracker({ pricing, budget: 100.0 });
       tracker.onAlert(handler);
@@ -559,7 +559,7 @@ describe('createCostTracker', () => {
       expect(handler).not.toHaveBeenCalled(); // 0.003 << 100.0
 
       // Change budget to something very small — alerts NOT fired immediately
-      tracker.setBudget(0.001);
+      await tracker.updateBudget(0.001);
       expect(handler).not.toHaveBeenCalled();
 
       // Next recordUsage triggers the alert re-evaluation
@@ -1433,62 +1433,6 @@ describe('createCostTracker', () => {
       } finally {
         logSpy.mockRestore();
       }
-    });
-  });
-
-  // P1-15: Mutator deprecation warnings fire once per tracker.
-  describe('P1-15 @deprecated mutator warnings', () => {
-    it('setPricing() emits a one-shot deprecation warning routed via logger', () => {
-      const warns: string[] = [];
-      const logger = {
-        debug: () => {},
-        info: () => {},
-        warn: (msg: string) => { warns.push(msg); },
-        error: () => {},
-        child: () => logger,
-      };
-      const tracker = createCostTracker({ logger });
-      tracker.setPricing([{ model: 'x', inputPer1kTokens: 0.001, outputPer1kTokens: 0 }]);
-      tracker.setPricing([{ model: 'y', inputPer1kTokens: 0.001, outputPer1kTokens: 0 }]);
-      tracker.setPricing([{ model: 'z', inputPer1kTokens: 0.001, outputPer1kTokens: 0 }]);
-      const depWarns = warns.filter((w) => w.includes('@deprecated setPricing'));
-      expect(depWarns).toHaveLength(1);
-    });
-
-    it('setBudget() emits a one-shot deprecation warning routed via logger', () => {
-      const warns: string[] = [];
-      const logger = {
-        debug: () => {},
-        info: () => {},
-        warn: (msg: string) => { warns.push(msg); },
-        error: () => {},
-        child: () => logger,
-      };
-      const tracker = createCostTracker({ logger });
-      tracker.setBudget(1);
-      tracker.setBudget(2);
-      tracker.setBudget(3);
-      const depWarns = warns.filter((w) => w.includes('@deprecated setBudget'));
-      expect(depWarns).toHaveLength(1);
-    });
-
-    it('setPricing() remains functional after the deprecation warning', () => {
-      const tracker = createCostTracker();
-      tracker.setPricing([{ model: 'keeps-working', inputPer1kTokens: 0.5, outputPer1kTokens: 0 }]);
-      const rec = tracker.recordUsage({
-        traceId: 't', model: 'keeps-working', inputTokens: 1000, outputTokens: 0,
-      });
-      expect(rec.estimatedCost).toBeCloseTo(0.5, 5);
-    });
-
-    it('setBudget() remains functional after the deprecation warning', () => {
-      const tracker = createCostTracker({
-        pricing: [{ model: 'm', inputPer1kTokens: 1.0, outputPer1kTokens: 0 }],
-      });
-      tracker.setBudget(0.0005);
-      tracker.recordUsage({ traceId: 't', model: 'm', inputTokens: 1000, outputTokens: 0 });
-      // cost 1.0 >> budget 0.0005 → exceeded
-      expect(tracker.checkBudget()?.type).toBe('exceeded');
     });
   });
 

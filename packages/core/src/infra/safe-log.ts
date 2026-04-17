@@ -9,7 +9,7 @@
  * @module
  */
 
-import { createLogger, type Logger } from '../observe/logger.js';
+import { createLogger, type Logger } from './logger.js';
 
 let cachedDefaultLogger: Logger | undefined;
 

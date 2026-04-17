@@ -8,28 +8,26 @@ import type { AgentLoop } from '../core/agent-loop.js';
 import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import { prefixedSecureId } from '../infra/ids.js';
 import { computeJitterMs } from '../infra/backoff.js';
-import type { Logger } from '../observe/logger.js';
+import type { Logger } from '../infra/logger.js';
 import type { MetricsPort } from '../observe/metrics-port.js';
 import type { TraceManager } from '../observe/trace-manager.js';
 import type { AgentPool, PoolConfig, PooledAgent, PoolStats } from './types.js';
 
 /**
- * Wave-13 B-1..B-4: Optional observability wiring for the agent pool. These
- * fields are additive to {@link PoolConfig} — when absent, the pool behaves
- * exactly as before (no-op logger/metrics calls). The fields live on the
- * factory config parameter (widened via intersection type on
- * {@link createAgentPool}) so we don't need to modify the closed
- * {@link PoolConfig} surface in `types.ts`.
+ * Optional observability wiring for the agent pool. These fields are additive
+ * to {@link PoolConfig} — when absent, the pool behaves exactly as before
+ * (no-op logger/metrics calls). The fields live on the factory config
+ * parameter (widened via intersection type on {@link createAgentPool}) so we
+ * don't need to modify the closed {@link PoolConfig} surface in `types.ts`.
  */
 export interface AgentPoolObservabilityConfig {
   /**
-   * Wave-13 B-1..B-3: Structured logger for queue-depth / resize / dispose
-   * signals. When omitted, corresponding log lines are skipped entirely
-   * (no allocation).
+   * Structured logger for queue-depth / resize / dispose signals. When
+   * omitted, corresponding log lines are skipped entirely (no allocation).
    */
   readonly logger?: Logger;
   /**
-   * Wave-13 B-1..B-3: MetricsPort for pool gauges and counters:
+   * MetricsPort for pool gauges and counters:
    *  - `harness.pool.queue_depth` (gauge) — emitted on every `acquireAsync()`.
    *  - `harness.pool.queue_full` (counter) — incremented per
    *    POOL_QUEUE_FULL throw.
@@ -39,16 +37,16 @@ export interface AgentPoolObservabilityConfig {
    */
   readonly metrics?: MetricsPort;
   /**
-   * Wave-13 B-4: Optional trace manager. When provided together with
+   * Optional trace manager. When provided together with
    * `acquireAsync({ spanId })`, a `pool_acquire_timeout` span event is
    * attached before the POOL_TIMEOUT rejection, carrying queue depth and
    * active-agent counts for observability.
    */
   readonly traceManager?: TraceManager;
   /**
-   * Wave-13 B-1..B-3: Pool identifier surfaced as the `pool_id` log
-   * attribute and metric label. Helpful when multiple pools share a single
-   * logger/metrics backend. Defaults to `'default'`.
+   * Pool identifier surfaced as the `pool_id` log attribute and metric label.
+   * Helpful when multiple pools share a single logger/metrics backend.
+   * Defaults to `'default'`.
    */
   readonly poolId?: string;
 }
@@ -57,35 +55,35 @@ interface PoolEntry {
   agent: PooledAgent;
   state: 'idle' | 'active';
   idleTimer: ReturnType<typeof setTimeout> | null;
-  /** Fix 25: Monotonic timestamp (performance.now()) for creation time. */
+  /** Monotonic timestamp (performance.now()) for creation time. */
   monotonicCreatedAt: number;
 }
 
-/** Pending async acquire request (Fix 24 + CQ-017). */
+/** Pending async acquire request. */
 interface PendingAcquire {
   resolve: (agent: PooledAgent) => void;
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout> | null;
   /**
-   * CQ-017: Cleanup function invoked when the request is settled (resolved,
-   * rejected, timed out, or aborted). Used to detach the AbortSignal listener.
+   * Cleanup function invoked when the request is settled (resolved, rejected,
+   * timed out, or aborted). Used to detach the AbortSignal listener.
    */
   cleanup: () => void;
   role?: string;
 }
 
 /**
- * CQ-017: Options for `acquireAsync`. Accepts a number for backwards
- * compatibility (previous signature was `acquireAsync(timeoutMs)`).
+ * Options for `acquireAsync`. Accepts a number for backwards compatibility
+ * (previous signature was `acquireAsync(timeoutMs)`).
  */
 export interface AcquireAsyncOptions {
   readonly timeoutMs?: number;
   readonly signal?: AbortSignal;
   readonly role?: string;
   /**
-   * Wave-13 B-4: Optional span id to attach a `pool_acquire_timeout` event
-   * to before rejecting with POOL_TIMEOUT. Only consulted when the pool was
-   * configured with a `traceManager`; otherwise silently ignored.
+   * Optional span id to attach a `pool_acquire_timeout` event to before
+   * rejecting with POOL_TIMEOUT. Only consulted when the pool was configured
+   * with a `traceManager`; otherwise silently ignored.
    */
   readonly spanId?: string;
 }
@@ -106,8 +104,8 @@ export function createAgentPool(
 ): AgentPool & {
   /**
    * Async acquire with optional timeout and AbortSignal. Queues the request
-   * when the pool is exhausted. On abort (CQ-017), the pending entry is
-   * removed from the queue and the promise rejects with `POOL_ABORTED`.
+   * when the pool is exhausted. On abort, the pending entry is removed from
+   * the queue and the promise rejects with `POOL_ABORTED`.
    *
    * Backwards compatible: accepts a plain number (legacy `timeoutMs`).
    */
@@ -118,12 +116,11 @@ export function createAgentPool(
   const max = config.max ?? 10;
   const idleTimeout = config.idleTimeout ?? 60_000;
   const maxAge = config.maxAge;
-  // P0-1 (Wave-12): Cap pending-queue depth to prevent unbounded memory
-  // growth under sustained acquire bursts. Default matches research-report
-  // recommendation (1000). `<= 0` disables queuing entirely.
+  // Cap pending-queue depth to prevent unbounded memory growth under
+  // sustained acquire bursts. Default 1000; `<= 0` disables queuing entirely.
   const maxPendingQueueSize = config.maxPendingQueueSize ?? 1000;
 
-  // Wave-13 B-1..B-4: optional observability wiring.
+  // Optional observability wiring.
   const logger: Logger | undefined = config.logger;
   const metrics: MetricsPort | undefined = config.metrics;
   const traceManager: TraceManager | undefined = config.traceManager;
@@ -149,21 +146,21 @@ export function createAgentPool(
   const entries = new Map<string, PoolEntry>();
   let disposed = false;
   /**
-   * LM-014: Idempotent-dispose latch. Serializes concurrent `dispose()` calls
-   * onto the same promise so callers all observe the same completion and
-   * teardown never runs twice.
+   * Idempotent-dispose latch. Serializes concurrent `dispose()` calls onto
+   * the same promise so callers all observe the same completion and teardown
+   * never runs twice.
    */
   let disposePromise: Promise<void> | null = null;
   let warmedUp = false;
   let totalCreated = 0;
   let totalRecycled = 0;
-  /** OBS-010: Counter for dispose errors silently dropped during teardown. */
+  /** Counter for dispose errors silently dropped during teardown. */
   let totalDisposeErrors = 0;
 
-  // Fix 24: Queue for pending async acquire requests
+  // Queue for pending async acquire requests
   const pendingQueue: PendingAcquire[] = [];
 
-  // Fix 25: Use monotonic timing (performance.now()) for internal expiry
+  // Use monotonic timing (performance.now()) for internal expiry
   // calculations. Date.now() is only used for the public-facing createdAt
   // field. performance.now() is monotonic and immune to clock skew.
   function now(): number {
@@ -177,8 +174,8 @@ export function createAgentPool(
 
   function createEntry(role?: string): PoolEntry {
     const loop: AgentLoop = factory(role);
-    // SEC-002: Use cryptographically secure IDs for pool agents to prevent
-    // enumeration in multi-tenant deployments.
+    // Use cryptographically secure IDs for pool agents to prevent enumeration
+    // in multi-tenant deployments.
     const id = prefixedSecureId('pa');
     const agent: PooledAgent = Object.freeze({
       id,
@@ -191,14 +188,14 @@ export function createAgentPool(
   }
 
   /**
-   * LM-014: Await the underlying loop's dispose so pending file/socket
-   * handles close before we walk away. `AgentLoop.dispose()` is
-   * synchronous today; awaiting `Promise.resolve(result)` keeps the call
-   * site future-proof for adapters that may return a promise.
+   * Await the underlying loop's dispose so pending file/socket handles close
+   * before we walk away. `AgentLoop.dispose()` is synchronous today; awaiting
+   * `Promise.resolve(result)` keeps the call site future-proof for adapters
+   * that may return a promise.
    */
   /**
-   * Wave-13 B-3: Best-effort redaction of a thrown dispose error for logging.
-   * Avoids leaking full stack traces through the logger boundary while still
+   * Best-effort redaction of a thrown dispose error for logging. Avoids
+   * leaking full stack traces through the logger boundary while still
    * surfacing enough for operators to correlate with traces.
    */
   function sanitizeDisposeError(err: unknown): Readonly<Record<string, unknown>> {
@@ -210,8 +207,7 @@ export function createAgentPool(
 
   function reportDisposeError(err: unknown): void {
     totalDisposeErrors++;
-    // Wave-13 B-3: log + counter on every dispose failure (previously the
-    // error was only reflected in the `disposeErrors` stats counter).
+    // Log + counter on every dispose failure.
     if (logger) {
       try {
         logger.warn('agent dispose failed', {
@@ -235,7 +231,7 @@ export function createAgentPool(
       }
     } catch (err) {
       // Individual agent dispose errors should not abort the pool teardown —
-      // tracked via totalDisposeErrors for observability (OBS-010 + B-3).
+      // tracked via totalDisposeErrors for observability.
       reportDisposeError(err);
     }
     entries.delete(entry.agent.id);
@@ -244,7 +240,7 @@ export function createAgentPool(
   /**
    * Fire-and-forget variant for call sites that cannot easily go async
    * (idle-timer expiry, resize(), release()). Errors are tracked via
-   * totalDisposeErrors for observability (OBS-010 + Wave-13 B-3).
+   * totalDisposeErrors for observability.
    */
   function disposeEntrySync(entry: PoolEntry): void {
     clearIdleTimer(entry);
@@ -268,11 +264,11 @@ export function createAgentPool(
 
   function startIdleTimer(entry: PoolEntry): void {
     clearIdleTimer(entry);
-    // Fix 25: Add jitter (0–10% of timeout) to prevent thundering herd.
-    // Delegates to the shared jitter utility for consistency and testability.
-    // P2-4 (Wave-12): Clamp jitter to `idleTimeout * 0.1` — defensive against
-    // a custom random source returning >=1 or rounding oddities that could
-    // push a jittered timer well past the intended 10% ceiling.
+    // Add jitter (0–10% of timeout) to prevent thundering herd. Delegates to
+    // the shared jitter utility for consistency and testability. Clamp jitter
+    // to `idleTimeout * 0.1` — defensive against a custom random source
+    // returning >=1 or rounding oddities that could push a jittered timer
+    // well past the intended 10% ceiling.
     const jitter = Math.min(computeJitterMs(idleTimeout, 0.1), Math.floor(idleTimeout * 0.1));
     const timer = setTimeout(() => {
       // Recycle: dispose idle agent if above min
@@ -306,7 +302,7 @@ export function createAgentPool(
     return { idle, active, total: entries.size, created: totalCreated, recycled: totalRecycled, disposeErrors: totalDisposeErrors };
   }
 
-  // Fix 24: Try to fulfill pending async acquire requests
+  // Try to fulfill pending async acquire requests
   function fulfillPending(): void {
     while (pendingQueue.length > 0) {
       // Find an idle agent
@@ -368,7 +364,7 @@ export function createAgentPool(
       return acquireSync(role);
     },
 
-    // Fix 24 + CQ-017: Async acquire with queuing, timeout, and abort support
+    // Async acquire with queuing, timeout, and abort support
     async acquireAsync(optsOrTimeout?: number | AcquireAsyncOptions): Promise<PooledAgent> {
       if (disposed) {
         throw new HarnessError('Agent pool is disposed', HarnessErrorCode.POOL_DISPOSED);
@@ -381,7 +377,7 @@ export function createAgentPool(
       const signal = opts.signal;
       warmUp(opts.role);
 
-      // CQ-017: If the signal is already aborted, fail fast without queuing.
+      // If the signal is already aborted, fail fast without queuing.
       if (signal?.aborted) {
         throw new HarnessError('Acquire aborted', HarnessErrorCode.POOL_ABORTED, 'The AbortSignal was already aborted when acquireAsync was called');
       }
@@ -391,12 +387,12 @@ export function createAgentPool(
         return acquireSync(opts.role);
       } catch (err: unknown) {
         if (err instanceof HarnessError && err.code === HarnessErrorCode.POOL_EXHAUSTED) {
-          // P0-1 (Wave-12): Reject fast when the pending queue is at capacity
-          // instead of growing the queue unboundedly. Includes current/max in
-          // the error context bag so ops can tune `maxPendingQueueSize`.
+          // Reject fast when the pending queue is at capacity instead of
+          // growing the queue unboundedly. Includes current/max in the error
+          // context bag so ops can tune `maxPendingQueueSize`.
           if (pendingQueue.length >= maxPendingQueueSize) {
-            // Wave-13 B-1: warn + counter BEFORE throwing so operators see the
-            // saturation event even if the caller doesn't surface the thrown
+            // Warn + counter BEFORE throwing so operators see the saturation
+            // event even if the caller doesn't surface the thrown
             // HarnessError. Emits structured context keys aligned with the
             // other pool log lines (pool_id, pending_queue_depth, active,
             // idle) so downstream alerts can filter cleanly.
@@ -439,11 +435,11 @@ export function createAgentPool(
               if (idx >= 0) {
                 pendingQueue.splice(idx, 1);
                 pending.cleanup();
-                // Wave-13 B-4: Attach a span event with queue-depth and
-                // active-agent counts BEFORE the rejection so tracing
-                // backends can tie the timeout to the pool saturation state
-                // at the moment of failure. Skipped silently when either the
-                // trace manager or span id is absent.
+                // Attach a span event with queue-depth and active-agent
+                // counts BEFORE the rejection so tracing backends can tie
+                // the timeout to the pool saturation state at the moment of
+                // failure. Skipped silently when either the trace manager or
+                // span id is absent.
                 if (traceManager && opts.spanId) {
                   try {
                     const snapshotTimeout = getStats();
@@ -473,7 +469,7 @@ export function createAgentPool(
             }
             pending.timer = timer;
 
-            // CQ-017: Abort listener — remove from queue and reject.
+            // Abort listener — remove from queue and reject.
             const onAbort = (): void => {
               const idx = pendingQueue.indexOf(pending);
               if (idx >= 0) {
@@ -504,11 +500,10 @@ export function createAgentPool(
 
             pendingQueue.push(pending);
 
-            // Wave-13 B-1: surface queue depth + active/idle snapshot for
-            // observability. Debug level keeps noise low for healthy pools
-            // while still making saturation traceable in debug builds. Gauge
-            // is always emitted because metrics backends filter/aggregate
-            // themselves.
+            // Surface queue depth + active/idle snapshot for observability.
+            // Debug level keeps noise low for healthy pools while still
+            // making saturation traceable in debug builds. Gauge is always
+            // emitted because metrics backends filter/aggregate themselves.
             const snapshotQueued = getStats();
             if (logger) {
               try {
@@ -537,14 +532,14 @@ export function createAgentPool(
       if (isExpired(entry)) {
         disposeEntrySync(entry);
         totalRecycled++;
-        // Fix 24: Try to fulfill pending requests with a new agent
+        // Try to fulfill pending requests with a new agent
         fulfillPending();
         return;
       }
 
       entry.state = 'idle';
 
-      // Fix 24: Check if there are pending async acquire requests
+      // Check if there are pending async acquire requests
       if (pendingQueue.length > 0) {
         clearIdleTimer(entry);
         entry.state = 'active';
@@ -564,11 +559,11 @@ export function createAgentPool(
       // Trim idle agents if over target
       const stats = getStats();
 
-      // Wave-13 B-2: Structured log + gauge on entry to make autoscaling
-      // visible. The log carries the from/to values and a snapshot of
-      // active/idle so operators can diagnose why a resize succeeded or was
-      // bounded by `max`. The gauge records the final total once the resize
-      // settles (emitted after mutation below).
+      // Structured log + gauge on entry to make autoscaling visible. The log
+      // carries the from/to values and a snapshot of active/idle so operators
+      // can diagnose why a resize succeeded or was bounded by `max`. The
+      // gauge records the final total once the resize settles (emitted after
+      // mutation below).
       if (logger) {
         try {
           logger.info('pool resize', {
@@ -602,9 +597,9 @@ export function createAgentPool(
         }
       }
 
-      // Wave-13 B-2: emit the final pool size as a gauge observation so the
-      // metrics backend sees both pre- and post-resize values (the pre-value
-      // is carried in the `from` log field).
+      // Emit the final pool size as a gauge observation so the metrics
+      // backend sees both pre- and post-resize values (the pre-value is
+      // carried in the `from` log field).
       sizeGauge?.record(entries.size, { pool_id: poolId });
     },
 
@@ -634,8 +629,8 @@ export function createAgentPool(
     },
 
     async dispose(): Promise<void> {
-      // LM-014: Cache the latch so concurrent dispose() callers share one
-      // teardown. `disposed` flips synchronously so subsequent sync paths
+      // Cache the latch so concurrent dispose() callers share one teardown.
+      // `disposed` flips synchronously so subsequent sync paths
       // (acquire/release) see the pool as torn down immediately.
       if (disposePromise) return disposePromise;
       disposed = true;

@@ -93,11 +93,11 @@ import { createEvalRunner } from '@harness-one/devkit';      // 取代旧的 har
 
 ```
                     ┌──────────┐
-                    │ _internal│  ← JSON Schema 验证器 + Token 估算器
+                    │   infra  │  ← JSON Schema 验证器 + Token 估算器 + ids / redact / backoff 等
                     └────┬─────┘
                          │
                     ┌────┴─────┐
-                    │   core   │  ← 共享类型 + AgentLoop + HarnessError
+                    │   core   │  ← 共享类型 + AgentLoop + HarnessError + 内建 guardrail port
                     └────┬─────┘
                          │
     ┌────────┬───────┬───┴───┬────────┬────────┬────────┬────────┐
@@ -106,22 +106,24 @@ import { createEvalRunner } from '@harness-one/devkit';      // 取代旧的 har
  context  prompt   tools  guardrails observe session  memory   eval   evolve  rag  orchestration
     │                │       │          │                │
     ▼                ▼       ▼          ▼                ▼
- _internal       _internal _internal _internal       fs-io (extracted)
+   infra           infra   infra      infra           fs-io (extracted)
 ```
 
 **依赖规则（严格执行）：**
-1. `_internal/` → 无依赖（叶子模块）
-2. `core/` → 仅 `_internal/`
-3. 所有功能模块 → 仅 `core/` + `_internal/`（类型导入为主）
+1. `infra/` → 无依赖（叶子模块；源码目录名即 `packages/core/src/infra/`）
+2. `core/` → 仅 `infra/`（包括 `core/` 内部引用的 `GuardrailPort` 运行时契约）
+3. 所有功能模块 → 仅 `core/` + `infra/`（类型导入为主；`observe/` 额外被允许作为日志/指标 port 的提供方，但仅通过类型引用）
 4. **功能模块之间绝不互相导入**（context、tools、guardrails、prompt 等互不依赖）
 5. `cli/` → 仅 Node.js 内置模块（fs、path、readline）
+
+> 历史版本的文档把 `infra/` 称作 `_internal/`，源码目录从来没有过 `_internal/`；已于此次重构统一到 `infra/`。
 
 ## 设计原则
 
 | 原则 | 实现方式 |
 |------|---------|
 | **工厂函数优先** | 12+ 个模块中绝大多数使用 `createXxx()` 工厂函数。AgentLoop 同时提供 `new AgentLoop()` 类形式与 `createAgentLoop()` 工厂别名（0.2.0 统一风格） |
-| **零运行时依赖** | JSON Schema 验证器、Token 估算器、LRU 缓存均为内部实现（`_internal/`） |
+| **零运行时依赖** | JSON Schema 验证器、Token 估算器、LRU 缓存均为内部实现（`infra/`） |
 | **不可变返回值** | 所有工厂返回的对象使用 `Object.freeze()` 或 `structuredClone` 冻结；metadata 从 0.2.0 起深拷贝防止外部嵌套修改 |
 | **Fail-Closed 安全默认** | 护栏出错时默认拦截请求，而非放行（fail-open 模式下 verdict.reason 区分真正 allow 与错误降级）；所有外部可达 ID 使用 `prefixedSecureId`（crypto-backed）；日志输出通过结构化 Logger 路由（保证 redaction） |
 | **Circuit Breaker** | AdapterCaller 可选 `circuitBreaker` 配置（`infra/circuit-breaker.ts`），在 LLM 持续失败时快速失败防止级联故障 |

@@ -15,11 +15,11 @@ import { createAdapterCaller, type AdapterCaller } from './adapter-caller.js';
 import { createStreamHandler } from './stream-handler.js';
 import { pruneConversation } from './conversation-pruner.js';
 import type { AgentLoopTraceManager } from './trace-interface.js';
-// T10 (Wave-5A): guardrail pipeline integration. Types-only import for the
-// opaque pipeline token; the runtime helpers now live inside
-// `iteration-runner.ts` (Wave-5B Step 3) and `guardrail-helpers.ts`.
-import type { GuardrailPipeline } from '../guardrails/pipeline.js';
-// Wave-5B Step 3: per-iteration choreography lives in IterationRunner.
+// Guardrail pipeline integration. Types-only import for the opaque pipeline
+// token; the runtime helpers live in `iteration-runner.ts` and
+// `guardrail-helpers.ts`.
+import type { GuardrailPipeline } from './guardrail-port.js';
+// Per-iteration choreography lives in IterationRunner.
 import {
   createIterationRunner,
   type IterationContext,
@@ -28,10 +28,11 @@ import {
 import { safeWarn } from '../infra/safe-log.js';
 import type { AgentLoopConfig, AgentLoopHook } from './agent-loop-types.js';
 import { createHookDispatcher } from './hook-dispatcher.js';
+import { validateAgentLoopConfig } from './agent-loop-validation.js';
 
-// ARCH-002: `AgentLoopTraceManager` lives in `./trace-interface.js`. Re-export
-// here so existing imports from `harness-one/core` (which historically pulled
-// the type from `agent-loop.ts`) keep working without a code change.
+// `AgentLoopTraceManager` lives in `./trace-interface.js`. Re-export here so
+// existing imports from `harness-one/core` (which historically pulled the type
+// from `agent-loop.ts`) keep working without a code change.
 export type { AgentLoopTraceManager } from './trace-interface.js';
 // Re-export the config + hook contracts so existing consumers keep working.
 export type { AgentLoopConfig, AgentLoopHook } from './agent-loop-types.js';
@@ -39,16 +40,14 @@ export type { AgentLoopConfig, AgentLoopHook } from './agent-loop-types.js';
 /**
  * Stateful agent loop that calls an LLM adapter in a loop, handling tool calls.
  *
- * @deprecated ARCH-011: Prefer {@link createAgentLoop} (factory). The class
- * export will be removed in 0.5.0. The factory returns the same instance
- * shape — no behavioural change is required at the call site.
+ * Both `new AgentLoop(config)` and `createAgentLoop(config)` are supported and
+ * return the same instance shape; the factory is the idiomatic public entry
+ * (consistent with the rest of the harness-one API) but the class is the
+ * actual return type, needed for `instanceof` checks and type references.
  *
  * @example
  * ```ts
- * // Preferred:
  * const loop = createAgentLoop({ adapter, onToolCall: handleTool });
- * // Discouraged (still supported through 0.4.x):
- * // const loop = new AgentLoop({ adapter, onToolCall: handleTool });
  * for await (const event of loop.run(messages)) {
  *   console.log(event.type);
  * }
@@ -73,34 +72,32 @@ export class AgentLoop {
   private readonly baseRetryDelayMs: number;
   private readonly retryableErrors: readonly string[];
   private readonly adapterCaller: AdapterCaller;
-  /** Wave-5B Step 3: per-iteration choreography runner. Stateless across runs. */
+  /** Per-iteration choreography runner. Stateless across runs. */
   private readonly iterationRunner: IterationRunner;
-  /** ARCH-006: registered iteration-level hooks. Empty array when none. */
+  /** Registered iteration-level hooks. Empty array when none. */
   private readonly hooks: readonly AgentLoopHook[];
   private readonly strictHooks: boolean;
   private readonly logger?: { warn: (msg: string, meta?: Record<string, unknown>) => void };
   /** Shared dispatcher over `hooks` with strictHooks + logger semantics. */
   private readonly runHook: ReturnType<typeof createHookDispatcher>;
-  /** T10 (Wave-5A): optional input-side guardrail pipeline. */
+  /** Optional input-side guardrail pipeline. */
   private readonly inputPipeline?: GuardrailPipeline;
-  /** T10 (Wave-5A): optional output-side guardrail pipeline (tool + final). */
+  /** Optional output-side guardrail pipeline (tool + final). */
   private readonly outputPipeline?: GuardrailPipeline;
   /**
-   * T10 (Wave-5A): guards the "no-guardrail" warn against duplication across
-   * multiple run() calls on the same AgentLoop instance. Flip once and never
-   * reset — the configuration is immutable per instance.
+   * Guards the "no-guardrail" warn against duplication across multiple run()
+   * calls on the same AgentLoop instance. Flip once and never reset — the
+   * configuration is immutable per instance.
    */
   private _noPipelineWarned: boolean = false;
 
   private abortController: AbortController;
   private _externalAbortHandler: (() => void) | undefined;
   /**
-   * PERF-025: Pre-built options bag handed to `executionStrategy.execute()`
-   * for every tool-call batch. Previously this object was re-constructed with
-   * `Object.assign({signal}, isSequentialTool ? {getToolMeta} : {})` inside
-   * the hot loop, producing one allocation per tool batch. Building it once
-   * at construction time — after `abortController` and `isSequentialTool`
-   * settle — lets us reuse the same frozen reference across all batches.
+   * Pre-built options bag handed to `executionStrategy.execute()` for every
+   * tool-call batch. Building it once at construction time — after
+   * `abortController` and `isSequentialTool` settle — lets us reuse the same
+   * frozen reference across all batches instead of allocating per-batch.
    */
   private readonly _strategyOptions: {
     readonly signal: AbortSignal;
@@ -120,10 +117,10 @@ export class AgentLoop {
     this.adapter = config.adapter;
     this.maxIterations = config.maxIterations ?? 25;
     this.maxTotalTokens = config.maxTotalTokens ?? Infinity;
-    // CQ-035: Under `exactOptionalPropertyTypes`, these optional fields are
-    // typed as `readonly field?: Type` (no explicit `| undefined`). Assign
-    // only when the source value is defined so we never set the property to
-    // `undefined` — leaving it absent instead.
+    // Under `exactOptionalPropertyTypes`, these optional fields are typed as
+    // `readonly field?: Type` (no explicit `| undefined`). Assign only when
+    // the source value is defined so we never set the property to `undefined`
+    // — leaving it absent instead.
     if (config.signal !== undefined) this.externalSignal = config.signal;
     if (config.onToolCall !== undefined) this.onToolCall = config.onToolCall;
     if (config.tools !== undefined) this.tools = config.tools;
@@ -137,9 +134,9 @@ export class AgentLoop {
     this.maxAdapterRetries = config.maxAdapterRetries ?? 0;
     this.baseRetryDelayMs = config.baseRetryDelayMs ?? 1000;
     this.retryableErrors = config.retryableErrors ?? ['ADAPTER_RATE_LIMIT'];
-    // ARCH-006: store hooks (defensive empty array, never undefined to
-    // simplify per-iteration dispatch). Logger is optional — when omitted,
-    // hook errors are swallowed silently.
+    // Store hooks (defensive empty array, never undefined to simplify
+    // per-iteration dispatch). Logger is optional — when omitted, hook errors
+    // are swallowed silently.
     this.hooks = config.hooks ?? [];
     this.strictHooks = config.strictHooks ?? false;
     if (config.logger !== undefined) this.logger = config.logger;
@@ -148,33 +145,21 @@ export class AgentLoop {
       strictHooks: this.strictHooks,
       ...(this.logger !== undefined && { logger: this.logger }),
     });
-    // T10 (Wave-5A): store optional guardrail pipelines. `exactOptionalPropertyTypes`
-    // forbids writing `undefined` to a `readonly pipe?: GuardrailPipeline`, so we
-    // gate the assignment behind an explicit presence check.
+    // Store optional guardrail pipelines. `exactOptionalPropertyTypes` forbids
+    // writing `undefined` to a `readonly pipe?: GuardrailPipeline`, so we gate
+    // the assignment behind an explicit presence check.
     if (config.inputPipeline !== undefined) this.inputPipeline = config.inputPipeline;
     if (config.outputPipeline !== undefined) this.outputPipeline = config.outputPipeline;
 
-    if (this.maxIterations < 1) {
-      throw new HarnessError('maxIterations must be >= 1', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide a positive maxIterations value');
-    }
-    if (this.maxTotalTokens <= 0) {
-      throw new HarnessError('maxTotalTokens must be > 0', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide a positive maxTotalTokens value');
-    }
-    if (this.maxStreamBytes <= 0) {
-      throw new HarnessError('maxStreamBytes must be > 0', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide a positive maxStreamBytes value');
-    }
-    if (this.maxToolArgBytes <= 0) {
-      throw new HarnessError('maxToolArgBytes must be > 0', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide a positive maxToolArgBytes value');
-    }
-    if (this.toolTimeoutMs !== undefined && this.toolTimeoutMs <= 0) {
-      throw new HarnessError('toolTimeoutMs must be > 0', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide a positive toolTimeoutMs value');
-    }
-    if (!Number.isFinite(this.baseRetryDelayMs) || this.baseRetryDelayMs < 0) {
-      throw new HarnessError('baseRetryDelayMs must be a non-negative finite number', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide a value >= 0');
-    }
-    if (!Number.isInteger(this.maxAdapterRetries) || this.maxAdapterRetries < 0) {
-      throw new HarnessError('maxAdapterRetries must be a non-negative integer', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide an integer >= 0');
-    }
+    validateAgentLoopConfig({
+      maxIterations: this.maxIterations,
+      maxTotalTokens: this.maxTotalTokens,
+      maxStreamBytes: this.maxStreamBytes,
+      maxToolArgBytes: this.maxToolArgBytes,
+      toolTimeoutMs: this.toolTimeoutMs,
+      baseRetryDelayMs: this.baseRetryDelayMs,
+      maxAdapterRetries: this.maxAdapterRetries,
+    });
 
     if (config.executionStrategy) {
       this.executionStrategy = config.executionStrategy;
@@ -186,12 +171,12 @@ export class AgentLoop {
       this.executionStrategy = createSequentialStrategy();
     }
 
-    // H3: Create internal AbortController (external signal linking deferred to run())
+    // Create internal AbortController (external signal linking deferred to run())
     this.abortController = new AbortController();
 
-    // PERF-025: Pre-build the strategy options bag once. `isSequentialTool`
-    // never changes after construction and `abortController.signal` is stable
-    // for the lifetime of this loop, so the same object is reused for every
+    // Pre-build the strategy options bag once. `isSequentialTool` never
+    // changes after construction and `abortController.signal` is stable for
+    // the lifetime of this loop, so the same object is reused for every
     // tool-call batch below. `Object.freeze` gives us structural immutability
     // so strategy implementations can safely cache or share the reference.
     this._strategyOptions = Object.freeze(
@@ -205,10 +190,10 @@ export class AgentLoop {
         : { signal: this.abortController.signal },
     );
 
-    // Wave-5B Step 2: build the StreamHandler once; AdapterCaller delegates
-    // to it on the streaming path. `maxCumulativeStreamBytes` matches
-    // run()'s local derivation (`maxIterations * maxStreamBytes`) so per-run
-    // and per-instance limits stay in lockstep.
+    // Build the StreamHandler once; AdapterCaller delegates to it on the
+    // streaming path. `maxCumulativeStreamBytes` matches run()'s local
+    // derivation (`maxIterations * maxStreamBytes`) so per-run and per-instance
+    // limits stay in lockstep.
     const streamHandler = createStreamHandler({
       adapter: this.adapter,
       signal: this.abortController.signal,
@@ -218,11 +203,8 @@ export class AgentLoop {
       ...(this.tools !== undefined && { tools: this.tools }),
     });
 
-    // Streaming is only effective when the adapter actually exposes
-    // `stream`. Today's run() had `if (this.streaming && this.adapter.stream)`
-    // guarding the streaming branch; we mirror that here so an adapter
-    // without `stream` transparently falls back to chat. (Matches
-    // pre-Wave-5B agent-loop.ts L685.)
+    // Streaming is only effective when the adapter actually exposes `stream`;
+    // an adapter without `stream` transparently falls back to chat.
     const effectiveStreaming = this.streaming && typeof this.adapter.stream === 'function';
 
     this.adapterCaller = createAdapterCaller({
@@ -233,15 +215,15 @@ export class AgentLoop {
       baseRetryDelayMs: this.baseRetryDelayMs,
       retryableErrors: this.retryableErrors,
       streamHandler,
-      // Wave-5B Step 3: onRetry is now provided per-call by IterationRunner
-      // so the active iteration span id is captured cleanly via the
-      // freshly-allocated IterationContext (no instance side-channel).
+      // onRetry is provided per-call by IterationRunner so the active
+      // iteration span id is captured cleanly via the freshly-allocated
+      // IterationContext (no instance side-channel).
       ...(this.tools !== undefined && { tools: this.tools }),
     });
 
-    // Wave-5B Step 3: build the IterationRunner once. The runner is stateless
-    // across runs (ADR §2.3 / R8 / R9); all per-run mutable state lives on the
-    // IterationContext we hand it inside `run()`.
+    // Build the IterationRunner once. The runner is stateless across runs;
+    // all per-run mutable state lives on the IterationContext we hand it
+    // inside `run()`.
     this.iterationRunner = createIterationRunner({
       adapterCaller: this.adapterCaller,
       executionStrategy: this.executionStrategy,
@@ -275,17 +257,17 @@ export class AgentLoop {
   /**
    * Dispose the loop, releasing resources and cancelling any pending operations.
    *
-   * Wave-13 D-10: when the execution strategy implements the optional
-   * `dispose()` method, we forward the call (fire-and-forget) so long-lived
-   * strategies (worker pools, persistent queues, etc.) can release their
-   * resources at loop shutdown. Errors from strategy dispose are swallowed —
-   * the loop's own teardown must not be blocked by strategy-specific failures.
+   * When the execution strategy implements the optional `dispose()` method,
+   * we forward the call (fire-and-forget) so long-lived strategies (worker
+   * pools, persistent queues, etc.) can release their resources at loop
+   * shutdown. Errors from strategy dispose are swallowed — the loop's own
+   * teardown must not be blocked by strategy-specific failures.
    */
   dispose(): void {
-    // PERF-013: Remove external signal listener to prevent memory leaks when
-    // the external signal outlives this loop instance. Wrap removal in
-    // try/catch so an exception from the signal implementation cannot leave
-    // the listener attached (it must always be detached to avoid a leak).
+    // Remove external signal listener to prevent memory leaks when the
+    // external signal outlives this loop instance. Wrap removal in try/catch
+    // so an exception from the signal implementation cannot leave the
+    // listener attached (it must always be detached to avoid a leak).
     try {
       if (this._externalAbortHandler && this.externalSignal) {
         try {
@@ -296,10 +278,9 @@ export class AgentLoop {
         this._externalAbortHandler = undefined;
       }
       this.abortController.abort();
-      // Wave-13 D-10: forward dispose to the execution strategy when present.
-      // Fire-and-forget: strategy dispose is async but we keep dispose()
-      // synchronous to preserve the pre-Wave-13 signature. Any rejection is
-      // silenced via `.catch()` — teardown errors are best-effort.
+      // Forward dispose to the execution strategy when present. Fire-and-forget:
+      // strategy dispose is async but we keep dispose() synchronous. Any
+      // rejection is silenced via `.catch()` — teardown errors are best-effort.
       const strategyDispose = this.executionStrategy.dispose;
       if (typeof strategyDispose === 'function') {
         try {
@@ -335,10 +316,8 @@ export class AgentLoop {
   /**
    * Run the agent loop, yielding events as they occur.
    *
-   * Wave-5B Step 4: orchestration only — the ceremony lives in private
-   * helpers (`startRun`, `emitTerminal`, `checkPreIteration`,
-   * `startIteration`, `finalizeRun`) so this method stays under the
-   * 120-LOC budget mandated by ADR §7.
+   * Orchestration only — the ceremony lives in private helpers (`startRun`,
+   * `emitTerminal`, `checkPreIteration`, `startIteration`, `finalizeRun`).
    *
    * @example
    * ```ts
@@ -368,8 +347,8 @@ export class AgentLoop {
     try {
       while (true) {
         // Pre-iteration checks (abort -> max_iterations -> token budget).
-        // The helper increments `iteration` for the max-iterations check
-        // and writes `this._iteration` so timing matches pre-Step-4.
+        // The helper increments `iteration` for the max-iterations check and
+        // writes `this._iteration` so it is observable via `getMetrics()`.
         const stop = yield* this.checkPreIteration(
           () => iteration,
           (next) => { iteration = next; },
@@ -414,10 +393,9 @@ export class AgentLoop {
   }
 
   /**
-   * Wave-5B Step 4: extract run() ceremony — status flip, no-pipeline
-   * warning (T10), external signal wiring (PERF-013 / A1-20), trace
-   * creation, and IterationContext allocation. Returns the trio the
-   * orchestrator threads through every iteration.
+   * run() ceremony — status flip, no-pipeline warning, external signal
+   * wiring, trace creation, and IterationContext allocation. Returns the trio
+   * the orchestrator threads through every iteration.
    */
   private startRun(messages: Message[]): {
     ctx: IterationContext;
@@ -427,10 +405,10 @@ export class AgentLoop {
     const conversation = [...messages];
     this._status = 'running';
 
-    // T10 (Wave-5A): emit a one-time security warning when neither pipeline
-    // is configured. Running an AgentLoop without guardrails is usually a
-    // misconfiguration — guide operators towards `createSecurePreset`. The
-    // flag lives on the instance so repeated run() calls don't spam logs.
+    // Emit a one-time security warning when neither pipeline is configured.
+    // Running an AgentLoop without guardrails is usually a misconfiguration —
+    // guide operators towards `createSecurePreset`. The flag lives on the
+    // instance so repeated run() calls don't spam logs.
     if (!this._noPipelineWarned && !this.inputPipeline && !this.outputPipeline) {
       this._noPipelineWarned = true;
       const msg = 'AgentLoop has no guardrail pipeline — security risk';
@@ -443,8 +421,8 @@ export class AgentLoop {
     }
 
     // Attach external signal listener at run() start (not constructor) so it
-    // is always cleaned up in the finally block, even if dispose() is never called.
-    // PERF-013: `{ once: true }` means the listener auto-detaches when abort
+    // is always cleaned up in the finally block, even if dispose() is never
+    // called. `{ once: true }` means the listener auto-detaches when abort
     // fires, but when abort never fires we still depend on manual removal in
     // finally. If removeEventListener throws for any reason (e.g., external
     // signal has been garbage-collected or replaced), the listener reference
@@ -454,14 +432,11 @@ export class AgentLoop {
       if (this.externalSignal.aborted) {
         this.abortController.abort();
       } else {
-        // A1-20 (Wave 4b): the listener must short-circuit once dispose() has
-        // run. Previously dispose() nulled `_externalAbortHandler` but a
-        // listener already queued by the signal's `abort` event could still
-        // execute afterwards, invoking abort() on a disposed loop (and, when
-        // the order of operations in dispose() was unlucky, touching the
-        // nulled reference). Guard the body with a `disposed` status check so
-        // a post-dispose abort is a silent no-op, AND keep `{ once: true }` so
-        // the runtime auto-detaches on fire.
+        // The listener must short-circuit once dispose() has run. A listener
+        // already queued by the signal's `abort` event could otherwise execute
+        // after dispose(), invoking abort() on a disposed loop. Guard the body
+        // with a `disposed` status check so a post-dispose abort is a silent
+        // no-op, AND keep `{ once: true }` so the runtime auto-detaches on fire.
         this._externalAbortHandler = () => {
           if (this._status === 'disposed') return;
           this.abortController.abort();
@@ -474,13 +449,12 @@ export class AgentLoop {
     const tm = this.traceManager;
     const traceId = tm ? tm.startTrace('agent-loop-run', { messageCount: messages.length }) : undefined;
 
-    // Wave-5B Step 3: per-run mutable state lives on the IterationContext.
-    // Freshly allocated per `run()` so IterationRunner can stay stateless
-    // across runs (ADR §2.3 / §9 R8 / R9). The orchestrator reads back
-    // `iterationSpanId` from the same context in the outer `finally`
-    // (R5 mitigation) and forwards `cumulativeUsage` / `toolCallCounter`
-    // to instance fields after each iteration so `getMetrics()` and the
-    // `usage` getter remain accurate.
+    // Per-run mutable state lives on the IterationContext. Freshly allocated
+    // per `run()` so IterationRunner can stay stateless across runs. The
+    // orchestrator reads back `iterationSpanId` from the same context in the
+    // outer `finally` and forwards `cumulativeUsage` / `toolCallCounter` to
+    // instance fields after each iteration so `getMetrics()` and the `usage`
+    // getter remain accurate.
     const ctx: IterationContext = {
       conversation,
       iteration: 0,
@@ -496,10 +470,9 @@ export class AgentLoop {
   }
 
   /**
-   * Wave-5B Step 4: extract the inline emitTerminal closure. Used by the
-   * three pre-iteration terminal sites (abort, max_iterations, pre-call
-   * token budget). These happen BEFORE any iteration_start / hook firing,
-   * so they don't go through bailOut — they don't need to fire
+   * Used by the three pre-iteration terminal sites (abort, max_iterations,
+   * pre-call token budget). These happen BEFORE any iteration_start / hook
+   * firing, so they don't go through bailOut — they don't need to fire
    * onIterationEnd and they skip the guardrail event channel.
    */
   private *emitTerminal(
@@ -518,12 +491,11 @@ export class AgentLoop {
   }
 
   /**
-   * Wave-5B Step 4: extract the three pre-iteration checks (abort ->
-   * max_iterations -> token budget). Order MUST be preserved exactly per
-   * ADR §7 Step 4. Increments the iteration counter for the
-   * max-iterations check (post-increment to match pre-Step-4 timing) and
-   * writes `this._iteration` immediately after the bump, before the
-   * runner call — both timings are observable via `getMetrics()`.
+   * The three pre-iteration checks (abort -> max_iterations -> token budget).
+   * Order MUST be preserved exactly. Increments the iteration counter for the
+   * max-iterations check (post-increment) and writes `this._iteration`
+   * immediately after the bump, before the runner call — both timings are
+   * observable via `getMetrics()`.
    *
    * Returns `true` when the caller should stop and `return` from `run()`.
    */
@@ -539,7 +511,7 @@ export class AgentLoop {
       return true;
     }
 
-    // Pre-iteration check 2: max iterations (post-increment to match today).
+    // Pre-iteration check 2: max iterations (post-increment).
     const next = getIteration() + 1;
     setIteration(next);
     this._iteration = next;
@@ -569,12 +541,12 @@ export class AgentLoop {
   }
 
   /**
-   * Wave-5B Step 4: extract per-iteration setup — H4 prune, end any stale
-   * span, open the fresh iteration span with diagnostic attributes, mirror
-   * iteration into ctx, reset the iterationEndFired latch, yield
-   * `iteration_start`, and fire the ARCH-006 onIterationStart hook in
-   * run() (NOT the runner) so a pre-iteration emitTerminal that happens
-   * BEFORE we get here would never observe a paired start/end.
+   * Per-iteration setup — prune conversation, end any stale span, open the
+   * fresh iteration span with diagnostic attributes, mirror iteration into
+   * ctx, reset the iterationEndFired latch, yield `iteration_start`, and fire
+   * the onIterationStart hook in run() (NOT the runner) so a pre-iteration
+   * emitTerminal that happens BEFORE we get here would never observe a paired
+   * start/end.
    */
   private *startIteration(
     iteration: number,
@@ -582,11 +554,10 @@ export class AgentLoop {
     tm: AgentLoopTraceManager | undefined,
     traceId: string | undefined,
   ): Generator<AgentEvent> {
-    // H4: prune conversation if exceeded.
-    // Wave-12 P0-4: avoid `splice(0, n, ...pruned)` which spreads a large
-    // array onto the call stack (stack-depth risk on big conversations) and
-    // forces an O(n) tail-copy followed by an O(m) insert. An in-place
-    // overwrite is O(n) with no spread and no temporary allocation.
+    // Prune conversation if exceeded. Avoid `splice(0, n, ...pruned)` which
+    // spreads a large array onto the call stack (stack-depth risk on big
+    // conversations) and forces an O(n) tail-copy followed by an O(m) insert.
+    // An in-place overwrite is O(n) with no spread and no temporary allocation.
     if (
       this.maxConversationMessages !== undefined &&
       ctx.conversation.length > this.maxConversationMessages
@@ -623,17 +594,16 @@ export class AgentLoop {
     ctx.iteration = iteration;
     ctx.iterationEndFired.value = false;
     yield { type: 'iteration_start', iteration };
-    // ARCH-006: fire onIterationStart in run() (not the runner) so a
-    // pre-iteration emitTerminal that happens BEFORE we get here would
-    // never observe a paired start/end.
+    // Fire onIterationStart in run() (not the runner) so a pre-iteration
+    // emitTerminal that happens BEFORE we get here would never observe a
+    // paired start/end.
     this.runHook('onIterationStart', { iteration });
   }
 
   /**
-   * Wave-5B Step 4: extract the run() finally-block teardown. Cleans up
-   * the external signal listener (PERF-013), closes any leaked
-   * iteration span via the durable context (R5), ends the trace, and
-   * aborts the internal controller when the generator was closed
+   * run() finally-block teardown. Cleans up the external signal listener,
+   * closes any leaked iteration span via the durable context, ends the trace,
+   * and aborts the internal controller when the generator was closed
    * externally via `.return()` / `.throw()`.
    */
   private finalizeRun(
@@ -642,8 +612,8 @@ export class AgentLoop {
     traceId: string | undefined,
     finalEventEmitted: boolean,
   ): void {
-    // Clean up external signal listener (PERF-013). Defensive try/catch:
-    // mocked/polyfilled signals can throw on removeEventListener.
+    // Clean up external signal listener. Defensive try/catch: mocked /
+    // polyfilled signals can throw on removeEventListener.
     if (this._externalAbortHandler && this.externalSignal) {
       try {
         this.externalSignal.removeEventListener('abort', this._externalAbortHandler);
@@ -652,9 +622,9 @@ export class AgentLoop {
       }
       this._externalAbortHandler = undefined;
     }
-    // R5: read iterationSpanId from the durable context, not a local
-    // `let`. The runner closes the span on the happy path; this catches
-    // the throw / generator-closed-externally cases.
+    // Read iterationSpanId from the durable context, not a local `let`. The
+    // runner closes the span on the happy path; this catches the throw /
+    // generator-closed-externally cases.
     if (ctx.iterationSpanId && tm) {
       try { tm.endSpan(ctx.iterationSpanId, 'error'); } catch { /* may already be ended */ }
     }
@@ -676,10 +646,6 @@ export class AgentLoop {
   static readonly MAX_STREAM_BYTES = 10 * 1024 * 1024;
   /** Maximum size per tool-call argument (5 MB) to prevent oversized payloads. */
   private static readonly MAX_TOOL_ARG_BYTES = 5 * 1024 * 1024;
-
-  // Wave-5B Step 3: `findLatestUserMessage` + `pickBlockingGuardName` moved
-  // to `./guardrail-helpers.ts`; `safeStringifyToolResult` (PERF-004) moved
-  // into `iteration-runner.ts`; `doneEvent` inlined into `run()`.
 
   private isAborted(): boolean {
     return this.abortController.signal.aborted;

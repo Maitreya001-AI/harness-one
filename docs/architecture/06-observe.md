@@ -13,7 +13,7 @@
 - Logger / TraceManager 接受 `redact: false`
 - Langfuse exporter 不接受 `sanitize: false`——必须提供**替代函数**（强制显式）
 
-**`_internal/safe-log.ts`（T01）**：新增 `createDefaultLogger()`（redaction-on console 包装）+
+**`infra/safe-log.ts`（T01）**：新增 `createDefaultLogger()`（redaction-on console 包装）+
 `safeWarn(logger?, msg, meta)` / `safeError(logger?, msg, meta)` 消除 `logger ?? console.warn`
 boilerplate。
 

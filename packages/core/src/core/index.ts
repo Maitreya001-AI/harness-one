@@ -40,9 +40,9 @@ export {
 export type { AgentEvent, DoneReason } from './events.js';
 export { assertNever } from './events.js';
 
-// AgentLoop — class and factory alias both exported; see createAgentLoop
-// JSDoc for when to use each form. The class itself is `@deprecated`
-// (ARCH-011); prefer `createAgentLoop()`.
+// AgentLoop — class and factory alias both exported. `createAgentLoop()` is
+// the idiomatic public entry; the `AgentLoop` class is its return type and
+// remains exported for `instanceof` / type references.
 export { AgentLoop, createAgentLoop } from './agent-loop.js';
 export type { AgentLoopConfig, AgentLoopHook } from './agent-loop.js';
 
@@ -75,10 +75,6 @@ export { createFallbackAdapter } from './fallback-adapter.js';
 // SSE streaming
 export type { SSEChunk } from './sse-stream.js';
 export { toSSEStream, formatSSE } from './sse-stream.js';
-
-// Event bus
-export type { EventHandler, EventBus, EventBusOptions } from './event-bus.js';
-export { createEventBus } from './event-bus.js';
 
 // Execution strategies
 export { createSequentialStrategy, createParallelStrategy } from './execution-strategies.js';

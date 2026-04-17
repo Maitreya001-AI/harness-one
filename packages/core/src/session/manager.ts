@@ -8,49 +8,8 @@ import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import { asSessionId, prefixedSecureId } from '../infra/ids.js';
 import type { SessionId } from '../core/types.js';
 import type { Session, SessionEvent } from './types.js';
-
-/** Manager for creating and tracking sessions. */
-export interface SessionManager {
-  /** Create a new session. */
-  create(metadata?: Record<string, unknown>): Session;
-  /** Get a session by ID (does not update lastAccessedAt). */
-  get(id: string): Session | undefined;
-  /** Access a session (updates lastAccessedAt). Throws if expired or locked. */
-  access(id: string): Session;
-  /** Lock a session for exclusive use. Returns an unlock function. */
-  lock(id: string): { unlock: () => void };
-  /** Destroy a session. */
-  destroy(id: string): void;
-  /** List all active sessions. */
-  list(): Session[];
-  /** Garbage collect expired sessions. Returns count removed. */
-  gc(): number;
-
-  /** Number of active sessions. */
-  readonly activeSessions: number;
-  /** Maximum allowed sessions. */
-  readonly maxSessions: number;
-  /** Number of events dropped due to reentrant event queue overflow. */
-  readonly droppedEvents: number;
-  /** Alias for `droppedEvents` — dedicated per-drop counter (Wave-13 E-2). */
-  readonly droppedEventCount: number;
-  /** Cumulative count of errors thrown by registered event handlers. */
-  readonly handlerErrorCount: number;
-
-  /** Register an event handler. Returns an unsubscribe function. */
-  onEvent(handler: (event: SessionEvent) => void): () => void;
-
-  /**
-   * Wave-13 E-1: diagnostic accessor returning the most recent event-handler
-   * error, along with the event type that triggered it. Returns `undefined`
-   * when no handler has thrown. Intended for debugging / health reporting —
-   * not for control-flow decisions (the error is best-effort only).
-   */
-  getLastHandlerError(): { error: unknown; eventType: SessionEvent['type'] } | undefined;
-
-  /** Dispose the manager (clears auto-GC interval). */
-  dispose(): void;
-}
+import type { SessionManager } from './manager-types.js';
+export type { SessionManager } from './manager-types.js';
 
 /**
  * Create a new SessionManager instance.
@@ -60,8 +19,8 @@ export interface SessionManager {
  * prevent memory leaks. Failing to call `dispose()` will leak the GC interval
  * timer and all session data.
  *
- * **Lazy Expiry (Fix 12):** Sessions expire lazily -- they are only removed
- * when accessed, listed, or when gc() runs. In long-running services, expired
+ * **Lazy Expiry:** Sessions expire lazily -- they are only removed when
+ * accessed, listed, or when gc() runs. In long-running services, expired
  * sessions remain in memory until one of these operations triggers cleanup.
  * For aggressive cleanup, ensure gc is enabled (gcIntervalMs config). The
  * default gcIntervalMs is 60000 (60 seconds).
@@ -81,16 +40,16 @@ export function createSessionManager(config?: {
   gcIntervalMs?: number;
   /**
    * Optional structured logger for surfacing event-drop warnings and
-   * event-handler exceptions (Wave-13 E-1/E-2).
+   * event-handler exceptions.
    */
   logger?: {
     warn: (msg: string, meta?: Record<string, unknown>) => void;
     error?: (msg: string, meta?: Record<string, unknown>) => void;
   };
   /**
-   * Wave-13 E-3: maximum byte size of per-session metadata (stringified via
-   * JSON). When set and the size is exceeded at `create()` time, the creation
-   * is rejected with `CORE_INVALID_INPUT`. Defaults to `undefined` (no cap).
+   * Maximum byte size of per-session metadata (stringified via JSON). When
+   * set and the size is exceeded at `create()` time, the creation is
+   * rejected with `CORE_INVALID_INPUT`. Defaults to `undefined` (no cap).
    *
    * This complements the deep-clone performed on every read in `toReadonly()`
    * — a documented size ceiling at write time prevents pathological metadata
@@ -128,10 +87,9 @@ export function createSessionManager(config?: {
    */
   const unlockedOrder = new Map<SessionId, true>(); // LRU of active (unlocked)
   const lockedIds = new Set<SessionId>();
-  // LM-012: Set-backed event-handler storage — JS Sets preserve insertion
-  // order, so emit order is identical to the historical array version.
-  // Unsubscribe is O(1) instead of O(n) indexOf+splice. Registering the same
-  // handler reference twice is deduplicated (store one).
+  // Set-backed event-handler storage — JS Sets preserve insertion order, so
+  // emit order is stable. Unsubscribe is O(1). Registering the same handler
+  // reference twice is deduplicated (stored once).
   const eventHandlers = new Set<(event: SessionEvent) => void>();
 
   // Emit reentry protection: queue events if already emitting.
@@ -141,34 +99,34 @@ export function createSessionManager(config?: {
   const MAX_PENDING_EVENTS = 1000;
   let emitting = false;
   const pendingEvents: SessionEvent[] = [];
-  // OBS-010: Counters are intentionally write-only to keep event emission
+  // Counters are intentionally write-only to keep event emission
   // allocation-free. Consumers surface them via the `SessionManager` if needed.
 
   let _droppedHandlerErrors = 0;
-  // Wave-13 E-1: keep the most recent handler error so operators can pull
-  // it out of `getLastHandlerError()` for diagnosis.
+  // Keep the most recent handler error so operators can pull it out of
+  // `getLastHandlerError()` for diagnosis.
   let _lastHandlerError: { error: unknown; eventType: SessionEvent['type'] } | undefined;
 
   let _droppedEvents = 0;
-  // Wave-13 E-2: rate-limit the queue-overflow warn() to at most 1 per second
-  // by remembering when we last emitted. Every single drop still increments
-  // `_droppedEvents` so counter-consumers see the real number.
-  // Two independent windows: pure-drop and priority-eviction convey different
-  // operational signals (lost low-priority audit data vs admitted high-priority
-  // event), so each is rate-limited separately.
+  // Rate-limit the queue-overflow warn() to at most 1 per second by
+  // remembering when we last emitted. Every single drop still increments
+  // `_droppedEvents` so counter-consumers see the real number. Two
+  // independent windows: pure-drop and priority-eviction convey different
+  // operational signals (lost low-priority audit data vs admitted
+  // high-priority event), so each is rate-limited separately.
   const DROP_WARN_INTERVAL_MS = 1000;
   let _lastDropWarnAt = 0;
   let _lastEvictionWarnAt = 0;
 
-  // SEC-002: Use cryptographically secure random IDs instead of a predictable
-  // counter + timestamp combination. Predictable session IDs enable
-  // session-hijacking and enumeration attacks.
+  // Use cryptographically secure random IDs instead of a predictable counter
+  // + timestamp combination. Predictable session IDs enable session-hijacking
+  // and enumeration attacks.
   function genId(): SessionId {
     return asSessionId(prefixedSecureId('sess'));
   }
 
   /**
-   * Wave-12 P1-10: prioritized event types. High-priority events
+   * Prioritized event types. High-priority events
    * (`created`/`destroyed`/`error`-shaped — `expired`/`evicted`) carry
    * lifecycle state that external listeners need to reconcile; dropping
    * them silently leaks refs and breaks auditing. When the queue is full,
@@ -189,19 +147,19 @@ export function createSessionManager(config?: {
     const event: SessionEvent = { type, sessionId, timestamp: Date.now(), ...(reason !== undefined && { reason }) };
     if (emitting) {
       if (pendingEvents.length >= MAX_PENDING_EVENTS) {
-        // Wave-12 P1-10: attempt priority-aware drop before refusing the event.
-        // If the new event is HIGH and there is at least one LOW queued,
-        // evict the oldest LOW to make room. Otherwise fall back to the
-        // historical behavior of dropping the incoming event.
+        // Attempt priority-aware drop before refusing the event. If the new
+        // event is HIGH and there is at least one LOW queued, evict the
+        // oldest LOW to make room. Otherwise fall back to dropping the
+        // incoming event.
         if (isHighPriority(type)) {
           const lowIdx = pendingEvents.findIndex(e => !isHighPriority(e.type));
           if (lowIdx !== -1) {
             pendingEvents.splice(lowIdx, 1);
             _droppedEvents++;
-            // Wave-13 E-2: emit a warn on every eviction, rate-limited to
-            // 1/sec via an INDEPENDENT window so a flood of low-priority
-            // drops (handled below) doesn't suppress high-signal eviction
-            // warnings from the same second.
+            // Emit a warn on every eviction, rate-limited to 1/sec via an
+            // INDEPENDENT window so a flood of low-priority drops (handled
+            // below) doesn't suppress high-signal eviction warnings from
+            // the same second.
             const nowMs = Date.now();
             if (logger && nowMs - _lastEvictionWarnAt >= DROP_WARN_INTERVAL_MS) {
               _lastEvictionWarnAt = nowMs;
@@ -221,10 +179,10 @@ export function createSessionManager(config?: {
           }
         }
         _droppedEvents++;
-        // Wave-13 E-2: warn on EVERY drop (not just the first), but rate-
-        // limit to 1/sec using a timestamp comparison (no timers needed).
-        // The counter is always incremented so operators can observe the
-        // true drop rate via `droppedEventCount`.
+        // Warn on EVERY drop (not just the first), but rate-limit to 1/sec
+        // using a timestamp comparison (no timers needed). The counter is
+        // always incremented so operators can observe the true drop rate
+        // via `droppedEventCount`.
         if (logger) {
           const nowMs = Date.now();
           if (nowMs - _lastDropWarnAt >= DROP_WARN_INTERVAL_MS) {
@@ -247,9 +205,9 @@ export function createSessionManager(config?: {
     try {
       for (const handler of eventHandlers) {
         try { handler(event); } catch (err) {
-          // Wave-13 E-1: prevent misbehaving handler from breaking event
-          // delivery, but don't silently swallow — log via injected logger
-          // when present and preserve the last error for diagnostic access.
+          // Prevent misbehaving handler from breaking event delivery, but
+          // don't silently swallow — log via injected logger when present
+          // and preserve the last error for diagnostic access.
           _droppedHandlerErrors++;
           _lastHandlerError = { error: err, eventType: event.type };
           if (logger) {
@@ -313,7 +271,7 @@ export function createSessionManager(config?: {
     unlockedOrder.set(id, true);
   }
 
-  // PERF-019: Amortize eviction by only triggering once we exceed
+  // Amortize eviction by only triggering once we exceed
   // `maxSessions + evictThreshold`. Without this amortization, each create()
   // at capacity scans unlockedOrder even when eviction is unnecessary.
   // Threshold = 5% of maxSessions (min 1).
@@ -343,11 +301,11 @@ export function createSessionManager(config?: {
   }
 
   /**
-   * Wave-12 P1-16: deep-clone the metadata bag so nested mutations on the
-   * returned readonly view cannot bleed back into internal manager state.
-   * `structuredClone` is preferred because it handles Dates, Maps, Sets,
-   * typed arrays, and cycles natively. For runtimes that lack it, fall back
-   * to a recursive clone limited to plain JSON-compatible shapes.
+   * Deep-clone the metadata bag so nested mutations on the returned readonly
+   * view cannot bleed back into internal manager state. `structuredClone` is
+   * preferred because it handles Dates, Maps, Sets, typed arrays, and cycles
+   * natively. For runtimes that lack it, fall back to a recursive clone
+   * limited to plain JSON-compatible shapes.
    */
   function deepCloneMetadata(m: Record<string, unknown>): Record<string, unknown> {
     const sc = (globalThis as { structuredClone?: (v: unknown) => unknown }).structuredClone;
@@ -383,12 +341,12 @@ export function createSessionManager(config?: {
   /**
    * Convert a mutable session to a readonly snapshot.
    *
-   * **Wave-13 E-3 — performance warning:** `metadata` is deep-cloned on every
-   * call. For large or frequently-accessed sessions, this can dominate
-   * `access()` / `get()` / `list()` latency. The real fix requires breaking
-   * the public contract (e.g., returning a Proxy or a frozen-but-shared view);
-   * we deliberately keep deep-clone semantics to preserve isolation guarantees
-   * from Wave-12 P1-16. Callers concerned about clone cost should:
+   * **Performance warning:** `metadata` is deep-cloned on every call. For
+   * large or frequently-accessed sessions, this can dominate `access()` /
+   * `get()` / `list()` latency. The real fix requires breaking the public
+   * contract (e.g., returning a Proxy or a frozen-but-shared view); we
+   * deliberately keep deep-clone semantics to preserve isolation. Callers
+   * concerned about clone cost should:
    *
    *   1. Configure `maxMetadataBytes` to cap the input side at creation.
    *   2. Prefer `get()` over `access()` when lastAccessedAt doesn't need to
@@ -407,8 +365,8 @@ export function createSessionManager(config?: {
   }
 
   /**
-   * Wave-13 E-3: enforce an optional byte cap on metadata at set time (rather
-   * than clone time). Uses `JSON.stringify` + UTF-8 byte length as a proxy for
+   * Enforce an optional byte cap on metadata at set time (rather than clone
+   * time). Uses `JSON.stringify` + UTF-8 byte length as a proxy for
    * serialized size. Throws `CORE_INVALID_INPUT` when exceeded so the caller
    * can trim the payload before it ever enters the manager.
    */
@@ -440,9 +398,9 @@ export function createSessionManager(config?: {
     ? setInterval(() => { manager.gc(); }, gcIntervalMs)
     : null;
 
-  // Fix 13: The GC timer is unref'd so it will not prevent process exit.
-  // If your application needs session persistence across restarts, use an
-  // external store (e.g., Redis, database).
+  // The GC timer is unref'd so it will not prevent process exit. If your
+  // application needs session persistence across restarts, use an external
+  // store (e.g., Redis, database).
   if (gcTimer && typeof gcTimer === 'object' && 'unref' in gcTimer) {
     gcTimer.unref();
   }
@@ -461,8 +419,8 @@ export function createSessionManager(config?: {
       }
       const id = genId();
       const now = Date.now();
-      // Wave-13 E-3: enforce optional byte cap at creation time so we never
-      // store metadata that will be expensive to clone on every read.
+      // Enforce optional byte cap at creation time so we never store
+      // metadata that will be expensive to clone on every read.
       const initialMetadata = metadata ? { ...metadata } : {};
       assertMetadataSize(initialMetadata);
       const session: MutableSession = {
@@ -650,8 +608,8 @@ export function createSessionManager(config?: {
     },
 
     onEvent(handler: (event: SessionEvent) => void): () => void {
-      // LM-012: O(1) add + O(1) delete — Set preserves insertion order so
-      // emit() still runs handlers in registration order.
+      // O(1) add + O(1) delete — Set preserves insertion order so emit()
+      // runs handlers in registration order.
       eventHandlers.add(handler);
       return () => {
         eventHandlers.delete(handler);
@@ -659,10 +617,10 @@ export function createSessionManager(config?: {
     },
 
     dispose(): void {
-      // PERF-001: Guard clearInterval with try/finally so that, even if one of
-      // the cleanup steps throws (e.g., a custom Map subclass overriding
-      // clear), the GC timer is always released. Leaking the interval keeps
-      // the entire manager closure alive and defeats memory reclamation.
+      // Guard clearInterval with try/finally so that, even if one of the
+      // cleanup steps throws (e.g., a custom Map subclass overriding clear),
+      // the GC timer is always released. Leaking the interval keeps the
+      // entire manager closure alive and defeats memory reclamation.
       try {
         // Clear all sessions to release memory and prevent stale references.
         sessions.clear();

@@ -125,7 +125,7 @@ for (const { chunk, score, tokens } of results) {
 
 ## Token 计数集成
 
-`RetrievalResult.tokens` 由 `pipeline.query()` 自动填充，计算方式为 `Math.ceil(content.length / 4)`（与 `_internal/token-estimator` 同一启发式）。调用方可据此在向 LLM 注入检索结果前剔除超出 token 预算的条目：
+`RetrievalResult.tokens` 由 `pipeline.query()` 自动填充，计算方式为 `Math.ceil(content.length / 4)`（与 `infra/token-estimator` 同一启发式）。调用方可据此在向 LLM 注入检索结果前剔除超出 token 预算的条目：
 
 ```ts
 let budget = 2000; // 可用 token 数

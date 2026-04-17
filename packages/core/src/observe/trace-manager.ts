@@ -19,113 +19,8 @@ import type { MetricsPort } from './metrics-port.js';
 import { TraceLruList } from './trace-lru-list.js';
 import { createSpanAttributeKeyWarner } from './span-attribute-keys.js';
 import type { Trace, Span, SpanEvent, SpanEventSeverity, TraceExporter } from './types.js';
-
-/** Retry telemetry aggregates exposed via `getRetryMetrics()`. */
-export interface RetryMetrics {
-  /** Total retry attempts observed across all spans. */
-  readonly totalRetries: number;
-  /** Retries that were followed by a successful span completion. */
-  readonly successAfterRetry: number;
-  /** Retries that ultimately failed (span ended with error status). */
-  readonly failedAfterRetries: number;
-}
-
-/** Manager for creating and tracking traces and spans. */
-export interface TraceManager {
-  /**
-   * Start a new trace. Returns the trace ID.
-   *
-   * SEC-016: The `metadata` argument is treated as USER metadata — it is
-   * redacted (if configured) and surfaced on `trace.metadata` as well as
-   * `trace.userMetadata`. System-authored metadata is emitted via
-   * `setTraceSystemMetadata()` and kept on `trace.systemMetadata`.
-   */
-  startTrace(name: string, metadata?: Record<string, unknown>): TraceId;
-  /** Start a new span within a trace. Returns the span ID. */
-  startSpan(traceId: TraceId | string, name: string, parentId?: string): SpanId;
-  /** Add an event to a span. */
-  addSpanEvent(spanId: SpanId | string, event: Omit<SpanEvent, 'timestamp'>): void;
-  /** Set attributes on a span. */
-  setSpanAttributes(spanId: SpanId | string, attributes: Record<string, unknown>): void;
-  /**
-   * P2-15: Snapshot accessor for the current global sampling rate. Primarily
-   * useful in tests and for introspection tooling. Runtime adjustments go
-   * through `setSamplingRate()`.
-   */
-  getSamplingRate(): number;
-  /**
-   * SEC-016: Attach library-controlled metadata to a trace. Keys written here
-   * land on `trace.systemMetadata` and are never redacted. `shouldExport()`
-   * sampling hooks MUST read only `systemMetadata` so users can't manipulate
-   * sampling decisions by injecting metadata keys.
-   */
-  setTraceSystemMetadata(traceId: TraceId | string, metadata: Record<string, unknown>): void;
-  /**
-   * End a span.
-   *
-   * P1-25: **Span status must be set BEFORE calling `endSpan()`.** The status
-   * passed to this call (or the default `'completed'`) is captured
-   * synchronously, attached to the frozen snapshot handed to exporters, and
-   * cannot be mutated after the fact. Callers that need to revise status
-   * (e.g. a deferred async error-classification step) must do so before
-   * invoking `endSpan()`, or start a new span for the revision.
-   *
-   * When `status` is omitted, `'completed'` is assumed. Pass `'error'`
-   * explicitly for failure paths — in non-production builds
-   * (`NODE_ENV !== 'production'`) a warning is logged if a caller appears
-   * to mutate a span's effective status after end.
-   */
-  endSpan(spanId: SpanId | string, status?: 'completed' | 'error'): void;
-  /** End a trace. */
-  endTrace(traceId: TraceId | string, status?: 'completed' | 'error'): void;
-  /** Get a trace by ID. */
-  getTrace(traceId: TraceId | string): Trace | undefined;
-  /**
-   * Get spans that are still running (not yet ended). Useful for leak detection.
-   *
-   * @param olderThanMs - When provided, only return spans that have been running
-   *   for longer than this duration (in milliseconds), comparing startTime to
-   *   Date.now(). This helps detect leaked/stale spans.
-   */
-  getActiveSpans(olderThanMs?: number): Array<{ id: string; traceId: string; name: string; startTime: number }>;
-  /**
-   * Flush all exporters.
-   *
-   * P1-19: Bounded by the configured `flushTimeoutMs` (default 30_000). On
-   * timeout, outstanding exports are abandoned (tracked promises remain but
-   * are no longer awaited), a warn is logged, and the call resolves. This
-   * prevents shutdown from hanging on a stuck exporter.
-   */
-  flush(): Promise<void>;
-  /**
-   * Eagerly invoke `initialize()` on every exporter that declares one.
-   * Lazy initialization also happens automatically on first export; calling
-   * `initialize()` explicitly is useful for fail-fast startup where connection
-   * problems should surface immediately.
-   */
-  initialize(): Promise<void>;
-  /**
-   * Update the global sampling rate (0-1).
-   *
-   * P2-15: **Only affects traces started AFTER the call.** In-flight traces
-   * keep the sampling decision captured at their original `startTrace()`
-   * (stored on `trace.samplingRateSnapshot` / `trace.sampled`). This
-   * guarantees per-trace determinism — a trace admitted at rate=1.0 will
-   * always be exported even if the rate is later lowered to 0. A per-exporter
-   * `shouldExport(trace)` hook, when present, takes precedence over this
-   * global rate; a per-exporter `shouldSampleTrace(trace)` (tail hook) can
-   * veto an export at `endTrace()` time.
-   */
-  setSamplingRate(rate: number): void;
-  /**
-   * OBS-005: Observed retry telemetry aggregated from span events. Retries
-   * are detected by events named `adapter_retry` emitted via `addSpanEvent()`
-   * or by attributes on spans indicating retry outcome.
-   */
-  getRetryMetrics(): RetryMetrics;
-  /** Dispose: flush all exporters, shut them down, and clear internal state. */
-  dispose(): Promise<void>;
-}
+import type { RetryMetrics, TraceManager } from './trace-manager-types.js';
+export type { RetryMetrics, TraceManager } from './trace-manager-types.js';
 
 /**
  * Create a new TraceManager instance.
@@ -147,7 +42,7 @@ export function createTraceManager(config?: {
    * Optional structured logger for trace-manager internal warnings. When set,
    * export errors without an onExportError callback route through this logger
    * instead of `console.warn`. Lets ops silence or redirect warnings at runtime.
-   * Wave-13 C-5: accepts an optional `debug` method for low-severity signals
+   * Accepts an optional `debug` method for low-severity signals
    * (dead-trace attempts, LRU 80% warnings).
    */
   logger?: {
@@ -161,9 +56,9 @@ export function createTraceManager(config?: {
    */
   defaultSamplingRate?: number;
   /**
-   * P1-19: Maximum wall time (milliseconds) that `flush()` and `dispose()`
-   * will spend waiting for pending in-flight export promises to settle
-   * before abandoning them and returning. Defaults to `30_000` (30s).
+   * Maximum wall time (milliseconds) that `flush()` and `dispose()` will
+   * spend waiting for pending in-flight export promises to settle before
+   * abandoning them and returning. Defaults to `30_000` (30s).
    *
    * When the deadline elapses the library logs a warn via the injected
    * logger (or invokes `onExportError`) and resolves the outer promise; the
@@ -173,33 +68,32 @@ export function createTraceManager(config?: {
    */
   flushTimeoutMs?: number;
   /**
-   * SEC-007: Secret redaction applied to all USER-SUPPLIED span attributes,
-   * trace metadata, and span events at the ingestion boundary. Because
-   * exporters (console, OTel, Langfuse) read `span.attributes` and
-   * `trace.metadata` verbatim, scrubbing here guarantees downstream observers
-   * never see unredacted secrets.
+   * Secret redaction applied to all USER-SUPPLIED span attributes, trace
+   * metadata, and span events at the ingestion boundary. Because exporters
+   * (console, OTel, Langfuse) read `span.attributes` and `trace.metadata`
+   * verbatim, scrubbing here guarantees downstream observers never see
+   * unredacted secrets.
    *
-   * Secure-by-default (T03): when omitted (`undefined`), the
-   * `DEFAULT_SECRET_PATTERN` is active so common key names (api_key,
-   * authorization, password, token, …) are scrubbed automatically. Pass a
-   * `RedactConfig` object to customize (e.g. add extra keys / patterns or
-   * disable the default pattern while keeping redaction active). Pass
-   * `false` to explicitly disable redaction entirely — use only when exports
-   * are known to be safe (e.g. tests, trusted internal sinks).
+   * Secure-by-default: when omitted (`undefined`), the `DEFAULT_SECRET_PATTERN`
+   * is active so common key names (api_key, authorization, password, token,
+   * …) are scrubbed automatically. Pass a `RedactConfig` object to customize
+   * (e.g. add extra keys / patterns or disable the default pattern while
+   * keeping redaction active). Pass `false` to explicitly disable redaction
+   * entirely — use only when exports are known to be safe (e.g. tests,
+   * trusted internal sinks).
    */
   redact?: RedactConfig | false;
   /**
-   * Wave-13 C-5: Opt-in strict mode for span creation against a dead/missing
-   * trace. Default `false` preserves the historical no-silent-no-op behaviour
-   * (returns a dead span id and increments a diagnostic counter). When set to
-   * `true`, `startSpan()` throws `HarnessError(TRACE_NOT_FOUND)` so callers can
-   * detect misuse immediately. This is additive and non-breaking.
+   * Opt-in strict mode for span creation against a dead/missing trace.
+   * Default `false` returns a dead span id and increments a diagnostic
+   * counter; `true` makes `startSpan()` throw `HarnessError(TRACE_NOT_FOUND)`
+   * so callers can detect misuse immediately.
    */
   strictSpanCreation?: boolean;
   /**
-   * Wave-13 C-3 / C-10: Optional metrics sink for trace-manager internals.
-   * Emits counters for dead-trace span creation attempts, trace LRU evictions,
-   * and span LRU evictions. Defaults to no-op.
+   * Optional metrics sink for trace-manager internals. Emits counters for
+   * dead-trace span creation attempts, trace LRU evictions, and span LRU
+   * evictions. Defaults to no-op.
    */
   metrics?: MetricsPort;
 }): TraceManager {
@@ -208,7 +102,7 @@ export function createTraceManager(config?: {
   const onExportError = config?.onExportError;
   const logger = config?.logger;
   const strictSpanCreation = config?.strictSpanCreation ?? false;
-  // Wave-13 C-3 / C-10: resolve optional metric instruments once.
+  // Resolve optional metric instruments once.
   const metricsPort = config?.metrics;
   const deadTraceSpanCounter = metricsPort?.counter('harness.trace.dead_span_attempts.total', {
     description: 'startSpan() calls that targeted a dead or missing trace',
@@ -220,7 +114,7 @@ export function createTraceManager(config?: {
     description: 'Spans evicted by trace LRU pressure',
   });
   let samplingRate = config?.defaultSamplingRate ?? 1;
-  // P1-19: default 30s flush deadline. `0` disables the cap.
+  // Default 30s flush deadline. `0` disables the cap.
   const flushTimeoutMs = config?.flushTimeoutMs ?? 30_000;
   if (!Number.isFinite(flushTimeoutMs) || flushTimeoutMs < 0) {
     throw new HarnessError(
@@ -229,7 +123,7 @@ export function createTraceManager(config?: {
       'Use 0 to disable the cap or a positive millisecond value',
     );
   }
-  // SEC-007 / T03: Build redactor once.
+  // Build redactor once.
   //   - `redact === false`            => no redactor (explicit opt-out)
   //   - `redact === undefined`        => default redactor (secure-by-default)
   //   - `redact: RedactConfig` object => honor the config as-is
@@ -254,10 +148,10 @@ export function createTraceManager(config?: {
    * Exporters are initialized on first export attempt (span or trace) to keep
    * createTraceManager synchronous.
    *
-   * A1-3 / LM-003: Uses `createLazyAsync` per-exporter so concurrent first
-   * exports share the same in-flight init promise (stored synchronously
-   * before the first await). On rejection the cache is cleared so a later
-   * export retries instead of silently re-using the failed result.
+   * Uses `createLazyAsync` per-exporter so concurrent first exports share the
+   * same in-flight init promise (stored synchronously before the first await).
+   * On rejection the cache is cleared so a later export retries instead of
+   * silently re-using the failed result.
    */
   const initLazies = new Map<TraceExporter, LazyAsync<void>>();
 
@@ -290,7 +184,7 @@ export function createTraceManager(config?: {
       });
   }
 
-  // ARCH-009: Reserved span-attribute prefix warner (once per unique key).
+  // Reserved span-attribute prefix warner (once per unique key).
   const maybeWarnAttributeKey = createSpanAttributeKeyWarner(logger);
 
   function reportExportError(err: unknown): void {
@@ -310,14 +204,12 @@ export function createTraceManager(config?: {
 
   function trackExport(p: Promise<unknown>): void {
     pendingExports.add(p);
-    // PERF-016: `.finally()` alone can leak when the underlying promise
-    // rejects and a handler in finally throws — swallow the rejection first
-    // so the delete callback is guaranteed to run.
-    //
-    // CQ-036 (Wave 4b): route swallowed rejections to the injected logger
-    // so ops can see tracker-cleanup failures. Falls back to silent swallow
-    // only when no logger is configured — spurious stderr from a library is
-    // worse than a loud but unnoticed warning in a fleet without logging.
+    // `.finally()` alone can leak when the underlying promise rejects and a
+    // handler in finally throws — swallow the rejection first so the delete
+    // callback is guaranteed to run. Route swallowed rejections to the
+    // injected logger so ops can see tracker-cleanup failures; fall back to
+    // silent swallow only when no logger is configured (spurious stderr from
+    // a library is worse than a loud but unnoticed warning).
     p.catch((err: unknown) => {
       if (logger) {
         try {
@@ -341,11 +233,11 @@ export function createTraceManager(config?: {
   function exportTraceTo(exporter: TraceExporter, trace: Trace, sampled: boolean): void {
     if (exporter.isHealthy && !exporter.isHealthy()) return;
     if (exporter.shouldExport && !exporter.shouldExport(trace)) return;
-    // F12: The sampling decision is made at startTrace() time and stored on
-    // the trace. Respect the stored decision rather than re-evaluating here.
+    // The sampling decision is made at startTrace() time and stored on the
+    // trace. Respect the stored decision rather than re-evaluating here.
     // Per-exporter shouldExport() hooks take precedence above.
     if (!exporter.shouldExport && !sampled) return;
-    // P1-6: Tail-based sampling veto. Evaluated AFTER head-based decisions so
+    // Tail-based sampling veto. Evaluated AFTER head-based decisions so
     // callers can "rescue" a head-dropped trace only by relaxing head
     // sampling — not by using a tail hook (that would defeat memory bounds).
     // Here we're already past the head gate so tail hook can only REMOVE
@@ -386,29 +278,29 @@ export function createTraceManager(config?: {
     name: string;
     startTime: number;
     endTime?: number;
-    /** SEC-016: user-supplied metadata (redacted when configured). */
+    /** User-supplied metadata (redacted when configured). */
     userMetadata: Record<string, unknown>;
-    /** SEC-016: library-authored metadata used by shouldExport hooks. */
+    /** Library-authored metadata used by shouldExport hooks. */
     systemMetadata: Record<string, unknown>;
     spanIds: string[];
     status: 'running' | 'completed' | 'error';
     /**
-     * LM-011 (Wave 4b): sampling rate captured at trace-start. Read by
-     * `exportTraceTo()` when the trace ends so a runtime `setSamplingRate()`
-     * call does NOT change the sampling verdict for already-in-flight traces.
-     * Gives per-trace sampling determinism — a trace started at rate=1.0 is
-     * guaranteed to export even if sampling was lowered before it ended.
+     * Sampling rate captured at trace-start. Read by `exportTraceTo()` when
+     * the trace ends so a runtime `setSamplingRate()` call does NOT change
+     * the sampling verdict for already-in-flight traces. Gives per-trace
+     * sampling determinism — a trace started at rate=1.0 is guaranteed to
+     * export even if sampling was lowered before it ended.
      */
     samplingRateSnapshot: number;
     /**
-     * F12: Sampling decision made at trace-start. When false, exporters skip
-     * this trace at endTrace() time without re-evaluating the sampling rate.
-     * This ensures changing the sampling rate after startTrace() does not
-     * affect already-started traces.
+     * Sampling decision made at trace-start. When false, exporters skip this
+     * trace at endTrace() time without re-evaluating the sampling rate. This
+     * ensures changing the sampling rate after startTrace() does not affect
+     * already-started traces.
      */
     sampled: boolean;
     /**
-     * PERF-029: embedded {@link LruNode} pointers. Owned and mutated by
+     * Embedded {@link LruNode} pointers. Owned and mutated by
      * {@link TraceLruList}; consumers must not touch them directly.
      */
     lruPrev: MutableTrace | null;
@@ -418,19 +310,19 @@ export function createTraceManager(config?: {
 
   const traces = new Map<string, MutableTrace>();
   const spans = new Map<string, MutableSpan>();
-  // PERF-029: intrusive doubly-linked LRU extracted to `./trace-lru-list.ts`.
-  // Head is the oldest entry (evict first); tail is the most recently added.
+  // Intrusive doubly-linked LRU extracted to `./trace-lru-list.ts`. Head is
+  // the oldest entry (evict first); tail is the most recently added.
   //
-  // Wave-13 C-7: list mutations run synchronously — there is no `await`
-  // between read and write, so they are already atomic on the JS event loop.
-  // `isEvicting` below guards eviction re-entrance. Any future change that
-  // introduces `await` inside the list operations MUST add an async-lock.
+  // List mutations run synchronously — there is no `await` between read and
+  // write, so they are already atomic on the JS event loop. `isEvicting`
+  // below guards eviction re-entrance. Any future change that introduces
+  // `await` inside the list operations MUST add an async-lock.
   const lru = new TraceLruList<MutableTrace>();
-  let isEvicting = false; // Re-entrance guard for eviction (Fix 3)
-  // Wave-13 C-10: one-shot warning state for the 80%-capacity signal.
+  let isEvicting = false; // Re-entrance guard for eviction
+  // One-shot warning state for the 80%-capacity signal.
   let spanHighWaterWarned = false;
   /**
-   * LM-016: Dead trace IDs — returned by `startTrace()` when every configured
+   * Dead trace IDs — returned by `startTrace()` when every configured
    * exporter reports `isHealthy() === false`. The trace is NEVER admitted to
    * `traces`, so it cannot turn into a zombie entry that the LRU has to
    * evict later. `startSpan()`, `addSpanEvent()`, `endSpan()`, `endTrace()`
@@ -442,7 +334,7 @@ export function createTraceManager(config?: {
   const DEAD_TRACE_PREFIX = 'dead-';
   const DEAD_SPAN_PREFIX = 'dead-span-';
 
-  // OBS-005: retry telemetry aggregated from span events named `adapter_retry`.
+  // Retry telemetry aggregated from span events named `adapter_retry`.
   let retryTotalRetries = 0;
   let retrySuccessAfterRetry = 0;
   let retryFailedAfterRetries = 0;
@@ -450,9 +342,8 @@ export function createTraceManager(config?: {
   // to count success/failure outcomes.
   const retryingSpanIds = new Set<string>();
 
-  // SEC-002: Use cryptographically secure IDs instead of predictable
-  // counter + timestamp. Prevents trace/span ID enumeration in multi-tenant
-  // deployments.
+  // Use cryptographically secure IDs instead of predictable counter +
+  // timestamp. Prevents trace/span ID enumeration in multi-tenant deployments.
   function genTraceId(): TraceId {
     return asTraceId(prefixedSecureId('tr'));
   }
@@ -480,10 +371,10 @@ export function createTraceManager(config?: {
   }
 
   function evictIfNeeded(): string[] {
-    // Re-entrance guard: prevent recursive eviction calls (Fix 3).
-    // Callers that arrive while eviction is running will observe the
-    // guard and skip. After the primary eviction completes, the loop
-    // below re-checks once — catching any traces added during the run.
+    // Re-entrance guard: prevent recursive eviction calls. Callers that
+    // arrive while eviction is running will observe the guard and skip. After
+    // the primary eviction completes, the loop below re-checks once — catching
+    // any traces added during the run.
     if (isEvicting) return [];
     isEvicting = true;
 
@@ -503,7 +394,7 @@ export function createTraceManager(config?: {
               spans.delete(spanId);
               retryingSpanIds.delete(spanId);
             }
-            // Wave-13 C-10: metric per evicted trace + span count.
+            // Metric per evicted trace + span count.
             traceEvictionCounter?.add(1, { reason: 'ended' });
             if (trace.spanIds.length > 0) {
               spanEvictionCounter?.add(trace.spanIds.length, { reason: 'trace_evicted' });
@@ -532,9 +423,9 @@ export function createTraceManager(config?: {
       isEvicting = false;
     }
 
-    // Wave-13 C-10: warn at 80% capacity so operators see pressure before
-    // eviction kicks in. One-shot per crossing (not re-triggered until the
-    // size drops below threshold).
+    // Warn at 80% capacity so operators see pressure before eviction kicks
+    // in. One-shot per crossing (not re-triggered until the size drops below
+    // threshold).
     if (traces.size >= Math.floor(maxTraces * 0.8) && !spanHighWaterWarned) {
       spanHighWaterWarned = true;
       if (logger) {
@@ -554,8 +445,8 @@ export function createTraceManager(config?: {
   }
 
   /**
-   * Wave-13 C-4: Invoke `exporter.flush()` with a per-exporter deadline so a
-   * single slow exporter can no longer block the aggregate `flush()` beyond
+   * Invoke `exporter.flush()` with a per-exporter deadline so a single slow
+   * exporter can no longer block the aggregate `flush()` beyond
    * `perExporterTimeoutMs`. A `0` timeout disables the cap for the legacy
    * wait-forever path.
    */
@@ -588,9 +479,9 @@ export function createTraceManager(config?: {
   }
 
   /**
-   * P1-19: Wait for every in-flight export to settle, bounded by
-   * `flushTimeoutMs`. On timeout, abandon the remainder (the promises remain
-   * tracked but are no longer awaited) and log a warn.
+   * Wait for every in-flight export to settle, bounded by `flushTimeoutMs`.
+   * On timeout, abandon the remainder (the promises remain tracked but are
+   * no longer awaited) and log a warn.
    *
    * `flushTimeoutMs === 0` disables the cap — callers explicitly opted into
    * wait-forever behaviour.
@@ -639,7 +530,7 @@ export function createTraceManager(config?: {
       return { ...s, events: [...s.events] } as Span;
     }).filter((s): s is Span => s !== null);
 
-    // SEC-016: `metadata` is the BACKWARD-COMPATIBLE view — callers that read
+    // `metadata` is the BACKWARD-COMPATIBLE view — callers that read
     // `trace.metadata` still see user metadata. New code consults
     // `userMetadata` / `systemMetadata` directly via the readonly alias.
     const combinedMetadata = { ...mt.userMetadata };
@@ -669,12 +560,12 @@ export function createTraceManager(config?: {
 
   return {
     startTrace(name: string, metadata?: Record<string, unknown>): TraceId {
-      // LM-016: If the caller has configured ≥1 exporter AND every exporter
-      // declares an `isHealthy()` hook AND every one of those hooks returns
-      // false, there is no point admitting this trace to the map — no
-      // exporter will consume it and the entry would sit as a zombie until
-      // LRU eviction. Return a dead-trace handle instead (evict-at-birth).
-      // All later operations on this id are silent no-ops.
+      // If the caller has configured ≥1 exporter AND every exporter declares
+      // an `isHealthy()` hook AND every one of those hooks returns false,
+      // there is no point admitting this trace to the map — no exporter will
+      // consume it and the entry would sit as a zombie until LRU eviction.
+      // Return a dead-trace handle instead (evict-at-birth). All later
+      // operations on this id are silent no-ops.
       const allExportersUnhealthy =
         exporters.length > 0 &&
         exporters.every(
@@ -687,13 +578,14 @@ export function createTraceManager(config?: {
       }
 
       const id = genTraceId();
-      // SEC-007 + SEC-016: user metadata is scrubbed at ingestion so exporters
-      // (console, OTel, Langfuse) never observe secrets.
+      // User metadata is scrubbed at ingestion so exporters (console, OTel,
+      // Langfuse) never observe secrets.
       const userMeta = metadata
         ? (redactor ? sanitizeAttributes(metadata, redactor) : { ...metadata })
         : {};
-      // F12: Make the sampling decision at trace-start so that changing the
-      // sampling rate after startTrace() does not affect already-started traces.
+      // Make the sampling decision at trace-start so that changing the
+      // sampling rate after startTrace() does not affect already-started
+      // traces.
       const rateSnapshot = samplingRate;
       const sampled = rateSnapshot >= 1 || randomInt(0, 1 << 30) / (1 << 30) < rateSnapshot;
       const mutable: MutableTrace = {
@@ -704,7 +596,7 @@ export function createTraceManager(config?: {
         systemMetadata: {},
         spanIds: [],
         status: 'running',
-        // LM-011 (Wave 4b): snapshot current sampling rate at trace-start.
+        // Snapshot current sampling rate at trace-start.
         samplingRateSnapshot: rateSnapshot,
         sampled,
         lruPrev: null,
@@ -713,7 +605,7 @@ export function createTraceManager(config?: {
       };
       traces.set(id, mutable);
       lru.append(mutable);
-      // LM-007: Actively evict even if exporters are fully healthy — otherwise
+      // Actively evict even if exporters are fully healthy — otherwise
       // `maxTraces` is only ever reached after a trace ends, letting the map
       // grow when N concurrent running traces exceed capacity. With active
       // eviction the oldest still-running trace is finalized early so memory
@@ -723,12 +615,12 @@ export function createTraceManager(config?: {
     },
 
     startSpan(traceId: string, name: string, parentId?: string): SpanId {
-      // LM-016: Dead trace handle — return a dead span id that every later
-      // operation treats as a no-op. Mirrors startTrace's evict-at-birth
-      // semantics so callers don't need special-casing.
+      // Dead trace handle — return a dead span id that every later operation
+      // treats as a no-op. Mirrors startTrace's evict-at-birth semantics so
+      // callers don't need special-casing.
       if (deadTraceIds.has(traceId)) {
-        // Wave-13 C-5: no longer a silent no-op. Either throw (strict) or
-        // emit an observable counter + debug log (lenient default).
+        // Not a silent no-op. Either throw (strict) or emit an observable
+        // counter + debug log (lenient default).
         if (strictSpanCreation) {
           throw new HarnessError(
             `Trace is dead (all exporters unhealthy at startTrace time): ${traceId}`,
@@ -746,7 +638,7 @@ export function createTraceManager(config?: {
       }
       const trace = traces.get(traceId);
       if (!trace) {
-        // Wave-13 C-5: missing-trace now observable even in strict=false path.
+        // Missing-trace is observable even in strict=false path.
         deadTraceSpanCounter?.add(1, { reason: 'trace_missing' });
         throw new HarnessError(
           `Trace not found: ${traceId}`,
@@ -783,7 +675,7 @@ export function createTraceManager(config?: {
     },
 
     addSpanEvent(spanId: string, event: Omit<SpanEvent, 'timestamp'>): void {
-      // LM-016: dead span — no-op
+      // dead span — no-op
       if (deadSpanIds.has(spanId)) return;
       const span = spans.get(spanId);
       if (!span) {
@@ -793,8 +685,8 @@ export function createTraceManager(config?: {
           'Start a span before adding events',
         );
       }
-      // SEC-007: scrub event attributes before storing. Event names are plain
-      // strings and are not redacted. Preserves optional severity.
+      // Scrub event attributes before storing. Event names are plain strings
+      // and are not redacted. Preserves optional severity.
       const safeAttrs = event.attributes
         ? (redactor ? sanitizeAttributes(event.attributes, redactor) : event.attributes)
         : undefined;
@@ -807,7 +699,7 @@ export function createTraceManager(config?: {
       };
       span.events.push(storedEvent);
 
-      // OBS-005: track adapter_retry events for aggregate telemetry.
+      // Track adapter_retry events for aggregate telemetry.
       if (event.name === 'adapter_retry') {
         retryTotalRetries++;
         retryingSpanIds.add(spanId);
@@ -815,7 +707,7 @@ export function createTraceManager(config?: {
     },
 
     setSpanAttributes(spanId: string, attributes: Record<string, unknown>): void {
-      // LM-016: dead span — no-op
+      // dead span — no-op
       if (deadSpanIds.has(spanId)) return;
       const span = spans.get(spanId);
       if (!span) {
@@ -825,20 +717,20 @@ export function createTraceManager(config?: {
           'Start a span before setting attributes',
         );
       }
-      // ARCH-009: lint-style warning for non-reserved keys. One warning per
-      // distinct key per tracker — surfaces drift early without spamming.
-      // Skipped when no logger is configured (avoids stderr noise).
+      // Lint-style warning for non-reserved keys. One warning per distinct
+      // key per tracker — surfaces drift early without spamming. Skipped when
+      // no logger is configured (avoids stderr noise).
       if (logger) {
         for (const k of Object.keys(attributes)) maybeWarnAttributeKey(k);
       }
-      // SEC-007: scrub attributes at ingestion — downstream exporters read
+      // Scrub attributes at ingestion — downstream exporters read
       // span.attributes verbatim, so redacting here guarantees no leak.
       const safeAttrs = redactor ? sanitizeAttributes(attributes, redactor) : attributes;
       Object.assign(span.attributes, safeAttrs);
     },
 
     setTraceSystemMetadata(traceId: string, metadata: Record<string, unknown>): void {
-      // LM-016: dead trace — no-op
+      // dead trace — no-op
       if (deadTraceIds.has(traceId)) return;
       const trace = traces.get(traceId);
       if (!trace) {
@@ -848,9 +740,9 @@ export function createTraceManager(config?: {
           'Start a trace before setting system metadata',
         );
       }
-      // SEC-016: systemMetadata is library-authored and NOT redacted. Caller
-      // owns correctness. Do still drop prototype-polluting keys via redactor
-      // if one is configured (shape-only safety, no secret scrubbing).
+      // systemMetadata is library-authored and NOT redacted. Caller owns
+      // correctness. Do still drop prototype-polluting keys via redactor if
+      // one is configured (shape-only safety, no secret scrubbing).
       for (const [k, v] of Object.entries(metadata)) {
         if (redactor && redactor.isPollutingKey(k)) continue;
         trace.systemMetadata[k] = v;
@@ -858,7 +750,7 @@ export function createTraceManager(config?: {
     },
 
     endSpan(spanId: string, status?: 'completed' | 'error'): void {
-      // LM-016: dead span — no-op (and forget the id so the set doesn't grow).
+      // dead span — no-op (and forget the id so the set doesn't grow).
       if (deadSpanIds.has(spanId)) {
         deadSpanIds.delete(spanId);
         return;
@@ -875,7 +767,7 @@ export function createTraceManager(config?: {
       const finalStatus = status ?? 'completed';
       span.status = finalStatus;
 
-      // OBS-005: attribute retry outcome now that the span is complete.
+      // Attribute retry outcome now that the span is complete.
       if (retryingSpanIds.has(spanId)) {
         retryingSpanIds.delete(spanId);
         if (finalStatus === 'completed') {
@@ -885,11 +777,8 @@ export function createTraceManager(config?: {
         }
       }
 
-      // PERF-021 / 023 / 033 / 035: Build one frozen readonly snapshot and
-      // reuse it across every exporter. Previously we deep-cloned the span
-      // (`{ ...span, events: [...span.events] }`) once per exporter — with
-      // N exporters this was N times the allocation for the same payload.
-      //
+      // Build one frozen readonly snapshot and reuse it across every
+      // exporter (avoids N allocations for the same payload with N exporters).
       // Freezing both the snapshot envelope AND the `events` array means
       // exporters cannot mutate the shared reference (or each other's view
       // of it). `attributes` is kept mutation-free by assigning a shallow
@@ -912,7 +801,7 @@ export function createTraceManager(config?: {
     },
 
     endTrace(traceId: string, status?: 'completed' | 'error'): void {
-      // LM-016: dead trace — no-op (and forget the id so the set doesn't grow).
+      // dead trace — no-op (and forget the id so the set doesn't grow).
       if (deadTraceIds.has(traceId)) {
         deadTraceIds.delete(traceId);
         return;
@@ -928,11 +817,11 @@ export function createTraceManager(config?: {
       trace.endTime = Date.now();
       trace.status = status ?? 'completed';
 
-      // PERF-029: O(1) linked-list unlink; previously O(n) index rebuild.
+      // O(1) linked-list unlink.
       lru.remove(trace);
 
       // Export — respects isHealthy(), shouldExport(), lazy initialize(), and sampling.
-      // F12: pass the sampling decision made at trace-start so concurrent
+      // Pass the sampling decision made at trace-start so concurrent
       // `setSamplingRate()` calls can't flip the decision.
       const readonlyTrace = toReadonlyTrace(trace);
       for (const exporter of exporters) {
@@ -951,8 +840,8 @@ export function createTraceManager(config?: {
       const now = Date.now();
       for (const span of spans.values()) {
         if (span.status === 'running') {
-          // Fix 2: When olderThanMs is provided, only include spans running
-          // longer than the specified duration (stale span detection).
+          // When olderThanMs is provided, only include spans running longer
+          // than the specified duration (stale span detection).
           if (olderThanMs !== undefined && (now - span.startTime) < olderThanMs) {
             continue;
           }
@@ -964,21 +853,16 @@ export function createTraceManager(config?: {
 
     async flush(): Promise<void> {
       // Settle pending in-flight exports before asking exporters to flush — a
-      // span may have been fired microseconds ago and we don't want flush() to
-      // race past it.
-      //
-      // PERF-028: `Promise.allSettled(pendingExports)` accepts any iterable,
-      // so we pass the Set directly instead of materialising a fresh array on
-      // every loop turn. Loop because a settled export's `finally` hook runs
-      // asynchronously and new exports can race in while we awaited.
-      //
-      // P1-19: wrap the whole settle-loop in a Promise.race with an abortable
-      // timeout so a stuck exporter cannot hang shutdown. `flushTimeoutMs === 0`
-      // disables the cap (legacy wait-forever behaviour).
-      //
-      // Wave-13 C-6: ensure every lazy-init promise is tracked by
-      // pendingExports BEFORE we settle, so flush waits for in-flight
-      // exporter initialize() calls too.
+      // span may have been fired microseconds ago and we don't want flush()
+      // to race past it. `Promise.allSettled(pendingExports)` accepts any
+      // iterable, so we pass the Set directly instead of materialising a
+      // fresh array on every loop turn. Loop because a settled export's
+      // `finally` hook runs asynchronously and new exports can race in while
+      // we awaited. The whole settle-loop is wrapped in a Promise.race with
+      // an abortable timeout (`flushTimeoutMs === 0` disables the cap) so a
+      // stuck exporter cannot hang shutdown. Ensure every lazy-init promise
+      // is tracked by pendingExports BEFORE we settle, so flush waits for
+      // in-flight exporter initialize() calls too.
       for (const e of exporters) {
         if (!e.initialize) continue;
         const initPromise = ensureInitialized(e);
@@ -987,9 +871,9 @@ export function createTraceManager(config?: {
         }
       }
       await waitForPendingWithTimeout('flush');
-      // Wave-13 C-4: Replace Promise.all with Promise.allSettled + per-exporter
-      // deadline so the slowest exporter cannot block flush(). Timed-out
-      // exporters are logged but NOT re-thrown — flush must remain best-effort.
+      // Promise.allSettled + per-exporter deadline so the slowest exporter
+      // cannot block flush(). Timed-out exporters are logged but NOT
+      // re-thrown — flush must remain best-effort.
       const perExporterTimeout = flushTimeoutMs > 0 && exporters.length > 0
         ? Math.max(1, Math.floor(flushTimeoutMs / exporters.length))
         : 0;
@@ -1005,9 +889,9 @@ export function createTraceManager(config?: {
     },
 
     async initialize(): Promise<void> {
-      // Wave-13 C-4: use allSettled so one slow exporter doesn't block the
-      // others, AND track every init promise in pendingExports so flush()
-      // awaits them if called concurrently.
+      // Use allSettled so one slow exporter doesn't block the others, AND
+      // track every init promise in pendingExports so flush() awaits them if
+      // called concurrently.
       const initPromises: Promise<void>[] = [];
       for (const e of exporters) {
         const p = ensureInitialized(e);
@@ -1040,7 +924,7 @@ export function createTraceManager(config?: {
       samplingRate = rate;
     },
 
-    // P2-15: snapshot accessor (tests + introspection).
+    // Snapshot accessor (tests + introspection).
     getSamplingRate(): number {
       return samplingRate;
     },
@@ -1054,13 +938,12 @@ export function createTraceManager(config?: {
     },
 
     async dispose(): Promise<void> {
-      // LM-001: Settle outstanding in-flight export promises before asking
-      // exporters to flush — otherwise a span fired milliseconds ago may still
-      // be in the exporter's queue when we clear internal state.
-      // PERF-028: pass the Set directly to `Promise.allSettled` instead of
-      // allocating `Array.from(pendingExports)` per turn.
-      // P1-19: bounded by flushTimeoutMs so a hanging exporter cannot block
-      // dispose forever.
+      // Settle outstanding in-flight export promises before asking exporters
+      // to flush — otherwise a span fired milliseconds ago may still be in
+      // the exporter's queue when we clear internal state. Pass the Set
+      // directly to `Promise.allSettled` instead of allocating
+      // `Array.from(pendingExports)` per turn. Bounded by flushTimeoutMs so
+      // a hanging exporter cannot block dispose forever.
       await waitForPendingWithTimeout('dispose');
       // Flush every exporter — use allSettled so one failure doesn't block others.
       const flushResults = await Promise.allSettled(exporters.map(e => e.flush()));
@@ -1069,9 +952,9 @@ export function createTraceManager(config?: {
           reportExportError(result.reason);
         }
       }
-      // LM-001 / LM-015: Call `shutdown()` on each exporter with a bounded
-      // per-exporter timeout. A hanging exporter used to block the whole
-      // dispose sequence; racing against a 5s cap keeps the DAG responsive.
+      // Call `shutdown()` on each exporter with a bounded per-exporter
+      // timeout. Racing against a 5s cap keeps the DAG responsive even when
+      // one exporter hangs.
       const EXPORTER_SHUTDOWN_TIMEOUT_MS = 5_000;
       for (const e of exporters) {
         if (!e.shutdown) continue;
@@ -1101,7 +984,7 @@ export function createTraceManager(config?: {
       // Clear internal maps so the process can exit cleanly.
       traces.clear();
       spans.clear();
-      // PERF-029: reset the linked-list LRU state.
+      // Reset the linked-list LRU state.
       lru.clear();
       retryingSpanIds.clear();
       deadTraceIds.clear();

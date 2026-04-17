@@ -5,16 +5,28 @@
  */
 
 import type { Guardrail, GuardrailContext, GuardrailEvent, PipelineResult } from './types.js';
-import { HarnessError, HarnessErrorCode} from '../core/errors.js';
+import type { GuardrailPipeline } from '../core/guardrail-port.js';
+import { HarnessError, HarnessErrorCode } from '../core/errors.js';
+export type { GuardrailPipeline } from '../core/guardrail-port.js';
 
 /**
- * Branded pipeline type — an opaque token returned by {@link createPipeline}.
- * The internal state lives in a module-scoped WeakMap keyed by the token,
- * so consumers cannot reach in and mutate it, and no `as unknown as` dance
- * is needed to recover it.
+ * Defence-in-depth guard for the module-level wrappers: rejects anything
+ * that isn't a pipeline created by {@link createPipeline} (i.e. anything
+ * that doesn't expose the port methods). The typed pipeline object never
+ * fails this check; forged tokens produced via `{} as GuardrailPipeline`
+ * do.
  */
-export interface GuardrailPipeline {
-  readonly _brand: unique symbol;
+function assertPipeline(pipeline: GuardrailPipeline, method: keyof GuardrailPipeline): void {
+  if (
+    pipeline == null ||
+    typeof (pipeline as unknown as Record<string, unknown>)[method] !== 'function'
+  ) {
+    throw new HarnessError(
+      'Invalid GuardrailPipeline instance',
+      HarnessErrorCode.GUARD_INVALID_PIPELINE,
+      'Use createPipeline() to create pipelines',
+    );
+  }
 }
 
 interface PipelineEntry {
@@ -30,25 +42,6 @@ interface PipelineInternalData {
   onEvent: ((event: GuardrailEvent) => void) | undefined;
   maxResults: number;
   totalTimeoutMs: number;
-}
-
-/**
- * CQ-031: private registry mapping pipeline tokens → internal state. A
- * `WeakMap` lets us hand out opaque tokens (`GuardrailPipeline`) while keeping
- * their state out of the object itself — callers cannot observe or mutate it,
- * and no double-cast is needed to recover it from inside this module.
- *
- * The WeakMap holds only weak references to tokens, so once a consumer drops
- * their pipeline handle the internal state is eligible for garbage collection.
- */
-const internalRegistry: WeakMap<GuardrailPipeline, PipelineInternalData> = new WeakMap();
-
-function getInternal(pipeline: GuardrailPipeline): PipelineInternalData {
-  const data = internalRegistry.get(pipeline);
-  if (!data) {
-    throw new HarnessError('Invalid GuardrailPipeline instance', HarnessErrorCode.GUARD_INVALID_PIPELINE, 'Use createPipeline() to create pipelines');
-  }
-  return data;
 }
 
 /**
@@ -108,13 +101,29 @@ export function createPipeline(config: {
     maxResults: config.maxResults ?? 1000,
     totalTimeoutMs: config.totalTimeoutMs ?? 30_000,
   };
-  // CQ-031: the public `GuardrailPipeline` token is a plain opaque object.
-  // Its internal state lives in the module-scoped `internalRegistry` WeakMap
-  // so consumers cannot reach in and mutate it. `Object.freeze` prevents
-  // tampering via property writes on the token itself.
-  const pipeline = Object.freeze({}) as GuardrailPipeline;
-  internalRegistry.set(pipeline, internalData);
-  return pipeline;
+  // The pipeline object directly carries the port methods; callers treat it
+  // as an opaque token. The internal mutable state is captured by the method
+  // closures instead of living on a module-scoped WeakMap — simpler and the
+  // brand field keeps the nominal type.
+  const port = {
+    runInput: (ctx: GuardrailContext): Promise<PipelineResult> =>
+      runGuardrails(internalData, internalData.input, 'input', ctx),
+    runOutput: (ctx: GuardrailContext): Promise<PipelineResult> =>
+      runGuardrails(internalData, internalData.output, 'output', ctx),
+    runToolOutput: (toolResult: string, toolName?: string): Promise<PipelineResult> => {
+      const ctx: GuardrailContext = {
+        content: toolResult,
+        ...(toolName !== undefined && { meta: { toolName } }),
+      };
+      return runGuardrails(internalData, internalData.output, 'output', ctx);
+    },
+    runRagContext: (
+      chunks: readonly string[],
+      meta?: GuardrailContext['meta'],
+    ): Promise<PipelineResult> => runRagContextInternal(internalData, chunks, meta),
+  };
+  // Freeze the token so consumers can't swap methods post-creation.
+  return Object.freeze(port) as unknown as GuardrailPipeline;
 }
 
 /**
@@ -339,53 +348,57 @@ async function runGuardrails(
   return { passed: true, verdict: allowVerdict, results };
 }
 
-/** Run input guardrails in sequence. */
+/**
+ * Module-level `runInput` wrapper — delegates to the pipeline port so
+ * existing `runInput(pipeline, ctx)` callers (examples, CLI templates,
+ * preset, user code) keep working unchanged.
+ */
 export async function runInput(
   pipeline: GuardrailPipeline,
   ctx: GuardrailContext,
 ): Promise<PipelineResult> {
-  const p = getInternal(pipeline);
-  return runGuardrails(p, p.input, 'input', ctx);
+  assertPipeline(pipeline, 'runInput');
+  return pipeline.runInput(ctx);
 }
 
-/** Run output guardrails in sequence. */
+/** Module-level wrapper for `pipeline.runOutput`. */
 export async function runOutput(
   pipeline: GuardrailPipeline,
   ctx: GuardrailContext,
 ): Promise<PipelineResult> {
-  const p = getInternal(pipeline);
-  return runGuardrails(p, p.output, 'output', ctx);
+  assertPipeline(pipeline, 'runOutput');
+  return pipeline.runOutput(ctx);
 }
 
-/** Run output guardrails on tool execution results. */
+/** Module-level wrapper for `pipeline.runToolOutput`. */
 export async function runToolOutput(
   pipeline: GuardrailPipeline,
   toolResult: string,
   toolName?: string,
 ): Promise<PipelineResult> {
-  const p = getInternal(pipeline);
-  const ctx: GuardrailContext = {
-    content: toolResult,
-    ...(toolName !== undefined && { meta: { toolName } }),
-  };
-  return runGuardrails(p, p.output, 'output', ctx);
+  assertPipeline(pipeline, 'runToolOutput');
+  return pipeline.runToolOutput(toolResult, toolName);
 }
 
 /**
- * Wave-5E SEC-A16: run input guardrails across retrieved RAG chunks.
- * Each chunk is scanned independently; any chunk that produces a verdict
- * other than `allow` short-circuits and returns that verdict — one
- * poisoned chunk poisons the whole retrieval set. Callers (AgentLoop or
- * RAG pipeline integrations) MUST invoke this before concatenating
- * chunks into the prompt context; otherwise an injection in a retrieved
- * document would bypass the input guardrail entirely.
+ * Module-level wrapper for `pipeline.runRagContext` — scans retrieved RAG
+ * chunks through the input guardrails. Any chunk producing a non-`allow`
+ * verdict poisons the whole retrieval set (first hit wins).
  */
 export async function runRagContext(
   pipeline: GuardrailPipeline,
   chunks: readonly string[],
   meta?: GuardrailContext['meta'],
 ): Promise<PipelineResult> {
-  const p = getInternal(pipeline);
+  assertPipeline(pipeline, 'runRagContext');
+  return pipeline.runRagContext(chunks, meta);
+}
+
+async function runRagContextInternal(
+  p: PipelineInternalData,
+  chunks: readonly string[],
+  meta?: GuardrailContext['meta'],
+): Promise<PipelineResult> {
   let lastResult: PipelineResult = {
     passed: true,
     verdict: { action: 'allow' },
@@ -398,7 +411,6 @@ export async function runRagContext(
     };
     const result = await runGuardrails(p, p.input, 'input', ctx);
     lastResult = result;
-    // Any verdict other than `allow` poisons the whole retrieval set.
     if (result.verdict.action !== 'allow') return result;
   }
   return lastResult;

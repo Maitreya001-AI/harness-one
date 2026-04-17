@@ -20,12 +20,10 @@ const mocks = vi.hoisted(() => {
     shutdown: vi.fn(),
   };
   const mockLangfuseCostTracker = {
-    setPricing: vi.fn(),
     recordUsage: vi.fn(),
     getTotalCost: vi.fn(() => 0),
     getCostByModel: vi.fn(() => ({})),
     getCostByTrace: vi.fn(() => 0),
-    setBudget: vi.fn(),
     checkBudget: vi.fn(() => null),
     onAlert: vi.fn(),
     reset: vi.fn(),

@@ -7,7 +7,7 @@
 import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import { MessageQueue } from './message-queue.js';
 import { createAsyncLock, type AsyncLock } from '../infra/async-lock.js';
-import type { Logger } from '../observe/logger.js';
+import type { Logger } from '../infra/logger.js';
 import type {
   AgentMessage,
   AgentRegistration,
@@ -20,16 +20,16 @@ import type {
 } from './types.js';
 
 /**
- * SEC-011: Keys that would bypass own-property checks via prototype
- * pollution if accidentally used as context keys.
+ * Keys that would bypass own-property checks via prototype pollution if
+ * accidentally used as context keys.
  */
 const FORBIDDEN_CONTEXT_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
 /**
- * SEC-011: Normalize a key (or policy prefix) via NFKC + casefold so that
- * Unicode visual-variant attacks ("ＡＤＭＩＮ." vs "admin.") cannot bypass
- * prefix-based policies. Exported via the orchestrator internals; callers
- * using `BoundaryPolicy.allowRead/allowWrite` prefixes benefit automatically.
+ * Normalize a key (or policy prefix) via NFKC + casefold so that Unicode
+ * visual-variant attacks ("ＡＤＭＩＮ." vs "admin.") cannot bypass prefix-based
+ * policies. Exported via the orchestrator internals; callers using
+ * `BoundaryPolicy.allowRead/allowWrite` prefixes benefit automatically.
  *
  * Consumers relying on prefix semantics MUST include the literal separator
  * (e.g. `'admin.'`) — we do not silently add it.
@@ -103,7 +103,7 @@ export interface OrchestratorLifecycle {
   dispose(): void;
   /** Dispose the orchestrator after waiting for in-flight delegations. */
   drainAndDispose(timeoutMs?: number): Promise<void>;
-  /** OBS-009: Runtime metrics snapshot (includes cumulative message drops). */
+  /** Runtime metrics snapshot (includes cumulative message drops). */
   getMetrics(): OrchestratorMetrics;
 }
 
@@ -129,7 +129,7 @@ export interface OrchestratorConfig {
   /** Called when an event handler throws an exception. If not provided, routes to `logger.warn` (or silently swallows when logger also absent). */
   readonly onHandlerError?: (error: unknown, event: OrchestratorEvent) => void;
   /**
-   * CQ-028/OBS-009: Optional logger. When set:
+   * Optional logger. When set:
    * - Event-handler exceptions without an `onHandlerError` callback route to `logger.warn`.
    * - Queue-overflow message drops always emit `logger.warn` (on top of `onWarning`).
    */
@@ -143,23 +143,23 @@ export interface OrchestratorConfig {
    */
   readonly redactMetadata?: (metadata: Record<string, unknown>) => Record<string, unknown>;
   /**
-   * Wave-13 P0-4: cap on total delegation-chain entries (cumulative size of
-   * all inner Sets across all delegators). Prevents a stuck orchestrator
-   * from growing `delegationChain` without bound when delegations never
-   * settle into unregistration. Default: 10_000. Breaches throw
+   * Cap on total delegation-chain entries (cumulative size of all inner Sets
+   * across all delegators). Prevents a stuck orchestrator from growing
+   * `delegationChain` without bound when delegations never settle into
+   * unregistration. Default: 10_000. Breaches throw
    * {@link HarnessErrorCode.ORCH_DELEGATION_LIMIT}.
    */
   readonly maxDelegationChainEntries?: number;
   /**
-   * Wave-13 P0-5: cap on shared-context store entries. Prevents unbounded
-   * growth of `sharedContext.set()` writes in long-running orchestrators.
-   * Default: 10_000. Breaches throw
-   * {@link HarnessErrorCode.ORCH_CONTEXT_LIMIT} with a remediation hint.
+   * Cap on shared-context store entries. Prevents unbounded growth of
+   * `sharedContext.set()` writes in long-running orchestrators. Default:
+   * 10_000. Breaches throw {@link HarnessErrorCode.ORCH_CONTEXT_LIMIT} with
+   * a remediation hint.
    */
   readonly maxSharedContextEntries?: number;
 }
 
-/** OBS-009: Metrics snapshot for an orchestrator instance. */
+/** Metrics snapshot for an orchestrator instance. */
 export interface OrchestratorMetrics {
   /** Cumulative number of messages dropped due to queue overflow. */
   readonly droppedMessages: number;
@@ -195,18 +195,18 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
   let disposed = false;
 
   const agents = new Map<string, MutableAgentRegistration>();
-  // PERF-017: Set-backed handler registry for O(1) unsubscribe.
+  // Set-backed handler registry for O(1) unsubscribe.
   const eventHandlers = new Set<(event: OrchestratorEvent) => void>();
   const contextStore = new Map<string, unknown>();
   const logger = config?.logger;
   const redactMetadata = config?.redactMetadata;
 
-  // OBS-009: Cumulative count of dropped messages (queue overflow).
+  // Cumulative count of dropped messages (queue overflow).
   let droppedMessages = 0;
 
-  // Fix 23: Track delegation chains to detect cycles
+  // Track delegation chains to detect cycles.
   const delegationChain = new Map<string, Set<string>>();
-  // A1-1 (Wave 4b): per-source-agent async lock. The delegate() flow does
+  // Per-source-agent async lock. The delegate() flow does
   // "check chain -> await strategy.select() -> mutate chain"; without a lock
   // two concurrent delegations from the same source agent can both pass the
   // cycle check and then both mutate the chain, admitting a cycle that the
@@ -230,7 +230,7 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
       try {
         handler(event);
       } catch (err: unknown) {
-        // Fix 34: Wrap onHandlerError callback itself in try-catch
+        // Wrap onHandlerError callback itself in try-catch.
         if (config?.onHandlerError) {
           try {
             config.onHandlerError(err, event);
@@ -238,7 +238,7 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
             // Swallow error from error handler to prevent blocking subsequent handlers
           }
         } else if (logger) {
-          // CQ-028: Route to injected logger instead of silently swallowing.
+          // Route to injected logger instead of silently swallowing.
           try {
             logger.warn('Orchestrator event handler threw; continuing', {
               error: err instanceof Error ? { name: err.name, message: err.message, stack: err.stack } : String(err),
@@ -261,7 +261,7 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
     onEvent?: (event: { type: 'message_dropped'; agentId: string; droppedCount: number }) => void;
   } = {
     onEvent: (event) => {
-      // OBS-009: Track cumulative drops and always signal via logger.
+      // Track cumulative drops and always signal via logger.
       if (event.type === 'message_dropped') {
         droppedMessages += event.droppedCount;
         if (logger) {
@@ -322,18 +322,18 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
 
   const sharedContext: SharedContext = {
     get(key: string): unknown {
-      // SEC-011: Normalize key for consistent lookup — ensures 'ADMIN' and
-      // 'admin' resolve to the same entry, matching boundary policy normalization.
+      // Normalize key for consistent lookup — ensures 'ADMIN' and 'admin'
+      // resolve to the same entry, matching boundary policy normalization.
       return contextStore.get(normalizeContextKey(key));
     },
     /**
      * Set a value on the shared context.
      *
-     * SEC-011: Keys that would bypass own-property checks via prototype
-     * pollution (`__proto__`, `constructor`, `prototype`) are rejected with
-     * an `INVALID_KEY` HarnessError. Keys are normalized via NFKC + casefold
-     * before storage so that lookup and boundary policy matching are consistent
-     * (see `normalizeContextKey`).
+     * Keys that would bypass own-property checks via prototype pollution
+     * (`__proto__`, `constructor`, `prototype`) are rejected with an
+     * `INVALID_KEY` HarnessError. Keys are normalized via NFKC + casefold
+     * before storage so that lookup and boundary policy matching are
+     * consistent (see `normalizeContextKey`).
      */
     set(key: string, value: unknown): void {
       if (typeof key !== 'string' || key.length === 0) {
@@ -343,7 +343,7 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
           'Provide a non-empty string key',
         );
       }
-      // SEC-011: Normalize before forbidden-key check to catch Unicode variants.
+      // Normalize before forbidden-key check to catch Unicode variants.
       const normalized = normalizeContextKey(key);
       if (FORBIDDEN_CONTEXT_KEYS.has(normalized)) {
         throw new HarnessError(
@@ -352,10 +352,9 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
           `Avoid keys in {${Array.from(FORBIDDEN_CONTEXT_KEYS).join(', ')}}`,
         );
       }
-      // Wave-13 P0-5: bound the contextStore size. Previously any user of
-      // `sharedContext.set()` could grow the map indefinitely in a
-      // long-running orchestrator — here we enforce a cap with a remediation
-      // hint. Overwriting an existing key never counts against the cap.
+      // Bound the contextStore size so `sharedContext.set()` cannot grow the
+      // map indefinitely in a long-running orchestrator. Overwriting an
+      // existing key never counts against the cap.
       if (!contextStore.has(normalized) && contextStore.size >= maxSharedContextEntries) {
         throw new HarnessError(
           `Orchestrator shared-context reached the configured cap of ${maxSharedContextEntries} entries`,
@@ -367,9 +366,8 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
       emit({ type: 'context_updated', key: normalized });
     },
     /**
-     * Wave-13 P0-5 ergonomic companion: explicitly evict a key so long-running
-     * orchestrators can reclaim space without wholesale clear(). Returns true
-     * if the key existed.
+     * Explicitly evict a key so long-running orchestrators can reclaim space
+     * without wholesale clear(). Returns true if the key existed.
      */
     delete(key: string): boolean {
       return contextStore.delete(normalizeContextKey(key));
@@ -418,15 +416,15 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
       const existed = agents.delete(id);
       if (existed) {
         messageQueue.deleteQueue(id);
-        // Fix 23: Clean up delegation chain
+        // Clean up delegation chain
         delegationChain.delete(id);
         for (const chain of delegationChain.values()) {
           chain.delete(id);
         }
-        // A1-1 (Wave 4b): drop the delegation lock for this source agent.
-        // Waiters (if any) are implausible since the caller would need to
-        // still hold a reference, and the lock is empty once the final
-        // critical section returns.
+        // Drop the delegation lock for this source agent. Waiters (if any)
+        // are implausible since the caller would need to still hold a
+        // reference, and the lock is empty once the final critical section
+        // returns.
         delegationLocks.delete(id);
       }
       return existed;
@@ -505,19 +503,19 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
         );
       }
       if (!strategy) return undefined;
-      // A1-1 (Wave 4b): the cycle-detection window ("inspect delegationChain
-      // -> await strategy.select -> mutate delegationChain") is a TOCTOU gap
-      // when two delegations originate from the same source agent. Take a
-      // per-source-agent lock so only one inspection+mutation runs at a time.
-      // When there's no `delegatedFrom`, there is nothing to cycle-check
-      // against, so we fall back to an unlocked path (strategy.select is
-      // stateless w.r.t. delegationChain).
+      // The cycle-detection window ("inspect delegationChain -> await
+      // strategy.select -> mutate delegationChain") is a TOCTOU gap when
+      // two delegations originate from the same source agent. Take a
+      // per-source-agent lock so only one inspection+mutation runs at a
+      // time. When there's no `delegatedFrom`, there is nothing to
+      // cycle-check against, so we fall back to an unlocked path
+      // (strategy.select is stateless w.r.t. delegationChain).
       const delegatedFromKey = task.metadata?.delegatedFrom as string | undefined;
       const runDelegation = async (): Promise<string | undefined> => {
         const allAgents = Array.from(agents.values()).map(toReadonly);
         const selectedId = await strategy.select(allAgents, task);
         if (selectedId !== undefined) {
-          // Fix 23: Check for delegation cycles
+          // Check for delegation cycles.
           // If task has metadata with delegatedFrom, check chain
           const delegatedFrom = task.metadata?.delegatedFrom as string | undefined;
           if (delegatedFrom && selectedId) {
@@ -548,11 +546,10 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
               }
             }
 
-            // Record the delegation: delegatedFrom -> selectedId
-            // Wave-13 P0-4: cap total entries across all inner Sets. This
-            // guards against unbounded delegationChain growth when
-            // delegations never complete (no unregister) — a previously
-            // silent path to OOM in long-running orchestrators.
+            // Record the delegation: delegatedFrom -> selectedId. Cap total
+            // entries across all inner Sets — this guards against unbounded
+            // delegationChain growth when delegations never complete (no
+            // unregister), a silent path to OOM in long-running orchestrators.
             const existingChain = delegationChain.get(delegatedFrom);
             const wouldBeNew = existingChain === undefined || !existingChain.has(selectedId);
             if (wouldBeNew) {
@@ -594,8 +591,8 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
       return sharedContext;
     },
 
-    // PERF-017: Set-backed eventHandlers; add/delete are O(1) and we iterate
-    // via spread in `emit()` so handlers can subscribe/unsubscribe safely.
+    // Set-backed eventHandlers; add/delete are O(1) and we iterate via spread
+    // in `emit()` so handlers can subscribe/unsubscribe safely.
     onEvent(handler: (event: OrchestratorEvent) => void): () => void {
       eventHandlers.add(handler);
       return () => {

@@ -59,7 +59,7 @@ export type AgentEvent = {
     totalUsage: TokenUsage;
 };
 
-// @public @deprecated
+// @public
 export class AgentLoop {
     constructor(config: AgentLoopConfig);
     abort(): void;
@@ -338,10 +338,6 @@ export interface CostTracker {
     onAlert(handler: (alert: CostAlert) => void): () => void;
     recordUsage(usage: Omit<TokenUsageRecord, 'estimatedCost' | 'timestamp'>): TokenUsageRecord;
     reset(): void;
-    // @deprecated
-    setBudget(budget: number): void;
-    // @deprecated
-    setPricing(pricing: ModelPricing[]): void;
     shouldStop(): boolean;
     updateBudget(budget: number): Promise<void>;
     updatePricing(pricing: ModelPricing[]): Promise<void>;
@@ -487,18 +483,6 @@ export function disposeAll(disposables: readonly Disposable_2[]): Promise<void>;
 // @public
 export type DoneReason = 'end_turn' | 'max_iterations' | 'token_budget' | 'aborted' | 'error';
 
-// @public @deprecated
-export interface EventBus {
-    emit<T = unknown>(event: string, data: T): void;
-    off(event: string, handler: EventHandler): void;
-    // Warning: (ae-forgotten-export) The symbol "EventHandler" needs to be exported by the entry point index.d.ts
-    on<T = unknown>(event: string, handler: EventHandler<T>): () => void;
-    removeAll(event?: string): void;
-}
-
-// @public @deprecated
-type EventHandler<T = unknown> = (data: T) => void;
-
 // @public
 interface EvictionStrategy {
     readonly name: EvictionStrategyName;
@@ -583,6 +567,16 @@ interface GuardrailEvent {
 export interface GuardrailPipeline {
     // (undocumented)
     readonly _brand: unique symbol;
+    // Warning: (ae-forgotten-export) The symbol "PipelineResult" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    runInput(ctx: GuardrailContext): Promise<PipelineResult>;
+    // (undocumented)
+    runOutput(ctx: GuardrailContext): Promise<PipelineResult>;
+    // (undocumented)
+    runRagContext(chunks: readonly string[], meta?: GuardrailContext['meta']): Promise<PipelineResult>;
+    // (undocumented)
+    runToolOutput(toolResult: string, toolName?: string): Promise<PipelineResult>;
 }
 
 // @public
@@ -1099,6 +1093,17 @@ export interface OutputParser<T = unknown> {
 
 // @public
 type PermissionLevel = 'strict' | 'default' | 'permissive';
+
+// @public
+interface PipelineResult {
+    modifiedContent?: string;
+    // (undocumented)
+    passed: boolean;
+    // (undocumented)
+    results: GuardrailEvent[];
+    // (undocumented)
+    verdict: GuardrailVerdict;
+}
 
 // @public
 export interface PruneResult {
@@ -1632,12 +1637,12 @@ export interface VectorSearchOptions {
 
 // Warnings were encountered during analysis:
 //
-// dist/cost-tracker-7sEeOum3.d.ts:278:5 - (ae-forgotten-export) The symbol "EvictionStrategyName" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-7sEeOum3.d.ts:278:5 - (ae-forgotten-export) The symbol "EvictionStrategy" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-7sEeOum3.d.ts:318:5 - (ae-forgotten-export) The symbol "MetricsPort" needs to be exported by the entry point index.d.ts
-// dist/pipeline-CCesF6ow.d.ts:95:5 - (ae-forgotten-export) The symbol "GuardrailEvent" needs to be exported by the entry point index.d.ts
-// dist/resilience-PlLF2tvt.d.ts:253:5 - (ae-forgotten-export) The symbol "MiddlewareContext" needs to be exported by the entry point index.d.ts
-// dist/trace-manager-CI3Oj-LO.d.ts:477:5 - (ae-forgotten-export) The symbol "RedactConfig" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-yj3JsvOC.d.ts:70:5 - (ae-forgotten-export) The symbol "RedactConfig" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-yj3JsvOC.d.ts:358:5 - (ae-forgotten-export) The symbol "EvictionStrategyName" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-yj3JsvOC.d.ts:358:5 - (ae-forgotten-export) The symbol "EvictionStrategy" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-yj3JsvOC.d.ts:398:5 - (ae-forgotten-export) The symbol "MetricsPort" needs to be exported by the entry point index.d.ts
+// dist/pipeline-CCw3TkZG.d.ts:45:5 - (ae-forgotten-export) The symbol "GuardrailEvent" needs to be exported by the entry point index.d.ts
+// dist/resilience-GRs5EBl_.d.ts:253:5 - (ae-forgotten-export) The symbol "MiddlewareContext" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 

@@ -37,12 +37,10 @@ const mocks = vi.hoisted(() => {
     shutdown: vi.fn(),
   };
   const mockLangfuseCostTracker = {
-    setPricing: vi.fn(),
     recordUsage: vi.fn(),
     getTotalCost: vi.fn(() => 0),
     getCostByModel: vi.fn(() => ({})),
     getCostByTrace: vi.fn(() => 0),
-    setBudget: vi.fn(),
     checkBudget: vi.fn(() => null),
     onAlert: vi.fn(),
     reset: vi.fn(),
@@ -243,8 +241,10 @@ describe('createHarness() factory', () => {
 
       // Langfuse exporter was created
       expect(mocks.createLangfuseExporter).toHaveBeenCalledWith({ client: langfuseClient });
-      // Langfuse cost tracker was created
-      expect(mocks.createLangfuseCostTracker).toHaveBeenCalledWith({ client: langfuseClient });
+      // Langfuse cost tracker was created with factory-time pricing + budget
+      expect(mocks.createLangfuseCostTracker).toHaveBeenCalledWith(
+        expect.objectContaining({ client: langfuseClient, pricing, budget: 5.0 }),
+      );
       // Custom memory was used instead of Redis
       expect(harness.memory).toBe(customMemory);
       expect(mocks.createRedisStore).not.toHaveBeenCalled();
@@ -252,9 +252,6 @@ describe('createHarness() factory', () => {
       expect(mocks.createAjvValidator).not.toHaveBeenCalled();
       // Tiktoken was registered
       expect(mocks.registerTiktokenModels).toHaveBeenCalled();
-      // Pricing and budget were set
-      expect(mocks.mockLangfuseCostTracker.setPricing).toHaveBeenCalledWith(pricing);
-      expect(mocks.mockLangfuseCostTracker.setBudget).toHaveBeenCalledWith(5.0);
       // Guardrails pipeline was created
       expect(harness.guardrails).toBeDefined();
       // All properties present
@@ -756,7 +753,9 @@ describe('createHarness() factory', () => {
     it('uses Langfuse cost tracker when langfuse client is provided', () => {
       const langfuseClient = { trace: vi.fn(), flushAsync: vi.fn() };
       createHarness({ ...anthropicConfig, langfuse: langfuseClient });
-      expect(mocks.createLangfuseCostTracker).toHaveBeenCalledWith({ client: langfuseClient });
+      expect(mocks.createLangfuseCostTracker).toHaveBeenCalledWith(
+        expect.objectContaining({ client: langfuseClient }),
+      );
     });
 
     it('uses core cost tracker when no langfuse is provided', () => {
@@ -765,32 +764,40 @@ describe('createHarness() factory', () => {
       expect(harness.costs).toBeDefined();
     });
 
-    it('calls setPricing when pricing config is provided', () => {
+    it('passes pricing to the Langfuse tracker factory when pricing config is provided', () => {
       const langfuseClient = { trace: vi.fn(), flushAsync: vi.fn() };
       const pricing = [
         { model: 'gpt-4', inputPer1kTokens: 0.03, outputPer1kTokens: 0.06 },
         { model: 'gpt-3.5', inputPer1kTokens: 0.001, outputPer1kTokens: 0.002 },
       ];
       createHarness({ ...anthropicConfig, langfuse: langfuseClient, pricing });
-      expect(mocks.mockLangfuseCostTracker.setPricing).toHaveBeenCalledWith(pricing);
+      expect(mocks.createLangfuseCostTracker).toHaveBeenCalledWith(
+        expect.objectContaining({ pricing }),
+      );
     });
 
-    it('calls setBudget when budget config is provided', () => {
+    it('passes budget to the Langfuse tracker factory when budget config is provided', () => {
       const langfuseClient = { trace: vi.fn(), flushAsync: vi.fn() };
       createHarness({ ...anthropicConfig, langfuse: langfuseClient, budget: 25.50 });
-      expect(mocks.mockLangfuseCostTracker.setBudget).toHaveBeenCalledWith(25.50);
+      expect(mocks.createLangfuseCostTracker).toHaveBeenCalledWith(
+        expect.objectContaining({ budget: 25.50 }),
+      );
     });
 
-    it('does not call setPricing when pricing is not provided', () => {
+    it('omits pricing from the Langfuse factory config when pricing is not provided', () => {
       const langfuseClient = { trace: vi.fn(), flushAsync: vi.fn() };
       createHarness({ ...anthropicConfig, langfuse: langfuseClient });
-      expect(mocks.mockLangfuseCostTracker.setPricing).not.toHaveBeenCalled();
+      const call = mocks.createLangfuseCostTracker.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+      expect(call).toBeDefined();
+      expect(call).not.toHaveProperty('pricing');
     });
 
-    it('does not call setBudget when budget is not provided', () => {
+    it('omits budget from the Langfuse factory config when budget is not provided', () => {
       const langfuseClient = { trace: vi.fn(), flushAsync: vi.fn() };
       createHarness({ ...anthropicConfig, langfuse: langfuseClient });
-      expect(mocks.mockLangfuseCostTracker.setBudget).not.toHaveBeenCalled();
+      const call = mocks.createLangfuseCostTracker.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+      expect(call).toBeDefined();
+      expect(call).not.toHaveProperty('budget');
     });
   });
 

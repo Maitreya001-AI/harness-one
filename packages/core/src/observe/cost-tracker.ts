@@ -16,125 +16,12 @@ import {
   getEvictionStrategy,
 } from './cost-tracker-eviction.js';
 import { KahanSum, priceUsage, hasNonFiniteTokens } from './cost-math.js';
+import type { ModelPricing, CostTracker } from './cost-tracker-types.js';
 export type { EvictionStrategy, EvictionStrategyName } from './cost-tracker-eviction.js';
 export { overflowBucketStrategy, lruStrategy, getEvictionStrategy } from './cost-tracker-eviction.js';
-
-/** Pricing configuration for a model. */
-export interface ModelPricing {
-  readonly model: string;
-  readonly inputPer1kTokens: number;
-  readonly outputPer1kTokens: number;
-  readonly cacheReadPer1kTokens?: number;
-  readonly cacheWritePer1kTokens?: number;
-}
-
-/**
- * Synthetic key used to bucket cost entries that arrive after the per-model or
- * per-trace capacity has been reached. See {@link CostTracker} for the
- * rationale — we never evict existing entries (SEC-009) because evictions can
- * be abused by a caller to erase legitimate totals by flooding the tracker
- * with junk keys.
- */
-export const OVERFLOW_BUCKET_KEY = '__overflow__';
-
-/** Tracker for token usage costs with budget alerting.
- *
- * Semantics of getters (CQ-009):
- *
- * - `getTotalCost()` reflects the **recent window** of kept records
- *   (bounded by `maxRecords`). When the record buffer evicts, the running
- *   sum subtracts the evicted cost, so this value tracks costs that are
- *   still addressable via `records`.
- * - `getCostByModel()` / `getCostByTrace()` are **cumulative since start**
- *   (or since the last `reset()`). They do NOT decrease when the record
- *   buffer evicts — this lets long-running jobs report end-to-end per-model
- *   spend regardless of buffer churn.
- *
- * Bounded-map semantics (SEC-009):
- *
- * - Once `modelTotals` (or `traceTotals`) reaches its cap, **existing**
- *   entries are never evicted. New, previously-unseen keys are aggregated
- *   into a synthetic `__overflow__` bucket (accessible as
- *   `OVERFLOW_BUCKET_KEY` on the returned record). This prevents a caller
- *   from flooding the tracker with junk keys to erase legitimate totals.
- */
-export interface CostTracker {
-  /**
-   * Set pricing for one or more models.
-   *
-   * @deprecated P1-15: Mutators leak mutable state post-construction and
-   * create non-deterministic behaviour under concurrent `recordUsage()` calls.
-   * Prefer passing the full pricing set at factory time via
-   * `createCostTracker({ pricing })`. A `@deprecated` warning is logged once
-   * per tracker on first call; the method remains functional for backward
-   * compatibility.
-   */
-  setPricing(pricing: ModelPricing[]): void;
-  /**
-   * Wave-13 C-1: Concurrency-safe pricing update. Serialises against
-   * `updateBudget()` and every concurrent `updatePricing()` via an internal
-   * async lock so callers running multiple fiber-style updaters do not
-   * interleave writes mid-record. Prefer this over the deprecated
-   * `setPricing()` for post-construction mutation.
-   */
-  updatePricing(pricing: ModelPricing[]): Promise<void>;
-  /** Record token usage and return the record with computed cost. */
-  recordUsage(usage: Omit<TokenUsageRecord, 'estimatedCost' | 'timestamp'>): TokenUsageRecord;
-  /**
-   * Update the most recent usage record for a given traceId with partial new token counts.
-   * Used for streaming scenarios where token counts arrive incrementally.
-   * Recalculates cost difference and adjusts the running total accordingly.
-   * Returns the updated record, or undefined if no record exists for the traceId.
-   */
-  updateUsage(traceId: string, usage: Partial<Omit<TokenUsageRecord, 'estimatedCost' | 'timestamp' | 'traceId' | 'model'>>): TokenUsageRecord | undefined;
-  /**
-   * Recent-window total cost. Tracks the running sum of kept records in the
-   * bounded `records` buffer. Not strictly cumulative — evicted records are
-   * subtracted (see CQ-009).
-   */
-  getTotalCost(): number;
-  /**
-   * Cumulative-since-start cost breakdown by model (see CQ-009). New unknown
-   * models landing after `maxModels` is reached are aggregated under
-   * `OVERFLOW_BUCKET_KEY` rather than evicting existing totals (SEC-009).
-   */
-  getCostByModel(): Record<string, number>;
-  /**
-   * Cumulative-since-start cost for a specific trace (see CQ-009). Unknown
-   * traces arriving after `maxTraces` is reached bucket into
-   * `OVERFLOW_BUCKET_KEY` rather than evicting (SEC-009).
-   */
-  getCostByTrace(traceId: string): number;
-  /**
-   * Set the budget limit.
-   *
-   * @deprecated P1-15: Prefer setting `budget` at construction time via
-   * `createCostTracker({ budget })`. Runtime mutation is retained for
-   * backward compatibility and logs a `@deprecated` warning on first call.
-   */
-  setBudget(budget: number): void;
-  /**
-   * Wave-13 C-1: Concurrency-safe budget update. Serialises against
-   * `updatePricing()` and concurrent `updateBudget()` via an internal async
-   * lock. Prefer this over the deprecated `setBudget()` for post-construction
-   * mutation.
-   */
-  updateBudget(budget: number): Promise<void>;
-  /** Check if budget thresholds have been crossed. */
-  checkBudget(): CostAlert | null;
-  /** Register an alert handler. Returns a cleanup function to unsubscribe. */
-  onAlert(handler: (alert: CostAlert) => void): () => void;
-  /** Reset all usage records. */
-  reset(): void;
-  /** Get a prompt-injectable alert message based on budget usage, or null if under threshold. */
-  getAlertMessage(): string | null;
-  /** Returns true when total cost >= budget. Returns false if no budget is set. */
-  isBudgetExceeded(): boolean;
-  /** Returns fraction of budget used (0-1+). Returns 0 if no budget is set. */
-  budgetUtilization(): number;
-  /** Returns true when the budget has been exceeded and processing should stop. */
-  shouldStop(): boolean;
-}
+export type { ModelPricing, CostTracker } from './cost-tracker-types.js';
+export { OVERFLOW_BUCKET_KEY } from './cost-tracker-types.js';
+import { OVERFLOW_BUCKET_KEY } from './cost-tracker-types.js';
 
 /**
  * Compensated-summation accumulator (Kahan sum).
@@ -163,12 +50,12 @@ export { KahanSum } from './cost-math.js';
 /**
  * Create a new CostTracker instance.
  *
- * ARCH-008: Eviction semantics are pluggable via `evictionStrategy`. The
- * default `'overflow-bucket'` matches the historical core behaviour:
+ * Eviction semantics are pluggable via `evictionStrategy`. The default
+ * `'overflow-bucket'` matches the core behaviour:
  *
  *   - Per-model and per-trace cumulative totals are NEVER evicted; new keys
  *     past `maxModels` / `maxTraces` are aggregated under
- *     {@link OVERFLOW_BUCKET_KEY} (SEC-009).
+ *     {@link OVERFLOW_BUCKET_KEY}.
  *   - The bounded record buffer still shifts when oversize, decrementing
  *     `getTotalCost()` (recent-window) but leaving per-model / per-trace
  *     cumulative totals untouched.
@@ -196,7 +83,7 @@ export function createCostTracker(config?: {
   maxModels?: number;
   maxTraces?: number;
   /**
-   * ARCH-008: select per-key total semantics. Defaults to `'overflow-bucket'`
+   * Select per-key total semantics. Defaults to `'overflow-bucket'`
    * (cumulative since start, never evicts). `'lru'` matches Langfuse's
    * sliding-window behaviour. Accepts a strategy object directly for tests.
    */
@@ -214,34 +101,34 @@ export function createCostTracker(config?: {
    */
   warnUnpricedModels?: boolean;
   /**
-   * SEC-009: Invoked at most once per minute (per tracker) when either
-   * `modelTotals` or `traceTotals` is at capacity and a new key is being
-   * folded into the `__overflow__` bucket. Use for operator alerting.
-   * If not provided, a warning is emitted via the structured logger at the same cadence.
+   * Invoked at most once per minute (per tracker) when either `modelTotals`
+   * or `traceTotals` is at capacity and a new key is being folded into the
+   * `__overflow__` bucket. Use for operator alerting. If not provided, a
+   * warning is emitted via the structured logger at the same cadence.
    */
   onOverflow?: (info: { kind: 'model' | 'trace'; capacity: number; rejectedKey: string }) => void;
   /** Optional logger for structured warning output. Falls back to the redaction-enabled default logger. */
   logger?: Logger;
   /**
-   * P2-13: Suppress duplicate budget alerts emitted within this window
-   * (per alert type: `warning` / `critical` / `exceeded`). Streaming
-   * `recordUsage()` calls frequently fire many updates per second; without
-   * dedupe a single budget crossing can flood alert handlers. Default: 500ms.
-   * Set to `0` to disable dedupe (legacy alert-every-call behaviour).
+   * Suppress duplicate budget alerts emitted within this window (per alert
+   * type: `warning` / `critical` / `exceeded`). Streaming `recordUsage()`
+   * calls frequently fire many updates per second; without dedupe a single
+   * budget crossing can flood alert handlers. Default: 500ms. Set to `0` to
+   * disable dedupe.
    */
   alertDedupeWindowMs?: number;
   /**
-   * Wave-13 C-3: Optional metrics port used to emit a running
-   * `harness.cost.utilization` gauge on every `recordUsage()` call plus a
-   * `harness.cost.alerts.total` counter when an alert fires. Defaults to
-   * a no-op sink so existing callers see no behaviour change.
+   * Optional metrics port used to emit a running `harness.cost.utilization`
+   * gauge on every `recordUsage()` call plus a `harness.cost.alerts.total`
+   * counter when an alert fires. Defaults to a no-op sink so existing
+   * callers see no behaviour change.
    */
   metrics?: MetricsPort;
 }): CostTracker {
   const pricing = new Map<string, ModelPricing>();
   const records: TokenUsageRecord[] = [];
-  // PERF-040: Set-backed alert handler storage — O(1) unsubscribe, consistent
-  // with session/orchestrator event handler patterns (LM-012 / PERF-017).
+  // Set-backed alert handler storage — O(1) unsubscribe, consistent with
+  // session/orchestrator event handler patterns.
   const alertHandlers = new Set<(alert: CostAlert) => void>();
   let budget: number | undefined = config?.budget;
   const warningThreshold = config?.alertThresholds?.warning ?? 0.8;
@@ -253,9 +140,9 @@ export function createCostTracker(config?: {
   const warnUnpricedModels = config?.warnUnpricedModels ?? true;
   const onOverflow = config?.onOverflow;
   const logger = config?.logger;
-  // Wave-13 C-3: lazy-resolved metric instruments. We intentionally resolve
-  // them once per tracker so implementations that cache by name keep a stable
-  // identity; no-op sinks cost nothing.
+  // Lazy-resolved metric instruments. We intentionally resolve them once per
+  // tracker so implementations that cache by name keep a stable identity;
+  // no-op sinks cost nothing.
   const metricsPort = config?.metrics;
   const costUtilizationGauge = metricsPort?.gauge('harness.cost.utilization', {
     description: 'Fraction of budget consumed (0..1+) reported after every recordUsage()',
@@ -264,19 +151,16 @@ export function createCostTracker(config?: {
   const costAlertCounter = metricsPort?.counter('harness.cost.alerts.total', {
     description: 'Count of emitted budget alerts by type',
   });
-  // P2-13: alert dedupe bookkeeping. Tracks the last emission timestamp per
-  // alert type; an alert re-fires only once the dedupe window has passed.
+  // Alert dedupe bookkeeping. Tracks the last emission timestamp per alert
+  // type; an alert re-fires only once the dedupe window has passed.
   const alertDedupeWindowMs = config?.alertDedupeWindowMs ?? 500;
   const lastAlertTs: Record<CostAlert['type'], number> = {
     warning: 0,
     critical: 0,
     exceeded: 0,
   };
-  // P1-15: one-shot deprecation warnings for setPricing / setBudget.
-  let setPricingDeprecationWarned = false;
-  let setBudgetDeprecationWarned = false;
-  // ARCH-008: pluggable eviction strategy. Accept a string or an object so
-  // tests can inject custom strategies.
+  // Pluggable eviction strategy. Accept a string or an object so tests can
+  // inject custom strategies.
   const evictionStrategy: EvictionStrategy =
     typeof config?.evictionStrategy === 'object'
       ? config.evictionStrategy
@@ -287,14 +171,10 @@ export function createCostTracker(config?: {
    */
   const warnedUnpriced = new Set<string>();
 
-  // SEC-009: throttle overflow signals to once per minute (per kind).
-  //
-  // PERF-008 historical note: an earlier proposal deferred eviction with
-  // batch-evict-10% semantics to remove LRU work from the hot path. SEC-009
-  // superseded this — we no longer evict existing entries at all (caller
-  // keys could otherwise wipe legitimate totals), so the hot-path cost is
-  // now a single `Map.size` comparison and (at most) one lookup. The check
-  // cost is O(1) and does not scale with `maxModels`.
+  // Throttle overflow signals to once per minute (per kind). We never evict
+  // existing entries (caller keys could otherwise wipe legitimate totals),
+  // so the hot-path cost is a single `Map.size` comparison and (at most)
+  // one lookup — O(1), does not scale with `maxModels`.
   const OVERFLOW_THROTTLE_MS = 60_000;
   const lastOverflowSignal = { model: 0, trace: 0 };
 
@@ -306,7 +186,7 @@ export function createCostTracker(config?: {
       try {
         onOverflow({ kind, capacity, rejectedKey });
       } catch (err) {
-        // C3: Log instead of silently swallowing — the record path must not
+        // Log instead of silently swallowing — the record path must not
         // break, but operators need visibility into buggy callbacks.
         safeWarn(
           logger,
@@ -321,10 +201,10 @@ export function createCostTracker(config?: {
     }
   }
 
-  // Fix 5: Use KahanSum utility for running total
+  // Running total uses Kahan summation to avoid float drift.
   const runningSum = new KahanSum();
 
-  // Wave-13 C-1: Internal async lock serialising post-construction mutators
+  // Internal async lock serialising post-construction mutators
   // (`updatePricing`, `updateBudget`). The synchronous hot path
   // (`recordUsage`, `updateUsage`, `checkBudget`) is single-JS-tick and
   // doesn't yield, so it cannot observe a partially-applied update — but
@@ -332,21 +212,18 @@ export function createCostTracker(config?: {
   // interleave without serialisation, hence the lock.
   const mutationLock = createAsyncLock();
 
-  // Fix 4: Track cumulative per-model costs separately from the buffer.
+  // Track cumulative per-model costs separately from the buffer.
   // modelTotals accumulates costs permanently (not affected by buffer eviction),
   // ensuring getCostByModel() stays consistent with getTotalCost().
   const modelTotals = new Map<string, KahanSum>();
 
-  // PERF-03: Secondary index for O(1) getCostByTrace lookups
+  // Secondary index for O(1) getCostByTrace lookups.
   const traceTotals = new Map<string, KahanSum>();
 
-  // Wave-13 P0-6: Secondary index mapping traceId → SORTED array of record
-  // indices that currently belong to that trace. Earlier versions stored only
-  // the latest index (scalar) and had to do an O(n) backward scan after every
-  // `records.shift()` to find the next-most-recent index when the evicted slot
-  // was index 0 — O(n²) under streaming load.
+  // Secondary index mapping traceId → SORTED array of record indices that
+  // currently belong to that trace.
   //
-  // New layout:
+  // Layout:
   //   - Every recordUsage() pushes `records.length - 1` onto the traceId's list.
   //   - updateUsage() uses `list[list.length - 1]` for the freshest index.
   //   - On buffer eviction (records.shift()) the head-most index is slot 0, so
@@ -380,9 +257,9 @@ export function createCostTracker(config?: {
   }
 
   function emitAlert(alert: CostAlert): void {
-    // P2-13: dedupe within a time window, per alert type. A single budget
-    // crossing during a streaming recordUsage() burst should produce exactly
-    // one alert per type until the window elapses.
+    // Dedupe within a time window, per alert type. A single budget crossing
+    // during a streaming recordUsage() burst should produce exactly one
+    // alert per type until the window elapses.
     if (alertDedupeWindowMs > 0) {
       const now = Date.now();
       const last = lastAlertTs[alert.type];
@@ -391,9 +268,9 @@ export function createCostTracker(config?: {
       }
       lastAlertTs[alert.type] = now;
     }
-    // Wave-13 C-3: emit a structured warn + metric alongside every alert so
-    // budget crossings surface in logs / observability backends, not just
-    // via the user `onAlert()` callback (which may be unset).
+    // Emit a structured warn + metric alongside every alert so budget
+    // crossings surface in logs / observability backends, not just via the
+    // user `onAlert()` callback (which may be unset).
     if (logger) {
       try {
         logger.warn('[harness-one/cost-tracker] budget alert', {
@@ -411,17 +288,16 @@ export function createCostTracker(config?: {
   }
 
   /**
-   * Wave-13 C-3: utility — report the current utilization fraction to the
-   * metrics port after every recordUsage()/updateUsage() call, even when no
-   * alert fires. Operators get a continuous signal rather than a sawtooth of
-   * threshold crossings.
+   * Report the current utilization fraction to the metrics port after every
+   * recordUsage()/updateUsage() call, even when no alert fires. Operators
+   * get a continuous signal rather than a sawtooth of threshold crossings.
    */
   function reportUtilization(): void {
     if (!costUtilizationGauge || budget === undefined || budget <= 0) return;
     costUtilizationGauge.record(runningSum.total / budget);
   }
 
-  // Issue 1: Standalone functions using closure references instead of `this`
+  // Standalone functions using closure references instead of `this`
   function checkBudgetFn(): CostAlert | null {
     if (budget === undefined || budget <= 0) return null;
     const currentCost = runningSum.total;
@@ -489,24 +365,8 @@ export function createCostTracker(config?: {
   }
 
   return {
-    setPricing(newPricing: ModelPricing[]): void {
-      // P1-15: emit one-shot @deprecated warning. Preferred path is factory
-      // config (`createCostTracker({ pricing })`). We keep this operational
-      // indefinitely for backward compatibility.
-      if (!setPricingDeprecationWarned) {
-        setPricingDeprecationWarned = true;
-        safeWarn(
-          logger,
-          '[harness-one/cost-tracker] @deprecated setPricing() mutates tracker state post-construction. Prefer passing `pricing` to createCostTracker() at factory time.',
-        );
-      }
-      for (const p of newPricing) {
-        pricing.set(p.model, p);
-      }
-    },
-
     async updatePricing(newPricing: ModelPricing[]): Promise<void> {
-      // Wave-13 C-1: serialise against concurrent updatePricing/updateBudget.
+      // Serialise against concurrent updatePricing/updateBudget.
       await mutationLock.withLock(async () => {
         for (const p of newPricing) {
           pricing.set(p.model, p);
@@ -540,7 +400,7 @@ export function createCostTracker(config?: {
         warnedUnpriced.add(usage.model);
         safeWarn(
           logger,
-          `[harness-one/cost-tracker] No pricing registered for model "${usage.model}". Cost will be reported as 0. Call setPricing() to fix.`,
+          `[harness-one/cost-tracker] No pricing registered for model "${usage.model}". Cost will be reported as 0. Pass \`pricing\` to createCostTracker() or call updatePricing() to fix.`,
         );
       }
 
@@ -552,8 +412,8 @@ export function createCostTracker(config?: {
       };
       records.push(record);
 
-      // Wave-13 P0-6: Append raw (pre-bias) index to this traceId's sorted list.
-      // Raw index space is monotone; effective slot = raw - evictionBias.
+      // Append raw (pre-bias) index to this traceId's sorted list. Raw index
+      // space is monotone; effective slot = raw - evictionBias.
       if (usage.traceId) {
         const rawIdx = records.length - 1 + evictionBias;
         const list = traceIdIndex.get(usage.traceId);
@@ -561,14 +421,13 @@ export function createCostTracker(config?: {
         else traceIdIndex.set(usage.traceId, [rawIdx]);
       }
 
-      // Fix 5: Use KahanSum for running total
       runningSum.add(estimatedCost);
 
-      // ARCH-008: Per-key bucket resolution is delegated to the configured
-      // EvictionStrategy. The default `'overflow-bucket'` strategy preserves
-      // SEC-009 semantics: existing totals are never evicted, new keys past
-      // capacity land in OVERFLOW_BUCKET_KEY. The throttled `signalOverflow`
-      // callback fires once per minute (per kind) to alert operators.
+      // Per-key bucket resolution is delegated to the configured
+      // EvictionStrategy. The default `'overflow-bucket'` strategy: existing
+      // totals are never evicted, new keys past capacity land in
+      // OVERFLOW_BUCKET_KEY. The throttled `signalOverflow` callback fires
+      // once per minute (per kind) to alert operators.
       const modelSum = evictionStrategy.resolveKeyBucket(
         modelTotals,
         usage.model,
@@ -590,15 +449,15 @@ export function createCostTracker(config?: {
       if (records.length > maxRecords) {
         const evicted = records.shift() as (typeof records)[number];
         runningSum.subtract(evicted.estimatedCost);
-        // ARCH-008: cumulative-since-start strategies leave per-key totals
-        // untouched; sliding-window strategies (`lru`) decrement them here.
+        // Cumulative-since-start strategies leave per-key totals untouched;
+        // sliding-window strategies (`lru`) decrement them here.
         evictionStrategy.onRecordEvicted(evicted, modelTotals, traceTotals);
 
-        // Wave-13 P0-6: O(1) amortised eviction bookkeeping. The evicted
-        // record occupied effective slot 0 → raw index == evictionBias. Only
-        // the affected traceId's list needs surgery: its head entry (the
-        // minimum raw index) is popped; every other traceId is unchanged in
-        // raw space. `evictionBias` is bumped so getters translate correctly.
+        // O(1) amortised eviction bookkeeping. The evicted record occupied
+        // effective slot 0 → raw index == evictionBias. Only the affected
+        // traceId's list needs surgery: its head entry (the minimum raw
+        // index) is popped; every other traceId is unchanged in raw space.
+        // `evictionBias` is bumped so getters translate correctly.
         if (evicted.traceId) {
           const list = traceIdIndex.get(evicted.traceId);
           if (list && list.length > 0 && list[0] === evictionBias) {
@@ -611,8 +470,7 @@ export function createCostTracker(config?: {
 
       // Check budget alerts after recording
       if (budget !== undefined) {
-        // Wave-13 C-3: report utilization on every update, not only on
-        // threshold crossings.
+        // Report utilization on every update, not only on threshold crossings.
         reportUtilization();
         const alert = checkBudgetFn();
         if (alert) {
@@ -624,9 +482,9 @@ export function createCostTracker(config?: {
     },
 
     updateUsage(traceId: string, usage: Partial<Omit<TokenUsageRecord, 'estimatedCost' | 'timestamp' | 'traceId' | 'model'>>): TokenUsageRecord | undefined {
-      // Wave-13 P0-6: the freshest raw index lives at the tail of the list.
-      // Translate via evictionBias to the live buffer slot. Any stale index
-      // below bias would indicate a bookkeeping bug — treat as miss.
+      // The freshest raw index lives at the tail of the list. Translate via
+      // evictionBias to the live buffer slot. Any stale index below bias
+      // would indicate a bookkeeping bug — treat as miss.
       const list = traceIdIndex.get(traceId);
       if (!list || list.length === 0) return undefined;
       const rawIdx = list[list.length - 1];
@@ -650,10 +508,10 @@ export function createCostTracker(config?: {
         );
       }
 
-      // Wave-13 C-2: explicit field assignment avoids the conditional-spread
-      // pattern that allocated `{}` / `{cacheReadTokens: ...}` temporaries on
-      // every call. Uses a `Partial<...>` scratch object so optional fields
-      // are only written when they carry a value (respecting the project-wide
+      // Explicit field assignment avoids the conditional-spread pattern that
+      // allocated `{}` / `{cacheReadTokens: ...}` temporaries on every call.
+      // Uses a `Partial<...>` scratch object so optional fields are only
+      // written when they carry a value (respecting the project-wide
       // `exactOptionalPropertyTypes: true` tsconfig).
       const updatedFields: Omit<TokenUsageRecord, 'estimatedCost' | 'timestamp'> = {
         traceId: existingRecord.traceId,
@@ -693,7 +551,7 @@ export function createCostTracker(config?: {
         modelSum.add(costDelta);
       }
 
-      // PERF-03: Adjust trace total for O(1) getCostByTrace
+      // Adjust trace total for O(1) getCostByTrace.
       const traceSum = traceTotals.get(traceId);
       if (traceSum) {
         traceSum.add(costDelta);
@@ -714,7 +572,7 @@ export function createCostTracker(config?: {
       return runningSum.total;
     },
 
-    // Fix 4: getCostByModel() returns from permanent modelTotals accumulator,
+    // getCostByModel() returns from permanent modelTotals accumulator,
     // consistent with getTotalCost() even after buffer eviction.
     getCostByModel(): Record<string, number> {
       const result: Record<string, number> = {};
@@ -728,30 +586,8 @@ export function createCostTracker(config?: {
       return traceTotals.get(traceId)?.total ?? 0;
     },
 
-    /**
-     * Set the budget limit for cost alerting.
-     *
-     * Alerts are only re-evaluated on the next recordUsage() call, not
-     * immediately on budget change. If the current cost already exceeds
-     * the new budget, the alert will fire on the next recordUsage().
-     *
-     * @deprecated P1-15: prefer `createCostTracker({ budget })` at factory
-     * time. Emits a one-shot `@deprecated` warning on first call; remains
-     * operational for backward compatibility.
-     */
-    setBudget(newBudget: number): void {
-      if (!setBudgetDeprecationWarned) {
-        setBudgetDeprecationWarned = true;
-        safeWarn(
-          logger,
-          '[harness-one/cost-tracker] @deprecated setBudget() mutates tracker state post-construction. Prefer passing `budget` to createCostTracker() at factory time.',
-        );
-      }
-      budget = newBudget;
-    },
-
     async updateBudget(newBudget: number): Promise<void> {
-      // Wave-13 C-1: serialise against concurrent updatePricing/updateBudget.
+      // Serialise against concurrent updatePricing/updateBudget.
       await mutationLock.withLock(async () => {
         budget = newBudget;
       });
@@ -772,10 +608,10 @@ export function createCostTracker(config?: {
       modelTotals.clear();
       traceTotals.clear();
       traceIdIndex.clear();
-      // Wave-13 P0-6: reset the bias so fresh records start at raw index 0.
+      // Reset the bias so fresh records start at raw index 0.
       evictionBias = 0;
-      // P2-13: reset dedupe state so alerts can re-fire after an explicit
-      // reset (tests + operator-driven "checkpoint" workflows).
+      // Reset dedupe state so alerts can re-fire after an explicit reset
+      // (tests + operator-driven "checkpoint" workflows).
       lastAlertTs.warning = 0;
       lastAlertTs.critical = 0;
       lastAlertTs.exceeded = 0;

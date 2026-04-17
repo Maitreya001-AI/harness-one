@@ -12,7 +12,7 @@
  */
 
 import type { Message } from './types.js';
-import type { PipelineResult } from '../guardrails/types.js';
+import type { PipelineResult } from './guardrail-port.js';
 
 /**
  * T10 (Wave-5A): walk the conversation from the tail until we find a

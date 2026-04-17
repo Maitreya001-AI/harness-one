@@ -16,12 +16,10 @@ const mocks = vi.hoisted(() => {
   };
   const mockLangfusePromptBackend = { fetch: vi.fn(), list: vi.fn() };
   const mockLangfuseCostTracker = {
-    setPricing: vi.fn(),
     recordUsage: vi.fn(),
     getTotalCost: vi.fn(() => 0),
     getCostByModel: vi.fn(() => ({})),
     getCostByTrace: vi.fn(() => 0),
-    setBudget: vi.fn(),
     checkBudget: vi.fn(() => null),
     onAlert: vi.fn(),
     reset: vi.fn(),
@@ -279,17 +277,21 @@ describe('createHarness', () => {
   });
 
   describe('cost tracking', () => {
-    it('sets pricing when provided', () => {
+    it('passes pricing to the Langfuse cost tracker factory when provided', () => {
       const pricing = [{ model: 'claude-3', inputPer1kTokens: 0.003, outputPer1kTokens: 0.015 }];
       const fakeLangfuse = { trace: vi.fn(), flushAsync: vi.fn() };
       createHarness({ ...baseConfig, langfuse: fakeLangfuse as unknown as AnthropicHarnessConfig['langfuse'], pricing });
-      expect(mocks.mockLangfuseCostTracker.setPricing).toHaveBeenCalledWith(pricing);
+      expect(mocks.createLangfuseCostTracker).toHaveBeenCalledWith(
+        expect.objectContaining({ pricing }),
+      );
     });
 
-    it('sets budget when provided', () => {
+    it('passes budget to the Langfuse cost tracker factory when provided', () => {
       const fakeLangfuse = { trace: vi.fn(), flushAsync: vi.fn() };
       createHarness({ ...baseConfig, langfuse: fakeLangfuse as unknown as AnthropicHarnessConfig['langfuse'], budget: 10.0 });
-      expect(mocks.mockLangfuseCostTracker.setBudget).toHaveBeenCalledWith(10.0);
+      expect(mocks.createLangfuseCostTracker).toHaveBeenCalledWith(
+        expect.objectContaining({ budget: 10.0 }),
+      );
     });
   });
 
@@ -469,11 +471,11 @@ describe('createHarness', () => {
       expect(harness.costs).toBeDefined();
     });
 
-    it('does not set pricing when not provided', () => {
+    it('does not pass pricing to the Langfuse factory when not provided', () => {
       createHarness(baseConfig);
-      // Neither setPricing nor setBudget should be called on the core tracker
-      // (they aren't even available as mocks in this case since it's the real core tracker)
-      expect(mocks.mockLangfuseCostTracker.setPricing).not.toHaveBeenCalled();
+      // baseConfig has no langfuse client, so the mock factory is never invoked.
+      // Sanity-check that no tracker was created at all here.
+      expect(mocks.createLangfuseCostTracker).not.toHaveBeenCalled();
     });
   });
 

@@ -85,7 +85,6 @@ export type {
   ResilientLoop,
   MiddlewareChain,
   OutputParser,
-  EventBus,
   PruneResult,
   StreamAggregatorEvent,
   StreamAggregatorChunk,

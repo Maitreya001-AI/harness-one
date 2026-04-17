@@ -4,7 +4,7 @@
 
 ## 概述
 
-core 模块定义了 harness-one 的共享类型契约（Message、TokenUsage、AgentAdapter 等）、统一错误层级（HarnessError 及其子类）、事件系统（AgentEvent 判别联合），以及唯一的 class：`AgentLoop`。所有功能模块通过类型导入依赖 core，但 core 自身仅依赖 `_internal/`。
+core 模块定义了 harness-one 的共享类型契约（Message、TokenUsage、AgentAdapter 等）、统一错误层级（HarnessError 及其子类）、事件系统（AgentEvent 判别联合），以及 Agent Loop 工厂。所有功能模块通过类型导入依赖 core，但 core 自身仅依赖 `infra/`（仓库里叶子层的实际目录名）。
 
 ## 文件结构
 
@@ -181,7 +181,7 @@ AgentLoop 在超出 token 预算时裁剪历史对话。裁剪逻辑始终保留
 
 ## 依赖关系
 
-- **依赖**: `_internal/`（间接，通过其他模块）
+- **依赖**: `infra/`（仓库叶子层；历史文档中也叫 `_internal/`）
 - **被依赖**: 所有功能模块通过类型导入依赖 core
 
 ## 扩展点

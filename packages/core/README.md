@@ -61,7 +61,7 @@ Available submodules: `core`, `prompt`, `context`, `tools`, `guardrails`, `obser
 
 > **Wave-5C (1.0-rc)** — `harness-one/eval` and `harness-one/evolve` were extracted to **[`@harness-one/devkit`](../devkit)**. The `harness-one/cli` subpath was extracted to **[`@harness-one/cli`](../cli)**. `harness-one/evolve-check` (architecture rules only) stays in core.
 >
-> The root barrel is now curated to **19 value symbols** (UJ-1..UJ-5 user-journey set). Other factories like `createEventBus`, `toSSEStream`, `categorizeAdapterError` etc. live on subpaths only.
+> The root barrel is now curated to **19 value symbols** (UJ-1..UJ-5 user-journey set). Other factories like `toSSEStream`, `categorizeAdapterError` etc. live on subpaths only.
 
 > **Wave-5D additions** (subpath-only): `harness-one/observe` exports `MetricsPort` + `createNoopMetricsPort` (vendor-neutral metric instruments), `HarnessLifecycle` + `createHarnessLifecycle` (init→ready→draining→shutdown state machine + aggregated `health()`); `harness-one/infra` exports `createAdmissionController` (per-tenant in-process token bucket with abort/timeout fail-closed).
 
