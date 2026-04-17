@@ -9,7 +9,7 @@
  * @module
  */
 
-import { HarnessError, HarnessErrorCode } from '../core/errors.js';
+import { HarnessError, HarnessErrorCode } from './errors-base.js';
 
 /**
  * Run `fn` with an optional timeout and AbortSignal.

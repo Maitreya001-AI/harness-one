@@ -8,6 +8,12 @@
  * streaming paths. Splitting it into focused suites would double the
  * setup boilerplate without adding coverage.
  *
+ * Wave-15 review: the size (>3k LOC) was flagged, but the alternative —
+ * duplicating the 50+ lines of mock-adapter setup into several smaller
+ * files — measurably hurts maintenance. The policy below (focused
+ * sibling files for new behaviour) keeps growth bounded without churn.
+ * Wave-15 adds `iteration-coordinator.test.ts` to that roster.
+ *
  * Focused unit tests for sub-modules landed alongside each extraction:
  * - `adapter-timeout.test.ts` — timeout/abort-chaining helper
  * - `adapter-caller.test.ts` — retry orchestration
@@ -16,6 +22,7 @@
  * - `agent-loop-guardrails.test.ts` — guardrail integration
  * - `agent-loop-status.test.ts` — iteration + lifecycle status
  * - `iteration-runner.test.ts` — per-iteration state machine
+ * - `iteration-coordinator.test.ts` — Wave-15 event-sequencing state machine
  * - `retry-policy.test.ts` — retry / backoff / circuit-breaker policy
  * - `guardrail-runner.test.ts` — guardrail dispatch per phase
  * - `hook-dispatcher.test.ts` — hook error isolation

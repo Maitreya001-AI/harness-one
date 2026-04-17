@@ -17,7 +17,7 @@
 
 import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import type { Logger } from '../infra/logger.js';
-import type { MetricCounter, MetricGauge, MetricsPort } from '../observe/metrics-port.js';
+import type { MetricCounter, MetricGauge, MetricsPort } from '../core/metrics-port.js';
 import type { AgentMessage } from './types.js';
 
 /** Callback for when messages are dropped due to queue overflow. */

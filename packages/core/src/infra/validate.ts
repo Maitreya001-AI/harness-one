@@ -18,7 +18,7 @@
  * @module
  */
 
-import { HarnessError, HarnessErrorCode } from '../core/errors.js';
+import { HarnessError, HarnessErrorCode } from './errors-base.js';
 
 /**
  * Require `value` to be a positive integer (>= 1). Accepts `undefined` so

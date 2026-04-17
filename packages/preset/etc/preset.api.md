@@ -190,6 +190,27 @@ export type Tokenizer = ((text: string) => number) | {
 // @public
 export function validateHarnessConfig(config: Record<string, unknown>): void;
 
+// @public
+export function validateHarnessConfigAll(config: Record<string, unknown>): void;
+
+// @public
+export function validateHarnessRuntimeConfig(config: {
+    readonly adapter?: unknown;
+    readonly client?: unknown;
+    readonly maxIterations?: number;
+    readonly maxTotalTokens?: number;
+    readonly budget?: number;
+    readonly maxAdapterRetries?: number;
+    readonly baseRetryDelayMs?: number;
+    readonly pricing?: unknown;
+    readonly guardrails?: {
+        readonly rateLimit?: {
+            readonly max?: number;
+            readonly windowMs?: number;
+        };
+    };
+}): void;
+
 // (No @packageDocumentation comment for this package)
 
 ```

@@ -11,7 +11,7 @@
 
 import { randomBytes, randomUUID } from 'node:crypto';
 
-import type { SessionId, SpanId, TraceId } from '../core/types.js';
+import type { SessionId, SpanId, TraceId } from './brands.js';
 
 /**
  * Brand a string as a {@link TraceId}. Trivial zero-cost cast at runtime;

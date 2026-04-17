@@ -9,12 +9,27 @@
  * @module
  */
 
-import { HarnessError, HarnessErrorCode} from '../core/errors.js';
+import { HarnessError, HarnessErrorCode } from './errors-base.js';
+
+/**
+ * Options accepted by {@link LRUCache}. Wave-15 added `onEvict` so callers
+ * that maintain side-tables (the trace-manager's span count, for example)
+ * can keep their accounting in lockstep with the cache's eviction without
+ * reaching into private state.
+ */
+export interface LRUCacheOptions<K, V> {
+  /** Fires synchronously for every key/value evicted from the cache. */
+  onEvict?: (key: K, value: V) => void;
+}
 
 export class LRUCache<K, V> {
   private readonly map = new Map<K, V>();
+  private readonly onEvict?: (key: K, value: V) => void;
 
-  constructor(private readonly maxSize: number) {
+  constructor(
+    private readonly maxSize: number,
+    options?: LRUCacheOptions<K, V>,
+  ) {
     if (maxSize < 1) {
       // CQ-032: throw via HarnessError so wrappers can catch-by-.code
       // instead of string-matching the message.
@@ -24,6 +39,7 @@ export class LRUCache<K, V> {
         'Use a value >= 1',
       );
     }
+    if (options?.onEvict) this.onEvict = options.onEvict;
   }
 
   get(key: K): V | undefined {
@@ -47,7 +63,12 @@ export class LRUCache<K, V> {
     while (this.map.size > this.maxSize) {
       const iter = this.map.keys().next();
       if (iter.done) break; // Safety: map unexpectedly empty
-      this.map.delete(iter.value);
+      const evictedKey = iter.value;
+      const evictedValue = this.map.get(evictedKey) as V;
+      this.map.delete(evictedKey);
+      if (this.onEvict) {
+        try { this.onEvict(evictedKey, evictedValue); } catch { /* never let an evict hook corrupt the cache */ }
+      }
     }
   }
 
@@ -61,6 +82,11 @@ export class LRUCache<K, V> {
 
   get size(): number {
     return this.map.size;
+  }
+
+  /** Maximum capacity of the cache (fixed at construction time). */
+  get capacity(): number {
+    return this.maxSize;
   }
 
   clear(): void {

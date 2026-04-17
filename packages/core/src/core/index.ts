@@ -125,9 +125,57 @@ export {
 } from '../infra/validate.js';
 export type { PricingNumericFields } from '../infra/validate.js';
 
+// Pricing — Wave-15 canonical home for the model-pricing type, the pure
+// cost math (`priceUsage`), and the validators. Observe / preset re-export
+// from here for backward compatibility.
+export type { ModelPricing } from './pricing.js';
+export { priceUsage, hasNonFiniteTokens } from './pricing.js';
+
 // Canonical jitter-fraction constants — import instead of hard-coding
 // so the retry vs pool jitter asymmetry stays readable.
 export {
   ADAPTER_RETRY_JITTER_FRACTION,
   AGENT_POOL_IDLE_JITTER_FRACTION,
+  computeBackoffMs,
+  computeJitterMs,
+  createBackoffSchedule,
 } from '../infra/backoff.js';
+export type { BackoffConfig, BackoffSchedule } from '../infra/backoff.js';
+
+// Custom error-code helper — Wave-15 extensibility hook so subsystems can
+// mint namespaced codes without growing the closed enum.
+export { createCustomErrorCode } from './errors.js';
+export type { HarnessErrorDetails } from './errors.js';
+
+// Wave-15 L2 promotion: MetricsPort + InstrumentationPort moved here from
+// observe so orchestration / rag can depend on the surface without an
+// L3→L3 edge. `harness-one/observe` re-exports for backward compatibility.
+export type {
+  MetricsPort,
+  MetricAttributes,
+  MetricCounter,
+  MetricGauge,
+  MetricHistogram,
+} from './metrics-port.js';
+export { createNoopMetricsPort } from './metrics-port.js';
+export type { InstrumentationPort } from './instrumentation-port.js';
+
+// Iteration coordinator — Wave-15 event-sequencing state machine extracted
+// from AgentLoop. Reuse the coordinator when building a custom loop with
+// the same yield/hook/span ordering guarantees.
+export {
+  startRun,
+  checkPreIteration,
+  startIteration,
+  finalizeRun,
+} from './iteration-coordinator.js';
+export type {
+  CoordinatorDeps,
+  CoordinatorState,
+  StartRunResult,
+} from './iteration-coordinator.js';
+
+// Resilience policy — Wave-15 alias for the circuit-breaker + retry
+// composition. `RetryPolicy` and `ResiliencePolicy` are the same shape;
+// new call sites should prefer the resilience name.
+export type { ResiliencePolicy } from './retry-policy.js';

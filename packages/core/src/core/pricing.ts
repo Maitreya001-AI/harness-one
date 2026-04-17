@@ -1,50 +1,28 @@
 /**
- * Pure math primitives for the cost-tracker.
+ * Pricing primitives — the cohesive home for everything that describes
+ * model cost: the `ModelPricing` type, the validation helpers (lifted
+ * from `infra/validate.ts`), and the pure pricing math (`priceUsage`).
  *
- * Isolated here so the tracker factory can focus on lifecycle, eviction, and
- * alerting instead of numerical bookkeeping. Everything in this module is
- * closure-free and side-effect-free (other than `safeWarn` for non-finite
- * tokens, which is explicitly passed in).
+ * Wave-15 consolidated these from three disparate homes
+ * (`observe/cost-tracker-types.ts`, `observe/cost-math.ts`, and
+ * `infra/validate.ts`) so a single module owns the pricing contract.
+ * The observe module still re-exports the type + math for back-compat.
  *
  * @module
  */
 
-import type { TokenUsageRecord } from './types.js';
-import type { ModelPricing } from '../core/pricing.js';
+import type { TokenUsageRecord } from '../observe/types.js';
 
 /**
- * Kahan compensated summation — maintains a tight running sum that is
- * resistant to catastrophic cancellation when many similar-magnitude
- * floating-point values are accumulated. Used for per-model / per-trace /
- * global cost totals.
+ * Pricing configuration for a model. Numeric fields are dollar-per-1k-token
+ * values; cache read/write prices are optional and default to "not priced".
  */
-export class KahanSum {
-  private _total = 0;
-  private _compensation = 0;
-
-  /** Add a value to the running sum. */
-  add(x: number): void {
-    const y = x - this._compensation;
-    const t = this._total + y;
-    this._compensation = (t - this._total) - y;
-    this._total = t;
-  }
-
-  /** Subtract a value from the running sum. */
-  subtract(x: number): void {
-    this.add(-x);
-  }
-
-  /** Get the current accumulated total. */
-  get total(): number {
-    return this._total;
-  }
-
-  /** Reset the sum to zero. */
-  reset(): void {
-    this._total = 0;
-    this._compensation = 0;
-  }
+export interface ModelPricing {
+  readonly model: string;
+  readonly inputPer1kTokens: number;
+  readonly outputPer1kTokens: number;
+  readonly cacheReadPer1kTokens?: number;
+  readonly cacheWritePer1kTokens?: number;
 }
 
 /**
@@ -83,3 +61,11 @@ export function hasNonFiniteTokens(
 ): boolean {
   return !Number.isFinite(usage.inputTokens) || !Number.isFinite(usage.outputTokens);
 }
+
+// Validation re-exports — kept here so callers reach for one module when
+// building / validating pricing.
+export {
+  validatePricingEntry,
+  validatePricingArray,
+} from '../infra/validate.js';
+export type { PricingNumericFields } from '../infra/validate.js';

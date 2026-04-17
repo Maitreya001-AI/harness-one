@@ -1,14 +1,23 @@
 /**
  * Unified configuration validation for harness preset.
  *
- * Validates the full HarnessConfig object at construction time using
- * structural checks. Catches misconfigurations early with actionable errors
- * instead of allowing silent failures at runtime.
+ * Wave-15 consolidation: there used to be two `validateHarnessConfig`
+ * functions — a structural one here and a numeric/provider one inside
+ * `build-harness/run.ts`. Both now live in this module so adding a new
+ * config field touches a single file and error messages stay consistent.
  *
  * @module
  */
 
-import { HarnessError, HarnessErrorCode } from 'harness-one/core';
+import {
+  HarnessError,
+  HarnessErrorCode,
+  requirePositiveInt,
+  requireNonNegativeInt,
+  requireFinitePositive,
+  requireFiniteNonNegative,
+  validatePricingArray,
+} from 'harness-one/core';
 
 /** Known provider names that createHarness supports. */
 const VALID_PROVIDERS = new Set(['anthropic', 'openai']);
@@ -127,4 +136,68 @@ export function validateHarnessConfig(config: Record<string, unknown>): void {
       );
     }
   }
+}
+
+/**
+ * Numeric + provider validation (formerly inlined in `build-harness/run.ts`).
+ *
+ * Runs the `require*` guards from `harness-one/core` so preset and core
+ * agree on what counts as a positive integer / finite positive number, and
+ * enforces the adapter/client XOR rule that the discriminated union
+ * already blocks at compile time (belt-and-suspenders for dynamic callers).
+ */
+export function validateHarnessRuntimeConfig(config: {
+  readonly adapter?: unknown;
+  readonly client?: unknown;
+  readonly maxIterations?: number;
+  readonly maxTotalTokens?: number;
+  readonly budget?: number;
+  readonly maxAdapterRetries?: number;
+  readonly baseRetryDelayMs?: number;
+  readonly pricing?: unknown;
+  readonly guardrails?: { readonly rateLimit?: { readonly max?: number; readonly windowMs?: number } };
+}): void {
+  const hasAdapter = !!config.adapter;
+  const hasClient = !!config.client;
+
+  if (!hasAdapter && !hasClient) {
+    throw new HarnessError(
+      'Either adapter or client must be provided',
+      HarnessErrorCode.CORE_INVALID_CONFIG,
+      'Pass a pre-built adapter or a provider client',
+    );
+  }
+  if (hasAdapter && hasClient) {
+    throw new HarnessError(
+      'adapter and client are mutually exclusive',
+      HarnessErrorCode.CORE_INVALID_CONFIG,
+      'Pass either a pre-built adapter OR a provider client, not both. '
+      + 'Use AdapterHarnessConfig ({ adapter }) to inject a pre-built adapter; '
+      + 'use AnthropicHarnessConfig/OpenAIHarnessConfig ({ provider, client }) '
+      + 'to let harness-one build the adapter for you.',
+    );
+  }
+  requirePositiveInt(config.maxIterations, 'maxIterations');
+  requirePositiveInt(config.maxTotalTokens, 'maxTotalTokens');
+  requireFinitePositive(config.budget, 'budget');
+  if (config.guardrails?.rateLimit) {
+    requirePositiveInt(config.guardrails.rateLimit.max, 'guardrails.rateLimit.max');
+    requirePositiveInt(config.guardrails.rateLimit.windowMs, 'guardrails.rateLimit.windowMs');
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  validatePricingArray(config.pricing as any);
+  requireNonNegativeInt(config.maxAdapterRetries, 'maxAdapterRetries');
+  requireFiniteNonNegative(config.baseRetryDelayMs, 'baseRetryDelayMs');
+}
+
+/**
+ * One-shot validator that runs structural (`validateHarnessConfig`) and
+ * numeric (`validateHarnessRuntimeConfig`) checks in a single call. Prefer
+ * this over invoking them separately so preset and secure-preset cannot
+ * drift on validation order.
+ */
+export function validateHarnessConfigAll(config: Record<string, unknown>): void {
+  validateHarnessConfig(config);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  validateHarnessRuntimeConfig(config as any);
 }

@@ -7,15 +7,18 @@
  */
 
 import type { TokenUsageRecord, CostAlert } from './types.js';
+import type { ModelPricing } from '../core/pricing.js';
 
-/** Pricing configuration for a model. */
-export interface ModelPricing {
-  readonly model: string;
-  readonly inputPer1kTokens: number;
-  readonly outputPer1kTokens: number;
-  readonly cacheReadPer1kTokens?: number;
-  readonly cacheWritePer1kTokens?: number;
-}
+/**
+ * Pricing configuration for a model.
+ *
+ * Wave-15: the canonical definition lives in {@link ../core/pricing.js};
+ * this is a re-export so existing `import { ModelPricing } from
+ * 'harness-one/observe'` keeps working. Prefer the `harness-one/core`
+ * import for new code — pricing is a cross-cutting primitive, not an
+ * observe-only concern.
+ */
+export type { ModelPricing } from '../core/pricing.js';
 
 /**
  * Synthetic key used to bucket cost entries that arrive after the per-model

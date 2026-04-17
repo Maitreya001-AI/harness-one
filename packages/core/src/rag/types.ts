@@ -4,7 +4,7 @@
  * @module
  */
 
-import type { InstrumentationPort } from '../observe/instrumentation-port.js';
+import type { InstrumentationPort } from '../core/instrumentation-port.js';
 
 /** A document to be processed by the RAG pipeline. */
 export interface Document {

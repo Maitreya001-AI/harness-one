@@ -1,7 +1,8 @@
 /**
- * Retry policy — pulls the three resilience primitives the adapter caller
- * needed (backoff sleep, circuit-breaker gate, retryable-error classification)
- * out of `adapter-caller.ts` so the caller stops owning policy concerns.
+ * Retry policy / resilience policy — pulls the three resilience primitives
+ * the adapter caller needed (backoff sleep, circuit-breaker gate,
+ * retryable-error classification) out of `adapter-caller.ts` so the caller
+ * stops owning policy concerns.
  *
  * Each exported helper is pure with respect to the adapter path:
  *
@@ -17,6 +18,18 @@
  * `createAdapterCaller` and passed around as a dependency — makes the
  * adapter caller code read as "ask the policy, then dispatch" instead of
  * 40 LOC of backoff timer housekeeping inline.
+ *
+ * Wave-15 clarified that {@link RetryPolicy} IS the composed
+ * "circuit-breaker + retry" primitive; {@link ResiliencePolicy} is an
+ * alias documenting that intent so future extensions (bulkhead, fallback,
+ * rate-limiter) have a clear landing spot.
+ *
+ * Composition contract:
+ *   1. `checkCircuitOpen()` gates the retry decision. When OPEN the caller
+ *      fast-fails without consulting `scheduleBackoff()`.
+ *   2. For a retryable error in CLOSED state, the caller uses
+ *      `scheduleBackoff()` to sleep before the next attempt.
+ *   3. `recordSuccess()` / `recordFailure()` feed the breaker's state machine.
  *
  * @module
  */
@@ -70,6 +83,14 @@ export interface RetryPolicy {
   /** Upper bound of retry attempts. Mirrors `maxAdapterRetries`. */
   readonly maxRetries: number;
 }
+
+/**
+ * Wave-15 alias for {@link RetryPolicy}. The shape is identical — the alias
+ * documents that the policy composes "circuit-breaker gate + retry loop"
+ * rather than purely "retry the call", so future additions (bulkhead,
+ * rate-limit, fallback) can land here without renaming the main interface.
+ */
+export type ResiliencePolicy = RetryPolicy;
 
 /** Minimal shape returned by {@link RetryPolicy.checkCircuitOpen}. */
 export interface CircuitOpenPayload {

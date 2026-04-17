@@ -8,6 +8,65 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed — Wave-15 (post-Wave-14 architecture review — 20 findings resolved)
+
+Driven by a fresh blue-team architecture review against the post-Wave-14
+baseline. All 20 findings addressed; every change is non-breaking via
+re-exports or additive surface. See `MIGRATION.md § Wave-15 additions`
+for the full table and `docs/ARCHITECTURE.md` for the updated layering
+contract.
+
+**Layering contract (blockers):**
+- `MetricsPort`, `InstrumentationPort` hoisted from observe (L3) to
+  `core/core` (L2); orchestration / rag stop importing from sibling L3.
+- `HarnessError`, `HarnessErrorCode`, branded-id types (`TraceId`,
+  `SpanId`, `SessionId`) moved to `core/infra/errors-base.ts` +
+  `core/infra/brands.ts`. Infra no longer imports from core/*; the
+  Wave-14 eslint carve-out is gone. "L1 imports nothing" is now
+  strict.
+
+**God-object splits / dedup (majors):**
+- `core/iteration-coordinator.ts` extracted from `agent-loop.ts`
+  (632 → 340 LOC). AgentLoop now composes the event-sequencing state
+  machine (startRun / checkPreIteration / startIteration /
+  finalizeRun) instead of owning it. Focused test file added.
+- `observe/trace.ts` + `observe/usage.ts` sub-barrels split the
+  observability surface into tracing pipeline vs cost/usage
+  accounting. New package-json subpaths: `harness-one/observe/trace`,
+  `harness-one/observe/usage`.
+- `createCustomErrorCode(namespace, code)` — namespaced custom codes
+  ride on `ADAPTER_CUSTOM` for switch-exhaustiveness. Subsystems stop
+  mutating the closed `HarnessErrorCode` enum for new codes.
+- `orchestration/safe-payload.ts` owns the shared depth + byte cap
+  used by handoff.
+- `observe/applyRecordCap()` centralises the record-eviction loop
+  shared by core + `@harness-one/langfuse` cost trackers.
+- `preset/validate-config.ts` merged the numeric/provider validator
+  that lived inside `build-harness/run.ts`. New
+  `validateHarnessRuntimeConfig` and `validateHarnessConfigAll`
+  exports.
+- `core/pricing.ts` is the canonical home for `ModelPricing`,
+  `priceUsage`, `hasNonFiniteTokens`, and the validator re-exports.
+
+**Additive primitives (minors):**
+- `createBackoffSchedule(config)` / `BackoffSchedule` — reusable
+  backoff sleeper.
+- `LRUCacheOptions.onEvict` — synchronous eviction hook.
+- `StreamAggregator.initialize()` / `finalize()` — explicit lifecycle
+  aliases.
+- `SessionStore<T>` + `createSessionManager({ store })` — pluggable
+  session backend for distributed deployments.
+- `TraceManagerConfig.redactor?: Redactor` — inject a shared Redactor
+  instance rather than compiling one per component.
+- `ResiliencePolicy` alias — documents that `RetryPolicy` is the
+  composed breaker+retry primitive.
+
+**Documentation:** `docs/ARCHITECTURE.md` and `MIGRATION.md` revised
+with Wave-15 promotions and the full additive surface table.
+
+**Environment:** 4403 tests passing (+11 over Wave-14); typecheck /
+test / lint / build / api:update all clean across 12 workspaces.
+
 ### Fixed — Wave-13 (eight-angle audit — 70+ production-grade fixes)
 
 Driven by eight parallel deep-audit agents (architecture, concurrency, error

@@ -85,11 +85,11 @@ export default tseslint.config(
       }],
     },
   },
-  // Wave-14 ARCHITECTURE.md: layering contract. `core/src/infra/**` sits
-  // at L1. It may depend on the error/type primitives in `core/errors.js`
-  // and `core/types.js` (the structural contract it needs to throw
-  // HarnessError + accept branded IDs) but must NOT depend on any L3
-  // subsystem — that would create a cycle.
+  // Wave-15 ARCHITECTURE.md: layering contract. `core/src/infra/**` sits
+  // at L1 and must not import from any higher layer — including L2
+  // (`core/core/**`). Error primitives (`errors-base.ts`) and branded-id
+  // types (`brands.ts`) now live inside infra itself, so the Wave-14
+  // carve-out for `core/errors.js` / `core/types.js` is no longer needed.
   {
     files: ['packages/core/src/infra/**/*.{ts,tsx}'],
     ignores: ['**/__tests__/**', '**/*.test.ts'],
@@ -98,6 +98,7 @@ export default tseslint.config(
         patterns: [
           {
             group: [
+              '../core/**',
               '../orchestration/**',
               '../session/**',
               '../observe/**',
@@ -110,7 +111,7 @@ export default tseslint.config(
               '../evolve-check/**',
               '../redact/**',
             ],
-            message: 'infra is the bottom layer (L1). It must not import from core subsystems (L3). See docs/ARCHITECTURE.md.',
+            message: 'infra is the bottom layer (L1). It must not import from any higher layer. See docs/ARCHITECTURE.md.',
           },
         ],
       }],

@@ -523,6 +523,13 @@ export function createSessionManager(config?: {
         error?: (msg: string, meta?: Record<string, unknown>) => void;
     };
     maxMetadataBytes?: number;
+    store?: SessionStore<{
+        id: SessionId;
+        createdAt: number;
+        lastAccessedAt: number;
+        metadata: Record<string, unknown>;
+        status: 'active' | 'locked' | 'expired';
+    }>;
 }): SessionManager;
 
 // @public
@@ -537,6 +544,7 @@ export function createTraceManager(config?: {
     defaultSamplingRate?: number;
     flushTimeoutMs?: number;
     redact?: RedactConfig | false;
+    redactor?: Redactor;
     strictSpanCreation?: boolean;
     metrics?: MetricsPort;
 }): TraceManager;
@@ -699,7 +707,9 @@ export class HarnessError extends Error {
 export enum HarnessErrorCode {
     // (undocumented)
     ADAPTER_AUTH = "ADAPTER_AUTH",
+    // (undocumented)
     ADAPTER_CIRCUIT_OPEN = "ADAPTER_CIRCUIT_OPEN",
+    // (undocumented)
     ADAPTER_CUSTOM = "ADAPTER_CUSTOM",
     // (undocumented)
     ADAPTER_ERROR = "ADAPTER_ERROR",
@@ -709,9 +719,11 @@ export enum HarnessErrorCode {
     ADAPTER_NETWORK = "ADAPTER_NETWORK",
     // (undocumented)
     ADAPTER_PARSE = "ADAPTER_PARSE",
+    // (undocumented)
     ADAPTER_PAYLOAD_OVERSIZED = "ADAPTER_PAYLOAD_OVERSIZED",
     // (undocumented)
     ADAPTER_RATE_LIMIT = "ADAPTER_RATE_LIMIT",
+    // (undocumented)
     ADAPTER_UNAVAILABLE = "ADAPTER_UNAVAILABLE",
     // (undocumented)
     ADAPTER_UNKNOWN = "ADAPTER_UNKNOWN",
@@ -796,6 +808,7 @@ export enum HarnessErrorCode {
     GUARD_VIOLATION = "GUARD_VIOLATION",
     // (undocumented)
     LOCK_ABORTED = "LOCK_ABORTED",
+    // (undocumented)
     MEMORY_CORRUPT = "MEMORY_CORRUPT",
     // @deprecated (undocumented)
     MEMORY_DATA_CORRUPTION = "MEMORY_DATA_CORRUPTION",
@@ -811,9 +824,11 @@ export enum HarnessErrorCode {
     ORCH_BOUNDARY_READ_DENIED = "ORCH_BOUNDARY_READ_DENIED",
     // (undocumented)
     ORCH_BOUNDARY_WRITE_DENIED = "ORCH_BOUNDARY_WRITE_DENIED",
+    // (undocumented)
     ORCH_CONTEXT_LIMIT = "ORCH_CONTEXT_LIMIT",
     // (undocumented)
     ORCH_DELEGATION_CYCLE = "ORCH_DELEGATION_CYCLE",
+    // (undocumented)
     ORCH_DELEGATION_LIMIT = "ORCH_DELEGATION_LIMIT",
     // (undocumented)
     ORCH_DUPLICATE_AGENT = "ORCH_DUPLICATE_AGENT",
@@ -891,7 +906,12 @@ export enum HarnessErrorCode {
 interface HarnessErrorDetails {
     // (undocumented)
     readonly [k: string]: unknown;
+    // (undocumented)
     readonly adapterCode?: string;
+    // (undocumented)
+    readonly customCode?: string;
+    // (undocumented)
+    readonly namespace?: string;
 }
 
 // @public
@@ -1209,6 +1229,14 @@ interface RedactConfig {
 }
 
 // @public
+interface Redactor {
+    // (undocumented)
+    isPollutingKey(key: string): boolean;
+    // (undocumented)
+    shouldRedactKey(key: string): boolean;
+}
+
+// @public
 export interface RelayState {
     // (undocumented)
     readonly artifacts: string[];
@@ -1287,8 +1315,6 @@ export interface SchemaValidator {
 export interface Session {
     // (undocumented)
     readonly createdAt: number;
-    // Warning: (ae-forgotten-export) The symbol "SessionId" needs to be exported by the entry point index.d.ts
-    //
     // (undocumented)
     readonly id: SessionId;
     // (undocumented)
@@ -1337,6 +1363,30 @@ export interface SessionManager {
     };
     readonly maxSessions: number;
     onEvent(handler: (event: SessionEvent) => void): () => void;
+}
+
+// @public
+interface SessionStore<T> {
+    // (undocumented)
+    [Symbol.iterator](): IterableIterator<[SessionId, T]>;
+    // (undocumented)
+    clear(): void;
+    // (undocumented)
+    delete(key: SessionId): boolean;
+    // (undocumented)
+    entries(): IterableIterator<[SessionId, T]>;
+    // (undocumented)
+    get(key: SessionId): T | undefined;
+    // (undocumented)
+    has(key: SessionId): boolean;
+    // (undocumented)
+    keys(): IterableIterator<SessionId>;
+    // (undocumented)
+    set(key: SessionId, value: T): void;
+    // (undocumented)
+    readonly size: number;
+    // (undocumented)
+    values(): IterableIterator<T>;
 }
 
 // @public
@@ -1724,12 +1774,15 @@ export interface VectorSearchOptions {
 
 // Warnings were encountered during analysis:
 //
-// dist/cost-tracker-BlG8TKB9.d.ts:71:5 - (ae-forgotten-export) The symbol "RedactConfig" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-BlG8TKB9.d.ts:372:5 - (ae-forgotten-export) The symbol "EvictionStrategyName" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-BlG8TKB9.d.ts:372:5 - (ae-forgotten-export) The symbol "EvictionStrategy" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-BlG8TKB9.d.ts:412:5 - (ae-forgotten-export) The symbol "MetricsPort" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-B5F27ao-.d.ts:307:5 - (ae-forgotten-export) The symbol "EvictionStrategyName" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-B5F27ao-.d.ts:307:5 - (ae-forgotten-export) The symbol "EvictionStrategy" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-B5F27ao-.d.ts:347:5 - (ae-forgotten-export) The symbol "MetricsPort" needs to be exported by the entry point index.d.ts
 // dist/pipeline-CCw3TkZG.d.ts:45:5 - (ae-forgotten-export) The symbol "GuardrailEvent" needs to be exported by the entry point index.d.ts
-// dist/resilience-BcjSMra-.d.ts:253:5 - (ae-forgotten-export) The symbol "MiddlewareContext" needs to be exported by the entry point index.d.ts
+// dist/resilience-DYELvvjw.d.ts:342:5 - (ae-forgotten-export) The symbol "MiddlewareContext" needs to be exported by the entry point index.d.ts
+// dist/session/index.d.ts:162:5 - (ae-forgotten-export) The symbol "SessionStore" needs to be exported by the entry point index.d.ts
+// dist/session/index.d.ts:163:9 - (ae-forgotten-export) The symbol "SessionId" needs to be exported by the entry point index.d.ts
+// dist/trace-manager-_DYbeni6.d.ts:71:5 - (ae-forgotten-export) The symbol "RedactConfig" needs to be exported by the entry point index.d.ts
+// dist/trace-manager-_DYbeni6.d.ts:78:5 - (ae-forgotten-export) The symbol "Redactor" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 

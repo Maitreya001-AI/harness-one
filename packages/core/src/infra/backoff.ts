@@ -8,7 +8,7 @@
  * @module
  */
 
-import { HarnessError, HarnessErrorCode } from '../core/errors.js';
+import { HarnessError, HarnessErrorCode } from './errors-base.js';
 
 /** Hard ceiling for `maxMs` (10 minutes). Values above this are rejected. */
 const MAX_MS_CEILING = 600_000;
@@ -120,4 +120,69 @@ export function computeJitterMs(
   random: () => number = Math.random,
 ): number {
   return Math.floor(random() * fraction * baseMs);
+}
+
+/**
+ * Reusable backoff schedule that wraps {@link computeBackoffMs} with a
+ * sleep-capable sleeper so callers never re-implement the "compute delay,
+ * sleep, honour abort" dance.
+ *
+ * Wave-15 introduced this so adapter-caller, guardrail self-healing, and
+ * any future retry site share a single backoff implementation. Callers
+ * that need only the delay computation (no sleep) can keep using
+ * {@link computeBackoffMs} directly.
+ *
+ * @example
+ * ```ts
+ * const sched = createBackoffSchedule({ baseMs: 500, maxMs: 30_000 });
+ * for (let attempt = 0; attempt < 5; attempt++) {
+ *   try { return await operation(); }
+ *   catch (err) { if (!retryable(err)) throw err; }
+ *   await sched.sleep(attempt, { signal });
+ * }
+ * ```
+ */
+export interface BackoffSchedule {
+  /** Return the delay (ms) for the given 0-based attempt. */
+  delay(attempt: number): number;
+  /** Sleep for the attempt's delay, honoring the optional abort signal. */
+  sleep(attempt: number, options?: { signal?: AbortSignal }): Promise<void>;
+}
+
+/** Create a {@link BackoffSchedule} bound to the given {@link BackoffConfig}. */
+export function createBackoffSchedule(config?: BackoffConfig): BackoffSchedule {
+  const resolved = { ...(config ?? {}) };
+  return {
+    delay(attempt: number): number {
+      return computeBackoffMs(attempt, resolved);
+    },
+    async sleep(attempt: number, options?: { signal?: AbortSignal }): Promise<void> {
+      const ms = computeBackoffMs(attempt, resolved);
+      if (ms <= 0) return;
+      await new Promise<void>((resolve, reject) => {
+        const signal = options?.signal;
+        if (signal?.aborted) {
+          reject(new HarnessError(
+            'Backoff sleep aborted',
+            HarnessErrorCode.CORE_ABORTED,
+            'Check if the abort was intentional',
+          ));
+          return;
+        }
+        const timer = setTimeout(() => {
+          signal?.removeEventListener('abort', onAbort);
+          resolve();
+        }, ms);
+        const onAbort = (): void => {
+          clearTimeout(timer);
+          reject(new HarnessError(
+            'Backoff sleep aborted',
+            HarnessErrorCode.CORE_ABORTED,
+            'Check if the abort was intentional',
+          ));
+        };
+        signal?.addEventListener('abort', onAbort, { once: true });
+      });
+    },
+  };
 }

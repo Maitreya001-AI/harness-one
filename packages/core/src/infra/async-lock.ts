@@ -15,7 +15,7 @@
  * @module
  */
 
-import { HarnessError, HarnessErrorCode} from '../core/errors.js';
+import { HarnessError, HarnessErrorCode } from './errors-base.js';
 
 /** Options accepted by {@link AsyncLock.acquire}. */
 export interface AcquireOptions {

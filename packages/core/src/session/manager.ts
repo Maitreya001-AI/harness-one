@@ -23,6 +23,30 @@ import { createSessionEventBus } from './session-event-bus.js';
 export type { SessionManager } from './manager-types.js';
 
 /**
+ * Wave-15: pluggable session storage backend. The default in-process Map
+ * implementation is suitable for single-instance deployments; distributed
+ * deployments can supply a Redis- or DB-backed implementation so session
+ * state survives process restarts and is shared across nodes.
+ *
+ * Only the Map-like surface the manager depends on is abstracted — size,
+ * iteration, and the five get/set/delete/has/clear operations. Async
+ * backends should wrap their network calls with a write-through cache so
+ * the synchronous contract holds.
+ */
+export interface SessionStore<T> {
+  get(key: SessionId): T | undefined;
+  set(key: SessionId, value: T): void;
+  delete(key: SessionId): boolean;
+  has(key: SessionId): boolean;
+  clear(): void;
+  readonly size: number;
+  values(): IterableIterator<T>;
+  keys(): IterableIterator<SessionId>;
+  entries(): IterableIterator<[SessionId, T]>;
+  [Symbol.iterator](): IterableIterator<[SessionId, T]>;
+}
+
+/**
  * Create a new SessionManager instance.
  *
  * **Important:** Always call `dispose()` when the manager is no longer needed.
@@ -63,6 +87,19 @@ export function createSessionManager(config?: {
    * rejected with `CORE_INVALID_INPUT`. Defaults to `undefined` (no cap).
    */
   maxMetadataBytes?: number;
+  /**
+   * Wave-15: optional storage backend. Defaults to an in-process `Map`,
+   * which is correct for single-instance deployments. Distributed
+   * deployments can supply a shared implementation (e.g. backed by
+   * `@harness-one/redis`) so session state survives restarts.
+   */
+  store?: SessionStore<{
+    id: SessionId;
+    createdAt: number;
+    lastAccessedAt: number;
+    metadata: Record<string, unknown>;
+    status: 'active' | 'locked' | 'expired';
+  }>;
 }): SessionManager {
   const maxSessions = config?.maxSessions ?? 100;
   const ttlMs = config?.ttlMs ?? 5 * 60 * 1000;
@@ -93,7 +130,8 @@ export function createSessionManager(config?: {
     status: 'active' | 'locked' | 'expired';
   }
 
-  const sessions = new Map<SessionId, MutableSession>();
+  const sessions: SessionStore<MutableSession> =
+    (config?.store as SessionStore<MutableSession> | undefined) ?? new Map<SessionId, MutableSession>();
 
   // Event bus owns handler registry + re-entry protection + priority drops.
   const eventBus = createSessionEventBus({

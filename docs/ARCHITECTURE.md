@@ -1,9 +1,9 @@
 # harness-one Architecture — Layering Contract
 
-This document codifies the layering contract that the audit waves 5–13
-and the Wave-14 cleanup have converged on. It is intentionally short —
-the details live in `docs/architecture/*.md` per-module. This file is
-the single-page mental model that every PR and review should respect.
+This document codifies the layering contract that the audit waves 5–15
+have converged on. It is intentionally short — the details live in
+`docs/architecture/*.md` per-module. This file is the single-page
+mental model that every PR and review should respect.
 
 ## Dependency direction
 
@@ -48,10 +48,17 @@ imports may only flow top-to-bottom:
 
 ## Allowed import edges
 
-- **L1 → nothing** — infra must not import from core/*. (Even core
-  types: use structurally-typed interfaces rather than importing a
-  named type from `core/core/errors.js` inside `core/infra`.)
-- **L2 → L1** — `core/core` freely imports from `core/infra`.
+- **L1 → nothing** — infra must not import from any higher layer.
+  Wave-15 made this rule strict: error primitives (`HarnessError` +
+  `HarnessErrorCode`) now live in `infra/errors-base.ts` and branded-id
+  types (`TraceId`, `SpanId`, `SessionId`) live in `infra/brands.ts`, so
+  the Wave-14 carve-out for `core/errors.js` / `core/types.js` is gone.
+- **L2 → L1** — `core/core` freely imports from `core/infra`. L2 is
+  also where the cross-cutting ports now live after Wave-15:
+  `core/metrics-port.ts` and `core/instrumentation-port.ts` (hoisted
+  out of observe), `core/pricing.ts` (the canonical model-pricing home),
+  and `core/iteration-coordinator.ts` (the event-sequencing state
+  machine extracted from AgentLoop).
 - **L3 → L1, L2** — each subsystem (`orchestration`, `observe`, …)
   imports from `core/core` and `core/infra`. Subsystems do **not**
   import from each other; shared abstractions belong in L2.

@@ -293,6 +293,25 @@ export class StreamAggregator {
     this.toolCallList.length = 0;
   }
 
+  /**
+   * Wave-15 explicit-lifecycle alias for {@link reset}. `initialize()` reads
+   * more clearly at the start of a new stream (vs `reset()` which suggests
+   * "back to a known good state after an error"). Both names preserve the
+   * same zero-allocation contract.
+   */
+  initialize(): void {
+    this.reset();
+  }
+
+  /**
+   * Wave-15 explicit-lifecycle alias for {@link getMessage}. `finalize()`
+   * makes the handler-side call site read as "close this stream", matching
+   * the StreamHandler's single-consumer contract.
+   */
+  finalize(usage: TokenUsage): StreamAggregatorMessage {
+    return this.getMessage(usage);
+  }
+
   private checkSizeLimits(): HarnessError | null {
     if (this.accumulatedBytes > this.options.maxStreamBytes) {
       return new HarnessError(

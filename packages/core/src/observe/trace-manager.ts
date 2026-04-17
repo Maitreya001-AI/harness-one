@@ -86,6 +86,13 @@ export function createTraceManager(config?: {
    */
   redact?: RedactConfig | false;
   /**
+   * Wave-15: pre-compiled {@link Redactor} instance. Use this to share a
+   * single redactor across trace manager, logger, and dataset exporter
+   * instead of each component compiling its own pattern set. Takes
+   * precedence over {@link redact} when both are set.
+   */
+  redactor?: Redactor;
+  /**
    * Opt-in strict mode for span creation against a dead/missing trace.
    * Default `false` returns a dead span id and increments a diagnostic
    * counter; `true` makes `startSpan()` throw `HarnessError(TRACE_NOT_FOUND)`
@@ -125,13 +132,16 @@ export function createTraceManager(config?: {
     );
   }
   // Build redactor once.
-  //   - `redact === false`            => no redactor (explicit opt-out)
-  //   - `redact === undefined`        => default redactor (secure-by-default)
-  //   - `redact: RedactConfig` object => honor the config as-is
+  //   - `config.redactor` set          => use the caller-provided instance
+  //   - `redact === false`             => no redactor (explicit opt-out)
+  //   - `redact === undefined`         => default redactor (secure-by-default)
+  //   - `redact: RedactConfig` object  => honor the config as-is
   const redactor: Redactor | undefined =
-    config?.redact === false
-      ? undefined
-      : createRedactor(config?.redact ?? undefined);
+    config?.redactor
+      ? config.redactor
+      : config?.redact === false
+        ? undefined
+        : createRedactor(config?.redact ?? undefined);
 
   if (maxTraces < 1) {
     throw new HarnessError('maxTraces must be >= 1', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide a positive maxTraces value');

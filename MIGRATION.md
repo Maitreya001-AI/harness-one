@@ -53,6 +53,37 @@ still on the old API.
 | --- | --- | --- | --- |
 | `getCostByModel(): Record<string, number>` | `getCostByModelMap(): ReadonlyMap<string, number>` | Not scheduled | Both methods are supported. The Map variant supports O(1) membership tests and ordered iteration without the boxing overhead of `Object.entries()`. Prefer the Map view in new code. |
 
+### Layer promotions (Wave-15)
+
+Non-breaking: every symbol below stays exported from its prior location.
+The canonical home changed to stop L3→L3 imports.
+
+| Symbol | Old canonical home | New canonical home | Notes |
+| --- | --- | --- | --- |
+| `MetricsPort`, `MetricCounter`, `MetricGauge`, `MetricHistogram`, `MetricAttributes`, `createNoopMetricsPort` | `harness-one/observe` | `harness-one/core` | L3→L3 edge removed. Observe re-exports. |
+| `InstrumentationPort` | `harness-one/observe` | `harness-one/core` | L3→L3 edge removed. Observe re-exports. |
+| `ModelPricing`, `priceUsage`, `hasNonFiniteTokens` | `harness-one/observe` | `harness-one/core` | Pricing is cross-cutting; observe/preset re-export. |
+| `HarnessError`, `HarnessErrorCode`, `HarnessErrorDetails` | `harness-one/core` (impl file) | `core/infra/errors-base.ts` | Enables the "L1 imports nothing" rule. `harness-one/core` re-exports. |
+| `Brand`, `TraceId`, `SpanId`, `SessionId` | `harness-one/core` (impl file) | `core/infra/brands.ts` | Same rationale as above. |
+| `Streaming` + `Usage` subpaths | — | `harness-one/observe/trace`, `harness-one/observe/usage` | Cohesive sub-barrels added for callers that want the tracing pipeline OR the cost/usage view, not both. |
+
+### Wave-15 additions
+
+Non-breaking additive surface — prefer these in new code.
+
+| Addition | Where | Notes |
+| --- | --- | --- |
+| `createCustomErrorCode(namespace, code)` | `harness-one/core` | Namespaced custom codes that ride on `ADAPTER_CUSTOM` for switch-exhaustiveness. |
+| `createBackoffSchedule(config)` / `BackoffSchedule` | `harness-one/core` | Reusable backoff sleeper sharing the infra/backoff math. |
+| `applyRecordCap({...})` | `harness-one/observe` | Shared record-eviction loop used by core and `@harness-one/langfuse` cost trackers. |
+| `serializePayloadSafe(payload, {...})` | `harness-one/orchestration` | Shared depth+byte cap extracted from `handoff.ts` so future cross-agent payloads can reuse it. |
+| `validateHarnessRuntimeConfig(config)` / `validateHarnessConfigAll(config)` | `@harness-one/preset` | Unified preset validation (numeric + structural), consolidating what used to live in two separate modules. |
+| `SessionStore<T>` + `createSessionManager({ store })` | `harness-one/session` | Pluggable session storage backend for distributed deployments. |
+| `LRUCacheOptions.onEvict` | infra (via `harness-one/core`) | Synchronous eviction hook for side-table accounting. |
+| Iteration coordinator (`startRun`, `checkPreIteration`, `startIteration`, `finalizeRun`, `CoordinatorDeps`, `CoordinatorState`) | `harness-one/core` | Event-sequencing state machine extracted from AgentLoop. |
+| `TraceManagerConfig.redactor?: Redactor` | `harness-one/observe` | Inject a shared Redactor instance rather than compiling one per component. |
+| `ResiliencePolicy` (alias for `RetryPolicy`) | `harness-one/core` | Clarifies that retry+breaker is one composed policy. |
+
 ## Removed in prior waves
 
 This section records historical deprecations that have already been

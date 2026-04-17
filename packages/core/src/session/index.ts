@@ -5,6 +5,7 @@ export type { Session, SessionEvent } from './types.js';
 
 // Manager
 export type { SessionManager } from './manager.js';
+export type { SessionStore } from './manager.js';
 export { createSessionManager } from './manager.js';
 
 // Conversation persistence

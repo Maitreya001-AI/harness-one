@@ -76,4 +76,8 @@ export type { ShutdownHandlerOptions } from './shutdown.js';
 // Config validation
 // ---------------------------------------------------------------------------
 
-export { validateHarnessConfig } from './validate-config.js';
+export {
+  validateHarnessConfig,
+  validateHarnessRuntimeConfig,
+  validateHarnessConfigAll,
+} from './validate-config.js';

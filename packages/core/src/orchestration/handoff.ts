@@ -4,7 +4,12 @@
  * @module
  */
 
-import { HarnessError, HarnessErrorCode} from '../core/errors.js';
+import { HarnessError, HarnessErrorCode } from '../core/errors.js';
+import {
+  serializePayloadSafe,
+  DEFAULT_PAYLOAD_MAX_BYTES,
+  DEFAULT_PAYLOAD_MAX_DEPTH,
+} from './safe-payload.js';
 import type {
   HandoffManager,
   HandoffPayload,
@@ -94,53 +99,18 @@ export function createHandoff(transport: MessageTransport, handoffConfig?: Hando
   const maxReceipts = handoffConfig?.maxReceipts ?? DEFAULT_MAX_RECEIPTS;
   const maxInboxPerAgent = handoffConfig?.maxInboxPerAgent ?? DEFAULT_MAX_INBOX_PER_AGENT;
 
-  // Wave-5E SEC-A11: cap payload size + depth to prevent runaway memory and
-  // stack growth from an untrusted peer. 64 KiB is ~10× the median tool-result
-  // size we see in practice; depth 16 is comfortably beyond nested-JSON
-  // convention (~5 levels) but rejects pathological recursive structures.
-  const MAX_HANDOFF_PAYLOAD_BYTES = handoffConfig?.maxPayloadBytes ?? 64 * 1024;
-  const MAX_HANDOFF_PAYLOAD_DEPTH = handoffConfig?.maxPayloadDepth ?? 16;
-
-  function checkPayloadDepth(value: unknown, depth: number, path: string): void {
-    if (depth > MAX_HANDOFF_PAYLOAD_DEPTH) {
-      throw new HarnessError(
-        `Failed to serialize handoff payload: depth exceeds ${MAX_HANDOFF_PAYLOAD_DEPTH} at ${path}`,
-        HarnessErrorCode.ORCH_HANDOFF_SERIALIZATION_ERROR,
-        'Flatten nested structures before handing off',
-      );
-    }
-    if (value === null || typeof value !== 'object') return;
-    if (Array.isArray(value)) {
-      for (let i = 0; i < value.length; i++) {
-        checkPayloadDepth(value[i], depth + 1, `${path}[${i}]`);
-      }
-      return;
-    }
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      checkPayloadDepth(v, depth + 1, `${path}.${k}`);
-    }
-  }
+  // Wave-5E SEC-A11 / Wave-15: depth + byte caps delegate to the shared
+  // safe-payload helper so a single module owns the cross-agent
+  // serialization contract.
+  const MAX_HANDOFF_PAYLOAD_BYTES = handoffConfig?.maxPayloadBytes ?? DEFAULT_PAYLOAD_MAX_BYTES;
+  const MAX_HANDOFF_PAYLOAD_DEPTH = handoffConfig?.maxPayloadDepth ?? DEFAULT_PAYLOAD_MAX_DEPTH;
 
   function serializePayload(payload: HandoffPayload): string {
-    checkPayloadDepth(payload, 0, '$');
-    let body: string;
-    try {
-      body = JSON.stringify(payload);
-    } catch (err) {
-      throw new HarnessError(
-        `Failed to serialize handoff payload: ${err instanceof Error ? err.message : String(err)}`,
-        HarnessErrorCode.ORCH_HANDOFF_SERIALIZATION_ERROR,
-        'Ensure all values in the handoff payload are JSON-serializable',
-      );
-    }
-    const bytes = Buffer.byteLength(body, 'utf8');
-    if (bytes > MAX_HANDOFF_PAYLOAD_BYTES) {
-      throw new HarnessError(
-        `Handoff payload is ${bytes} bytes; exceeds cap of ${MAX_HANDOFF_PAYLOAD_BYTES}`,
-        HarnessErrorCode.ORCH_HANDOFF_SERIALIZATION_ERROR,
-        'Reduce payload size or reference large data via a handle instead',
-      );
-    }
+    const body = serializePayloadSafe(payload, {
+      maxBytes: MAX_HANDOFF_PAYLOAD_BYTES,
+      maxDepth: MAX_HANDOFF_PAYLOAD_DEPTH,
+      errorCode: HarnessErrorCode.ORCH_HANDOFF_SERIALIZATION_ERROR,
+    });
     return HANDOFF_PREFIX + body;
   }
 

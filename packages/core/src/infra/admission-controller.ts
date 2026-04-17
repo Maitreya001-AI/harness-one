@@ -22,7 +22,7 @@
  * @module
  */
 
-import { HarnessError, HarnessErrorCode } from '../core/errors.js';
+import { HarnessError, HarnessErrorCode } from './errors-base.js';
 
 export interface AdmissionControllerConfig {
   /** Maximum simultaneously-inflight requests per tenant. Default 128. */

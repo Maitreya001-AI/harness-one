@@ -10,7 +10,7 @@
  * @module
  */
 
-import { HarnessError, HarnessErrorCode } from '../core/errors.js';
+import { HarnessError, HarnessErrorCode } from './errors-base.js';
 
 /** Circuit breaker states. */
 export type CircuitState = 'closed' | 'open' | 'half_open';

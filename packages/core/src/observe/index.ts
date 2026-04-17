@@ -36,7 +36,12 @@ export { createCostTracker, OVERFLOW_BUCKET_KEY, KahanSum } from './cost-tracker
 
 // ARCH-008: pluggable eviction strategy shared with @harness-one/langfuse.
 export type { EvictionStrategy, EvictionStrategyName } from './cost-tracker-eviction.js';
-export { overflowBucketStrategy, lruStrategy, getEvictionStrategy } from './cost-tracker-eviction.js';
+export {
+  overflowBucketStrategy,
+  lruStrategy,
+  getEvictionStrategy,
+  applyRecordCap,
+} from './cost-tracker-eviction.js';
 
 // Logger
 export type { LogLevel, Logger, LoggerConfig } from './logger.js';

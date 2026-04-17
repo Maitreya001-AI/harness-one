@@ -9,7 +9,7 @@ import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import { prefixedSecureId } from '../infra/ids.js';
 import { computeJitterMs, AGENT_POOL_IDLE_JITTER_FRACTION } from '../infra/backoff.js';
 import type { Logger } from '../infra/logger.js';
-import type { MetricsPort } from '../observe/metrics-port.js';
+import type { MetricsPort } from '../core/metrics-port.js';
 import type { TraceManager } from '../observe/trace-manager.js';
 import type { AgentPool, PoolConfig, PooledAgent, PoolStats } from './types.js';
 

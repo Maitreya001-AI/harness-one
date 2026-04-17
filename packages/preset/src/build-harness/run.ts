@@ -11,15 +11,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import {
-  HarnessError,
-  HarnessErrorCode,
-  requirePositiveInt,
-  requireNonNegativeInt,
-  requireFinitePositive,
-  requireFiniteNonNegative,
-  validatePricingArray,
-} from 'harness-one/core';
+import { HarnessError, HarnessErrorCode } from 'harness-one/core';
 import type { Message, AgentEvent } from 'harness-one/core';
 import { runInput, runOutput } from 'harness-one/guardrails';
 
@@ -27,56 +19,12 @@ import {
   DRAIN_DEFAULT_TIMEOUT_MS,
 } from './types.js';
 import type {
-  AnthropicHarnessConfig,
-  OpenAIHarnessConfig,
   Harness,
   HarnessConfig,
 } from './types.js';
 
 import { wireComponents, warmTiktokenIfNeeded } from './wire-components.js';
-
-/**
- * Validate the subset of {@link HarnessConfig} that affects numeric safety.
- * Every rule flows through the shared validate helpers in `harness-one/core`
- * so preset and core cannot drift on what counts as a "positive integer"
- * or a "finite positive number".
- */
-function validateHarnessConfig(config: HarnessConfig): void {
-  const providerConfig = config as AnthropicHarnessConfig | OpenAIHarnessConfig;
-  const hasAdapter = !!config.adapter;
-  const hasClient = !!providerConfig.client;
-
-  if (!hasAdapter && !hasClient) {
-    throw new HarnessError(
-      'Either adapter or client must be provided',
-      HarnessErrorCode.CORE_INVALID_CONFIG,
-      'Pass a pre-built adapter or a provider client',
-    );
-  }
-  // Wave-14 belt+suspenders: the discriminated union already prevents this at
-  // compile time, but runtime callers bypassing the type system get a clear
-  // error instead of ambiguous "which one won?" behaviour.
-  if (hasAdapter && hasClient) {
-    throw new HarnessError(
-      'adapter and client are mutually exclusive',
-      HarnessErrorCode.CORE_INVALID_CONFIG,
-      'Pass either a pre-built adapter OR a provider client, not both. '
-      + 'Use AdapterHarnessConfig ({ adapter }) to inject a pre-built adapter; '
-      + 'use AnthropicHarnessConfig/OpenAIHarnessConfig ({ provider, client }) '
-      + 'to let harness-one build the adapter for you.',
-    );
-  }
-  requirePositiveInt(config.maxIterations, 'maxIterations');
-  requirePositiveInt(config.maxTotalTokens, 'maxTotalTokens');
-  requireFinitePositive(config.budget, 'budget');
-  if (config.guardrails?.rateLimit) {
-    requirePositiveInt(config.guardrails.rateLimit.max, 'guardrails.rateLimit.max');
-    requirePositiveInt(config.guardrails.rateLimit.windowMs, 'guardrails.rateLimit.windowMs');
-  }
-  validatePricingArray(config.pricing);
-  requireNonNegativeInt(config.maxAdapterRetries, 'maxAdapterRetries');
-  requireFiniteNonNegative(config.baseRetryDelayMs, 'baseRetryDelayMs');
-}
+import { validateHarnessRuntimeConfig } from '../validate-config.js';
 
 /**
  * Build a fully-wired {@link Harness} instance. Every auto-configured
@@ -84,7 +32,7 @@ function validateHarnessConfig(config: HarnessConfig): void {
  * (`adapter`, `exporters`, `memoryStore`, etc.).
  */
 export function buildHarness(config: HarnessConfig): Harness {
-  validateHarnessConfig(config);
+  validateHarnessRuntimeConfig(config);
 
   const wired = wireComponents(config);
   const {

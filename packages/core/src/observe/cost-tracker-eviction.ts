@@ -133,3 +133,37 @@ export function getEvictionStrategy(name: EvictionStrategyName): EvictionStrateg
     case 'lru': return lruStrategy;
   }
 }
+
+/**
+ * Wave-15: shared eviction loop used by both {@link createCostTracker} and
+ * `@harness-one/langfuse`'s `createLangfuseCostTracker`. Centralizes the
+ * "shift oldest, decrement running total, notify strategy" sequence so the
+ * two trackers agree byte-for-byte on eviction semantics.
+ *
+ * The caller owns the backing buffer, running sum, and per-key maps; this
+ * helper just orchestrates the eviction call order correctly.
+ *
+ * @example
+ * ```ts
+ * applyRecordCap({
+ *   records, runningSum, maxRecords,
+ *   modelTotals, traceTotals, strategy: lruStrategy,
+ * });
+ * ```
+ */
+export function applyRecordCap(args: {
+  readonly records: TokenUsageRecord[];
+  readonly runningSum: KahanSum;
+  readonly maxRecords: number;
+  readonly modelTotals: Map<string, KahanSum>;
+  readonly traceTotals: Map<string, KahanSum>;
+  readonly strategy: EvictionStrategy;
+}): void {
+  const { records, runningSum, maxRecords, modelTotals, traceTotals, strategy } = args;
+  while (records.length > maxRecords) {
+    const evicted = records.shift();
+    if (!evicted) break;
+    runningSum.subtract(evicted.estimatedCost);
+    strategy.onRecordEvicted(evicted, modelTotals, traceTotals);
+  }
+}
