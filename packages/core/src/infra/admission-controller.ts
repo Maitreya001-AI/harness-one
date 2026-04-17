@@ -23,6 +23,7 @@
  */
 
 import { HarnessError, HarnessErrorCode } from './errors-base.js';
+import { requirePositiveInt } from './validate.js';
 
 export interface AdmissionControllerConfig {
   /** Maximum simultaneously-inflight requests per tenant. Default 128. */
@@ -59,13 +60,7 @@ export function createAdmissionController(
 ): AdmissionController {
   const maxInflight = config?.maxInflight ?? 128;
   const defaultTimeoutMs = config?.defaultTimeoutMs ?? 5000;
-  if (!Number.isInteger(maxInflight) || maxInflight < 1) {
-    throw new HarnessError(
-      `AdmissionController.maxInflight must be a positive integer; got ${maxInflight}`,
-      HarnessErrorCode.CORE_INVALID_CONFIG,
-      'Use a positive integer (e.g. 128)',
-    );
-  }
+  requirePositiveInt(maxInflight, 'AdmissionController.maxInflight');
 
   interface TenantState {
     inflight: number;

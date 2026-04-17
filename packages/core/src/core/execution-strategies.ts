@@ -1,5 +1,5 @@
 import type { ToolCallRequest, ExecutionStrategy, ToolExecutionResult } from './types.js';
-import { HarnessError, HarnessErrorCode } from './errors.js';
+import { requirePositiveInt } from '../infra/validate.js';
 
 /**
  * Wave-13 D-10: declaration merging adds an optional `dispose` member to the
@@ -62,13 +62,7 @@ export function createParallelStrategy(options?: {
   maxConcurrency?: number;
 }): ExecutionStrategy {
   const maxConcurrency = options?.maxConcurrency ?? 5;
-  if (!Number.isInteger(maxConcurrency) || maxConcurrency < 1) {
-    throw new HarnessError(
-      'maxConcurrency must be a positive integer',
-      HarnessErrorCode.CORE_INVALID_CONFIG,
-      'Provide a positive integer for maxConcurrency (e.g. 5)',
-    );
-  }
+  requirePositiveInt(maxConcurrency, 'maxConcurrency');
 
   return {
     async execute(calls, handler, strategyOptions) {

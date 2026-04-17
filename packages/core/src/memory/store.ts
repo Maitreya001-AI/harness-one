@@ -7,6 +7,7 @@
 import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import { secureId } from '../infra/ids.js';
 import { assertMemoryEntrySize } from './_schemas.js';
+import { resolveCandidateIds } from './memory-query.js';
 import type {
   MemoryEntry,
   MemoryFilter,
@@ -348,36 +349,9 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
       };
       throwIfAborted();
 
-      // Use secondary indexes to narrow candidate set when possible.
-      // Start with candidate IDs from the most selective indexed filter,
-      // then intersect with other indexed filters.
-      let candidateIds: Set<string> | null = null;
-
-      if (filter.grade) {
-        const gradeSet = gradeIndex.get(filter.grade);
-        candidateIds = gradeSet ? new Set(gradeSet) : new Set();
-      }
-
-      if (filter.tags && filter.tags.length > 0) {
-        // OR semantics: union of all tag sets
-        const tagUnion = new Set<string>();
-        for (const tag of filter.tags) {
-          const tagSet = tagIndex.get(tag);
-          if (tagSet) {
-            for (const id of tagSet) tagUnion.add(id);
-          }
-        }
-        if (candidateIds !== null) {
-          // Intersect with grade candidates
-          const intersected = new Set<string>();
-          for (const id of candidateIds) {
-            if (tagUnion.has(id)) intersected.add(id);
-          }
-          candidateIds = intersected;
-        } else {
-          candidateIds = tagUnion;
-        }
-      }
+      // Wave-16 m7: index set-algebra (union / intersect) lives in
+      // `memory-query.ts` so this function can focus on orchestration.
+      const candidateIds = resolveCandidateIds(filter, { gradeIndex, tagIndex });
 
       // Resolve candidates to entries, or fall back to full scan.
       // PERF-007: In the full-scan path we intentionally iterate directly over

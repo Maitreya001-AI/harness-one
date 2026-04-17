@@ -268,11 +268,10 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
       // fields and corrupt orchestrator state. A shallow `{ ...metadata }`
       // leaves nested objects (e.g., `metadata.user`) shared by reference.
       // Optional redaction strips sensitive fields before returning.
+      // `package.json` pins node>=18, so `structuredClone` is always present.
       ...(agent.metadata !== undefined && {
         metadata: (() => {
-          const cloned = typeof structuredClone === 'function'
-            ? structuredClone(agent.metadata)
-            : JSON.parse(JSON.stringify(agent.metadata)) as Record<string, unknown>;
+          const cloned = structuredClone(agent.metadata);
           return redactMetadata ? redactMetadata(cloned) : cloned;
         })(),
       }),

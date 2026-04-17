@@ -75,6 +75,17 @@ export interface TraceExporterCoordinator {
 /** Wall-clock cap on any single exporter's `shutdown()` call. */
 const EXPORTER_SHUTDOWN_TIMEOUT_MS = 5_000;
 
+/**
+ * Invoke a possibly-sync-throwing lifecycle method and always get a rejected
+ * promise back instead of a synchronous throw. `Promise.resolve(fn())` evaluates
+ * `fn()` eagerly, so a sync throw bypasses the resulting promise entirely; this
+ * helper moves the call inside the promise chain so sync throws become
+ * rejections that `Promise.allSettled` / `.catch()` can see.
+ */
+function invokeAsync<T>(fn: () => T | PromiseLike<T>): Promise<T> {
+  return Promise.resolve().then(fn);
+}
+
 export function createTraceExporterCoordinator(
   config: Readonly<TraceExporterCoordinatorConfig>,
 ): TraceExporterCoordinator {
@@ -208,14 +219,14 @@ export function createTraceExporterCoordinator(
     perExporterTimeoutMs: number,
   ): Promise<void> {
     if (perExporterTimeoutMs <= 0) {
-      return Promise.resolve(exporter.flush()).then(() => undefined);
+      return invokeAsync(() => exporter.flush()).then(() => undefined);
     }
     let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<'timeout'>((resolve) => {
       timeoutHandle = setTimeout(() => resolve('timeout'), perExporterTimeoutMs);
     });
     return Promise.race([
-      Promise.resolve(exporter.flush()).then(() => 'ok' as const),
+      invokeAsync(() => exporter.flush()).then(() => 'ok' as const),
       timeoutPromise,
     ])
       .then((outcome) => {
@@ -342,15 +353,18 @@ export function createTraceExporterCoordinator(
   async function shutdownAll(): Promise<void> {
     await waitForPendingWithTimeout('dispose');
     // Flush every exporter — allSettled so one failure doesn't block others.
+    // `invokeAsync` ensures a sync throw from `flush()` becomes a rejection
+    // instead of unwinding past `Promise.allSettled` during map evaluation.
     const flushResults = await Promise.allSettled(
-      exporters.map((e) => e.flush()),
+      exporters.map((e) => invokeAsync(() => e.flush())),
     );
     for (const r of flushResults) {
       if (r.status === 'rejected') reportExportError(r.reason);
     }
     // Call `shutdown()` on each exporter with a bounded per-exporter timeout.
     for (const e of exporters) {
-      if (!e.shutdown) continue;
+      const shutdownHook = e.shutdown;
+      if (!shutdownHook) continue;
       let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
       const timeoutPromise = new Promise<'timeout'>((resolve) => {
         timeoutHandle = setTimeout(
@@ -360,7 +374,7 @@ export function createTraceExporterCoordinator(
       });
       try {
         const outcome = await Promise.race([
-          Promise.resolve(e.shutdown())
+          invokeAsync(() => shutdownHook.call(e))
             .then(() => 'ok' as const)
             .catch((err: unknown) => {
               reportExportError(err);

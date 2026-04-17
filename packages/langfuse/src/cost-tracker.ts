@@ -2,15 +2,29 @@
  * Langfuse CostTracker — cost-tracking entry point for
  * `@harness-one/langfuse`.
  *
+ * Wave-16 M2: the body of the 575-LOC monolith has been split into three
+ * cohesive sibling files. This module is now the wiring layer:
+ *
+ *   - `cost-pricing.ts`  pricing table + `computeCost` (pure math)
+ *   - `cost-export.ts`   `handleExportError`, pending-flush tracking,
+ *                        bounded `dispose()`
+ *
+ *   (Alert / budget logic still lives inline — it is tightly coupled with
+ *   the `KahanSum`-backed `runningSum` and with the per-call
+ *   `budgetSnapshot` race invariant.)
+ *
  * @module
  */
 
 import type { Langfuse } from 'langfuse';
-import type { CostTracker, ModelPricing, Logger } from 'harness-one/observe';
+import type { CostTracker, ModelPricing } from 'harness-one/observe';
 import type { TokenUsageRecord, CostAlert } from 'harness-one/observe';
-import type { EvictionStrategy } from 'harness-one/observe';
-import { KahanSum, lruStrategy, safeWarn } from 'harness-one/observe';
-import { HarnessError, HarnessErrorCode } from 'harness-one/core';
+import type { EvictionStrategy, Logger } from 'harness-one/observe';
+import { KahanSum, lruStrategy } from 'harness-one/observe';
+import { requireFiniteNonNegative, requirePositiveInt } from 'harness-one/core';
+
+import { createLangfusePricing } from './cost-pricing.js';
+import { createExportHealth } from './cost-export.js';
 
 // ---------------------------------------------------------------------------
 // CostTracker (Langfuse-backed)
@@ -105,12 +119,16 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): La
   // ARCH-008: explicit strategy reference so the divergence with the core
   // tracker is grep-able and substitutable.
   const evictionStrategy: EvictionStrategy = lruStrategy;
-  const { client, onExportError, logger } = config;
+  const { client } = config;
   const maxRecords = config.maxRecords ?? 10_000;
-  if (config.maxRecords !== undefined && config.maxRecords < 1) {
-    throw new HarnessError('maxRecords must be >= 1', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide a positive maxRecords value');
-  }
-  const pricing = new Map<string, ModelPricing>();
+  // Wave-16 m3: delegate to the shared helper so langfuse and core
+  // agree on what counts as a positive integer.
+  requirePositiveInt(config.maxRecords, 'maxRecords');
+  const pricingTable = createLangfusePricing(config.pricing);
+  const exportHealth = createExportHealth({
+    ...(config.onExportError !== undefined && { onExportError: config.onExportError }),
+    ...(config.logger !== undefined && { logger: config.logger }),
+  });
   const records: TokenUsageRecord[] = [];
   const alertHandlers: ((alert: CostAlert) => void)[] = [];
   let budget: number | undefined;
@@ -129,106 +147,32 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): La
   const warningThreshold = config.warningThreshold ?? 0.8;
   const criticalThreshold = config.criticalThreshold ?? 0.95;
 
-  const warnedModels = new Set<string>();
-
   // OBS-003: Dedupe `budget_exceeded` event emission per (model + budget).
   // Keys are re-seeded on `applyBudget` so a new budget produces a fresh
   // window of events, and fully cleared on `reset()`.
   const emittedBudgetExceeded = new Set<string>();
 
   // P3-3: `setPricing` / `setBudget` mutators were removed from the returned
-  // tracker surface. The helpers below hold the same bodies and are shared
-  // between factory-time seeding (from `config.pricing` / `config.budget`)
-  // and the async `updatePricing` / `updateBudget` methods.
-  function applyPricing(newPricing: ModelPricing[]): void {
-    for (const p of newPricing) {
-      pricing.set(p.model, p);
-    }
-  }
-
+  // tracker surface. The budget helper below shares its body with the async
+  // `updateBudget` method; pricing updates route through the pricing table.
   function applyBudget(newBudget: number): void {
-    if (!Number.isFinite(newBudget) || newBudget < 0) {
-      throw new HarnessError(
-        `Budget must be a non-negative finite number, got ${newBudget}`,
-        HarnessErrorCode.CORE_INVALID_CONFIG,
-        'Provide a non-negative number for the budget',
-      );
-    }
+    // Wave-16 m3: shared helper keeps langfuse/core/preset in lockstep on
+    // what counts as a valid budget.
+    requireFiniteNonNegative(newBudget, 'budget');
     budget = newBudget;
     // OBS-003: New budget => new dedupe window.
     emittedBudgetExceeded.clear();
   }
 
-  // Seed pricing / budget from config, if provided. Budget seeding runs
-  // through `applyBudget` so factory-time invalid budgets throw the same
-  // `CORE_INVALID_CONFIG` error as post-construction `updateBudget()`.
-  if (config.pricing) {
-    applyPricing(config.pricing);
-  }
+  // Pricing seeding happens inside `createLangfusePricing`. Budget seeding
+  // still runs through `applyBudget` so factory-time invalid budgets throw
+  // the same `CORE_INVALID_CONFIG` as post-construction `updateBudget()`.
   if (config.budget !== undefined) {
     applyBudget(config.budget);
   }
 
-  // OBS-015: Export-health counters.
-  let flushErrors = 0;
+  // OBS-015: Event counter (flush counter lives inside `exportHealth`).
   let budgetExceededEvents = 0;
-
-  // Wave-12 P1-8: Track in-flight `flushAsync` promises so shutdown / flush
-  // callers can await them instead of leaking fire-and-forget promises. Each
-  // entry is registered before it is fired and removed in a `finally` once
-  // settled, regardless of success or rejection.
-  const pendingFlushes = new Set<Promise<unknown>>();
-
-  function handleExportError(err: unknown, op: 'flush' | 'record', details?: unknown): void {
-    if (op === 'flush') {
-      flushErrors++;
-    }
-    if (onExportError) {
-      try {
-        onExportError(err, { op, details });
-      } catch {
-        // Never let a user callback break the record path.
-      }
-      return;
-    }
-    if (logger) {
-      logger.error('[harness-one/langfuse] export error', {
-        op,
-        err: err instanceof Error ? { name: err.name, message: err.message, stack: err.stack } : err,
-        ...(details !== undefined ? { details } : {}),
-      });
-      return;
-    }
-    // Wave-5F T13: route final fallback through safeWarn (redaction-enabled).
-    safeWarn(undefined, `[harness-one/langfuse] ${op} error`, {
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
-
-  function computeCost(usage: Omit<TokenUsageRecord, 'estimatedCost' | 'timestamp'>): number {
-    const p = pricing.get(usage.model);
-    if (!p) {
-      if (!warnedModels.has(usage.model)) {
-        warnedModels.add(usage.model);
-        safeWarn(undefined, `[harness-one/langfuse] No pricing configured for model "${usage.model}" — cost will be reported as $0`);
-      }
-      return 0;
-    }
-    if (!Number.isFinite(usage.inputTokens) || !Number.isFinite(usage.outputTokens)) {
-      safeWarn(undefined, `[harness-one/langfuse] Invalid token counts for model "${usage.model}" — inputTokens=${usage.inputTokens}, outputTokens=${usage.outputTokens}. Cost will be 0.`);
-      return 0;
-    }
-    let cost = 0;
-    cost += (usage.inputTokens / 1000) * p.inputPer1kTokens;
-    cost += (usage.outputTokens / 1000) * p.outputPer1kTokens;
-    if (usage.cacheReadTokens && p.cacheReadPer1kTokens) {
-      cost += (usage.cacheReadTokens / 1000) * p.cacheReadPer1kTokens;
-    }
-    if (usage.cacheWriteTokens && p.cacheWritePer1kTokens) {
-      cost += (usage.cacheWriteTokens / 1000) * p.cacheWritePer1kTokens;
-    }
-    return cost;
-  }
 
   // ARCH-008: thin wrapper around the LRU strategy's bucket resolution.
   // Capacity is set to Number.MAX_SAFE_INTEGER because Langfuse never
@@ -281,7 +225,7 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): La
       budgetExceededEvents++;
     } catch (err) {
       // Emitting the signal must never crash the record path.
-      handleExportError(err, 'record', { reason: 'budget_exceeded_event_failed' });
+      exportHealth.handleExportError(err, 'record', { reason: 'budget_exceeded_event_failed' });
     }
   }
 
@@ -292,7 +236,7 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): La
       // updateBudget() is called concurrently from another async context.
       const budgetSnapshot = budget;
 
-      const estimatedCost = computeCost(usage);
+      const estimatedCost = pricingTable.computeCost(usage);
       const record: TokenUsageRecord = {
         ...usage,
         estimatedCost,
@@ -339,21 +283,9 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): La
       // instead of being swallowed with a bare console.warn. The error is
       // also counted so operators can observe degraded export health.
       //
-      // Wave-12 P1-8: Track the in-flight promise so `flush()` / shutdown
-      // paths on the exporter (and future dispose paths on the tracker) can
-      // await rather than race to completion. The catch handler is itself
-      // wrapped so a throwing logger can't surface as an unhandled rejection.
-      const flushPromise = client.flushAsync().catch((err: unknown) => {
-        try {
-          handleExportError(err, 'flush');
-        } catch {
-          // Defensive: never let a user logger break the pending-flush machinery.
-        }
-      });
-      pendingFlushes.add(flushPromise);
-      flushPromise.finally(() => {
-        pendingFlushes.delete(flushPromise);
-      });
+      // Wave-12 P1-8 + Wave-16 M2: `exportHealth.trackFlush` owns the
+      // pending-promise set + the safe `handleExportError` routing.
+      exportHealth.trackFlush(client.flushAsync());
 
       // F18c: Use the snapshot taken at entry, not the live `budget` variable.
       if (budgetSnapshot !== undefined) {
@@ -403,7 +335,7 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): La
      * uniformly.
      */
     async updatePricing(newPricing: ModelPricing[]): Promise<void> {
-      applyPricing(newPricing);
+      pricingTable.apply(newPricing);
     },
 
     /**
@@ -482,7 +414,7 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): La
         ...(usage.cacheReadTokens !== undefined && { cacheReadTokens: usage.cacheReadTokens }),
         ...(usage.cacheWriteTokens !== undefined && { cacheWriteTokens: usage.cacheWriteTokens }),
       };
-      const newCost = computeCost(merged);
+      const newCost = pricingTable.computeCost(merged);
       merged.estimatedCost = newCost;
 
       records[lastIdx] = merged;
@@ -505,7 +437,7 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): La
       modelTotals.clear();
       traceTotals.clear();
       emittedBudgetExceeded.clear();
-      flushErrors = 0;
+      exportHealth.reset();
       budgetExceededEvents = 0;
     },
 
@@ -545,29 +477,15 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): La
     getStats(): LangfuseCostTrackerStats {
       return {
         records: records.length,
-        flushErrors,
+        flushErrors: exportHealth.getFlushErrors(),
         budgetExceededEvents,
       };
     },
 
     async dispose(timeoutMs: number = 5_000): Promise<void> {
-      // Wave-12 P1-8: Drain pending flushes with a cap so shutdown cannot hang
-      // on an unresponsive Langfuse backend. `allSettled` guarantees rejections
-      // don't propagate; the timeout guarantees bounded wait time.
-      if (pendingFlushes.size === 0) return;
-      const snapshot = Array.from(pendingFlushes);
-      let timerHandle: ReturnType<typeof setTimeout> | undefined;
-      const timeout = new Promise<void>((resolve) => {
-        timerHandle = setTimeout(resolve, Math.max(0, timeoutMs));
-      });
-      try {
-        await Promise.race([
-          Promise.allSettled(snapshot).then(() => undefined),
-          timeout,
-        ]);
-      } finally {
-        if (timerHandle !== undefined) clearTimeout(timerHandle);
-      }
+      // Wave-12 P1-8 + Wave-16 M2: pending-flush draining lives inside
+      // `exportHealth.dispose`.
+      await exportHealth.dispose(timeoutMs);
     },
   };
 

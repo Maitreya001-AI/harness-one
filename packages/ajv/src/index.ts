@@ -14,7 +14,7 @@
 
 import { Ajv, type ValidateFunction } from 'ajv';
 import type { JsonSchema } from 'harness-one/core';
-import { HarnessError, HarnessErrorCode } from 'harness-one/core';
+import { requirePositiveInt } from 'harness-one/core';
 import type { SchemaValidator, ValidationError } from 'harness-one/tools';
 import type { Logger } from 'harness-one/observe';
 import { createDefaultLogger } from 'harness-one/observe';
@@ -183,16 +183,9 @@ export function createAjvValidator(options?: AjvValidatorOptions): AjvSchemaVali
   // which hid configuration bugs: a caller passing `maxCacheSize: 0`
   // expected no caching, got 1, and saw surprising memory growth. We now
   // fail-fast with a typed error so misconfiguration surfaces early.
-  if (options?.maxCacheSize !== undefined) {
-    const n = options.maxCacheSize;
-    if (!Number.isFinite(n) || !Number.isInteger(n) || n < 1) {
-      throw new HarnessError(
-        `maxCacheSize must be a positive integer >= 1, got ${String(n)}`,
-        HarnessErrorCode.CORE_INVALID_CONFIG,
-        'Provide an integer >= 1 (e.g. 256) or omit the option to use the default.',
-      );
-    }
-  }
+  // Routes through core's shared helper so preset/core/ajv agree on what
+  // counts as a positive integer (Wave-16 m3).
+  requirePositiveInt(options?.maxCacheSize, 'maxCacheSize');
 
   const ajv = new Ajv({
     allErrors: options?.allErrors ?? true,

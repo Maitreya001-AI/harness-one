@@ -84,6 +84,22 @@ Non-breaking additive surface — prefer these in new code.
 | `TraceManagerConfig.redactor?: Redactor` | `harness-one/observe` | Inject a shared Redactor instance rather than compiling one per component. |
 | `ResiliencePolicy` (alias for `RetryPolicy`) | `harness-one/core` | Clarifies that retry+breaker is one composed policy. |
 
+### Wave-16 deprecation / removal schedule
+
+| Symbol | Replacement | Removal target | Notes |
+| --- | --- | --- | --- |
+| `harness-one/observe/metrics-port` re-export path | `harness-one/core` | `v0.3.0` | Wave-15 moved the canonical `MetricsPort` home to L2. The thin `observe/metrics-port.ts` re-export now carries an explicit removal pin. External consumers: switch the import path; internal code must import from `../core/metrics-port.js` directly. |
+| `observe/cost-math.ts` module | `harness-one/core` (for `priceUsage` / `hasNonFiniteTokens`) + `cost-tracker.ts` (for `KahanSum`) | Removed in Wave-16 | Duplicated primitives that already lived in `core/pricing.ts`; `KahanSum` moved inline into `observe/cost-tracker.ts` since that's its only caller. No public API change — the public re-exports (`KahanSum`, `priceUsage`, `hasNonFiniteTokens`) keep working. |
+
+### Wave-16 additions (non-breaking)
+
+| Addition | Where | Notes |
+| --- | --- | --- |
+| Validator consolidation — `requirePositiveInt` / `requireNonNegativeInt` / `requireFinitePositive` / `requireFiniteNonNegative` / `requireUnitInterval` now used by admission controller, circuit breaker, execution strategies, trace sampler, trace manager, agent-loop validation, `@harness-one/ajv`, `@harness-one/langfuse` | `harness-one/core` | Error messages for `maxIterations` / `maxTotalTokens` / `maxStreamBytes` / `maxToolArgBytes` / `toolTimeoutMs` kept verbatim; `maxTraces` / `maxRecords` / `samplingRate` / `flushTimeoutMs` / `baseRetryDelayMs` / `maxAdapterRetries` / `maxConcurrency` / `maxInflight` / `failureThreshold` / `resetTimeoutMs` / `budget` / `defaultTTL` / `maxCacheSize` normalised. Integration tests assert the delegation so future drift is caught. |
+| `resolveCandidateIds(filter, indexes)` / `unionTagSets` / `intersect` | `core/memory/memory-query.ts` | Set-algebra helpers extracted from `createInMemoryStore` so the store owns CRUD + index maintenance and the query logic is unit-tested in isolation. |
+| `invokeAsync(fn)` guard in `trace-exporter-coordinator` | `core/observe/trace-exporter-coordinator.ts` | Ensures a sync-throwing `exporter.flush()` / `shutdown()` rejects cleanly instead of unwinding past `Promise.allSettled`. Regression tests landed alongside. |
+| Adapter package splits — `@harness-one/redis` → `keys.ts` / `codec.ts` / `query.ts` / `update-txn.ts` / `compact.ts`; `@harness-one/langfuse` → `cost-pricing.ts` / `cost-export.ts`; `@harness-one/opentelemetry` → `span-map.ts` / `attributes.ts` | respective package `src/` | Public API unchanged — `createRedisStore`, `createLangfuseCostTracker`, and `createOTelExporter` still live in `src/index.ts` / `src/cost-tracker.ts`. The split removes the monolithic single-file adapters flagged in the Wave-16 review. |
+
 ## Removed in prior waves
 
 This section records historical deprecations that have already been

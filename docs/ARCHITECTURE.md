@@ -1,6 +1,6 @@
 # harness-one Architecture — Layering Contract
 
-This document codifies the layering contract that the audit waves 5–15
+This document codifies the layering contract that the audit waves 5–16
 have converged on. It is intentionally short — the details live in
 `docs/architecture/*.md` per-module. This file is the single-page
 mental model that every PR and review should respect.
@@ -99,6 +99,34 @@ Build time: the root `eslint.config.js` enforces the layering via
   if it's genuinely observability-shaped. Redaction primitives
   (previously re-exported from `observe`) were hoisted to
   `harness-one/redact` in Wave-14 for exactly this reason.
+
+## LRU caches
+
+Two LRU shapes live in core. Pick the right one:
+
+- **`core/infra/lru-cache.ts`** — generic `Map`-backed key/value cache.
+  Reach for this first: it holds values, supports any key type, and
+  fires `onEvict` hooks for side-table accounting.
+- **`core/observe/trace-lru-list.ts`** — intrusive doubly-linked list of
+  trace-id strings with O(1) `move-to-tail` / `pop-head`. Holds no
+  payload; callers store values in a sibling `Map<string, T>`. Use it
+  when (a) eviction must fan out to multiple sibling side-tables,
+  (b) nodes already exist in a parent structure where embedding
+  prev/next pointers is cheaper than a separate wrapper, or (c)
+  move-to-tail is called on every read.
+
+Both modules carry a header comment with the same decision rule.
+
+## Validation helpers
+
+Primitive numeric guards live in one place: `core/infra/validate.ts`
+(`requirePositiveInt`, `requireNonNegativeInt`, `requireFinitePositive`,
+`requireFiniteNonNegative`, `requireUnitInterval`, `validatePricingEntry`,
+`validatePricingArray`). Every subsystem (core, admission controller,
+circuit breaker, execution strategies, trace sampler, trace manager,
+agent-loop config, ajv validator, langfuse, preset) delegates to those
+helpers — do not reintroduce a bespoke inline guard. The
+`validate.test.ts` witness tests lock this in per Wave-16 m3.
 
 ## Also see
 

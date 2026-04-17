@@ -6,6 +6,23 @@
  *
  * All operations are O(1).
  *
+ * ## When to use this vs. `observe/trace-lru-list`
+ *
+ * - **`LRUCache` (this file)**: generic key-→-value cache for any key type.
+ *   Holds values. Use when callers look up by key and expect a value back
+ *   (model pricing tables, session metadata caches, init-promise caches, etc.).
+ * - **`TraceLruList` (`observe/trace-lru-list`)**: intrusive doubly-linked
+ *   list of trace-id strings, with O(1) move-to-tail and O(1) pop-head. Holds
+ *   no payload — callers keep values in a sibling `Map` and use the list only
+ *   to pick the next eviction victim. Used by the trace-manager where one
+ *   eviction must fan out to span-count and metadata bookkeeping in multiple
+ *   side-tables.
+ *
+ * Rule of thumb: reach for `LRUCache` first. Only switch to `TraceLruList` if
+ * you need eviction ordering decoupled from the value storage, or if eviction
+ * must be driven by multiple touchpoints (add / access / resize) against a
+ * shared side-table.
+ *
  * @module
  */
 

@@ -4,9 +4,11 @@
  * from `infra/validate.ts`), and the pure pricing math (`priceUsage`).
  *
  * Wave-15 consolidated these from three disparate homes
- * (`observe/cost-tracker-types.ts`, `observe/cost-math.ts`, and
+ * (`observe/cost-tracker-types.ts`, the retired `observe/cost-math.ts`, and
  * `infra/validate.ts`) so a single module owns the pricing contract.
- * The observe module still re-exports the type + math for back-compat.
+ * Wave-16 m6 finished the job by deleting `cost-math.ts`; the tracker now
+ * imports math straight from this module. The observe module still
+ * re-exports the type + math for back-compat.
  *
  * @module
  */

@@ -14,7 +14,7 @@
  */
 
 import { randomInt } from 'node:crypto';
-import { HarnessError, HarnessErrorCode } from '../core/errors.js';
+import { requireUnitInterval } from '../infra/validate.js';
 
 /** Runtime-mutable head sampler over a default rate in `[0, 1]`. */
 export interface TraceSampler {
@@ -33,14 +33,8 @@ export interface TraceSampler {
  * finite, matching the behaviour previously inlined in `createTraceManager`.
  */
 export function createTraceSampler(defaultRate = 1): TraceSampler {
-  if (!Number.isFinite(defaultRate) || defaultRate < 0 || defaultRate > 1) {
-    // Config-level field name so the error surfaces the knob the caller set.
-    throw new HarnessError(
-      'defaultSamplingRate must be a finite number in [0, 1]',
-      HarnessErrorCode.CORE_INVALID_CONFIG,
-      'Provide a rate between 0 and 1 inclusive',
-    );
-  }
+  // Config-level field name so the error surfaces the knob the caller set.
+  requireUnitInterval(defaultRate, 'defaultSamplingRate');
   let samplingRate = defaultRate;
 
   function decide(): { rateSnapshot: number; sampled: boolean } {
@@ -51,13 +45,7 @@ export function createTraceSampler(defaultRate = 1): TraceSampler {
   }
 
   function setRate(rate: number): void {
-    if (!Number.isFinite(rate) || rate < 0 || rate > 1) {
-      throw new HarnessError(
-        'samplingRate must be a finite number in [0, 1]',
-        HarnessErrorCode.CORE_INVALID_CONFIG,
-        'Provide a rate between 0 and 1 inclusive',
-      );
-    }
+    requireUnitInterval(rate, 'samplingRate');
     samplingRate = rate;
   }
 

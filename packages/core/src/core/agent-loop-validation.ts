@@ -7,6 +7,10 @@
  */
 
 import { HarnessError, HarnessErrorCode } from './errors.js';
+import {
+  requireFiniteNonNegative,
+  requireNonNegativeInt,
+} from '../infra/validate.js';
 
 /** Minimal shape that `validateAgentLoopConfig` inspects. */
 export interface ResolvedAgentLoopLimits {
@@ -24,6 +28,13 @@ export interface ResolvedAgentLoopLimits {
  * `HarnessError(CORE_INVALID_CONFIG)` the first time any guard fails; never
  * returns a value, never mutates the input. The class constructor calls this
  * after assigning every property to `this`.
+ *
+ * Wave-16 m3: error messages for `maxIterations` / `maxTotalTokens` /
+ * `maxStreamBytes` / `maxToolArgBytes` / `toolTimeoutMs` are kept verbatim
+ * because external tests and docs reference them; delegating to
+ * `requirePositiveInt` would change the wording. The remaining numeric
+ * guards now route through `core/infra/validate.ts` helpers so they stay in
+ * lockstep with `preset/validate-config.ts`.
  */
 export function validateAgentLoopConfig(limits: ResolvedAgentLoopLimits): void {
   if (limits.maxIterations < 1) {
@@ -61,18 +72,8 @@ export function validateAgentLoopConfig(limits: ResolvedAgentLoopLimits): void {
       'Provide a positive toolTimeoutMs value',
     );
   }
-  if (!Number.isFinite(limits.baseRetryDelayMs) || limits.baseRetryDelayMs < 0) {
-    throw new HarnessError(
-      'baseRetryDelayMs must be a non-negative finite number',
-      HarnessErrorCode.CORE_INVALID_CONFIG,
-      'Provide a value >= 0',
-    );
-  }
-  if (!Number.isInteger(limits.maxAdapterRetries) || limits.maxAdapterRetries < 0) {
-    throw new HarnessError(
-      'maxAdapterRetries must be a non-negative integer',
-      HarnessErrorCode.CORE_INVALID_CONFIG,
-      'Provide an integer >= 0',
-    );
-  }
+  // These two now share the centralised helpers so the exact same
+  // `Number.isFinite` / `Number.isInteger` predicate is applied everywhere.
+  requireFiniteNonNegative(limits.baseRetryDelayMs, 'baseRetryDelayMs');
+  requireNonNegativeInt(limits.maxAdapterRetries, 'maxAdapterRetries');
 }

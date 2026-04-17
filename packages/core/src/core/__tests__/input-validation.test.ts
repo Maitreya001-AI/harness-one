@@ -243,9 +243,11 @@ describe('SessionManager input validation', () => {
 
 describe('TraceManager input validation', () => {
   it('throws INVALID_CONFIG when maxTraces is 0', () => {
+    // Wave-16 m3: message now routes through the shared `requirePositiveInt`
+    // helper in core/infra/validate.ts.
     expectInvalidConfig(
       () => createTraceManager({ maxTraces: 0 }),
-      'maxTraces must be >= 1',
+      'maxTraces must be a positive integer',
     );
   });
 

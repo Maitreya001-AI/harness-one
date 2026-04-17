@@ -6,6 +6,7 @@
 
 import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import { asSpanId, asTraceId, prefixedSecureId } from '../infra/ids.js';
+import { requirePositiveInt, requireFiniteNonNegative } from '../infra/validate.js';
 import type { SpanId, TraceId } from '../core/types.js';
 import {
   createRedactor,
@@ -124,13 +125,7 @@ export function createTraceManager(config?: {
   });
   // Default 30s flush deadline. `0` disables the cap.
   const flushTimeoutMs = config?.flushTimeoutMs ?? 30_000;
-  if (!Number.isFinite(flushTimeoutMs) || flushTimeoutMs < 0) {
-    throw new HarnessError(
-      'flushTimeoutMs must be a finite, non-negative number (ms)',
-      HarnessErrorCode.CORE_INVALID_CONFIG,
-      'Use 0 to disable the cap or a positive millisecond value',
-    );
-  }
+  requireFiniteNonNegative(flushTimeoutMs, 'flushTimeoutMs');
   // Build redactor once.
   //   - `config.redactor` set          => use the caller-provided instance
   //   - `redact === false`             => no redactor (explicit opt-out)
@@ -143,9 +138,7 @@ export function createTraceManager(config?: {
         ? undefined
         : createRedactor(config?.redact ?? undefined);
 
-  if (maxTraces < 1) {
-    throw new HarnessError('maxTraces must be >= 1', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide a positive maxTraces value');
-  }
+  requirePositiveInt(maxTraces, 'maxTraces');
 
   // Sampling state + per-trace decision snapshot live in a dedicated sampler.
   const sampler = createTraceSampler(config?.defaultSamplingRate ?? 1);

@@ -5,6 +5,11 @@
  * should import from `../core/metrics-port.js` directly when inside
  * the core package, or from the public `harness-one/core` barrel.
  *
+ * @deprecated Wave-15 relocation, scheduled for removal in harness-one v0.3.0.
+ *   External consumers: switch `import … from 'harness-one/observe'` to
+ *   `'harness-one/core'` (the types/values live at the same names). Internal
+ *   code must import from `../core/metrics-port.js` directly.
+ *
  * @module
  */
 export {

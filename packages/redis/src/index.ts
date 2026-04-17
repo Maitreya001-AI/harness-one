@@ -4,6 +4,16 @@
  * Provides persistent memory storage using Redis, with support for
  * filtering, compaction, and key indexing.
  *
+ * Wave-16 M2 split — the 569-LOC monolith that used to live here has been
+ * decomposed into cohesive sub-modules. This file now only holds the
+ * public types + the `createRedisStore` factory that wires them together.
+ *
+ *   - `keys.ts`       tenant-aware key construction + tenantId guard
+ *   - `codec.ts`      JSON parse/validate + SADD-tracked writes
+ *   - `query.ts`      MGET-batched filter application
+ *   - `update-txn.ts` WATCH/MULTI/EXEC optimistic-locking retry loop
+ *   - `compact.ts`    policy eviction + explicit corruption sweep
+ *
  * @module
  */
 
@@ -15,9 +25,14 @@ import type {
   MemoryFilter,
   CompactionPolicy,
 } from 'harness-one/memory';
-import { validateMemoryEntry, parseJsonSafe } from 'harness-one/memory';
-import { HarnessError, HarnessErrorCode} from 'harness-one/core';
+import { HarnessError, HarnessErrorCode, requireFinitePositive } from 'harness-one/core';
 import { createDefaultLogger } from 'harness-one/observe';
+
+import { createRedisKeyspace } from './keys.js';
+import { getEntry, setEntry } from './codec.js';
+import { queryEntries } from './query.js';
+import { transactionalUpdate } from './update-txn.js';
+import { compactEntries, repairEntries } from './compact.js';
 
 /**
  * Minimal structured logger accepted by the Redis store. Falls back to
@@ -28,98 +43,41 @@ export interface RedisStoreLogger {
   warn: (message: string, context?: Record<string, unknown>) => void;
 }
 
-/**
- * Parse + validate a MemoryEntry from a Redis-stored JSON string.
- * Returns null on corruption (invalid JSON or shape mismatch); callers decide
- * whether to skip silently or raise. Always logs one line so corruption
- * isn't invisible.
- */
-function parseEntryFromRedis(
-  raw: string,
-  id: string,
-  logger: RedisStoreLogger,
-): MemoryEntry | null {
-  const parsed = parseJsonSafe(raw);
-  if (!parsed.ok) {
-    logger.warn(`[harness-one/redis] corrupted entry ${id}: ${parsed.error.message}`, {
-      entryId: id,
-      reason: 'invalid_json',
-    });
-    return null;
-  }
-  try {
-    return validateMemoryEntry(parsed.value, `redis entry ${id}`);
-  } catch (err) {
-    logger.warn(
-      `[harness-one/redis] invalid entry shape ${id}: ${err instanceof Error ? err.message : String(err)}`,
-      { entryId: id, reason: 'invalid_shape' },
-    );
-    return null;
-  }
-}
-
-/** Configuration for the Redis memory store. */
 export interface RedisStoreConfig {
-  /** A pre-configured ioredis client instance. */
-  readonly client: Redis;
-  /** Key prefix for Redis keys. Defaults to 'harness:memory'. */
-  readonly prefix?: string;
-  /** Default TTL in seconds for entries. Undefined = no expiry. */
-  readonly defaultTTL?: number;
+  /** ioredis client instance (required). */
+  client: Redis;
+  /** Key prefix to scope this store's entries. Default: `'harness:memory'`. */
+  prefix?: string;
+  /** Default TTL in seconds for every stored entry. */
+  defaultTTL?: number;
+  /** Optional logger for warnings (e.g., corrupted payloads). */
+  logger?: RedisStoreLogger;
   /**
-   * Wave-5E (SEC-A08) — tenant isolation key segment. Inserted between
-   * `prefix` and the entry id so multi-tenant deployments cannot leak
-   * memory across tenants via a shared Redis instance. Defaults to the
-   * string `'default'`; a one-time warning fires on start-up when the
-   * default is used so single-tenant deployments stay explicit rather
-   * than implicit.
+   * Tenancy namespace for multi-tenant deployments. Defaults to `"default"`
+   * with a logged warning — production callers MUST set this per tenant
+   * to prevent cross-tenant reads.
    */
-  readonly tenantId?: string;
+  tenantId?: string;
   /**
-   * Optional logger for diagnostic warnings (e.g., corrupt entries).
-   * Defaults to a `console.warn`-backed shim so warnings remain visible.
+   * Wave-13 K-1: opt-in to the legacy "warn + skip chunk" behaviour when a
+   * batched MGET sub-request fails during `query()`. Default is strict:
+   * the failure is re-thrown so partial result sets never leak.
    */
-  readonly logger?: RedisStoreLogger;
-  /**
-   * Wave-13 K-1: When `true`, `query()` preserves the historical behaviour
-   * of returning a partial result set when an `MGET` sub-batch fails —
-   * failed batches are skipped with a warning. When `false` (the default),
-   * a batch failure throws `HarnessError(MEMORY_CORRUPT)` so callers can
-   * treat partial results as a hard error instead of silently shipping an
-   * incomplete list. Defaults to `false`.
-   */
-  readonly partialOk?: boolean;
+  partialOk?: boolean;
 }
 
 /**
- * Redis memory store extended with operator-facing maintenance operations.
- * `repair()` is additive to the base {@link MemoryStore} contract — callers
- * must opt in explicitly because it performs destructive cleanup.
+ * Redis-backed {@link MemoryStore} with the extra `repair()` admin routine
+ * for the SEC-014 corruption-sweep workflow.
  */
 export interface RedisMemoryStore extends MemoryStore {
-  /**
-   * Scan the index, detect corrupt entries (invalid JSON or shape), and
-   * remove them from both the STRING bucket and the index SET. Returns the
-   * count of entries removed. Safe to run idempotently.
-   *
-   * Exposed separately from `read()` so a single malformed payload cannot be
-   * weaponised to trigger auto-delete on every lookup (SEC-014): observation
-   * is read-only by default; destructive cleanup is an explicit operator call.
-   */
+  /** Explicit corruption sweep — see `compact.ts`. */
   repair(): Promise<{ repaired: number }>;
 }
 
 /**
- * Create a MemoryStore backed by Redis.
- *
- * Requires a pre-configured ioredis client. For production use, configure
- * the client with: `retryStrategy` for reconnection, `reconnectOnError` for
- * transient failures, and appropriate `maxRetriesPerRequest`. Connection
- * pooling is managed by ioredis internally.
- *
- * Data model:
- * - Each entry: STRING key `prefix:id` -> JSON(MemoryEntry)
- * - Key index: SET `prefix:__keys__` -> { id1, id2, ... }
+ * Create a Redis-backed memory store. The returned handle is a plain
+ * object; ioredis ownership (connect/disconnect) stays with the caller.
  */
 export function createRedisStore(config: RedisStoreConfig): RedisMemoryStore {
   const { client } = config;
@@ -128,79 +86,25 @@ export function createRedisStore(config: RedisStoreConfig): RedisMemoryStore {
   // Wave-5F T13: delegate default logger to core's redaction-enabled singleton.
   // `RedisStoreLogger` only needs `.warn`, which the core Logger satisfies.
   const logger: RedisStoreLogger = config.logger ?? createDefaultLogger();
-  // Wave-13 K-1: default to strict failure semantics so partial results never
-  // silently reach the caller. Opt-in `partialOk: true` restores legacy
-  // behaviour for callers that can tolerate a degraded batch.
   const partialOk = config.partialOk === true;
 
   if (!client) {
-    throw new HarnessError('Redis client is required', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide a valid ioredis client instance');
-  }
-  if (defaultTTL !== undefined && defaultTTL <= 0) {
-    throw new HarnessError('defaultTTL must be > 0', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide a positive TTL value in seconds');
-  }
-
-  // Wave-5E (SEC-A08) — tenant-isolated keys. `prefix:{tenantId}:id` and
-  // `prefix:{tenantId}:__keys__` keep each tenant's namespace disjoint.
-  // Warn once if the caller leaves it at the default — single-tenant use
-  // should still be explicit.
-  const tenantId = config.tenantId ?? 'default';
-  if (config.tenantId === undefined) {
-    logger.warn(
-      '[harness-one/redis] createRedisStore() invoked without tenantId; defaulting to "default". Multi-tenant deployments MUST set RedisStoreConfig.tenantId per tenant to prevent cross-tenant reads.',
-    );
-  }
-  if (tenantId.includes(':')) {
     throw new HarnessError(
-      `Invalid tenantId "${tenantId}": colon is the key separator and is reserved`,
+      'Redis client is required',
       HarnessErrorCode.CORE_INVALID_CONFIG,
-      'Use URL-safe characters only',
+      'Provide a valid ioredis client instance',
     );
   }
+  requireFinitePositive(defaultTTL, 'defaultTTL');
 
-  function entryKey(id: string): string {
-    return `${prefix}:${tenantId}:${id}`;
-  }
-
-  const indexKey = `${prefix}:${tenantId}:__keys__`;
+  const keyspace = createRedisKeyspace(prefix, config.tenantId, logger);
 
   function generateId(): string {
     return `mem_${randomUUID()}`;
   }
 
-  /**
-   * SEC-014: Non-destructive read. A corrupted payload used to auto-delete
-   * itself here (`DEL` + `SREM`), which let any write of a malformed string
-   * erase entries on first read — a denial-of-service gadget for multi-tenant
-   * deployments. We now return `null` with a warning; callers who want to
-   * evict corrupt records must invoke {@link RedisMemoryStore.repair}
-   * explicitly.
-   */
-  async function getEntry(id: string): Promise<MemoryEntry | null> {
-    const raw = await client.get(entryKey(id));
-    if (!raw) return null;
-    const entry = parseEntryFromRedis(raw, id, logger);
-    if (!entry) {
-      return null;
-    }
-    return entry;
-  }
-
-  async function setEntry(entry: MemoryEntry): Promise<void> {
-    const key = entryKey(entry.id);
-    const value = JSON.stringify(entry);
-    const pipeline = client.multi();
-    if (defaultTTL) {
-      pipeline.set(key, value, 'EX', defaultTTL);
-    } else {
-      pipeline.set(key, value);
-    }
-    pipeline.sadd(indexKey, entry.id);
-    await pipeline.exec();
-  }
-
   return {
-    async write(input: Omit<MemoryEntry, 'id' | 'createdAt' | 'updatedAt'>) {
+    async write(input) {
       const now = Date.now();
       const entry: MemoryEntry = {
         id: generateId(),
@@ -212,358 +116,46 @@ export function createRedisStore(config: RedisStoreConfig): RedisMemoryStore {
         ...(input.metadata !== undefined && { metadata: input.metadata }),
         ...(input.tags !== undefined && { tags: input.tags }),
       };
-      await setEntry(entry);
+      await setEntry(client, keyspace, entry, defaultTTL);
       return entry;
     },
 
     async read(id: string) {
-      return getEntry(id);
+      return getEntry(client, keyspace, id, logger);
     },
 
     async query(filter: MemoryFilter) {
-      const allIds = await client.smembers(indexKey);
-      const entries: MemoryEntry[] = [];
-
-      const batchSize = 100;
-      for (let i = 0; i < allIds.length; i += batchSize) {
-        const batch = allIds.slice(i, i + batchSize);
-        const keys = batch.map(entryKey);
-        let values: (string | null)[];
-        try {
-          values = await client.mget(...keys);
-        } catch (err) {
-          // Wave-13 K-1: by default, an MGET sub-batch failure is a hard
-          // error so partial result sets never leak to the caller. Opt-in
-          // `partialOk: true` restores the legacy "warn + skip chunk"
-          // semantics for callers that explicitly accept degraded reads.
-          if (!partialOk) {
-            throw new HarnessError(
-              `query() aborted: MGET batch ${Math.floor(i / batchSize)} failed — partial results suppressed`,
-              HarnessErrorCode.MEMORY_CORRUPT,
-              'Set `partialOk: true` in the RedisStoreConfig if partial results are acceptable, otherwise verify Redis connectivity.',
-              err instanceof Error ? err : undefined,
-            );
-          }
-          logger.warn('[harness-one/redis] batch read failed, results may be partial (partialOk=true)', {
-            batchSize: batch.length,
-            batchIndex: Math.floor(i / batchSize),
-            error: err instanceof Error ? err.message : String(err),
-          });
-          continue;
-        }
-
-        for (let k = 0; k < values.length; k++) {
-          const raw = values[k];
-          if (!raw) continue;
-          const entry = parseEntryFromRedis(raw, batch[k], logger);
-          if (!entry) continue; // Skip corrupted entries (already warned)
-
-          if (filter.grade && entry.grade !== filter.grade) continue;
-          if (filter.tags && filter.tags.length > 0) {
-            // CQ-006: OR semantics — match entries that carry ANY of the
-            // requested tags. Aligned with the in-memory and fs-store
-            // implementations so the MemoryStore contract is backend-agnostic.
-            if (!filter.tags.some((t) => entry.tags?.includes(t))) continue;
-          }
-          if (filter.since !== undefined && entry.updatedAt < filter.since) continue;
-          if (filter.search && typeof filter.search === 'string') {
-            const term = filter.search.toLowerCase();
-            if (!entry.content.toLowerCase().includes(term)) continue;
-          }
-          if (filter.sessionId !== undefined && entry.metadata?.['sessionId'] !== filter.sessionId) continue;
-
-          entries.push(entry);
-        }
-      }
-
-      entries.sort((a, b) => b.updatedAt - a.updatedAt);
-
-      if (filter.offset !== undefined && filter.offset > 0) {
-        entries.splice(0, filter.offset);
-      }
-
-      if (filter.limit !== undefined && filter.limit > 0) {
-        return entries.slice(0, filter.limit);
-      }
-
-      return entries;
+      return queryEntries({ client, keyspace, logger, partialOk }, filter);
     },
 
-    /**
-     * Update an entry with optimistic locking via WATCH/MULTI/EXEC.
-     *
-     * F10: The read-modify-write cycle is protected against concurrent
-     * mutations. If another client modifies the key between WATCH and EXEC,
-     * the transaction returns `null` and we retry (up to 3 attempts).
-     *
-     * Wave-13 P0-7: Hardened around the WATCH/UNWATCH contract.
-     *   (a) All data that does NOT depend on the read (i.e. the updates bag
-     *       and the serialisation overhead) is prepared BEFORE WATCH, so the
-     *       WATCH → GET → MULTI → EXEC window is as tight as possible.
-     *   (b) Every error path (not-found, corrupt, unexpected throw from
-     *       GET / parse / JSON.stringify / EXEC) runs UNWATCH via a
-     *       `safeUnwatch` helper that never re-throws.
-     *   (c) No `await` sits between MULTI pipeline construction and EXEC —
-     *       the pipeline is built synchronously and EXEC is the next `await`.
-     *   (d) A failed EXEC (returns null) runs UNWATCH defensively before the
-     *       next iteration re-WATCHes, so a client driver that left the
-     *       session in a watched state can't accumulate stale watches.
-     */
-    async update(id: string, updates: Partial<Pick<MemoryEntry, 'content' | 'grade' | 'metadata' | 'tags'>>) {
-      const key = entryKey(id);
-      const MAX_RETRIES = 3;
-
-      // Wave-13 P0-7 (a): compute anything that does not depend on the
-      // watched value ahead of WATCH. `updates` is an object reference only;
-      // spreading it here pre-caches structure shape for v8 and shortens the
-      // WATCH/EXEC window.
-      const now = () => Date.now();
-
-      const safeUnwatch = async (): Promise<void> => {
-        try {
-          await client.unwatch();
-        } catch (err) {
-          // UNWATCH is best-effort — a transient connection failure just
-          // means the server will expire our watch on its own. Log at warn
-          // so the signal isn't completely swallowed.
-          logger.warn('[harness-one/redis] UNWATCH failed', {
-            entryId: id,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      };
-
-      for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-        await client.watch(key);
-
-        let raw: string | null;
-        try {
-          raw = await client.get(key);
-        } catch (err) {
-          // (b): any throw from GET must release WATCH before propagating.
-          await safeUnwatch();
-          throw err;
-        }
-
-        if (!raw) {
-          await safeUnwatch();
-          throw new HarnessError(`Memory entry not found: ${id}`, HarnessErrorCode.MEMORY_NOT_FOUND);
-        }
-
-        const existing = parseEntryFromRedis(raw, id, logger);
-        if (!existing) {
-          await safeUnwatch();
-          throw new HarnessError(
-            `Corrupted memory entry: ${id}`,
-            HarnessErrorCode.MEMORY_DATA_CORRUPTION,
-            'Delete and recreate the entry',
-          );
-        }
-
-        // (c): build the pipeline synchronously — no `await` between
-        // MULTI and EXEC. All value-computation happens here so the server
-        // sees WATCH → GET → MULTI → EXEC with no interleaved round-trips.
-        let value: string;
-        try {
-          const updated: MemoryEntry = {
-            ...existing,
-            ...updates,
-            updatedAt: now(),
-          };
-          value = JSON.stringify(updated);
-
-          const pipeline = client.multi();
-          if (defaultTTL) {
-            pipeline.set(key, value, 'EX', defaultTTL);
-          } else {
-            pipeline.set(key, value);
-          }
-          pipeline.sadd(indexKey, id);
-          const result = await pipeline.exec();
-
-          if (result !== null) {
-            return updated; // Success — no conflict, WATCH is auto-released by EXEC
-          }
-          // (d): EXEC returned null — WATCH detected a concurrent modification.
-          // EXEC auto-releases the watch, but UNWATCH is idempotent and cheap;
-          // calling it keeps the session state consistent if the driver
-          // retained any watch metadata.
-          await safeUnwatch();
-        } catch (err) {
-          // (b): any throw between MULTI build and EXEC must release WATCH.
-          await safeUnwatch();
-          throw err;
-        }
-        // result was null → retry on next loop iteration.
-      }
-
-      throw new HarnessError(
-        `Concurrent update conflict after ${MAX_RETRIES} retries for entry: ${id}`,
-        HarnessErrorCode.MEMORY_RELAY_CONFLICT,
-        'Retry the operation or use application-level serialization',
-      );
+    async update(id, updates) {
+      return transactionalUpdate({ client, keyspace, defaultTTL, logger }, id, updates);
     },
 
     async delete(id: string) {
-      const existed = await client.del(entryKey(id));
-      await client.srem(indexKey, id);
+      const existed = await client.del(keyspace.entryKey(id));
+      await client.srem(keyspace.indexKey, id);
       return existed > 0;
     },
 
     async compact(policy: CompactionPolicy) {
-      const allIds = await client.smembers(indexKey);
-      const entries: MemoryEntry[] = [];
-
-      const batchSize = 100;
-      for (let i = 0; i < allIds.length; i += batchSize) {
-        const batch = allIds.slice(i, i + batchSize);
-        const keys = batch.map(entryKey);
-        let values: (string | null)[];
-        try {
-          values = await client.mget(...keys);
-        } catch {
-          // Connection failure mid-batch: skip this chunk and continue
-          continue;
-        }
-        for (let k = 0; k < values.length; k++) {
-          const raw = values[k];
-          if (!raw) continue;
-          const entry = parseEntryFromRedis(raw, batch[k], logger);
-          if (!entry) continue;
-          entries.push(entry);
-        }
-      }
-
-      const now = Date.now();
-      const weights = policy.gradeWeights ?? {
-        critical: 1.0,
-        useful: 0.5,
-        ephemeral: 0.1,
-      };
-      const victims: string[] = [];
-
-      if (policy.maxAge !== undefined) {
-        for (const entry of entries) {
-          if (now - entry.createdAt > policy.maxAge && weights[entry.grade] < 1.0) {
-            victims.push(entry.id);
-          }
-        }
-      }
-
-      // Compute set of IDs already scheduled for removal so the second pass
-      // can skip them when ranking the remaining entries by weight/age.
-      const victimSet = new Set(victims);
-      if (policy.maxEntries !== undefined) {
-        const remaining = entries.filter((e) => !victimSet.has(e.id));
-        if (remaining.length > policy.maxEntries) {
-          remaining.sort(
-            (a, b) => weights[a.grade] - weights[b.grade] || a.updatedAt - b.updatedAt,
-          );
-          let survivingCount = remaining.length;
-          for (const victim of remaining) {
-            if (survivingCount <= policy.maxEntries) break;
-            if (weights[victim.grade] < 1.0) {
-              victims.push(victim.id);
-              victimSet.add(victim.id);
-              survivingCount--;
-            } else {
-              // Remaining entries share the same or higher weight (we sorted
-              // by ascending weight), so there are no more evictable victims.
-              break;
-            }
-          }
-        }
-      }
-
-      // CQ-023: Batch all DEL/SREM calls through a single MULTI pipeline
-      // instead of N sequential round-trips. Chunked at 1000 members per
-      // SREM to keep each command bounded and avoid oversized RESP frames.
-      if (victims.length > 0) {
-        const chunkSize = 1000;
-        for (let i = 0; i < victims.length; i += chunkSize) {
-          const chunk = victims.slice(i, i + chunkSize);
-          const pipeline = client.multi();
-          for (const id of chunk) {
-            pipeline.del(entryKey(id));
-          }
-          // Single SREM with multiple members is O(N) on the server but only
-          // one network round-trip, versus one SREM per member before.
-          pipeline.srem(indexKey, ...chunk);
-          await pipeline.exec();
-        }
-      }
-
-      return {
-        removed: victimSet.size,
-        remaining: await client.scard(indexKey),
-        freedEntries: [...victimSet],
-      };
+      return compactEntries({ client, keyspace, logger }, policy);
     },
 
     async count() {
-      return client.scard(indexKey);
+      return client.scard(keyspace.indexKey);
     },
 
     async clear() {
-      const allIds = await client.smembers(indexKey);
+      const allIds = await client.smembers(keyspace.indexKey);
       if (allIds.length > 0) {
-        const keys = allIds.map(entryKey);
-        await client.del(...keys, indexKey);
+        const keys = allIds.map((id) => keyspace.entryKey(id));
+        await client.del(...keys, keyspace.indexKey);
       }
     },
 
-    /**
-     * SEC-014: Explicit corruption sweep. Walks the index, re-reads each
-     * payload, and removes any that fail JSON parse or schema validation.
-     * Unlike the old auto-delete-on-read behaviour, this is opt-in — callers
-     * invoke it from a maintenance job or admin endpoint, never from a hot
-     * request path.
-     */
-    async repair(): Promise<{ repaired: number }> {
-      const allIds = await client.smembers(indexKey);
-      const corruptIds: string[] = [];
-      const batchSize = 100;
-      for (let i = 0; i < allIds.length; i += batchSize) {
-        const batch = allIds.slice(i, i + batchSize);
-        const keys = batch.map(entryKey);
-        let values: (string | null)[];
-        try {
-          values = await client.mget(...keys);
-        } catch (err) {
-          // Transient failure — skip this chunk and let the next repair pass
-          // handle it. Never throw from a maintenance routine.
-          logger.warn('[harness-one/redis] repair batch read failed, skipping chunk', {
-            batchSize: batch.length,
-            error: err instanceof Error ? err.message : String(err),
-          });
-          continue;
-        }
-        for (let k = 0; k < values.length; k++) {
-          const raw = values[k];
-          if (raw === null) {
-            // STRING missing but id still in SET — dangling index reference.
-            corruptIds.push(batch[k]);
-            continue;
-          }
-          const entry = parseEntryFromRedis(raw, batch[k], logger);
-          if (!entry) corruptIds.push(batch[k]);
-        }
-      }
-
-      if (corruptIds.length > 0) {
-        const chunkSize = 1000;
-        for (let i = 0; i < corruptIds.length; i += chunkSize) {
-          const chunk = corruptIds.slice(i, i + chunkSize);
-          const pipeline = client.multi();
-          for (const id of chunk) {
-            pipeline.del(entryKey(id));
-          }
-          pipeline.srem(indexKey, ...chunk);
-          await pipeline.exec();
-        }
-      }
-
-      return { repaired: corruptIds.length };
+    async repair() {
+      return repairEntries({ client, keyspace, logger });
     },
   };
 }

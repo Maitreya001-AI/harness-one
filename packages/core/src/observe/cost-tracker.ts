@@ -1,6 +1,23 @@
 /**
  * Token cost tracking with budget alerts.
  *
+ * ## Neighbour files
+ *
+ * Wave-16 m6 dedup'd math into `../core/pricing.ts` and retained three
+ * sibling files that together make up the cost subsystem:
+ *
+ *   - `cost-tracker-types.ts` — the public `ModelPricing` / `CostTracker`
+ *     types and the `OVERFLOW_BUCKET_KEY` sentinel.
+ *   - `cost-tracker-eviction.ts` — the `EvictionStrategy` protocol and the
+ *     two in-box strategies (`overflow-bucket`, `lru`). Pluggable, so it
+ *     stays split.
+ *   - `cost-alert-manager.ts` — the alert fan-out / dedupe / threshold
+ *     engine. Inverted-control via `getCurrentCost()` thunk so it holds no
+ *     reference to tracker state.
+ *
+ * Everything else (record buffer, running sums, per-model/per-trace totals,
+ * eviction bookkeeping, alert wiring) lives in this file.
+ *
  * @module
  */
 
@@ -15,7 +32,9 @@ import {
   type EvictionStrategyName,
   getEvictionStrategy,
 } from './cost-tracker-eviction.js';
-import { KahanSum, priceUsage, hasNonFiniteTokens } from './cost-math.js';
+// priceUsage / hasNonFiniteTokens live in the canonical pricing home
+// (`core/pricing.ts`); Wave-16 m6 deleted the duplicate in `cost-math.ts`.
+import { priceUsage, hasNonFiniteTokens } from '../core/pricing.js';
 import type { ModelPricing, CostTracker } from './cost-tracker-types.js';
 import { createCostAlertManager } from './cost-alert-manager.js';
 export type { EvictionStrategy, EvictionStrategyName } from './cost-tracker-eviction.js';
@@ -39,6 +58,11 @@ import { OVERFLOW_BUCKET_KEY } from './cost-tracker-types.js';
  * the total is only displayed or where IEEE-754 drift is already dominated
  * by input noise.
  *
+ * Wave-16 m6: moved from the tiny `cost-math.ts` sub-module into the tracker
+ * itself so the tracker's dependencies are visible at a glance. Still exported
+ * at the module boundary because external cost-trackers (langfuse) and the
+ * eviction strategies consume it.
+ *
  * @example
  * ```ts
  * const sum = new KahanSum();
@@ -46,7 +70,34 @@ import { OVERFLOW_BUCKET_KEY } from './cost-tracker-types.js';
  * if (sum.total > budget) stop();
  * ```
  */
-export { KahanSum } from './cost-math.js';
+export class KahanSum {
+  private _total = 0;
+  private _compensation = 0;
+
+  /** Add a value to the running sum. */
+  add(x: number): void {
+    const y = x - this._compensation;
+    const t = this._total + y;
+    this._compensation = (t - this._total) - y;
+    this._total = t;
+  }
+
+  /** Subtract a value from the running sum. */
+  subtract(x: number): void {
+    this.add(-x);
+  }
+
+  /** Get the current accumulated total. */
+  get total(): number {
+    return this._total;
+  }
+
+  /** Reset the sum to zero. */
+  reset(): void {
+    this._total = 0;
+    this._compensation = 0;
+  }
+}
 
 /**
  * Create a new CostTracker instance.

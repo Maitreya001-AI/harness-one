@@ -1,0 +1,126 @@
+/**
+ * Wave-13 Track J — OTel exporter hardening tests. Split out of the
+ * monolith by Wave-16 M3.
+ */
+
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { createOTelExporter } from '../index.js';
+import { createMockTracer } from './otel-test-fixtures.js';
+
+describe('Wave-13 Track J — OTel exporter', () => {
+  let mock: ReturnType<typeof createMockTracer>;
+  beforeEach(() => { mock = createMockTracer(); });
+
+  it('Wave-13 J-1: `evictedParentsTtlMs` is typed + @deprecated + a no-op', async () => {
+    // Compile-time: accepting the option must still typecheck. Runtime: passing
+    // it MUST NOT change retention — a span referenced via its parent should
+    // remain reachable regardless of the supplied TTL value.
+    const exporter = createOTelExporter({
+      tracer: mock.tracer,
+      maxEvictedParents: 5,
+      evictedParentsTtlMs: 1, // supplied but ignored — docstring contract
+    });
+    await exporter.exportSpan({
+      id: 'parent-1', traceId: 't', name: 'p',
+      startTime: 0, endTime: 1, attributes: {}, events: [], status: 'completed',
+    });
+    // Wait beyond the "TTL" — must not evict.
+    await new Promise((r) => setTimeout(r, 10));
+    // Child lookup still finds parent (either live or via evictedParents cache).
+    await exporter.exportSpan({
+      id: 'child-1', traceId: 't', parentId: 'parent-1', name: 'c',
+      startTime: 2, endTime: 3, attributes: {}, events: [], status: 'completed',
+    });
+    // No orphan warning was emitted because the TTL is a no-op. We expect at
+    // least 2 span creations (parent + child); the exporter may also open a
+    // per-trace root span on first access (CQ-002), hence >=.
+    expect(mock.mocks.startActiveSpan.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('Wave-13 J-2: createOTelExporter return type exposes getDroppedAttributeMetrics', () => {
+    const exporter = createOTelExporter({ tracer: mock.tracer });
+    // The named interface guarantees this method is callable without an
+    // intersection-type cast — regression guard for the anonymous-type fix.
+    expect(typeof exporter.getDroppedAttributeMetrics).toBe('function');
+    const m = exporter.getDroppedAttributeMetrics();
+    expect(m).toEqual({ droppedAttributes: 0, droppedEventAttributes: 0 });
+  });
+
+  it('Wave-13 J-3: emits parent_fallback counter + debug log when parent resolved via evicted cache', async () => {
+    const counterAdd = vi.fn();
+    const metricsCounter = vi.fn().mockReturnValue({ add: counterAdd });
+    const metrics = {
+      counter: metricsCounter,
+      gauge: vi.fn().mockReturnValue({ record: vi.fn() }),
+      histogram: vi.fn().mockReturnValue({ record: vi.fn() }),
+    };
+    const debug = vi.fn();
+    const logger = { warn: vi.fn(), debug };
+
+    // Keep spanMap tiny so the parent gets evicted to evictedParents before
+    // the child is exported.
+    const exporter = createOTelExporter({
+      tracer: mock.tracer,
+      maxSpans: 1,
+      maxEvictedParents: 10,
+      metrics,
+      logger,
+    });
+
+    await exporter.exportSpan({
+      id: 'p', traceId: 't', name: 'parent',
+      startTime: 0, endTime: 1, attributes: {}, events: [], status: 'completed',
+    });
+    // Export a second unrelated span to force eviction of 'p' from spanMap.
+    await exporter.exportSpan({
+      id: 'other', traceId: 't', name: 'other',
+      startTime: 2, endTime: 3, attributes: {}, events: [], status: 'completed',
+    });
+
+    // Now a child referencing parent 'p' — must be found via evictedParents.
+    await exporter.exportSpan({
+      id: 'c', traceId: 't', parentId: 'p', name: 'child',
+      startTime: 4, endTime: 5, attributes: {}, events: [], status: 'completed',
+    });
+
+    expect(metricsCounter).toHaveBeenCalledWith(
+      'harness.otel.parent_fallback',
+      expect.any(Object),
+    );
+    expect(counterAdd).toHaveBeenCalledWith(1, {
+      exporter: 'opentelemetry',
+      source: 'evicted_parents_cache',
+    });
+    expect(debug).toHaveBeenCalledWith(
+      'otel parent fallback',
+      expect.objectContaining({
+        parent_id: 'p',
+        source: 'evicted_parents_cache',
+        child_id: 'c',
+      }),
+    );
+  });
+
+  it('Wave-13 J-3: no counter emitted when parent is live in spanMap', async () => {
+    const counterAdd = vi.fn();
+    const metrics = {
+      counter: vi.fn().mockReturnValue({ add: counterAdd }),
+      gauge: vi.fn().mockReturnValue({ record: vi.fn() }),
+      histogram: vi.fn().mockReturnValue({ record: vi.fn() }),
+    };
+    const exporter = createOTelExporter({
+      tracer: mock.tracer,
+      maxSpans: 1000,
+      metrics,
+    });
+    await exporter.exportSpan({
+      id: 'p', traceId: 't', name: 'parent',
+      startTime: 0, endTime: 1, attributes: {}, events: [], status: 'completed',
+    });
+    await exporter.exportSpan({
+      id: 'c', traceId: 't', parentId: 'p', name: 'child',
+      startTime: 2, endTime: 3, attributes: {}, events: [], status: 'completed',
+    });
+    expect(counterAdd).not.toHaveBeenCalled();
+  });
+});

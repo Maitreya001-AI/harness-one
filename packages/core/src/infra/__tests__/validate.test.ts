@@ -84,6 +84,38 @@ describe('requireUnitInterval', () => {
   });
 });
 
+describe('Wave-16 m3: consolidated callers route through infra/validate', () => {
+  // These witness-tests ensure that the subsystems that Wave-16 consolidated
+  // keep delegating to the shared helpers. A regression that reintroduces a
+  // bespoke inline guard will surface here via a divergent error message.
+  it('admission-controller rejects non-integer maxInflight via the helper', async () => {
+    const mod = await import('../admission-controller.js');
+    expect(() => mod.createAdmissionController({ maxInflight: 1.5 })).toThrow(
+      'AdmissionController.maxInflight must be a positive integer',
+    );
+  });
+
+  it('circuit-breaker rejects zero failureThreshold via the helper', async () => {
+    const mod = await import('../circuit-breaker.js');
+    expect(() => mod.createCircuitBreaker({ failureThreshold: 0 })).toThrow(
+      'failureThreshold must be a positive integer',
+    );
+  });
+
+  it('execution-strategies rejects zero maxConcurrency via the helper', async () => {
+    const mod = await import('../../core/execution-strategies.js');
+    expect(() => mod.createParallelStrategy({ maxConcurrency: 0 })).toThrow(
+      'maxConcurrency must be a positive integer',
+    );
+  });
+
+  it('trace-sampler rejects rate > 1 via the helper', async () => {
+    const mod = await import('../../observe/trace-sampler.js');
+    const s = mod.createTraceSampler(0.5);
+    expect(() => s.setRate(1.1)).toThrow('samplingRate must be a finite number in [0, 1]');
+  });
+});
+
 describe('validatePricingEntry / validatePricingArray', () => {
   const good = {
     model: 'gpt-test',

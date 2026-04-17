@@ -181,22 +181,19 @@ export function createSessionManager(config?: {
 
   /**
    * Deep-clone the metadata bag so nested mutations on the returned readonly
-   * view cannot bleed back into internal manager state. `structuredClone` is
-   * preferred because it handles Dates, Maps, Sets, typed arrays, and cycles
-   * natively. For runtimes that lack it, fall back to a recursive clone
-   * limited to plain JSON-compatible shapes.
+   * view cannot bleed back into internal manager state. `structuredClone`
+   * handles Dates, Maps, Sets, typed arrays, and cycles natively; it is
+   * always present because `package.json` pins `node>=18`. The recursive
+   * fallback is used only when metadata contains non-cloneable values
+   * (functions, class instances with methods, DOM nodes, etc.) that would
+   * raise `DataCloneError`.
    */
   function deepCloneMetadata(m: Record<string, unknown>): Record<string, unknown> {
-    const sc = (globalThis as { structuredClone?: (v: unknown) => unknown }).structuredClone;
-    if (typeof sc === 'function') {
-      try {
-        return sc(m) as Record<string, unknown>;
-      } catch {
-        /* noop: fall through to recursive clone for non-cloneable inputs
-           (functions, class instances with methods, etc.) */
-      }
+    try {
+      return structuredClone(m) as Record<string, unknown>;
+    } catch {
+      return recursiveClone(m) as Record<string, unknown>;
     }
-    return recursiveClone(m) as Record<string, unknown>;
   }
 
   function recursiveClone(v: unknown, seen = new WeakMap<object, unknown>()): unknown {

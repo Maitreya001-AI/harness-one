@@ -6,6 +6,22 @@
  * as a small standalone data structure so the factory body stays focused on
  * trace lifecycle rather than pointer bookkeeping.
  *
+ * ## When to use this vs. `infra/lru-cache`
+ *
+ * This list holds **no payload** — callers keep the actual objects in a
+ * sibling `Map<string, T>` and use the list only to pick the next eviction
+ * victim in O(1). Reach for this shape when:
+ *
+ *   - the same eviction must drive multiple side-tables (span counters,
+ *     per-trace metadata, tag indexes, etc.),
+ *   - nodes already exist in a parent structure and embedding pointers on
+ *     them is cheaper than a separate `Map<K, V>` wrapper,
+ *   - `move-to-tail` is called on every read (hot-path access reordering).
+ *
+ * For every other "look up a value by key with LRU eviction" use case,
+ * prefer {@link ../infra/lru-cache.LRUCache}. See that module's header for
+ * the full decision table.
+ *
  * @module
  * @internal
  */

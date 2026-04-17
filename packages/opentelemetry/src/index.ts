@@ -4,17 +4,14 @@
  * Maps harness-one traces and spans to OpenTelemetry spans with attributes,
  * events, and status codes.
  *
- * @module
- */
-
-import type { Tracer, Span as OTelSpan } from '@opentelemetry/api';
-import { trace as otelTrace, SpanStatusCode, context as otelContext } from '@opentelemetry/api';
-import type { TraceExporter, Trace, Span, MetricsPort } from 'harness-one/observe';
-
-/**
- * OBS-011: Mapping from harness-one cache-monitor metric names to
- * OpenTelemetry semantic-convention-friendly names. Documented here so both
- * the adapter and downstream dashboards share a single source of truth.
+ * Wave-16 M2: the 502-LOC monolith split into cohesive siblings:
+ *
+ *   - `span-map.ts`    live-span + evicted-parent LRU bookkeeping
+ *   - `attributes.ts`  semconv rename table, JSON-stringify fallback,
+ *                      and dropped-attribute counters
+ *
+ * This module keeps the public types and the factory that wires everything
+ * together.
  *
  * | harness-one key | OTel semconv key  |
  * |-----------------|-------------------|
@@ -22,14 +19,17 @@ import type { TraceExporter, Trace, Span, MetricsPort } from 'harness-one/observ
  * | missRate        | cache.miss_ratio  |
  * | avgLatency      | cache.latency_ms  |
  *
- * Applied in `setSpanAttributes` when the span attribute name matches one of
- * the legacy keys. Primitive-valued only.
+ * The rename table lives in `attributes.ts`.
+ *
+ * @module
  */
-const CACHE_ATTR_RENAME: Record<string, string> = {
-  hitRate: 'cache.hit_ratio',
-  missRate: 'cache.miss_ratio',
-  avgLatency: 'cache.latency_ms',
-};
+
+import type { Tracer, Span as OTelSpan } from '@opentelemetry/api';
+import { trace as otelTrace, SpanStatusCode, context as otelContext } from '@opentelemetry/api';
+import type { TraceExporter, Trace, Span, MetricsPort } from 'harness-one/observe';
+
+import { createOTelSpanMap } from './span-map.js';
+import { createAttributeSink } from './attributes.js';
 
 /**
  * F18b: Minimal logger interface accepted by the OTel exporter.
@@ -142,10 +142,8 @@ export function createOTelExporter(config?: OTelExporterConfig): OTelTraceExport
   // Wave-12 P1-9: `evictedParentsTtlMs` intentionally ignored. The previous
   // TTL-based sweep raced with in-flight children and could orphan subtrees.
   // Size-based LRU on `maxEvictedParents` is now the only retention policy.
-  const onDroppedAttribute = config?.onDroppedAttribute;
   const logger = config?.logger;
-  // Wave-12 P2-12: opt-in JSON-stringify fallback for non-primitive attributes.
-  const stringifyComplexAttributes = config?.stringifyComplexAttributes ?? false;
+  const maxSpans = config?.maxSpans ?? 10_000;
   // Wave-13 J-3: lazy metric handle — only materialised when a metrics port
   // was supplied, so the common no-metric path stays allocation-free.
   const parentFallbackCounter = config?.metrics?.counter(
@@ -156,114 +154,13 @@ export function createOTelExporter(config?: OTelExporterConfig): OTelTraceExport
     },
   );
 
-  // OBS-004: Track dropped-attribute counts for operator visibility.
-  let droppedAttributes = 0;
-  let droppedEventAttributes = 0;
-
-  // Track created OTel spans so children can reference parents
-  const spanMap = new Map<string, OTelSpan>();
-  // Track parent relationships for eviction: childId -> parentId
-  const spanParentMap = new Map<string, string>();
-  // Track last access time per span for LRU eviction
-  const spanAccessTime = new Map<string, number>();
-  // Lightweight fallback for evicted parents: spanId -> OTel span
-  // Prevents children from being orphaned when their parent was evicted from spanMap.
-  const evictedParents = new Map<string, OTelSpan>();
-  // Access timestamps for LRU eviction of evictedParents
-  const evictedParentsAccessTime = new Map<string, number>();
-
-  function touchSpan(spanId: string): void {
-    // Delete-then-reinsert to maintain Map insertion order as LRU order.
-    // The first entries in the Map are always the least recently used.
-    spanAccessTime.delete(spanId);
-    spanAccessTime.set(spanId, Date.now());
-  }
-
-  /**
-   * Wave-12 P1-9: Look up an evicted parent span. Previously this performed a
-   * lazy TTL check that could expire a parent mid-export, orphaning the child
-   * subtree. Retention is now purely size-based (LRU), so lookup is a simple
-   * Map access.
-   */
-  function getEvictedParent(spanId: string): OTelSpan | undefined {
-    return evictedParents.get(spanId);
-  }
-
-  function evictSpans(count: number): void {
-    // O(count) eviction using Map insertion order as LRU order.
-    // With the delete-then-reinsert pattern in touchSpan(), the first entries
-    // in spanAccessTime are always the least recently used.
-    let evicted = 0;
-    for (const [id] of spanAccessTime) {
-      if (evicted >= count) break;
-      if (!spanMap.has(id)) {
-        spanAccessTime.delete(id);
-        continue;
-      }
-
-      // Save to evictedParents before removing
-      const otelSpan = spanMap.get(id);
-      if (otelSpan) {
-        evictedParents.set(id, otelSpan);
-        evictedParentsAccessTime.delete(id);
-        evictedParentsAccessTime.set(id, Date.now());
-        // Lazy purge: only purge if over limit
-        if (evictedParents.size > maxEvictedParents) {
-          // Evict oldest 10% from evictedParents using Map insertion order
-          const epEvictCount = Math.ceil(maxEvictedParents * 0.1);
-          let removed = 0;
-          for (const [epId] of evictedParentsAccessTime) {
-            if (removed >= epEvictCount) break;
-            evictedParents.delete(epId);
-            evictedParentsAccessTime.delete(epId);
-            // Clean up orphaned parent references pointing to this evicted parent
-            for (const [childId, parentId] of spanParentMap) {
-              if (parentId === epId) spanParentMap.delete(childId);
-            }
-            removed++;
-          }
-        }
-      }
-
-      spanMap.delete(id);
-      spanParentMap.delete(id);
-      spanAccessTime.delete(id);
-      evicted++;
-    }
-  }
-
-  function setSpanAttributes(otelSpan: OTelSpan, attrs: Record<string, unknown>): void {
-    for (const [rawKey, value] of Object.entries(attrs)) {
-      // OBS-011: translate legacy cache-monitor names to OTel semconv keys.
-      const key = CACHE_ATTR_RENAME[rawKey] ?? rawKey;
-      if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-        otelSpan.setAttribute(key, value);
-      } else if (value !== undefined && value !== null) {
-        // Wave-12 P2-12: optional JSON-stringify fallback. Only attempted for
-        // object-shaped values — functions/symbols still cannot be represented
-        // as string attributes without silently producing "[object Object]"
-        // or similar, so we continue to drop them. A failing JSON.stringify
-        // (circular refs, throwing getters) falls through to the drop path.
-        if (stringifyComplexAttributes && typeof value === 'object') {
-          try {
-            otelSpan.setAttribute(key, JSON.stringify(value));
-            continue;
-          } catch {
-            // fall through to drop path below
-          }
-        }
-        // OBS-004: track and surface dropped non-primitive attributes rather
-        // than silently discarding them. Fall back to console.debug so
-        // existing tests / deployments still see the signal.
-        droppedAttributes++;
-        if (onDroppedAttribute) {
-          onDroppedAttribute({ key, type: typeof value, where: 'attribute' });
-        } else if (typeof console !== 'undefined') {
-          console.debug(`Dropping non-primitive attribute '${key}' of type '${typeof value}'`);
-        }
-      }
-    }
-  }
+  // Wave-16 M2 split: bookkeeping lives in `span-map.ts`, attribute
+  // translation / drop counters live in `attributes.ts`.
+  const spans = createOTelSpanMap({ maxEvictedParents });
+  const attributes = createAttributeSink({
+    stringifyComplexAttributes: config?.stringifyComplexAttributes ?? false,
+    ...(config?.onDroppedAttribute !== undefined && { onDroppedAttribute: config.onDroppedAttribute }),
+  });
 
   // CQ-002: Per-trace OTel root span, lazily created on first span of a
   // harness trace. `exportSpan` links root-less harness spans to this root
@@ -307,7 +204,7 @@ export function createOTelExporter(config?: OTelExporterConfig): OTelTraceExport
       root.setAttribute('harness.trace.status', harnessTrace.status);
       root.setAttribute('harness.span.count', harnessTrace.spans.length);
 
-      setSpanAttributes(root, Object.fromEntries(
+      attributes.applyAttributes(root, Object.fromEntries(
         Object.entries(harnessTrace.metadata).map(([k, v]) => [`harness.meta.${k}`, v]),
       ));
 
@@ -323,11 +220,7 @@ export function createOTelExporter(config?: OTelExporterConfig): OTelTraceExport
       traceRootCreated.delete(harnessTrace.id);
 
       // Clean up child spans for this trace
-      for (const s of harnessTrace.spans) {
-        spanMap.delete(s.id);
-        spanParentMap.delete(s.id);
-        spanAccessTime.delete(s.id);
-      }
+      spans.deleteBatch(harnessTrace.spans.map((s) => s.id));
     },
 
     async exportSpan(harnessSpan: Span): Promise<void> {
@@ -339,11 +232,11 @@ export function createOTelExporter(config?: OTelExporterConfig): OTelTraceExport
       let parentOTelSpan: OTelSpan | undefined;
       let parentFromEvictedCache = false;
       if (harnessSpan.parentId) {
-        const live = spanMap.get(harnessSpan.parentId);
+        const live = spans.getLive(harnessSpan.parentId);
         if (live) {
           parentOTelSpan = live;
         } else {
-          const fallback = getEvictedParent(harnessSpan.parentId);
+          const fallback = spans.getEvictedParent(harnessSpan.parentId);
           if (fallback) {
             parentOTelSpan = fallback;
             parentFromEvictedCache = true;
@@ -388,11 +281,10 @@ export function createOTelExporter(config?: OTelExporterConfig): OTelTraceExport
         );
       }
 
-      // Update evictedParents access time when the parent was found there
-      // Use delete-then-reinsert to maintain LRU order in the Map
-      if (harnessSpan.parentId && evictedParents.has(harnessSpan.parentId) && parentOTelSpan) {
-        evictedParentsAccessTime.delete(harnessSpan.parentId);
-        evictedParentsAccessTime.set(harnessSpan.parentId, Date.now());
+      // Touch the evicted-parent cache so a late child doesn't evict a parent
+      // that is still actively resolving descendants.
+      if (harnessSpan.parentId && spans.hasEvicted(harnessSpan.parentId)) {
+        spans.touchEvicted(harnessSpan.parentId);
       }
 
       const parentContext = parentOTelSpan
@@ -400,19 +292,15 @@ export function createOTelExporter(config?: OTelExporterConfig): OTelTraceExport
         : undefined;
 
       const spanCallback = (otelSpan: OTelSpan): void => {
-        spanMap.set(harnessSpan.id, otelSpan);
-        touchSpan(harnessSpan.id);
-        if (harnessSpan.parentId) {
-          spanParentMap.set(harnessSpan.id, harnessSpan.parentId);
-          // Touch the parent span to mark it as recently accessed
-          if (spanAccessTime.has(harnessSpan.parentId)) {
-            touchSpan(harnessSpan.parentId);
-          }
+        spans.set(harnessSpan.id, otelSpan, harnessSpan.parentId);
+        // Touch the parent span to mark it as recently accessed when still live.
+        if (harnessSpan.parentId && spans.hasLive(harnessSpan.parentId)) {
+          spans.touch(harnessSpan.parentId);
         }
 
         // Safety limit to prevent unbounded growth
-        if (spanMap.size > (config?.maxSpans ?? 10_000)) {
-          evictSpans(1);
+        if (spans.liveSize() > maxSpans) {
+          spans.evictLive(1);
         }
 
         otelSpan.setAttribute('harness.span.id', harnessSpan.id);
@@ -421,23 +309,10 @@ export function createOTelExporter(config?: OTelExporterConfig): OTelTraceExport
           otelSpan.setAttribute('harness.parent.id', harnessSpan.parentId);
         }
 
-        setSpanAttributes(otelSpan, harnessSpan.attributes);
+        attributes.applyAttributes(otelSpan, harnessSpan.attributes);
 
         for (const event of harnessSpan.events) {
-          const attrs: Record<string, string | number | boolean> = {};
-          if (event.attributes) {
-            for (const [k, v] of Object.entries(event.attributes)) {
-              if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
-                attrs[k] = v;
-              } else {
-                // OBS-004: track dropped event attributes too.
-                droppedEventAttributes++;
-                if (onDroppedAttribute) {
-                  onDroppedAttribute({ key: k, type: typeof v, where: 'event' });
-                }
-              }
-            }
-          }
+          const attrs = attributes.filterEventAttributes(event.attributes);
           otelSpan.addEvent(event.name, attrs, new Date(event.timestamp));
         }
 
@@ -464,39 +339,16 @@ export function createOTelExporter(config?: OTelExporterConfig): OTelTraceExport
     },
 
     async flush(): Promise<void> {
-      // Snapshot current spans before clearing
-      const snapshot = new Map(spanMap);
-
-      // Clear maps atomically
-      spanMap.clear();
-      spanParentMap.clear();
-      spanAccessTime.clear();
-
-      // Migrate snapshot to evictedParents for child linking
-      for (const [id, span] of snapshot) {
-        evictedParents.set(id, span);
-        evictedParentsAccessTime.delete(id);
-        evictedParentsAccessTime.set(id, Date.now());
-      }
-
-      // Wave-12 P1-9: purge-by-TTL removed — the race with in-flight child
-      // exports caused orphaned subtrees. Size-based LRU is the only retention
-      // policy.
-      if (evictedParents.size > maxEvictedParents) {
-        const excess = evictedParents.size - maxEvictedParents;
-        let removed = 0;
-        for (const [epId] of evictedParentsAccessTime) {
-          if (removed >= excess) break;
-          evictedParents.delete(epId);
-          evictedParentsAccessTime.delete(epId);
-          removed++;
-        }
-      }
+      // Wave-16 M2: bookkeeping lives in `span-map.ts`.
+      spans.migrateLiveToEvicted();
     },
 
     /** OBS-004: inspect dropped-attribute counters. */
     getDroppedAttributeMetrics(): OTelDroppedAttributeMetrics {
-      return { droppedAttributes, droppedEventAttributes };
+      return {
+        droppedAttributes: attributes.getDroppedAttributes(),
+        droppedEventAttributes: attributes.getDroppedEventAttributes(),
+      };
     },
   };
 }

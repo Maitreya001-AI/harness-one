@@ -141,6 +141,58 @@ describe('createTraceExporterCoordinator', () => {
     expect(errs.length).toBeGreaterThan(0);
   });
 
+  it('flushAll tolerates an exporter that sync-throws from flush()', async () => {
+    // Regression for Wave-16 m1: `Array.map` evaluates callbacks eagerly, so a
+    // sync throw inside the map would unwind past `Promise.allSettled`.
+    // `invokeAsync` forces the call into the promise chain so the throw lands
+    // as a rejection we can catch.
+    const errs: unknown[] = [];
+    const throwing: TraceExporter = {
+      name: 'throws-sync',
+      exportSpan: async () => {},
+      exportTrace: async () => {},
+      flush: (() => {
+        throw new Error('sync-boom');
+      }) as TraceExporter['flush'],
+    };
+    const coord = createTraceExporterCoordinator({
+      exporters: [throwing],
+      flushTimeoutMs: 1000,
+      onExportError: (e) => {
+        errs.push(e);
+      },
+    });
+    await expect(coord.flushAll()).resolves.toBeUndefined();
+    expect(errs).toHaveLength(1);
+    expect((errs[0] as Error).message).toBe('sync-boom');
+  });
+
+  it('shutdownAll tolerates an exporter that sync-throws from flush() and shutdown()', async () => {
+    // Regression for Wave-16 m1 in the shutdown path.
+    const errs: unknown[] = [];
+    const throwing: TraceExporter = {
+      name: 'throws-sync',
+      exportSpan: async () => {},
+      exportTrace: async () => {},
+      flush: (() => {
+        throw new Error('flush-sync-boom');
+      }) as TraceExporter['flush'],
+      shutdown: (() => {
+        throw new Error('shutdown-sync-boom');
+      }) as TraceExporter['shutdown'],
+    };
+    const coord = createTraceExporterCoordinator({
+      exporters: [throwing],
+      flushTimeoutMs: 1000,
+      onExportError: (e) => {
+        errs.push(e);
+      },
+    });
+    await expect(coord.shutdownAll()).resolves.toBeUndefined();
+    // One error from flush, one from shutdown.
+    expect(errs.length).toBeGreaterThanOrEqual(2);
+  });
+
   it('initializeAll runs every exporter initialize() in parallel', async () => {
     const order: string[] = [];
     const a: TraceExporter = {
