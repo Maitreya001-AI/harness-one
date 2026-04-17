@@ -1,19 +1,18 @@
 /**
- * Pricing primitives — the cohesive home for everything that describes
- * model cost: the `ModelPricing` type, the validation helpers (lifted
- * from `infra/validate.ts`), and the pure pricing math (`priceUsage`).
+ * Pricing primitives — the cohesive L2 home for everything that describes
+ * model cost: `ModelPricing`, `TokenUsageRecord`, the validation helpers
+ * (lifted from `infra/validate.ts`), and the pure pricing math
+ * (`priceUsage`).
  *
- * Wave-15 consolidated these from three disparate homes
+ * Wave-15 consolidated the pricing math + type from three disparate homes
  * (`observe/cost-tracker-types.ts`, the retired `observe/cost-math.ts`, and
- * `infra/validate.ts`) so a single module owns the pricing contract.
- * Wave-16 m6 finished the job by deleting `cost-math.ts`; the tracker now
- * imports math straight from this module. The observe module still
- * re-exports the type + math for back-compat.
+ * `infra/validate.ts`); Wave-16 m6 deleted `cost-math.ts`; Wave-17 moved the
+ * `TokenUsageRecord` shape itself from observe (L3) into this module so L2
+ * no longer reaches into L3 for types. Observe re-exports the record type
+ * for its own public API (`harness-one/observe`).
  *
  * @module
  */
-
-import type { TokenUsageRecord } from '../observe/types.js';
 
 /**
  * Pricing configuration for a model. Numeric fields are dollar-per-1k-token
@@ -25,6 +24,25 @@ export interface ModelPricing {
   readonly outputPer1kTokens: number;
   readonly cacheReadPer1kTokens?: number;
   readonly cacheWritePer1kTokens?: number;
+}
+
+/**
+ * A recorded token-usage row with its computed cost, produced by
+ * `CostTracker.recordUsage()` and consumed by exporters / alert managers.
+ *
+ * Lives in L2 (alongside the pricing math that produces `estimatedCost`) so
+ * the pricing module has no upward dependency on observe.
+ */
+export interface TokenUsageRecord {
+  readonly traceId: string;
+  readonly spanId?: string;
+  readonly model: string;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly cacheReadTokens?: number;
+  readonly cacheWriteTokens?: number;
+  readonly estimatedCost: number;
+  readonly timestamp: number;
 }
 
 /**

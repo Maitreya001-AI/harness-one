@@ -353,7 +353,7 @@ export function createFileSystemStore(config: {
         } catch (err) {
           throw new HarnessError(
             'Failed to write index after clearing entries — store may be in an inconsistent state',
-            HarnessErrorCode.MEMORY_STORE_CORRUPTION,
+            HarnessErrorCode.MEMORY_CORRUPT,
             'Re-run clear() or manually delete the index file to rebuild',
             err instanceof Error ? err : undefined,
           );

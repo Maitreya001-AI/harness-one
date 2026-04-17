@@ -114,7 +114,7 @@ export function createFileIO(config: { directory: string; indexFile?: string }):
       if (!parsed.ok) {
         throw new HarnessError(
           `Corrupted memory index at ${indexPath}: ${parsed.error.message}`,
-          HarnessErrorCode.MEMORY_STORE_CORRUPTION,
+          HarnessErrorCode.MEMORY_CORRUPT,
           'The index file is not valid JSON. Delete it to rebuild from entry files, ' +
             'or restore from backup.',
           parsed.error,
@@ -146,7 +146,7 @@ export function createFileIO(config: { directory: string; indexFile?: string }):
       if (!parsed.ok) {
         throw new HarnessError(
           `Corrupted memory entry at ${entryPath(id)}: ${parsed.error.message}`,
-          HarnessErrorCode.MEMORY_STORE_CORRUPTION,
+          HarnessErrorCode.MEMORY_CORRUPT,
           'The entry file is not valid JSON. Delete the file to drop the entry, ' +
             'or restore from backup.',
           parsed.error,

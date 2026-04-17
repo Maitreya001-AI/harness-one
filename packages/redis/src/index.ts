@@ -25,7 +25,8 @@ import type {
   MemoryFilter,
   CompactionPolicy,
 } from 'harness-one/memory';
-import { HarnessError, HarnessErrorCode, requireFinitePositive } from 'harness-one/core';
+import { HarnessError, HarnessErrorCode } from 'harness-one/core';
+import { requireFinitePositive } from 'harness-one/advanced';
 import { createDefaultLogger } from 'harness-one/observe';
 
 import { createRedisKeyspace } from './keys.js';

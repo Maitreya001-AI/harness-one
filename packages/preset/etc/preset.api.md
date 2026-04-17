@@ -18,7 +18,7 @@ import { Logger } from 'harness-one/observe';
 import { MemoryStore } from 'harness-one/memory';
 import { Message } from 'harness-one/core';
 import { MetricsPort } from 'harness-one/observe';
-import { MiddlewareChain } from 'harness-one/core';
+import { MiddlewareChain } from 'harness-one/advanced';
 import { ModelPricing } from 'harness-one/observe';
 import { OpenAIAdapterConfig } from '@harness-one/openai';
 import { PromptBuilder } from 'harness-one/prompt';

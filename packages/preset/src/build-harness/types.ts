@@ -9,7 +9,8 @@
  * @module
  */
 
-import type { AgentAdapter, Message, AgentEvent, MiddlewareChain, AgentLoop } from 'harness-one/core';
+import type { AgentAdapter, Message, AgentEvent, AgentLoop } from 'harness-one/core';
+import type { MiddlewareChain } from 'harness-one/advanced';
 import type { TraceExporter, TraceManager, CostTracker, ModelPricing, Logger } from 'harness-one/observe';
 import type { PromptBuilder } from 'harness-one/prompt';
 import type { ToolRegistry, SchemaValidator } from 'harness-one/tools';

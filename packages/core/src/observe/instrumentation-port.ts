@@ -1,7 +1,8 @@
 /**
- * Re-export of the canonical {@link InstrumentationPort} that now lives
- * in L2 (`core/core/instrumentation-port.ts`). Kept here for backward
- * compatibility; new code should import from `../core/instrumentation-port.js`.
+ * The {@link InstrumentationPort} type surfaced via `harness-one/observe`
+ * for ergonomics — the canonical L2 home is `../core/instrumentation-port.js`,
+ * but consumers writing exporters naturally reach for the observe barrel
+ * and expect the tracing port alongside `TraceManager` / `TraceExporter`.
  *
  * @module
  */

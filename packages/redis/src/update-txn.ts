@@ -99,7 +99,7 @@ export async function transactionalUpdate(
       await safeUnwatch();
       throw new HarnessError(
         `Corrupted memory entry: ${id}`,
-        HarnessErrorCode.MEMORY_DATA_CORRUPTION,
+        HarnessErrorCode.MEMORY_CORRUPT,
         'Delete and recreate the entry',
       );
     }

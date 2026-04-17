@@ -10,7 +10,7 @@ import { prefixedSecureId } from '../infra/ids.js';
 import { computeJitterMs, AGENT_POOL_IDLE_JITTER_FRACTION } from '../infra/backoff.js';
 import type { Logger } from '../infra/logger.js';
 import type { MetricsPort } from '../core/metrics-port.js';
-import type { TraceManager } from '../observe/trace-manager.js';
+import type { InstrumentationPort } from '../core/instrumentation-port.js';
 import type { AgentPool, PoolConfig, PooledAgent, PoolStats } from './types.js';
 
 /**
@@ -37,12 +37,14 @@ export interface AgentPoolObservabilityConfig {
    */
   readonly metrics?: MetricsPort;
   /**
-   * Optional trace manager. When provided together with
+   * Optional tracing port. When provided together with
    * `acquireAsync({ spanId })`, a `pool_acquire_timeout` span event is
    * attached before the POOL_TIMEOUT rejection, carrying queue depth and
-   * active-agent counts for observability.
+   * active-agent counts for observability. The L3 `TraceManager`
+   * implements this structurally — any existing trace manager is a valid
+   * value here, so no adapter is needed at the call site.
    */
-  readonly traceManager?: TraceManager;
+  readonly traceManager?: InstrumentationPort;
   /**
    * Pool identifier surfaced as the `pool_id` log attribute and metric label.
    * Helpful when multiple pools share a single logger/metrics backend.
@@ -123,7 +125,7 @@ export function createAgentPool(
   // Optional observability wiring.
   const logger: Logger | undefined = config.logger;
   const metrics: MetricsPort | undefined = config.metrics;
-  const traceManager: TraceManager | undefined = config.traceManager;
+  const traceManager: InstrumentationPort | undefined = config.traceManager;
   const poolId: string = config.poolId ?? 'default';
 
   // Lazy instrument handles — only materialised when a MetricsPort is wired.

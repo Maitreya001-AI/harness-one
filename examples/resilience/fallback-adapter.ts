@@ -5,7 +5,8 @@
  * After 3 consecutive failures (configurable), the adapter switches to the next
  * in the list. The failure count resets on any successful call.
  */
-import { createFallbackAdapter, AgentLoop } from 'harness-one/core';
+import { AgentLoop } from 'harness-one/core';
+import { createFallbackAdapter } from 'harness-one/advanced';
 // import { createAnthropicAdapter } from '@harness-one/anthropic';
 // import { createOpenAIAdapter } from '@harness-one/openai';
 

@@ -17,7 +17,6 @@ import type {
   HandoffVerificationResult,
   MessageTransport,
 } from './types.js';
-import type { AgentOrchestrator } from './orchestrator.js';
 
 const HANDOFF_PREFIX = '__handoff__:';
 const DEFAULT_MAX_RECEIPTS = 10_000;
@@ -62,8 +61,9 @@ export interface SendHandle {
  * Create a HandoffManager that layers structured handoff semantics
  * on top of any {@link MessageTransport}.
  *
- * The transport only needs `send()` — the full {@link AgentOrchestrator}
- * satisfies this interface, but lightweight custom transports work too.
+ * The transport only needs `send()` — the `AgentOrchestrator` returned by
+ * {@link createOrchestrator} already satisfies this interface, but
+ * lightweight custom transports work too.
  *
  * @example
  * ```ts
@@ -81,13 +81,6 @@ export interface SendHandle {
  * const handoff = createHandoff(transport);
  * ```
  */
-export function createHandoff(transport: MessageTransport, handoffConfig?: HandoffConfig): HandoffManager;
-/**
- * @deprecated Pass a {@link MessageTransport} instead of a full AgentOrchestrator.
- *             AgentOrchestrator already satisfies MessageTransport, so no code
- *             changes are needed — this overload exists for backward compatibility.
- */
-export function createHandoff(orchestrator: AgentOrchestrator, handoffConfig?: HandoffConfig): HandoffManager;
 export function createHandoff(transport: MessageTransport, handoffConfig?: HandoffConfig): HandoffManager {
   const receipts = new Map<string, HandoffReceipt>();
   const inbox = new Map<string, HandoffPayload[]>();

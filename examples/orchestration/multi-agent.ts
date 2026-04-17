@@ -4,7 +4,8 @@
  * Demonstrates the orchestration module with agent pools, handoff
  * protocols, and context boundaries for multi-agent workflows.
  */
-import { AgentLoop, createMockAdapter } from 'harness-one/core';
+import { AgentLoop } from 'harness-one/core';
+import { createMockAdapter } from 'harness-one/advanced';
 import {
   createOrchestrator,
   createAgentPool,

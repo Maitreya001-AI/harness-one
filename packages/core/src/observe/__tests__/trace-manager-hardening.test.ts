@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { createTraceManager } from '../trace-manager.js';
 import { HarnessError } from '../../core/errors.js';
 import type { TraceExporter } from '../types.js';
-import type { MetricsPort } from '../metrics-port.js';
+import type { MetricsPort } from '../../core/metrics-port.js';
 
 function makeRecordingMetricsPort(): {
   port: MetricsPort;

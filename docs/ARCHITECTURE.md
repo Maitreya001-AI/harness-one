@@ -61,7 +61,10 @@ imports may only flow top-to-bottom:
   machine extracted from AgentLoop).
 - **L3 → L1, L2** — each subsystem (`orchestration`, `observe`, …)
   imports from `core/core` and `core/infra`. Subsystems do **not**
-  import from each other; shared abstractions belong in L2.
+  import from each other (not even type-only); shared abstractions
+  belong in L2. Wave-17 tightened this: `orchestration/agent-pool`
+  now depends on the L2 `InstrumentationPort` rather than the L3
+  `TraceManager`, removing the last L3→L3 edge in the tree.
 - **L4 → L1, L2, L3 (via public subpath barrels)** — adapter packages
   (`@harness-one/openai`, etc.) depend on the `harness-one` package
   through its published subpath exports (`harness-one/core`,
@@ -122,11 +125,36 @@ Both modules carry a header comment with the same decision rule.
 Primitive numeric guards live in one place: `core/infra/validate.ts`
 (`requirePositiveInt`, `requireNonNegativeInt`, `requireFinitePositive`,
 `requireFiniteNonNegative`, `requireUnitInterval`, `validatePricingEntry`,
-`validatePricingArray`). Every subsystem (core, admission controller,
-circuit breaker, execution strategies, trace sampler, trace manager,
-agent-loop config, ajv validator, langfuse, preset) delegates to those
-helpers — do not reintroduce a bespoke inline guard. The
-`validate.test.ts` witness tests lock this in per Wave-16 m3.
+`validatePricingArray`). They're surfaced on the public
+`harness-one/advanced` barrel for adapter authors and the preset to
+share; internal call sites import straight from `../infra/validate.js`.
+Every subsystem (core, admission controller, circuit breaker, execution
+strategies, trace sampler, trace manager, agent-loop config, ajv
+validator, langfuse, preset) delegates to those helpers — do not
+reintroduce a bespoke inline guard. The `validate.test.ts` witness
+tests lock this in per Wave-16 m3.
+
+## Public-surface split (Wave-17)
+
+`harness-one/core` is the end-user surface: message types, errors,
+events, `createAgentLoop` + hooks + config, model pricing, and the
+two observability ports. Anything a typical consumer imports when
+wiring an agent loop is here.
+
+`harness-one/advanced` is the extension-author surface: middleware
+factory, stream aggregator, output parser, fallback adapter, SSE
+helpers, execution-strategy factories, error classifier, custom
+error-code helper, conversation pruner, resilient-loop factory,
+iteration-coordinator primitives, validators, pricing math, backoff
+primitives, trusted system-message factories, and the mock adapters
+used by tests. These were previously on `harness-one/core` and moved
+in Wave-17 so the end-user surface is narrow and the extension-author
+surface is separately declared.
+
+The root `harness-one` barrel continues to re-export the UJ-1 value
+symbols (`createMiddlewareChain`, `createResilientLoop`, …) so
+top-level imports of those primitives don't have to know about the
+`/advanced` split.
 
 ## Also see
 

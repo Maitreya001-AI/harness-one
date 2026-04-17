@@ -1,6 +1,6 @@
 /**
  * Verifies the fs-store readIndex / readEntry paths throw
- * `STORE_CORRUPTION` when the on-disk file is malformed or shape-invalid.
+ * `MEMORY_CORRUPT` when the on-disk file is malformed or shape-invalid.
  * Previously these paths cast the parsed JSON directly, silently admitting
  * bad shapes.
  */
@@ -20,15 +20,15 @@ describe('fs-io corruption detection', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('readIndex: throws STORE_CORRUPTION on invalid JSON', async () => {
+  it('readIndex: throws MEMORY_CORRUPT on invalid JSON', async () => {
     const io = createFileIO({ directory: dir });
     writeFileSync(join(dir, '_index.json'), '{not json');
     await expect(io.readIndex()).rejects.toMatchObject({
-      code: HarnessErrorCode.MEMORY_STORE_CORRUPTION,
+      code: HarnessErrorCode.MEMORY_CORRUPT,
     });
   });
 
-  it('readIndex: throws STORE_CORRUPTION when shape is wrong (missing keys)', async () => {
+  it('readIndex: throws MEMORY_CORRUPT when shape is wrong (missing keys)', async () => {
     const io = createFileIO({ directory: dir });
     writeFileSync(join(dir, '_index.json'), JSON.stringify({ other: 'stuff' }));
     await expect(io.readIndex()).rejects.toBeInstanceOf(HarnessError);
@@ -47,10 +47,10 @@ describe('fs-io corruption detection', () => {
     expect(await io.readIndex()).toEqual({ keys: {} });
   });
 
-  it('readEntry: throws STORE_CORRUPTION on invalid JSON', async () => {
+  it('readEntry: throws MEMORY_CORRUPT on invalid JSON', async () => {
     const io = createFileIO({ directory: dir });
     writeFileSync(join(dir, 'id1.json'), '{corrupt');
-    await expect(io.readEntry('id1')).rejects.toMatchObject({ code: HarnessErrorCode.MEMORY_STORE_CORRUPTION });
+    await expect(io.readEntry('id1')).rejects.toMatchObject({ code: HarnessErrorCode.MEMORY_CORRUPT });
   });
 
   it('readEntry: throws MEMORY_CORRUPT on shape mismatch (bad grade)', async () => {

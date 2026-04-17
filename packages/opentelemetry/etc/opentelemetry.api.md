@@ -21,8 +21,6 @@ export interface OTelDroppedAttributeMetrics {
 
 // @public
 export interface OTelExporterConfig {
-    // @deprecated (undocumented)
-    readonly evictedParentsTtlMs?: number;
     readonly logger?: OTelExporterLogger;
     readonly maxEvictedParents?: number;
     readonly maxSpans?: number;

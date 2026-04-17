@@ -31,7 +31,7 @@
  * @module
  */
 
-import type { TokenUsageRecord } from './types.js';
+import type { TokenUsageRecord } from '../core/pricing.js';
 import { KahanSum, OVERFLOW_BUCKET_KEY } from './cost-tracker.js';
 
 /** Strategy selector exposed publicly. */

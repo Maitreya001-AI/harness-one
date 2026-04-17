@@ -21,7 +21,7 @@ import type { CostTracker, ModelPricing } from 'harness-one/observe';
 import type { TokenUsageRecord, CostAlert } from 'harness-one/observe';
 import type { EvictionStrategy, Logger } from 'harness-one/observe';
 import { KahanSum, lruStrategy } from 'harness-one/observe';
-import { requireFiniteNonNegative, requirePositiveInt } from 'harness-one/core';
+import { requireFiniteNonNegative, requirePositiveInt } from 'harness-one/advanced';
 
 import { createLangfusePricing } from './cost-pricing.js';
 import { createExportHealth } from './cost-export.js';

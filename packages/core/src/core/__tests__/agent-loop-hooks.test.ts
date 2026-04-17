@@ -32,11 +32,11 @@ async function drain(gen: AsyncGenerator<AgentEvent>): Promise<AgentEvent[]> {
 }
 
 describe('AgentLoopHook (ARCH-006)', () => {
-  it('fires onIterationStart, onCost, onIterationEnd for a no-tool iteration', async () => {
+  it('fires onIterationStart, onTokenUsage, onIterationEnd for a no-tool iteration', async () => {
     const hook: AgentLoopHook = {
       onIterationStart: vi.fn(),
       onToolCall: vi.fn(),
-      onCost: vi.fn(),
+      onTokenUsage: vi.fn(),
       onIterationEnd: vi.fn(),
     };
     const adapter = adapterFromResponses([
@@ -47,7 +47,7 @@ describe('AgentLoopHook (ARCH-006)', () => {
 
     expect(hook.onIterationStart).toHaveBeenCalledWith({ iteration: 1 });
     expect(hook.onToolCall).not.toHaveBeenCalled();
-    expect(hook.onCost).toHaveBeenCalledWith({ iteration: 1, usage: USAGE });
+    expect(hook.onTokenUsage).toHaveBeenCalledWith({ iteration: 1, usage: USAGE });
     expect(hook.onIterationEnd).toHaveBeenCalledWith({ iteration: 1, done: true });
   });
 
@@ -61,7 +61,7 @@ describe('AgentLoopHook (ARCH-006)', () => {
     const hook: AgentLoopHook = {
       onIterationStart: ({ iteration }) => events.push(`start:${iteration}`),
       onToolCall: ({ iteration, toolCall }) => events.push(`tool:${iteration}:${toolCall.name}`),
-      onCost: ({ iteration }) => events.push(`cost:${iteration}`),
+      onTokenUsage: ({ iteration }) => events.push(`usage:${iteration}`),
       onIterationEnd: ({ iteration, done }) => events.push(`end:${iteration}:${done}`),
     };
     const loop = createAgentLoop({
@@ -71,15 +71,15 @@ describe('AgentLoopHook (ARCH-006)', () => {
     });
     await drain(loop.run([{ role: 'user', content: 'go' }]));
 
-    // Expected: iteration 1 starts → cost → tool → end (loop continues),
-    // iteration 2 starts → cost → end (terminal).
+    // Expected: iteration 1 starts → token usage → tool → end (loop
+    // continues), iteration 2 starts → token usage → end (terminal).
     expect(events).toEqual([
       'start:1',
-      'cost:1',
+      'usage:1',
       'tool:1:echo',
       'end:1:false',
       'start:2',
-      'cost:2',
+      'usage:2',
       'end:2:true',
     ]);
   });
@@ -92,7 +92,7 @@ describe('AgentLoopHook (ARCH-006)', () => {
     const logger = { warn };
     const throwingHook: AgentLoopHook = {
       onIterationStart: () => { throw new Error('boom'); },
-      onCost: () => { throw new Error('boom-cost'); },
+      onTokenUsage: () => { throw new Error('boom-usage'); },
       onIterationEnd: () => { throw new Error('boom-end'); },
     };
     const loop = createAgentLoop({ adapter, hooks: [throwingHook], logger });

@@ -62,19 +62,6 @@ export interface OTelExporterConfig {
    * not found` warnings for expected-alive parents).
    */
   readonly maxEvictedParents?: number;
-  /**
-   * @deprecated Wave-12 P1-9 — **no-op, kept for API/source compatibility.**
-   *
-   * Time-based expiry was removed because it races with child-span arrival:
-   * a parent could expire while its child was being exported, orphaning the
-   * subtree. Retention is now purely size-based (LRU on `maxEvictedParents`).
-   * Supplying this option has no runtime effect; `maxEvictedParents` is the
-   * only retention knob. Wave-13 J-1 reaffirmed the `@deprecated` tag so
-   * downstream tsc / IDE tooling surfaces the deprecation at the call site.
-   *
-   * @see maxEvictedParents
-   */
-  readonly evictedParentsTtlMs?: number;
   /** Maximum number of active spans to retain before LRU eviction. Defaults to 10000. */
   readonly maxSpans?: number;
   /**
@@ -139,9 +126,6 @@ export function createOTelExporter(config?: OTelExporterConfig): OTelTraceExport
   const serviceName = config?.serviceName ?? 'harness-one';
   const tracer = config?.tracer ?? otelTrace.getTracer(serviceName);
   const maxEvictedParents = config?.maxEvictedParents ?? 1000;
-  // Wave-12 P1-9: `evictedParentsTtlMs` intentionally ignored. The previous
-  // TTL-based sweep raced with in-flight children and could orphan subtrees.
-  // Size-based LRU on `maxEvictedParents` is now the only retention policy.
   const logger = config?.logger;
   const maxSpans = config?.maxSpans ?? 10_000;
   // Wave-13 J-3: lazy metric handle — only materialised when a metrics port

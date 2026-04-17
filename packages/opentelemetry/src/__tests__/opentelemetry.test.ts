@@ -572,51 +572,6 @@ describe('createOTelExporter', () => {
       vi.useRealTimers();
     });
 
-    it('evictedParentsTtlMs option is accepted but has no effect (deprecated no-op)', async () => {
-      // Callers that still pass the option must not see behavior regressions:
-      // it is additive-compatible and simply ignored.
-      const localMock = createMockTracer();
-      const exporter = createOTelExporter({
-        tracer: localMock.tracer,
-        evictedParentsTtlMs: 1, // would have expired immediately under the old TTL model
-      });
-
-      await exporter.exportSpan({
-        id: 'noop-parent',
-        traceId: 'trace-1',
-        name: 'parent-op',
-        startTime: 1000,
-        endTime: 2000,
-        attributes: {},
-        events: [],
-        status: 'completed',
-      });
-      await exporter.flush();
-
-      vi.useFakeTimers();
-      vi.setSystemTime(Date.now() + 10_000);
-
-      await exporter.exportSpan({
-        id: 'noop-child',
-        traceId: 'trace-1',
-        parentId: 'noop-parent',
-        name: 'child-ignored-ttl',
-        startTime: 2000,
-        endTime: 3000,
-        attributes: {},
-        events: [],
-        status: 'completed',
-      });
-
-      const calls = localMock.mocks.startActiveSpan.mock.calls;
-      const childCall = calls[calls.length - 1];
-      expect(childCall[0]).toBe('child-ignored-ttl');
-      // Parent is still present -> explicit parent context (4 args).
-      expect(childCall.length).toBe(4);
-
-      vi.useRealTimers();
-    });
-
     it('evicts oldest evictedParents entry only when size exceeds maxEvictedParents', async () => {
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
       const localMock = createMockTracer();
@@ -1355,7 +1310,6 @@ describe('createOTelExporter', () => {
       const exporter = createOTelExporter({
         tracer: localMock.tracer,
         maxEvictedParents: 100,
-        evictedParentsTtlMs: 1, // deprecated no-op; must not cause expiry
       });
 
       await exporter.exportSpan({

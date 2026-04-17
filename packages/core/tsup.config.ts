@@ -5,6 +5,7 @@ export default defineConfig([
     entry: {
       index: 'src/index.ts',
       'core/index': 'src/core/index.ts',
+      'advanced/index': 'src/advanced/index.ts',
       'context/index': 'src/context/index.ts',
       'tools/index': 'src/tools/index.ts',
       'guardrails/index': 'src/guardrails/index.ts',
@@ -23,7 +24,7 @@ export default defineConfig([
     dts: true,
     outDir: 'dist',
     clean: true,
-    splitting: false,
+    splitting: true,
     treeshake: true,
     minify: true,
     target: 'node18',
@@ -33,6 +34,7 @@ export default defineConfig([
     entry: {
       index: 'src/index.ts',
       'core/index': 'src/core/index.ts',
+      'advanced/index': 'src/advanced/index.ts',
       'context/index': 'src/context/index.ts',
       'tools/index': 'src/tools/index.ts',
       'guardrails/index': 'src/guardrails/index.ts',
@@ -50,7 +52,7 @@ export default defineConfig([
     format: ['cjs'],
     outDir: 'dist/cjs',
     outExtension: () => ({ js: '.cjs' }),
-    splitting: false,
+    splitting: true,
     treeshake: true,
     minify: true,
     target: 'node18',

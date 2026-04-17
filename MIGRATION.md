@@ -1,121 +1,166 @@
 # Migration Guide
 
-This document tracks deprecations and removal schedules across the
-`harness-one` monorepo. Every `@deprecated` symbol in the source tree
-should have a row here; removal lands no earlier than the noted version.
+This document tracks load-bearing API changes across the `harness-one`
+monorepo. While we're pre-1.0 we delete deprecated surface in-place
+rather than carrying both shapes — every entry below is a breaking
+change landed in the noted wave. Source re-exports exist where they
+add no cost, but the "old name" is never the recommended path.
 
-Follow [SemVer](https://semver.org/): deprecated symbols continue to
-work in every `0.x.y` release and are only removed in a major-version
-bump. The "Removal target" column below is informational — we reserve
-the right to extend deprecation windows when meaningful consumers are
-still on the old API.
+## Wave-17 — unreleased cleanup
 
-## Active deprecations
+Seven structural issues identified in the Wave-16 post-review. Every
+item is breaking and lands without a deprecation window because the
+package has not been published.
 
-### Error codes
+### Hook rename: `onCost` → `onTokenUsage`
 
-| Symbol | Replacement | Removal target | Notes |
-| --- | --- | --- | --- |
-| `HarnessErrorCode.MEMORY_STORE_CORRUPTION` | `HarnessErrorCode.MEMORY_CORRUPT` | `v2.0` | Round-3 canonicalised on the `MEMORY_CORRUPT` name. Back-compat enum entry kept so existing `catch (e) { if (e.code === MEMORY_STORE_CORRUPTION) ... }` still matches. |
-| `HarnessErrorCode.MEMORY_DATA_CORRUPTION` | `HarnessErrorCode.MEMORY_CORRUPT` | `v2.0` | Same as above — alternate spelling that some wave-12 callers relied on. |
+The per-iteration hook shipped on `AgentLoopHook` was named `onCost`
+but its payload only ever carried raw `TokenUsage` — no dollar cost.
+Dollar cost is computed separately by `CostTracker`. The hook is
+renamed so the name matches the payload.
 
-### Error classes
+```diff
+ createAgentLoop({
+   adapter,
+   hooks: [{
+-    onCost: ({ iteration, usage }) => metrics.add(usage),
++    onTokenUsage: ({ iteration, usage }) => metrics.add(usage),
+   }],
+ });
+```
 
-| Symbol | Replacement | Removal target | Notes |
-| --- | --- | --- | --- |
-| `GuardrailBlockedError` | `new HarnessError(reason, HarnessErrorCode.GUARD_VIOLATION, suggestion)` | `v2.0` | The runtime guardrail pipeline (`core/guardrail-runner.ts`) now throws the typed `HarnessError` form directly. `GuardrailBlockedError` is still exported for `instanceof` checks; new code should match on `err.code === HarnessErrorCode.GUARD_VIOLATION` instead. |
+### Public surface split: `harness-one/core` + `harness-one/advanced`
 
-### Public barrels
+`harness-one/core` was exporting ~150 symbols mixing the narrow
+end-user API with extension-point primitives. Wave-17 moves the
+extension primitives to a new `harness-one/advanced` subpath and
+keeps `harness-one/core` focused on the end-user surface (message
+types, `createAgentLoop`, hooks, errors, model pricing, the two
+observability ports).
 
-| Symbol | Replacement | Removal target | Notes |
-| --- | --- | --- | --- |
-| `createRedactor` from `harness-one/observe` | `harness-one/redact` | `v2.0` | Redaction primitives hoisted to a dedicated subpath. The `harness-one/observe` re-exports remain but are flagged `@deprecated`. |
-| `redactValue` / `sanitizeAttributes` from `harness-one/observe` | `harness-one/redact` | `v2.0` | Same as above. |
-| `REDACTED_VALUE` / `DEFAULT_SECRET_PATTERN` / `POLLUTING_KEYS` from `harness-one/observe` | `harness-one/redact` | `v2.0` | Same as above. |
-| `type RedactConfig` / `type Redactor` from `harness-one/observe` | `harness-one/redact` | `v2.0` | Same as above. |
+Moved to `harness-one/advanced`:
 
-### Function signatures
+- `createMiddlewareChain`, `MiddlewareChain`, `MiddlewareContext`, `MiddlewareFn`
+- `StreamAggregator` + its event/chunk/message/options types
+- `OutputParser`, `createJsonOutputParser`, `parseWithRetry`
+- `createFallbackAdapter`, `FallbackAdapterConfig`
+- `toSSEStream`, `formatSSE`, `SSEChunk`
+- `createSequentialStrategy`, `createParallelStrategy`
+- `categorizeAdapterError`
+- `createCustomErrorCode`, `HarnessErrorDetails`
+- `pruneConversation`, `PruneResult`
+- `createResilientLoop`, `ResilientLoop`, `ResilientLoopConfig`, `ResiliencePolicy`
+- Iteration coordinator: `startRun`, `checkPreIteration`, `startIteration`, `finalizeRun`, `CoordinatorDeps`, `CoordinatorState`, `StartRunResult`
+- Validators: `requirePositiveInt`, `requireNonNegativeInt`, `requireFinitePositive`, `requireFiniteNonNegative`, `requireUnitInterval`, `validatePricingEntry`, `validatePricingArray`, `PricingNumericFields`
+- Pricing math: `priceUsage`, `hasNonFiniteTokens`
+- Backoff: `ADAPTER_RETRY_JITTER_FRACTION`, `AGENT_POOL_IDLE_JITTER_FRACTION`, `computeBackoffMs`, `computeJitterMs`, `createBackoffSchedule`, `BackoffConfig`, `BackoffSchedule`
+- Trusted system message: `createTrustedSystemMessage`, `isTrustedSystemMessage`, `sanitizeRestoredMessage`
+- Test utilities: `createMockAdapter`, `createFailingAdapter`, `createStreamingMockAdapter`, `createErrorStreamingMockAdapter`, `MockAdapterConfig`
+- `AgentLoopTraceManager`
 
-| Symbol | Replacement | Removal target | Notes |
-| --- | --- | --- | --- |
-| `createHandoff(orchestrator: AgentOrchestrator, ...)` overload | `createHandoff(transport: MessageTransport, ...)` | `v2.0` | `AgentOrchestrator` structurally satisfies `MessageTransport`, so no call-site changes are required — the type hint will simply prefer the more-specific overload going forward. |
-| Flat `AgentLoopConfig` shape | Nested `AgentLoopConfigV2` (`{ limits, resilience, observability, pipelines, execution }`) | Not scheduled | Flat form remains fully supported. `createAgentLoop` accepts either shape; prefer the nested form in new code for ergonomic grouping. |
+The root `harness-one` barrel continues to re-export `createResilientLoop`,
+`createMiddlewareChain`, and the relevant types — those are part of the
+advertised UJ-1 surface — so top-level imports of those names continue
+to resolve. Deep imports change path:
 
-### Harness configuration
+```diff
+-import { createMiddlewareChain } from 'harness-one/core';
++import { createMiddlewareChain } from 'harness-one/advanced';
+```
 
-| Symbol | Replacement | Removal target | Notes |
-| --- | --- | --- | --- |
-| Passing both `adapter` and `client` on `HarnessConfig` | Pick one: `AdapterHarnessConfig` ({ adapter }) XOR `{Anthropic,OpenAI}HarnessConfig` ({ provider, client }) | `v2.0` (compile error today) | Wave-14 made the XOR a compile-time error via a discriminated union, plus a runtime guard with an explicit migration message. Consumers passing both were silently using the `adapter` branch before. |
+### Layer promotion: `TokenUsageRecord` moved to L2
 
-### Cost tracker
+`TokenUsageRecord` previously lived in `core/observe/types.ts` (L3)
+but was consumed by the L2 pricing module. Wave-17 moves it to
+`core/core/pricing.ts` (L2) alongside `ModelPricing`, restoring the
+"L2 depends on L1 only" rule. `harness-one/observe` re-exports the
+type so consumers who reach for it through the observe surface keep
+working.
 
-| Symbol | Replacement | Removal target | Notes |
-| --- | --- | --- | --- |
-| `getCostByModel(): Record<string, number>` | `getCostByModelMap(): ReadonlyMap<string, number>` | Not scheduled | Both methods are supported. The Map variant supports O(1) membership tests and ordered iteration without the boxing overhead of `Object.entries()`. Prefer the Map view in new code. |
+### Layer tightening: `agent-pool` depends on `InstrumentationPort` (L2), not `TraceManager` (L3)
 
-### Layer promotions (Wave-15)
+`orchestration/agent-pool.ts` previously typed its `traceManager`
+field against the concrete L3 `TraceManager`. It now uses the L2
+`InstrumentationPort` — the minimal tracing contract. `TraceManager`
+structurally satisfies the port, so consumer code needs no changes.
 
-Non-breaking: every symbol below stays exported from its prior location.
-The canonical home changed to stop L3→L3 imports.
+### Renamed error codes
 
-| Symbol | Old canonical home | New canonical home | Notes |
-| --- | --- | --- | --- |
-| `MetricsPort`, `MetricCounter`, `MetricGauge`, `MetricHistogram`, `MetricAttributes`, `createNoopMetricsPort` | `harness-one/observe` | `harness-one/core` | L3→L3 edge removed. Observe re-exports. |
-| `InstrumentationPort` | `harness-one/observe` | `harness-one/core` | L3→L3 edge removed. Observe re-exports. |
-| `ModelPricing`, `priceUsage`, `hasNonFiniteTokens` | `harness-one/observe` | `harness-one/core` | Pricing is cross-cutting; observe/preset re-export. |
-| `HarnessError`, `HarnessErrorCode`, `HarnessErrorDetails` | `harness-one/core` (impl file) | `core/infra/errors-base.ts` | Enables the "L1 imports nothing" rule. `harness-one/core` re-exports. |
-| `Brand`, `TraceId`, `SpanId`, `SessionId` | `harness-one/core` (impl file) | `core/infra/brands.ts` | Same rationale as above. |
-| `Streaming` + `Usage` subpaths | — | `harness-one/observe/trace`, `harness-one/observe/usage` | Cohesive sub-barrels added for callers that want the tracing pipeline OR the cost/usage view, not both. |
+Two long-aliased codes are removed. Consumers matching on them must
+switch to `MEMORY_CORRUPT`.
 
-### Wave-15 additions
+| Removed | Use |
+| --- | --- |
+| `HarnessErrorCode.MEMORY_STORE_CORRUPTION` | `HarnessErrorCode.MEMORY_CORRUPT` |
+| `HarnessErrorCode.MEMORY_DATA_CORRUPTION` | `HarnessErrorCode.MEMORY_CORRUPT` |
 
-Non-breaking additive surface — prefer these in new code.
+### Removed: `GuardrailBlockedError` class
 
-| Addition | Where | Notes |
+The runtime guardrail pipeline has been throwing
+`new HarnessError(reason, HarnessErrorCode.GUARD_VIOLATION, …)` since
+Wave-14. The `GuardrailBlockedError` subclass was kept as a back-compat
+`instanceof` target; it's gone now. Match on the code instead:
+
+```diff
+-try { /* … */ } catch (e) { if (e instanceof GuardrailBlockedError) … }
++try { /* … */ } catch (e) {
++  if (e instanceof HarnessError && e.code === HarnessErrorCode.GUARD_BLOCKED) …
++}
+```
+
+### Removed: `createHandoff(orchestrator, …)` overload
+
+`createHandoff` now only accepts a `MessageTransport`. The
+`AgentOrchestrator` returned by `createOrchestrator` structurally
+satisfies `MessageTransport`, so call sites that passed an
+orchestrator directly continue to compile without changes.
+
+### Removed: `evictedParentsTtlMs` from `OTelExporterConfig`
+
+The field was a no-op since Wave-12 P1-9 (time-based expiry was
+removed to eliminate the child-arrival race). Pass `maxEvictedParents`
+instead; eviction is purely size-based.
+
+### Removed: redact re-exports on `harness-one/observe`
+
+`createRedactor`, `redactValue`, `sanitizeAttributes`, `REDACTED_VALUE`,
+`DEFAULT_SECRET_PATTERN`, `POLLUTING_KEYS`, `RedactConfig`, `Redactor`
+are only available through the canonical `harness-one/redact` subpath.
+
+### Removed: legacy OpenAI global warn state
+
+`_globalZeroUsageWarnedModelsDeprecated` is gone. `_resetOpenAIWarnState`
+retains its signature but only clears per-instance state and the
+convert-time unknown-schema-key dedupe.
+
+### KNOWN_KEYS validator type-enforced
+
+`@harness-one/preset`'s `validate-config.ts` now types the
+unknown-key allow-list against `HarnessConfigBase | SecurePresetOptions`
+so adding a field to the config surface raises a TypeScript error
+in `validate-config.ts` until the allow-list is updated in step.
+
+## Layer promotions (Wave-15, retained for reference)
+
+The canonical homes changed to stop L3→L3 imports. Every symbol
+listed stays reachable from its prior location through a re-export.
+
+| Symbol | Old canonical home | New canonical home |
 | --- | --- | --- |
-| `createCustomErrorCode(namespace, code)` | `harness-one/core` | Namespaced custom codes that ride on `ADAPTER_CUSTOM` for switch-exhaustiveness. |
-| `createBackoffSchedule(config)` / `BackoffSchedule` | `harness-one/core` | Reusable backoff sleeper sharing the infra/backoff math. |
-| `applyRecordCap({...})` | `harness-one/observe` | Shared record-eviction loop used by core and `@harness-one/langfuse` cost trackers. |
-| `serializePayloadSafe(payload, {...})` | `harness-one/orchestration` | Shared depth+byte cap extracted from `handoff.ts` so future cross-agent payloads can reuse it. |
-| `validateHarnessRuntimeConfig(config)` / `validateHarnessConfigAll(config)` | `@harness-one/preset` | Unified preset validation (numeric + structural), consolidating what used to live in two separate modules. |
-| `SessionStore<T>` + `createSessionManager({ store })` | `harness-one/session` | Pluggable session storage backend for distributed deployments. |
-| `LRUCacheOptions.onEvict` | infra (via `harness-one/core`) | Synchronous eviction hook for side-table accounting. |
-| Iteration coordinator (`startRun`, `checkPreIteration`, `startIteration`, `finalizeRun`, `CoordinatorDeps`, `CoordinatorState`) | `harness-one/core` | Event-sequencing state machine extracted from AgentLoop. |
-| `TraceManagerConfig.redactor?: Redactor` | `harness-one/observe` | Inject a shared Redactor instance rather than compiling one per component. |
-| `ResiliencePolicy` (alias for `RetryPolicy`) | `harness-one/core` | Clarifies that retry+breaker is one composed policy. |
+| `MetricsPort`, `MetricCounter`, `MetricGauge`, `MetricHistogram`, `MetricAttributes`, `createNoopMetricsPort` | `harness-one/observe` | `harness-one/core` |
+| `InstrumentationPort` | `harness-one/observe` | `harness-one/core` |
+| `ModelPricing`, `priceUsage`, `hasNonFiniteTokens` | `harness-one/observe` | `harness-one/advanced` (Wave-17) |
+| `HarnessError`, `HarnessErrorCode` | `harness-one/core` (impl file) | `core/infra/errors-base.ts` |
+| `Brand`, `TraceId`, `SpanId`, `SessionId` | `harness-one/core` (impl file) | `core/infra/brands.ts` |
+| `Streaming` + `Usage` subpaths | — | `harness-one/observe/trace`, `harness-one/observe/usage` |
 
-### Wave-16 deprecation / removal schedule
+## How to file a breaking change
 
-| Symbol | Replacement | Removal target | Notes |
-| --- | --- | --- | --- |
-| `harness-one/observe/metrics-port` re-export path | `harness-one/core` | `v0.3.0` | Wave-15 moved the canonical `MetricsPort` home to L2. The thin `observe/metrics-port.ts` re-export now carries an explicit removal pin. External consumers: switch the import path; internal code must import from `../core/metrics-port.js` directly. |
-| `observe/cost-math.ts` module | `harness-one/core` (for `priceUsage` / `hasNonFiniteTokens`) + `cost-tracker.ts` (for `KahanSum`) | Removed in Wave-16 | Duplicated primitives that already lived in `core/pricing.ts`; `KahanSum` moved inline into `observe/cost-tracker.ts` since that's its only caller. No public API change — the public re-exports (`KahanSum`, `priceUsage`, `hasNonFiniteTokens`) keep working. |
-
-### Wave-16 additions (non-breaking)
-
-| Addition | Where | Notes |
-| --- | --- | --- |
-| Validator consolidation — `requirePositiveInt` / `requireNonNegativeInt` / `requireFinitePositive` / `requireFiniteNonNegative` / `requireUnitInterval` now used by admission controller, circuit breaker, execution strategies, trace sampler, trace manager, agent-loop validation, `@harness-one/ajv`, `@harness-one/langfuse` | `harness-one/core` | Error messages for `maxIterations` / `maxTotalTokens` / `maxStreamBytes` / `maxToolArgBytes` / `toolTimeoutMs` kept verbatim; `maxTraces` / `maxRecords` / `samplingRate` / `flushTimeoutMs` / `baseRetryDelayMs` / `maxAdapterRetries` / `maxConcurrency` / `maxInflight` / `failureThreshold` / `resetTimeoutMs` / `budget` / `defaultTTL` / `maxCacheSize` normalised. Integration tests assert the delegation so future drift is caught. |
-| `resolveCandidateIds(filter, indexes)` / `unionTagSets` / `intersect` | `core/memory/memory-query.ts` | Set-algebra helpers extracted from `createInMemoryStore` so the store owns CRUD + index maintenance and the query logic is unit-tested in isolation. |
-| `invokeAsync(fn)` guard in `trace-exporter-coordinator` | `core/observe/trace-exporter-coordinator.ts` | Ensures a sync-throwing `exporter.flush()` / `shutdown()` rejects cleanly instead of unwinding past `Promise.allSettled`. Regression tests landed alongside. |
-| Adapter package splits — `@harness-one/redis` → `keys.ts` / `codec.ts` / `query.ts` / `update-txn.ts` / `compact.ts`; `@harness-one/langfuse` → `cost-pricing.ts` / `cost-export.ts`; `@harness-one/opentelemetry` → `span-map.ts` / `attributes.ts` | respective package `src/` | Public API unchanged — `createRedisStore`, `createLangfuseCostTracker`, and `createOTelExporter` still live in `src/index.ts` / `src/cost-tracker.ts`. The split removes the monolithic single-file adapters flagged in the Wave-16 review. |
-
-## Removed in prior waves
-
-This section records historical deprecations that have already been
-removed. It is not exhaustive — see `CHANGELOG.md` for the full
-history. Only load-bearing renames that consumers might still need to
-look up are captured here.
-
-- (No prior removals yet — tracking begins in Wave-14.)
-
-## How to file a deprecation
-
-When flagging a new `@deprecated` symbol:
-
-1. Add a `@deprecated` JSDoc tag with a one-sentence migration hint.
-2. Add a row to the appropriate table in this file (Symbol,
-   Replacement, Removal target, Notes).
+1. Implement the change in-place (no `@deprecated` alias); this
+   project treats pre-1.0 churn as expected.
+2. Add a section under the current wave in this file: diff the
+   before/after, note any re-export that preserves the old name,
+   call out runtime (not just type) effects.
 3. If the removal is load-bearing, add a changeset under
-   `.changeset/` so the deprecation appears in the next published
+   `.changeset/` so the change appears in the next published
    changelog.

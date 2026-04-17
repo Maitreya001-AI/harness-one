@@ -19,7 +19,7 @@
 
 import type { CostAlert } from './types.js';
 import type { Logger } from './logger.js';
-import type { MetricsPort, MetricCounter } from './metrics-port.js';
+import type { MetricsPort, MetricCounter } from '../core/metrics-port.js';
 
 export interface CostAlertManagerConfig {
   readonly budget?: number;

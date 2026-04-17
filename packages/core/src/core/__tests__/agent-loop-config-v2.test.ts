@@ -5,7 +5,8 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { createAgentLoop, createMockAdapter } from '../index.js';
+import { createAgentLoop } from '../index.js';
+import { createMockAdapter } from '../test-utils.js';
 import {
   flattenNestedAgentLoopConfig,
   isNestedAgentLoopConfig,

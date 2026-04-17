@@ -6,8 +6,8 @@
  * @module
  */
 
-import type { TokenUsageRecord, CostAlert } from './types.js';
-import type { ModelPricing } from '../core/pricing.js';
+import type { CostAlert } from './types.js';
+import type { ModelPricing, TokenUsageRecord } from '../core/pricing.js';
 
 /**
  * Pricing configuration for a model.

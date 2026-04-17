@@ -14,7 +14,7 @@ import {
   type RedactConfig,
   type Redactor,
 } from '../infra/redact.js';
-import type { MetricsPort } from './metrics-port.js';
+import type { MetricsPort } from '../core/metrics-port.js';
 import { TraceLruList } from './trace-lru-list.js';
 import { createSpanAttributeKeyWarner } from './span-attribute-keys.js';
 import { createTraceSampler } from './trace-sampler.js';

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { createCostTracker } from '../cost-tracker.js';
 import { createLogger } from '../logger.js';
 import type { CostAlert } from '../types.js';
-import type { MetricsPort } from '../metrics-port.js';
+import type { MetricsPort } from '../../core/metrics-port.js';
 
 function makeRecordingMetricsPort(): {
   port: MetricsPort;

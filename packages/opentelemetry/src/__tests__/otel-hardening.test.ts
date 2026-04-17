@@ -11,32 +11,6 @@ describe('Wave-13 Track J — OTel exporter', () => {
   let mock: ReturnType<typeof createMockTracer>;
   beforeEach(() => { mock = createMockTracer(); });
 
-  it('Wave-13 J-1: `evictedParentsTtlMs` is typed + @deprecated + a no-op', async () => {
-    // Compile-time: accepting the option must still typecheck. Runtime: passing
-    // it MUST NOT change retention — a span referenced via its parent should
-    // remain reachable regardless of the supplied TTL value.
-    const exporter = createOTelExporter({
-      tracer: mock.tracer,
-      maxEvictedParents: 5,
-      evictedParentsTtlMs: 1, // supplied but ignored — docstring contract
-    });
-    await exporter.exportSpan({
-      id: 'parent-1', traceId: 't', name: 'p',
-      startTime: 0, endTime: 1, attributes: {}, events: [], status: 'completed',
-    });
-    // Wait beyond the "TTL" — must not evict.
-    await new Promise((r) => setTimeout(r, 10));
-    // Child lookup still finds parent (either live or via evictedParents cache).
-    await exporter.exportSpan({
-      id: 'child-1', traceId: 't', parentId: 'parent-1', name: 'c',
-      startTime: 2, endTime: 3, attributes: {}, events: [], status: 'completed',
-    });
-    // No orphan warning was emitted because the TTL is a no-op. We expect at
-    // least 2 span creations (parent + child); the exporter may also open a
-    // per-trace root span on first access (CQ-002), hence >=.
-    expect(mock.mocks.startActiveSpan.mock.calls.length).toBeGreaterThanOrEqual(2);
-  });
-
   it('Wave-13 J-2: createOTelExporter return type exposes getDroppedAttributeMetrics', () => {
     const exporter = createOTelExporter({ tracer: mock.tracer });
     // The named interface guarantees this method is callable without an

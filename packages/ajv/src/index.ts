@@ -14,7 +14,7 @@
 
 import { Ajv, type ValidateFunction } from 'ajv';
 import type { JsonSchema } from 'harness-one/core';
-import { requirePositiveInt } from 'harness-one/core';
+import { requirePositiveInt } from 'harness-one/advanced';
 import type { SchemaValidator, ValidationError } from 'harness-one/tools';
 import type { Logger } from 'harness-one/observe';
 import { createDefaultLogger } from 'harness-one/observe';

@@ -917,7 +917,7 @@ await admission.withPermit('tenant-123', async () => {
 
 The four bigger 5D items — `CostTracker` consolidation, conversation-store reconciler, Redis-backed cross-process token bucket, and demoting `@harness-one/langfuse` to a secondary `TraceExporter` — are deferred to **5D.1** pending PRD + ADR competition.
 
-**AgentLoopHook** (0.4.0) — pass an array of hooks in `AgentLoopConfig.hooks` to receive `onIterationStart` / `onToolCall` / `onCost` / `onIterationEnd` callbacks without subscribing to `AgentEvent`. Hook errors are swallowed through the injected logger and never break the loop.
+**AgentLoopHook** (0.4.0) — pass an array of hooks in `AgentLoopConfig.hooks` to receive `onIterationStart` / `onToolCall` / `onTokenUsage` / `onIterationEnd` callbacks without subscribing to `AgentEvent`. Hook errors are swallowed through the injected logger and never break the loop.
 
 All auto-configured components can be replaced by passing the explicit override field (`adapter`, `exporters`, `memoryStore`, `schemaValidator`).
 

@@ -3,7 +3,6 @@ import {
   HarnessError,
   MaxIterationsError,
   AbortedError,
-  GuardrailBlockedError,
   ToolValidationError,
   TokenBudgetExceededError, HarnessErrorCode} from '../errors.js';
 
@@ -49,12 +48,25 @@ describe('AbortedError', () => {
   });
 });
 
-describe('GuardrailBlockedError', () => {
-  it('includes reason in message', () => {
-    const err = new GuardrailBlockedError('toxic content');
-    expect(err.code).toBe(HarnessErrorCode.GUARD_BLOCKED);
-    expect(err.message).toContain('toxic content');
-    expect(err).toBeInstanceOf(HarnessError);
+describe('guardrail-block error (HarnessError form)', () => {
+  it('carries GUARD_BLOCKED / GUARD_VIOLATION codes from the pipeline', () => {
+    /* Wave-17 removed the GuardrailBlockedError subclass. The pipeline
+     * throws plain HarnessError with the typed code instead. This test
+     * locks in the guard-code contract for consumers. */
+    const blocked = new HarnessError(
+      'Guardrail blocked: toxic content',
+      HarnessErrorCode.GUARD_BLOCKED,
+      'Review the guardrail configuration and input',
+    );
+    expect(blocked.code).toBe(HarnessErrorCode.GUARD_BLOCKED);
+    expect(blocked.message).toContain('toxic content');
+    expect(blocked).toBeInstanceOf(HarnessError);
+
+    const violation = new HarnessError(
+      'Guardrail violation detected',
+      HarnessErrorCode.GUARD_VIOLATION,
+    );
+    expect(violation.code).toBe(HarnessErrorCode.GUARD_VIOLATION);
   });
 });
 

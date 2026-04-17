@@ -6,18 +6,25 @@
  * `build-harness/run.ts`. Both now live in this module so adding a new
  * config field touches a single file and error messages stay consistent.
  *
+ * Wave-17 type-enforces `KNOWN_KEYS` against {@link HarnessConfigBase} +
+ * {@link SecurePresetOptions} so adding a new top-level field surfaces a
+ * TypeScript error here until the validator is updated — the "shape in
+ * types.ts, allow-list in validate-config.ts" drift the review flagged
+ * can no longer happen silently.
+ *
  * @module
  */
 
+import { HarnessError, HarnessErrorCode } from 'harness-one/core';
 import {
-  HarnessError,
-  HarnessErrorCode,
   requirePositiveInt,
   requireNonNegativeInt,
   requireFinitePositive,
   requireFiniteNonNegative,
   validatePricingArray,
-} from 'harness-one/core';
+} from 'harness-one/advanced';
+import type { HarnessConfigBase } from './build-harness/types.js';
+import type { SecurePresetOptions } from './secure.js';
 
 /** Known provider names that createHarness supports. */
 const VALID_PROVIDERS = new Set(['anthropic', 'openai']);
@@ -118,17 +125,13 @@ export function validateHarnessConfig(config: Record<string, unknown>): void {
     }
   }
 
-  // Warn about unrecognized top-level keys.
-  const KNOWN_KEYS = new Set([
-    'provider', 'client', 'model', 'adapter', 'langfuse', 'redis',
-    'exporters', 'memoryStore', 'schemaValidator', 'tokenizer',
-    'maxIterations', 'maxTotalTokens', 'maxAdapterRetries', 'baseRetryDelayMs',
-    'retryableErrors', 'guardrails', 'budget', 'pricing', 'logger',
-    // SecurePresetOptions
-    'guardrailLevel', 'skipProviderSeal',
-  ]);
+  // Warn about unrecognized top-level keys. The allow-list is typed against
+  // the public config surfaces so adding a field to `HarnessConfigBase` /
+  // `AnthropicHarnessConfig` / `OpenAIHarnessConfig` / `AdapterHarnessConfig` /
+  // `SecurePresetOptions` — or renaming one — raises a TypeScript error here
+  // until `KNOWN_KEYS` is updated in step.
   for (const key of Object.keys(config)) {
-    if (!KNOWN_KEYS.has(key)) {
+    if (!KNOWN_KEYS.has(key as HarnessConfigKnownKey)) {
       throw new HarnessError(
         `Unknown config key: "${key}"`,
         HarnessErrorCode.CORE_INVALID_CONFIG,
@@ -137,6 +140,49 @@ export function validateHarnessConfig(config: Record<string, unknown>): void {
     }
   }
 }
+
+/**
+ * Discriminator-tag keys from the provider-specific harness config variants.
+ * These live on {@link AnthropicHarnessConfig} / {@link OpenAIHarnessConfig} /
+ * {@link AdapterHarnessConfig} but not on `HarnessConfigBase`, so they need
+ * to be spelled out for the `KNOWN_KEYS` allow-list.
+ */
+type DiscriminatorKey = 'type' | 'provider' | 'client' | 'adapter';
+
+/** Every top-level key `createHarness` / `createSecurePreset` accept. */
+type HarnessConfigKnownKey =
+  | keyof HarnessConfigBase
+  | DiscriminatorKey
+  | keyof SecurePresetOptions;
+
+const KNOWN_KEYS: ReadonlySet<HarnessConfigKnownKey> = new Set<HarnessConfigKnownKey>([
+  // HarnessConfigBase — keep in sync with `build-harness/types.ts`.
+  'model',
+  'langfuse',
+  'redis',
+  'exporters',
+  'memoryStore',
+  'schemaValidator',
+  'tokenizer',
+  'maxIterations',
+  'maxTotalTokens',
+  'maxAdapterRetries',
+  'baseRetryDelayMs',
+  'retryableErrors',
+  'adapterTimeoutMs',
+  'guardrails',
+  'budget',
+  'pricing',
+  'logger',
+  // Provider-variant discriminators.
+  'type',
+  'provider',
+  'client',
+  'adapter',
+  // SecurePresetOptions.
+  'guardrailLevel',
+  'skipProviderSeal',
+]);
 
 /**
  * Numeric + provider validation (formerly inlined in `build-harness/run.ts`).

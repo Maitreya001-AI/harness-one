@@ -384,7 +384,7 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
     const safeOutput = Math.min(Math.max(0, responseUsage.outputTokens), 1_000_000_000);
     ctx.cumulativeUsage.inputTokens += safeInput;
     ctx.cumulativeUsage.outputTokens += safeOutput;
-    runHook('onCost', { iteration: ctx.iteration, usage: responseUsage });
+    runHook('onTokenUsage', { iteration: ctx.iteration, usage: responseUsage });
 
     // [4] Post-call token budget.
     const postCallTokens =

@@ -108,21 +108,6 @@ function createInstanceWarnedState(cap = _ZERO_USAGE_WARN_CAP): InstanceWarnedSt
 }
 
 /**
- * Wave-13 G-1: module-scoped fallback maintained only for backwards
- * compatibility with `_resetOpenAIWarnState()` tests that exercised the
- * legacy global dedupe. New adapter instances use `createInstanceWarnedState`
- * inside the factory closure instead, so cross-tenant contamination is
- * eliminated. This set is intentionally never written to by production code
- * paths in Wave-13+ — only `_resetOpenAIWarnState` clears it for test-parity
- * on the legacy surface. Marked for removal in a future breaking wave.
- *
- * @deprecated Use the per-instance warned state seeded inside
- * `createOpenAIAdapter()`. Retained only so `_resetOpenAIWarnState()` keeps
- * its signature for existing tests.
- */
-const _globalZeroUsageWarnedModelsDeprecated: Set<string> = new Set();
-
-/**
  * Wave-12 P0-2: guarded narrow on the OpenAI SDK stream's private
  * `controller` field.
  *
@@ -386,9 +371,8 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
 export function _resetOpenAIWarnState(): void {
   // Wave-13 G-1: per-instance warned state is no longer reachable from outside
   // the factory closure, so this helper only clears the module-scoped caches
-  // that still exist (the unknown-schema-key dedupe + the deprecated global
-  // zero-usage set retained for legacy test parity). Tests that need to
-  // re-exercise per-instance dedupe behaviour should create a fresh adapter.
-  _globalZeroUsageWarnedModelsDeprecated.clear();
+  // that still exist (the unknown-schema-key dedupe in `convert.ts`). Tests
+  // that need to re-exercise per-instance dedupe behaviour should create a
+  // fresh adapter.
   _resetConvertWarnState();
 }

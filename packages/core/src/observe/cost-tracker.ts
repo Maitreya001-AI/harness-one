@@ -21,12 +21,12 @@
  * @module
  */
 
-import type { TokenUsageRecord } from './types.js';
+import type { TokenUsageRecord } from '../core/pricing.js';
 import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import { createAsyncLock } from '../infra/async-lock.js';
 import { safeWarn } from '../infra/safe-log.js';
 import type { Logger } from './logger.js';
-import type { MetricsPort } from './metrics-port.js';
+import type { MetricsPort } from '../core/metrics-port.js';
 import {
   type EvictionStrategy,
   type EvictionStrategyName,

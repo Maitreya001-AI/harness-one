@@ -23,11 +23,11 @@ import {
   runInput,
 } from 'harness-one/guardrails';
 import { createTraceManager, createConsoleExporter, createLogger } from 'harness-one/observe';
+import { HarnessError } from 'harness-one/core';
 import {
   createFallbackAdapter,
   categorizeAdapterError,
-  HarnessError,
-} from 'harness-one/core';
+} from 'harness-one/advanced';
 import type {
   AgentAdapter,
   ChatParams,

@@ -108,18 +108,12 @@ export interface SpanEvent {
   readonly severity?: SpanEventSeverity;
 }
 
-/** Record of token usage for cost tracking. */
-export interface TokenUsageRecord {
-  readonly traceId: string;
-  readonly spanId?: string;
-  readonly model: string;
-  readonly inputTokens: number;
-  readonly outputTokens: number;
-  readonly cacheReadTokens?: number;
-  readonly cacheWriteTokens?: number;
-  readonly estimatedCost: number;
-  readonly timestamp: number;
-}
+/**
+ * Record of token usage for cost tracking. Re-exported from L2 (`core/pricing.ts`)
+ * which owns the pricing math that populates `estimatedCost`. Observe's public
+ * API surface still ships this type via `harness-one/observe`.
+ */
+export type { TokenUsageRecord } from '../core/pricing.js';
 
 /** A cost budget alert. */
 export interface CostAlert {

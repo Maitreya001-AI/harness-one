@@ -60,15 +60,18 @@ export { createDatasetExporter } from './dataset-exporter.js';
 // Safe-log primitive (fallback logger + safeWarn/safeError helpers)
 export { createDefaultLogger, safeWarn, safeError } from '../infra/safe-log.js';
 
-// Wave-5D ARCH-5: MetricsPort (vendor-neutral metric interface).
+// Wave-5D ARCH-5 / Wave-15: MetricsPort is the vendor-neutral metric
+// interface. Its canonical L2 home is `../core/metrics-port.js`; this
+// barrel re-exports it so `harness-one/observe` consumers still see the
+// symbols next to the trace / cost APIs they are using.
 export type {
   MetricsPort,
   MetricAttributes,
   MetricCounter,
   MetricGauge,
   MetricHistogram,
-} from './metrics-port.js';
-export { createNoopMetricsPort } from './metrics-port.js';
+} from '../core/metrics-port.js';
+export { createNoopMetricsPort } from '../core/metrics-port.js';
 
 // Wave-5D ARCH-6: lifecycle state machine + aggregated health.
 export type {
@@ -80,22 +83,3 @@ export type {
 } from './lifecycle.js';
 export { createHarnessLifecycle } from './lifecycle.js';
 
-/**
- * Secret redaction primitives — historically re-exported from `observe`
- * for convenience, but the canonical public path is now
- * `harness-one/redact`. The re-exports below remain for back-compat
- * through the next minor version; see MIGRATION.md for the removal
- * schedule.
- *
- * @deprecated Import from `harness-one/redact` instead.
- */
-export type { RedactConfig, Redactor } from '../infra/redact.js';
-/** @deprecated Import from `harness-one/redact` instead. */
-export {
-  createRedactor,
-  redactValue,
-  sanitizeAttributes,
-  REDACTED_VALUE,
-  DEFAULT_SECRET_PATTERN,
-  POLLUTING_KEYS,
-} from '../infra/redact.js';

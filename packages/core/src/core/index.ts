@@ -1,6 +1,21 @@
-// Core module — public exports
+/**
+ * `harness-one/core` — the end-user surface.
+ *
+ * This barrel exposes the API a typical consumer needs to build an agent
+ * loop: message types, errors, events, `createAgentLoop` + its hooks and
+ * config shapes, model pricing, and the two tracing ports that get wired
+ * into the observability stack.
+ *
+ * Extension primitives (`StreamAggregator`, `createMiddlewareChain`,
+ * `parseWithRetry`, validators, iteration-coordinator helpers, etc.) live
+ * in the separate `harness-one/advanced` barrel. Keeping the two surfaces
+ * distinct means new consumers see a narrow, stable contract here and opt
+ * into the lower-level plumbing only when they actually need it.
+ *
+ * @module
+ */
 
-// Types
+// ─── Message / adapter / response types ──────────────────────────────────
 export type {
   Role,
   Message,
@@ -25,24 +40,21 @@ export type {
   ExecutionStrategy,
 } from './types.js';
 
-// Errors
+// ─── Errors (every consumer catches these) ────────────────────────────────
 export {
   HarnessError,
   HarnessErrorCode,
   MaxIterationsError,
   AbortedError,
-  GuardrailBlockedError,
   ToolValidationError,
   TokenBudgetExceededError,
 } from './errors.js';
 
-// Events
+// ─── Events ───────────────────────────────────────────────────────────────
 export type { AgentEvent, DoneReason } from './events.js';
 export { assertNever } from './events.js';
 
-// AgentLoop — class and factory alias both exported. `createAgentLoop()` is
-// the idiomatic public entry; the `AgentLoop` class is its return type and
-// remains exported for `instanceof` / type references.
+// ─── AgentLoop + config + hooks (the idiomatic entry point) ──────────────
 export { AgentLoop, createAgentLoop } from './agent-loop.js';
 export type { AgentLoopConfig, AgentLoopHook } from './agent-loop.js';
 // Nested-form public config (additive; flat AgentLoopConfig remains
@@ -56,100 +68,10 @@ export type {
   AgentLoopPipelinesConfig,
 } from './agent-loop-types.js';
 
-// Tracing interface (ARCH-002) — hoisted out of agent-loop.ts so callers can
-// depend on the shape without importing the loop implementation.
-export type { AgentLoopTraceManager } from './trace-interface.js';
+// ─── Pricing types (consumers declare model rates against this shape) ────
+export type { ModelPricing, TokenUsageRecord } from './pricing.js';
 
-// Stream aggregator (ARCH-001) — extracted from AgentLoop; reusable as a
-// stand-alone primitive when wrapping a custom adapter.stream() generator.
-export { StreamAggregator } from './stream-aggregator.js';
-export type {
-  StreamAggregatorEvent,
-  StreamAggregatorChunk,
-  StreamAggregatorMessage,
-  StreamAggregatorOptions,
-} from './stream-aggregator.js';
-
-// Output parser
-export type { OutputParser } from './output-parser.js';
-export { createJsonOutputParser, parseWithRetry } from './output-parser.js';
-
-// Middleware
-export type { MiddlewareContext, MiddlewareFn, MiddlewareChain } from './middleware.js';
-export { createMiddlewareChain } from './middleware.js';
-
-// Fallback adapter
-export type { FallbackAdapterConfig } from './fallback-adapter.js';
-export { createFallbackAdapter } from './fallback-adapter.js';
-
-// SSE streaming
-export type { SSEChunk } from './sse-stream.js';
-export { toSSEStream, formatSSE } from './sse-stream.js';
-
-// Execution strategies
-export { createSequentialStrategy, createParallelStrategy } from './execution-strategies.js';
-
-// Error classifier (extracted from AgentLoop)
-export { categorizeAdapterError } from './error-classifier.js';
-
-// Conversation pruner (extracted from AgentLoop)
-export type { PruneResult } from './conversation-pruner.js';
-export { pruneConversation } from './conversation-pruner.js';
-
-// Resilient loop
-export type { ResilientLoopConfig, ResilientLoop } from './resilience.js';
-export { createResilientLoop } from './resilience.js';
-
-// Test utilities
-export type { MockAdapterConfig } from './test-utils.js';
-export { createMockAdapter, createFailingAdapter, createStreamingMockAdapter, createErrorStreamingMockAdapter } from './test-utils.js';
-
-// Wave-5E (SEC-A07) — trusted system-message factory.
-export {
-  createTrustedSystemMessage,
-  isTrustedSystemMessage,
-  sanitizeRestoredMessage,
-} from './trusted-system-message.js';
-
-// Shared validators (centralized so preset, core, and future callers
-// cannot drift on what counts as a valid positive integer, finite
-// positive number, or pricing entry).
-export {
-  requirePositiveInt,
-  requireNonNegativeInt,
-  requireFinitePositive,
-  requireFiniteNonNegative,
-  requireUnitInterval,
-  validatePricingEntry,
-  validatePricingArray,
-} from '../infra/validate.js';
-export type { PricingNumericFields } from '../infra/validate.js';
-
-// Pricing — Wave-15 canonical home for the model-pricing type, the pure
-// cost math (`priceUsage`), and the validators. Observe / preset re-export
-// from here for backward compatibility.
-export type { ModelPricing } from './pricing.js';
-export { priceUsage, hasNonFiniteTokens } from './pricing.js';
-
-// Canonical jitter-fraction constants — import instead of hard-coding
-// so the retry vs pool jitter asymmetry stays readable.
-export {
-  ADAPTER_RETRY_JITTER_FRACTION,
-  AGENT_POOL_IDLE_JITTER_FRACTION,
-  computeBackoffMs,
-  computeJitterMs,
-  createBackoffSchedule,
-} from '../infra/backoff.js';
-export type { BackoffConfig, BackoffSchedule } from '../infra/backoff.js';
-
-// Custom error-code helper — Wave-15 extensibility hook so subsystems can
-// mint namespaced codes without growing the closed enum.
-export { createCustomErrorCode } from './errors.js';
-export type { HarnessErrorDetails } from './errors.js';
-
-// Wave-15 L2 promotion: MetricsPort + InstrumentationPort moved here from
-// observe so orchestration / rag can depend on the surface without an
-// L3→L3 edge. `harness-one/observe` re-exports for backward compatibility.
+// ─── Observability ports (consumers wire their backend against these) ───
 export type {
   MetricsPort,
   MetricAttributes,
@@ -159,23 +81,3 @@ export type {
 } from './metrics-port.js';
 export { createNoopMetricsPort } from './metrics-port.js';
 export type { InstrumentationPort } from './instrumentation-port.js';
-
-// Iteration coordinator — Wave-15 event-sequencing state machine extracted
-// from AgentLoop. Reuse the coordinator when building a custom loop with
-// the same yield/hook/span ordering guarantees.
-export {
-  startRun,
-  checkPreIteration,
-  startIteration,
-  finalizeRun,
-} from './iteration-coordinator.js';
-export type {
-  CoordinatorDeps,
-  CoordinatorState,
-  StartRunResult,
-} from './iteration-coordinator.js';
-
-// Resilience policy — Wave-15 alias for the circuit-breaker + retry
-// composition. `RetryPolicy` and `ResiliencePolicy` are the same shape;
-// new call sites should prefer the resilience name.
-export type { ResiliencePolicy } from './retry-policy.js';

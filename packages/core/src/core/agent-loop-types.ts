@@ -40,7 +40,7 @@ import type { GuardrailPipeline } from './guardrail-port.js';
  *   adapter,
  *   hooks: [{
  *     onIterationStart: ({ iteration }) => console.log('iter', iteration),
- *     onCost: ({ usage }) => metrics.add(usage),
+ *     onTokenUsage: ({ usage }) => metrics.add(usage),
  *   }],
  * });
  * ```
@@ -57,10 +57,17 @@ export interface AgentLoopHook {
    */
   onToolCall?(info: { iteration: number; toolCall: ToolCallRequest }): void;
   /**
-   * Fires after the adapter returns usage for the iteration. MUST NOT throw
-   * — exceptions are logged and swallowed.
+   * Fires after the adapter returns token usage for the iteration.
+   *
+   * The payload carries raw `TokenUsage` only — no dollar value. Cost
+   * accounting lives in the separate {@link CostTracker} subsystem, which
+   * applies model pricing to produce a `TokenUsageRecord` with
+   * `estimatedCost`. This hook is named for what it actually delivers, so
+   * callers don't have to read the signature to learn it's token-shaped.
+   *
+   * MUST NOT throw — exceptions are logged and swallowed.
    */
-  onCost?(info: { iteration: number; usage: TokenUsage }): void;
+  onTokenUsage?(info: { iteration: number; usage: TokenUsage }): void;
   /**
    * Fires at the end of the iteration. `done` indicates whether the loop is
    * terminating. MUST NOT throw — exceptions are logged and swallowed.
@@ -239,7 +246,7 @@ export interface AgentLoopConfig {
   readonly retryableErrors?: readonly string[];
   /**
    * ARCH-006: Iteration-level instrumentation hooks. Each registered hook
-   * receives `onIterationStart`, `onToolCall`, `onCost`, and
+   * receives `onIterationStart`, `onToolCall`, `onTokenUsage`, and
    * `onIterationEnd` callbacks (all optional). Hook errors are logged via
    * `logger` (when set) and swallowed — hooks must never break the loop.
    */

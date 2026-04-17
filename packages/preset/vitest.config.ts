@@ -23,6 +23,7 @@ export default defineConfig({
     alias: {
       // Core sub-path exports
       'harness-one/core': path.join(coreSrc, 'core/index.ts'),
+      'harness-one/advanced': path.join(coreSrc, 'advanced/index.ts'),
       'harness-one/observe': path.join(coreSrc, 'observe/index.ts'),
       'harness-one/prompt': path.join(coreSrc, 'prompt/index.ts'),
       'harness-one/tools': path.join(coreSrc, 'tools/index.ts'),

@@ -1006,7 +1006,7 @@ describe('createRedisStore', () => {
     mockRedis._sets.set(indexKey, existing);
 
     await expect(store.update('bad', { content: 'x' })).rejects.toMatchObject({
-      code: 'MEMORY_DATA_CORRUPTION',
+      code: 'MEMORY_CORRUPT',
     });
     expect(mockRedis.unwatch).toHaveBeenCalled();
   });

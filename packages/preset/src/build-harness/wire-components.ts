@@ -14,11 +14,9 @@
  * @module
  */
 
-import {
-  createAgentLoop,
-  createMiddlewareChain,
-} from 'harness-one/core';
+import { createAgentLoop } from 'harness-one/core';
 import type { AgentAdapter } from 'harness-one/core';
+import { createMiddlewareChain } from 'harness-one/advanced';
 import {
   createTraceManager,
   createCostTracker,
@@ -44,7 +42,7 @@ import { createLangfuseCostTracker } from '@harness-one/langfuse';
 import { registerTiktokenModels } from '@harness-one/tiktoken';
 
 import type { AgentLoop } from 'harness-one/core';
-import type { MiddlewareChain } from 'harness-one/core';
+import type { MiddlewareChain } from 'harness-one/advanced';
 
 import {
   DEFAULT_ADAPTER_TIMEOUT_MS,

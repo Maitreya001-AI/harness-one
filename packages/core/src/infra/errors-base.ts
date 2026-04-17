@@ -84,11 +84,7 @@ export enum HarnessErrorCode {
 
   // ── MEMORY_* ─────────────────────────────────────────────────────────────
   MEMORY_CORRUPT = 'MEMORY_CORRUPT',
-  /** @deprecated Prefer {@link MEMORY_CORRUPT}. */
-  MEMORY_STORE_CORRUPTION = 'MEMORY_STORE_CORRUPTION',
   MEMORY_NOT_FOUND = 'MEMORY_NOT_FOUND',
-  /** @deprecated Prefer {@link MEMORY_CORRUPT}. */
-  MEMORY_DATA_CORRUPTION = 'MEMORY_DATA_CORRUPTION',
   MEMORY_RELAY_CONFLICT = 'MEMORY_RELAY_CONFLICT',
 
   // ── TRACE_* ──────────────────────────────────────────────────────────────

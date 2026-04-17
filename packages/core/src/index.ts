@@ -18,19 +18,18 @@
  */
 
 // ── CORE LOOP (UJ-1) ────────────────────────────────────────────────────────
-export { createAgentLoop } from './core/index.js';       // 1  UJ-1: primary factory
-export { AgentLoop } from './core/index.js';             // 2  UJ-1: class for `new` + instanceof narrowing
-export { createResilientLoop } from './core/index.js';   // 3  UJ-1: canonical retry-wrap (re-added per ADR §5.1 critic §3.4)
-export { createMiddlewareChain } from './core/index.js'; // 4  UJ-1: middleware composition (preset + custom both use)
+export { createAgentLoop } from './core/index.js';           // 1  UJ-1: primary factory
+export { AgentLoop } from './core/index.js';                 // 2  UJ-1: class for `new` + instanceof narrowing
+export { createResilientLoop } from './advanced/index.js';   // 3  UJ-1: canonical retry-wrap (lives in /advanced)
+export { createMiddlewareChain } from './advanced/index.js'; // 4  UJ-1: middleware composition (lives in /advanced)
 
 // ── ERRORS (UJ-1 — every consumer catches these) ────────────────────────────
 export { HarnessError } from './core/errors.js';             // 5  UJ-1: base error class
 export { MaxIterationsError } from './core/errors.js';       // 6  UJ-1: common catch target
 export { AbortedError } from './core/errors.js';             // 7  UJ-1: AbortController path
-export { GuardrailBlockedError } from './core/errors.js';    // 8  UJ-1: guardrail pipeline verdict
-export { ToolValidationError } from './core/errors.js';      // 9  UJ-1: tool-call schema miss
-export { TokenBudgetExceededError } from './core/errors.js'; // 10 UJ-1: budget ceiling
-export { HarnessErrorCode } from './core/errors.js';         // 11 UJ-1: closed enum (runtime-introspectable — ADR §3.f B-pattern)
+export { ToolValidationError } from './core/errors.js';      // 8  UJ-1: tool-call schema miss
+export { TokenBudgetExceededError } from './core/errors.js'; // 9  UJ-1: budget ceiling
+export { HarnessErrorCode } from './core/errors.js';         // 10 UJ-1: closed enum (runtime-introspectable — ADR §3.f B-pattern)
 
 // ── TOOLS (UJ-1) ────────────────────────────────────────────────────────────
 export { defineTool } from './tools/index.js';     // 12 UJ-1: tool DSL
@@ -74,7 +73,6 @@ export type {
   AgentLoopObservabilityConfig,
   AgentLoopPipelinesConfig,
   AgentLoopHook,
-  AgentLoopTraceManager,
   ChatParams,
   ChatResponse,
   StreamChunk,
@@ -86,6 +84,13 @@ export type {
   ResponseFormat,
   AgentEvent,
   DoneReason,
+} from './core/index.js';
+
+// Extension-point types from `harness-one/advanced` — re-exported at the
+// root so top-level imports of the UJ-1 primitives keep their public-type
+// references (MiddlewareChain, ResilientLoop, ...) without a second import.
+export type {
+  AgentLoopTraceManager,
   FallbackAdapterConfig,
   ResilientLoopConfig,
   ResilientLoop,
@@ -96,7 +101,7 @@ export type {
   StreamAggregatorChunk,
   StreamAggregatorMessage,
   StreamAggregatorOptions,
-} from './core/index.js';
+} from './advanced/index.js';
 
 export type {
   ToolDefinition,

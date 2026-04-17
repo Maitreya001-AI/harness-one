@@ -158,16 +158,16 @@ export interface AgentLoopExecutionConfig {
 
 // @public
 export interface AgentLoopHook {
-    onCost?(info: {
-        iteration: number;
-        usage: TokenUsage;
-    }): void;
     onIterationEnd?(info: {
         iteration: number;
         done: boolean;
     }): void;
     onIterationStart?(info: {
         iteration: number;
+    }): void;
+    onTokenUsage?(info: {
+        iteration: number;
+        usage: TokenUsage;
     }): void;
     onToolCall?(info: {
         iteration: number;
@@ -630,11 +630,6 @@ export interface FallbackAdapterConfig {
 // @public
 export type Guardrail = (ctx: GuardrailContext) => Promise<GuardrailVerdict> | GuardrailVerdict;
 
-// @public @deprecated
-export class GuardrailBlockedError extends HarnessError {
-    constructor(reason: string, cause?: Error);
-}
-
 // @public
 export interface GuardrailContext {
     // (undocumented)
@@ -810,14 +805,10 @@ export enum HarnessErrorCode {
     LOCK_ABORTED = "LOCK_ABORTED",
     // (undocumented)
     MEMORY_CORRUPT = "MEMORY_CORRUPT",
-    // @deprecated (undocumented)
-    MEMORY_DATA_CORRUPTION = "MEMORY_DATA_CORRUPTION",
     // (undocumented)
     MEMORY_NOT_FOUND = "MEMORY_NOT_FOUND",
     // (undocumented)
     MEMORY_RELAY_CONFLICT = "MEMORY_RELAY_CONFLICT",
-    // @deprecated (undocumented)
-    MEMORY_STORE_CORRUPTION = "MEMORY_STORE_CORRUPTION",
     // (undocumented)
     ORCH_AGENT_NOT_FOUND = "ORCH_AGENT_NOT_FOUND",
     // (undocumented)
@@ -1774,15 +1765,15 @@ export interface VectorSearchOptions {
 
 // Warnings were encountered during analysis:
 //
-// dist/cost-tracker-V7rUFkVB.d.ts:333:5 - (ae-forgotten-export) The symbol "EvictionStrategyName" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-V7rUFkVB.d.ts:333:5 - (ae-forgotten-export) The symbol "EvictionStrategy" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-V7rUFkVB.d.ts:373:5 - (ae-forgotten-export) The symbol "MetricsPort" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-BlC5vT5N.d.ts:334:5 - (ae-forgotten-export) The symbol "EvictionStrategyName" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-BlC5vT5N.d.ts:334:5 - (ae-forgotten-export) The symbol "EvictionStrategy" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-BlC5vT5N.d.ts:374:5 - (ae-forgotten-export) The symbol "MetricsPort" needs to be exported by the entry point index.d.ts
 // dist/pipeline-CCw3TkZG.d.ts:45:5 - (ae-forgotten-export) The symbol "GuardrailEvent" needs to be exported by the entry point index.d.ts
-// dist/resilience-DYELvvjw.d.ts:342:5 - (ae-forgotten-export) The symbol "MiddlewareContext" needs to be exported by the entry point index.d.ts
+// dist/resilience-B8mvmtrc.d.ts:64:5 - (ae-forgotten-export) The symbol "MiddlewareContext" needs to be exported by the entry point index.d.ts
 // dist/session/index.d.ts:162:5 - (ae-forgotten-export) The symbol "SessionStore" needs to be exported by the entry point index.d.ts
 // dist/session/index.d.ts:163:9 - (ae-forgotten-export) The symbol "SessionId" needs to be exported by the entry point index.d.ts
-// dist/trace-manager-_DYbeni6.d.ts:71:5 - (ae-forgotten-export) The symbol "RedactConfig" needs to be exported by the entry point index.d.ts
-// dist/trace-manager-_DYbeni6.d.ts:78:5 - (ae-forgotten-export) The symbol "Redactor" needs to be exported by the entry point index.d.ts
+// dist/trace-manager-C3gtYT7b.d.ts:178:5 - (ae-forgotten-export) The symbol "RedactConfig" needs to be exported by the entry point index.d.ts
+// dist/trace-manager-C3gtYT7b.d.ts:185:5 - (ae-forgotten-export) The symbol "Redactor" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 
