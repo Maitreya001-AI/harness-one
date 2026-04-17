@@ -54,8 +54,6 @@ export interface HarnessConfigBase {
   /** Redis client (optional -- enables persistent memory). */
   readonly redis?: RedisStoreConfig['client'];
 
-  /** Override: custom AgentAdapter. */
-  readonly adapter?: AgentAdapter;
   /** Override: custom TraceExporter[]. */
   readonly exporters?: TraceExporter[];
   /** Override: custom MemoryStore. */
@@ -145,7 +143,13 @@ export interface HarnessConfigBase {
   readonly logger?: Logger;
 }
 
-/** Configuration for creating a full Harness instance with Anthropic. */
+/**
+ * Configuration for creating a full Harness instance with Anthropic.
+ *
+ * Wave-14: `adapter` is explicitly `undefined` so the discriminated union
+ * enforces XOR with {@link AdapterHarnessConfig} at compile time — passing
+ * both `adapter` and `client` is a type error, not a runtime warning.
+ */
 export interface AnthropicHarnessConfig extends HarnessConfigBase {
   /**
    * Wave-13 F-4: optional discriminator tag for the {@link HarnessConfig}
@@ -158,9 +162,16 @@ export interface AnthropicHarnessConfig extends HarnessConfigBase {
   readonly provider: 'anthropic';
   /** Anthropic client instance. */
   readonly client: AnthropicAdapterConfig['client'];
+  /** Adapter is mutually exclusive with provider/client — type error if set. */
+  readonly adapter?: undefined;
 }
 
-/** Configuration for creating a full Harness instance with OpenAI. */
+/**
+ * Configuration for creating a full Harness instance with OpenAI.
+ *
+ * Wave-14: `adapter` is explicitly `undefined` so the discriminated union
+ * enforces XOR with {@link AdapterHarnessConfig} at compile time.
+ */
 export interface OpenAIHarnessConfig extends HarnessConfigBase {
   /**
    * Wave-13 F-4: optional discriminator tag for the {@link HarnessConfig}
@@ -171,6 +182,8 @@ export interface OpenAIHarnessConfig extends HarnessConfigBase {
   readonly provider: 'openai';
   /** OpenAI client instance. */
   readonly client: OpenAIAdapterConfig['client'];
+  /** Adapter is mutually exclusive with provider/client — type error if set. */
+  readonly adapter?: undefined;
 }
 
 /**

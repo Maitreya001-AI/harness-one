@@ -1,3 +1,30 @@
+/**
+ * AgentLoop integration test suite.
+ *
+ * This file intentionally retains the broad end-to-end coverage that was
+ * accumulated across Waves 5–13 and round-3 cleanup. It is a black-box
+ * integration suite: every test wires a full AgentLoop and exercises
+ * real control-flow branches through the resolved config, hooks, and
+ * streaming paths. Splitting it into focused suites would double the
+ * setup boilerplate without adding coverage.
+ *
+ * Focused unit tests for sub-modules landed alongside each extraction:
+ * - `adapter-timeout.test.ts` — timeout/abort-chaining helper
+ * - `adapter-caller.test.ts` — retry orchestration
+ * - `agent-loop-config-v2.test.ts` — nested config flattening
+ * - `agent-loop-hooks.test.ts` — hook dispatch semantics
+ * - `agent-loop-guardrails.test.ts` — guardrail integration
+ * - `agent-loop-status.test.ts` — iteration + lifecycle status
+ * - `iteration-runner.test.ts` — per-iteration state machine
+ * - `retry-policy.test.ts` — retry / backoff / circuit-breaker policy
+ * - `guardrail-runner.test.ts` — guardrail dispatch per phase
+ * - `hook-dispatcher.test.ts` — hook error isolation
+ *
+ * New tests SHOULD prefer the focused files above. Add here only when
+ * the test specifically validates end-to-end loop behaviour that
+ * cannot be observed through a sub-module.
+ */
+
 import { describe, it, expect, vi } from 'vitest';
 import { AgentLoop } from '../agent-loop.js';
 import type { AgentAdapter, ChatResponse, Message, ToolCallRequest, StreamChunk, ToolSchema, ExecutionStrategy, ToolExecutionResult } from '../types.js';

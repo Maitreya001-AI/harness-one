@@ -21,7 +21,8 @@ import {
   type IterationRunner,
 } from './iteration-runner.js';
 import { safeWarn } from '../infra/safe-log.js';
-import type { AgentLoopConfig } from './agent-loop-types.js';
+import type { AgentLoopConfig, AgentLoopConfigV2 } from './agent-loop-types.js';
+import { flattenNestedAgentLoopConfig, isNestedAgentLoopConfig } from './agent-loop-config.js';
 import { createHookDispatcher } from './hook-dispatcher.js';
 import {
   resolveAgentLoopConfig,
@@ -619,6 +620,13 @@ export class AgentLoop {
  * for await (const event of loop.run(messages)) { ... }
  * ```
  */
-export function createAgentLoop(config: AgentLoopConfig): AgentLoop {
+export function createAgentLoop(config: AgentLoopConfig): AgentLoop;
+export function createAgentLoop(config: AgentLoopConfigV2): AgentLoop;
+export function createAgentLoop(
+  config: AgentLoopConfig | AgentLoopConfigV2,
+): AgentLoop {
+  if (isNestedAgentLoopConfig(config)) {
+    return new AgentLoop(flattenNestedAgentLoopConfig(config));
+  }
   return new AgentLoop(config);
 }

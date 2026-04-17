@@ -7,7 +7,7 @@
 import type { AgentLoop } from '../core/agent-loop.js';
 import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import { prefixedSecureId } from '../infra/ids.js';
-import { computeJitterMs } from '../infra/backoff.js';
+import { computeJitterMs, AGENT_POOL_IDLE_JITTER_FRACTION } from '../infra/backoff.js';
 import type { Logger } from '../infra/logger.js';
 import type { MetricsPort } from '../observe/metrics-port.js';
 import type { TraceManager } from '../observe/trace-manager.js';
@@ -273,12 +273,16 @@ export function createAgentPool(
 
   function startIdleTimer(entry: PoolEntry): void {
     clearIdleTimer(entry);
-    // Add jitter (0–10% of timeout) to prevent thundering herd. Delegates to
-    // the shared jitter utility for consistency and testability. Clamp jitter
-    // to `idleTimeout * 0.1` — defensive against a custom random source
-    // returning >=1 or rounding oddities that could push a jittered timer
-    // well past the intended 10% ceiling.
-    const jitter = Math.min(computeJitterMs(idleTimeout, 0.1), Math.floor(idleTimeout * 0.1));
+    // Add jitter (0–10% of timeout via AGENT_POOL_IDLE_JITTER_FRACTION) to
+    // prevent thundering herd. Delegates to the shared jitter utility for
+    // consistency and testability. Clamp jitter to the same fraction of
+    // idleTimeout — defensive against a custom random source returning >=1
+    // or rounding oddities that could push a jittered timer past the ceiling.
+    const jitterCeiling = Math.floor(idleTimeout * AGENT_POOL_IDLE_JITTER_FRACTION);
+    const jitter = Math.min(
+      computeJitterMs(idleTimeout, AGENT_POOL_IDLE_JITTER_FRACTION),
+      jitterCeiling,
+    );
     const timer = setTimeout(() => {
       // Recycle: dispose idle agent if above min
       if (entry.state === 'idle') {

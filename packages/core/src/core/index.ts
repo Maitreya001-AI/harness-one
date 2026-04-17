@@ -45,6 +45,16 @@ export { assertNever } from './events.js';
 // remains exported for `instanceof` / type references.
 export { AgentLoop, createAgentLoop } from './agent-loop.js';
 export type { AgentLoopConfig, AgentLoopHook } from './agent-loop.js';
+// Nested-form public config (additive; flat AgentLoopConfig remains
+// accepted by `createAgentLoop`). Prefer the nested shape in new code.
+export type {
+  AgentLoopConfigV2,
+  AgentLoopExecutionConfig,
+  AgentLoopLimitsConfig,
+  AgentLoopResilienceConfig,
+  AgentLoopObservabilityConfig,
+  AgentLoopPipelinesConfig,
+} from './agent-loop-types.js';
 
 // Tracing interface (ARCH-002) — hoisted out of agent-loop.ts so callers can
 // depend on the shape without importing the loop implementation.
@@ -100,3 +110,24 @@ export {
   isTrustedSystemMessage,
   sanitizeRestoredMessage,
 } from './trusted-system-message.js';
+
+// Shared validators (centralized so preset, core, and future callers
+// cannot drift on what counts as a valid positive integer, finite
+// positive number, or pricing entry).
+export {
+  requirePositiveInt,
+  requireNonNegativeInt,
+  requireFinitePositive,
+  requireFiniteNonNegative,
+  requireUnitInterval,
+  validatePricingEntry,
+  validatePricingArray,
+} from '../infra/validate.js';
+export type { PricingNumericFields } from '../infra/validate.js';
+
+// Canonical jitter-fraction constants — import instead of hard-coding
+// so the retry vs pool jitter asymmetry stays readable.
+export {
+  ADAPTER_RETRY_JITTER_FRACTION,
+  AGENT_POOL_IDLE_JITTER_FRACTION,
+} from '../infra/backoff.js';

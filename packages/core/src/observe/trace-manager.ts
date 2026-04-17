@@ -19,6 +19,7 @@ import { createSpanAttributeKeyWarner } from './span-attribute-keys.js';
 import { createTraceSampler } from './trace-sampler.js';
 import { createTraceRetryCollector } from './trace-retry-collector.js';
 import { createTraceExporterCoordinator } from './trace-exporter-coordinator.js';
+import { toReadonlyTrace as buildReadonlyTrace } from './trace-view.js';
 import type { Trace, Span, SpanEvent, SpanEventSeverity, TraceExporter } from './types.js';
 import type { RetryMetrics, TraceManager } from './trace-manager-types.js';
 export type { RetryMetrics, TraceManager } from './trace-manager-types.js';
@@ -328,38 +329,7 @@ export function createTraceManager(config?: {
 
 
   function toReadonlyTrace(mt: MutableTrace): Trace {
-    const traceSpans: Span[] = mt.spanIds.map(sid => {
-      const s = spans.get(sid);
-      if (!s) return null;
-      return { ...s, events: [...s.events] } as Span;
-    }).filter((s): s is Span => s !== null);
-
-    // `metadata` is the BACKWARD-COMPATIBLE view — callers that read
-    // `trace.metadata` still see user metadata. New code consults
-    // `userMetadata` / `systemMetadata` directly via the readonly alias.
-    const combinedMetadata = { ...mt.userMetadata };
-    // When system metadata is present, make it available under a well-known
-    // namespaced key so legacy observers that only read `.metadata` still see
-    // it. Namespaced to avoid collisions with user keys.
-    if (Object.keys(mt.systemMetadata).length > 0) {
-      (combinedMetadata as Record<string, unknown>)['__system__'] = { ...mt.systemMetadata };
-    }
-
-    const result: Trace & {
-      readonly userMetadata?: Record<string, unknown>;
-      readonly systemMetadata?: Record<string, unknown>;
-    } = {
-      id: mt.id,
-      name: mt.name,
-      startTime: mt.startTime,
-      ...(mt.endTime !== undefined && { endTime: mt.endTime }),
-      metadata: combinedMetadata,
-      userMetadata: { ...mt.userMetadata },
-      systemMetadata: { ...mt.systemMetadata },
-      spans: traceSpans,
-      status: mt.status,
-    };
-    return result;
+    return buildReadonlyTrace(mt, (id) => spans.get(id));
   }
 
   return {

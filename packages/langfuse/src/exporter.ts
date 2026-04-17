@@ -8,7 +8,7 @@ import type { Langfuse } from 'langfuse';
 import type { TraceExporter, Trace, Span, InstrumentationPort, MetricsPort } from 'harness-one/observe';
 import type { Logger } from 'harness-one/observe';
 import { safeWarn } from 'harness-one/observe';
-import { createRedactor, sanitizeAttributes } from 'harness-one/observe';
+import { createRedactor, sanitizeAttributes } from 'harness-one/redact';
 import { HarnessError } from 'harness-one/core';
 
 // ---------------------------------------------------------------------------

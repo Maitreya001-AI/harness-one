@@ -43,6 +43,7 @@ export interface AdapterHarnessConfig extends HarnessConfigBase {
 
 // @public
 export interface AnthropicHarnessConfig extends HarnessConfigBase {
+    readonly adapter?: undefined;
     readonly client: AnthropicAdapterConfig['client'];
     // (undocumented)
     readonly provider: 'anthropic';
@@ -110,7 +111,6 @@ export type HarnessConfig = AdapterHarnessConfig | AnthropicHarnessConfig | Open
 
 // @public
 export interface HarnessConfigBase {
-    readonly adapter?: AgentAdapter;
     readonly adapterTimeoutMs?: number;
     readonly baseRetryDelayMs?: number;
     readonly budget?: number;
@@ -150,6 +150,7 @@ export interface HarnessConfigBase {
 
 // @public
 export interface OpenAIHarnessConfig extends HarnessConfigBase {
+    readonly adapter?: undefined;
     readonly client: OpenAIAdapterConfig['client'];
     // (undocumented)
     readonly provider: 'openai';

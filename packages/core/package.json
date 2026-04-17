@@ -63,6 +63,11 @@
       "types": "./dist/orchestration/index.d.ts",
       "import": "./dist/orchestration/index.js",
       "require": "./dist/cjs/orchestration/index.cjs"
+    },
+    "./redact": {
+      "types": "./dist/redact/index.d.ts",
+      "import": "./dist/redact/index.js",
+      "require": "./dist/cjs/redact/index.cjs"
     }
   },
   "files": [

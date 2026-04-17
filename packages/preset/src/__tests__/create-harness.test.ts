@@ -40,6 +40,7 @@ const mocks = vi.hoisted(() => {
     recordUsage: vi.fn(),
     getTotalCost: vi.fn(() => 0),
     getCostByModel: vi.fn(() => ({})),
+    getCostByModelMap: vi.fn(() => new Map()),
     getCostByTrace: vi.fn(() => 0),
     checkBudget: vi.fn(() => null),
     onAlert: vi.fn(),
@@ -279,6 +280,20 @@ describe('createHarness() factory', () => {
 
     it('throws HarnessError when config is completely empty', () => {
       expect(() => createHarness({} as unknown as AnthropicHarnessConfig)).toThrow(HarnessError);
+    });
+
+    it('throws HarnessError when both adapter AND client are provided (Wave-14 XOR)', () => {
+      const customAdapter = { chat: vi.fn() };
+      const bad = {
+        ...anthropicConfig,
+        adapter: customAdapter,
+      } as unknown as AnthropicHarnessConfig;
+      expect(() => createHarness(bad)).toThrow(/mutually exclusive/);
+      try {
+        createHarness(bad);
+      } catch (e) {
+        expect((e as HarnessError).code).toBe(HarnessErrorCode.CORE_INVALID_CONFIG);
+      }
     });
 
     describe('maxIterations validation', () => {

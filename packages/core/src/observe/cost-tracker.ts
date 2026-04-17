@@ -482,6 +482,16 @@ export function createCostTracker(config?: {
       return result;
     },
 
+    getCostByModelMap(): ReadonlyMap<string, number> {
+      // Snapshot a frozen copy so callers cannot mutate the internal
+      // KahanSum map. The snapshot preserves insertion order.
+      const snapshot = new Map<string, number>();
+      for (const [model, sum] of modelTotals) {
+        snapshot.set(model, sum.total);
+      }
+      return snapshot;
+    },
+
     getCostByTrace(traceId: string): number {
       return traceTotals.get(traceId)?.total ?? 0;
     },

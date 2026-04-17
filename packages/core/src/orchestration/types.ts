@@ -68,8 +68,14 @@ export interface DelegationTask {
 
 /** Shared context accessible by all agents in the orchestration. */
 export interface SharedContext {
-  /** Get a value by key. */
-  get(key: string): unknown;
+  /**
+   * Get a value by key. The generic overload is a *type assertion*, not a
+   * runtime check — callers that pass `T` are declaring "I know this key
+   * holds a T" and take responsibility for any mismatch. Use it to narrow
+   * at the boundary (e.g. `ctx.get<UserProfile>('user.profile')`) instead
+   * of sprinkling `as UserProfile` casts at every call site.
+   */
+  get<T = unknown>(key: string): T | undefined;
   /** Set a value by key. */
   set(key: string, value: unknown): void;
   /**

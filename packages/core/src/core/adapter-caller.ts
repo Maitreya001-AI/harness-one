@@ -24,6 +24,7 @@ import { categorizeAdapterError } from './error-classifier.js';
 import { type CircuitBreaker, CircuitOpenError } from '../infra/circuit-breaker.js';
 import type { StreamHandler } from './stream-handler.js';
 import { createRetryPolicy } from './retry-policy.js';
+import { withAdapterTimeout } from './adapter-timeout.js';
 
 /** Successful single-attempt adapter call result. */
 export interface AdapterCallOnceOk {
@@ -159,6 +160,13 @@ export interface AdapterCallerConfig {
   readonly logger?: {
     debug?: (msg: string, meta?: Record<string, unknown>) => void;
   };
+  /**
+   * Optional metrics port. Forwarded to {@link withAdapterTimeout}; the
+   * timeout helper increments `harness.adapter.orphan_after_timeout`
+   * each time the adapter rejects after the timeout deadline — signal of
+   * a provider that does not honour abort signals promptly.
+   */
+  readonly metrics?: import('./adapter-timeout.js').AdapterTimeoutMetrics;
 }
 
 /** Public surface of the adapter caller. */
@@ -216,81 +224,20 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
     conversation: readonly Message[],
   ): Promise<AdapterCallOnceResult> {
     const chatFn = async (): Promise<AdapterCallOnceResult> => {
-      // When `adapterTimeoutMs` is set, chain an internal AbortController
-      // with `config.signal` and race `adapter.chat` against an abortable
-      // timeout. Unset = unlimited.
+      // When `adapterTimeoutMs` is set, delegate to the timeout helper which
+      // owns the AbortController chaining + orphan-catch bookkeeping. Unset
+      // = unlimited (delegate straight to adapter.chat).
       if (config.adapterTimeoutMs !== undefined && config.adapterTimeoutMs > 0) {
-        const timeoutMs = config.adapterTimeoutMs;
-        const internalAbort = new AbortController();
-        // Chain: any external abort cancels the adapter request too.
-        const forwardAbort = (): void => {
-          try {
-            internalAbort.abort();
-          } catch {
-            /* already aborted — fine */
-          }
-        };
-        if (config.signal.aborted) {
-          internalAbort.abort();
-        } else {
-          config.signal.addEventListener('abort', forwardAbort, { once: true });
-        }
-
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        let timedOut = false;
-        const chatPromise = config.adapter.chat({
-          messages: conversation as Message[],
-          signal: internalAbort.signal,
-          ...(config.tools !== undefined && { tools: config.tools as ToolSchema[] }),
+        const response = await withAdapterTimeout({
+          adapter: config.adapter,
+          messages: conversation,
+          ...(config.tools !== undefined && { tools: config.tools }),
+          externalSignal: config.signal,
+          timeoutMs: config.adapterTimeoutMs,
+          ...(config.logger !== undefined && { logger: config.logger }),
+          ...(config.metrics !== undefined && { metrics: config.metrics }),
         });
-        const timeoutPromise = new Promise<never>((_, reject) => {
-          timer = setTimeout(() => {
-            timedOut = true;
-            try {
-              internalAbort.abort();
-            } catch {
-              /* */
-            }
-            reject(
-              new HarnessError(
-                `Adapter chat timed out after ${timeoutMs}ms`,
-                HarnessErrorCode.CORE_TIMEOUT,
-                'Increase adapterTimeoutMs or investigate provider latency',
-              ),
-            );
-          }, timeoutMs);
-          if (typeof timer === 'object' && 'unref' in timer) {
-            (timer as NodeJS.Timeout).unref();
-          }
-        });
-
-        try {
-          const response = await Promise.race([chatPromise, timeoutPromise]);
-          return { ok: true, message: response.message, usage: response.usage };
-        } finally {
-          if (timer !== undefined) clearTimeout(timer);
-          try {
-            config.signal.removeEventListener('abort', forwardAbort);
-          } catch {
-            /* */
-          }
-          // Swallow any rejection from the now-orphaned chatPromise on
-          // timeout; without this the Node process prints an
-          // UnhandledPromiseRejection when the adapter finally throws its own
-          // AbortError after we've already resolved/rejected. Emit a debug
-          // log so ops can detect abnormal upstream behaviour (e.g. adapter
-          // not honouring the abort signal) — kept at debug-level because
-          // not every orphan rejection is actionable.
-          if (timedOut) {
-            chatPromise.catch((err: unknown) => {
-              config.logger?.debug?.('adapter orphan after timeout', {
-                error: String(err).slice(0, 200),
-                adapter: config.adapter.name ?? 'unknown',
-                timeoutMs,
-              });
-            });
-          }
-        }
+        return { ok: true, message: response.message, usage: response.usage };
       }
 
       const response = await config.adapter.chat({

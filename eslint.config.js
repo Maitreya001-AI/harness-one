@@ -74,6 +74,44 @@ export default tseslint.config(
           'harness-one/infra/**',
           'harness-one/dist/infra',
           'harness-one/dist/infra/**',
+          // Wave-14 ARCHITECTURE.md: sibling packages must go through the
+          // published subpath exports, not through the source tree. These
+          // patterns catch mistyped imports like `harness-one/src/core/...`.
+          'harness-one/src',
+          'harness-one/src/**',
+          'harness-one/dist/src',
+          'harness-one/dist/src/**',
+        ],
+      }],
+    },
+  },
+  // Wave-14 ARCHITECTURE.md: layering contract. `core/src/infra/**` sits
+  // at L1. It may depend on the error/type primitives in `core/errors.js`
+  // and `core/types.js` (the structural contract it needs to throw
+  // HarnessError + accept branded IDs) but must NOT depend on any L3
+  // subsystem — that would create a cycle.
+  {
+    files: ['packages/core/src/infra/**/*.{ts,tsx}'],
+    ignores: ['**/__tests__/**', '**/*.test.ts'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        patterns: [
+          {
+            group: [
+              '../orchestration/**',
+              '../session/**',
+              '../observe/**',
+              '../guardrails/**',
+              '../memory/**',
+              '../tools/**',
+              '../prompt/**',
+              '../context/**',
+              '../rag/**',
+              '../evolve-check/**',
+              '../redact/**',
+            ],
+            message: 'infra is the bottom layer (L1). It must not import from core subsystems (L3). See docs/ARCHITECTURE.md.',
+          },
         ],
       }],
     },

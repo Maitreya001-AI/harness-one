@@ -75,10 +75,17 @@ export type {
 } from './lifecycle.js';
 export { createHarnessLifecycle } from './lifecycle.js';
 
-// Secret redaction primitives — hoisted from `infra/redact.ts` so adapter
-// packages (langfuse, openai, ...) can reuse the canonical implementation
-// instead of inlining their own copies.
+/**
+ * Secret redaction primitives — historically re-exported from `observe`
+ * for convenience, but the canonical public path is now
+ * `harness-one/redact`. The re-exports below remain for back-compat
+ * through the next minor version; see MIGRATION.md for the removal
+ * schedule.
+ *
+ * @deprecated Import from `harness-one/redact` instead.
+ */
 export type { RedactConfig, Redactor } from '../infra/redact.js';
+/** @deprecated Import from `harness-one/redact` instead. */
 export {
   createRedactor,
   redactValue,

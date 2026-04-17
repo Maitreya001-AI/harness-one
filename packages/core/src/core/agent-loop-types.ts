@@ -68,6 +68,77 @@ export interface AgentLoopHook {
   onIterationEnd?(info: { iteration: number; done: boolean }): void;
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Nested public API (additive, back-compat alongside the flat shape)
+//
+// The flat `AgentLoopConfig` below groups 20+ optional fields into a
+// single struct. The nested groups here let new callers pass concern-
+// sized bundles — `AgentLoopConfigV2` is a strict superset of the flat
+// fields (every field has the same name + semantics). Consumers may
+// mix flat and nested fields on the same call; if both are present,
+// nested takes precedence.
+// ─────────────────────────────────────────────────────────────────────
+
+/** Execution-strategy bundle. */
+export interface AgentLoopExecutionConfig {
+  readonly executionStrategy?: ExecutionStrategy;
+  readonly parallel?: boolean;
+  readonly maxParallelToolCalls?: number;
+  readonly isSequentialTool?: (name: string) => boolean;
+}
+
+/** Limit / capacity bundle. */
+export interface AgentLoopLimitsConfig {
+  readonly maxIterations?: number;
+  readonly maxTotalTokens?: number;
+  readonly maxConversationMessages?: number;
+  readonly maxStreamBytes?: number;
+  readonly maxToolArgBytes?: number;
+  readonly toolTimeoutMs?: number;
+}
+
+/** Resilience (retry + circuit-breaker behaviour) bundle. */
+export interface AgentLoopResilienceConfig {
+  readonly maxAdapterRetries?: number;
+  readonly baseRetryDelayMs?: number;
+  readonly retryableErrors?: readonly string[];
+}
+
+/** Observability bundle. */
+export interface AgentLoopObservabilityConfig {
+  readonly traceManager?: import('./trace-interface.js').AgentLoopTraceManager;
+  readonly logger?: { warn: (msg: string, meta?: Record<string, unknown>) => void };
+}
+
+/** Guardrail pipelines bundle. */
+export interface AgentLoopPipelinesConfig {
+  readonly input?: GuardrailPipeline;
+  readonly output?: GuardrailPipeline;
+}
+
+/**
+ * Nested-form configuration for the AgentLoop. Every group is
+ * optional; unspecified groups behave exactly like the flat defaults.
+ *
+ * Accepted by `createAgentLoop` in addition to the flat
+ * {@link AgentLoopConfig} — see `agent-loop-config.ts` for the
+ * resolution rules. Prefer this shape in new code.
+ */
+export interface AgentLoopConfigV2 {
+  readonly adapter: AgentAdapter;
+  readonly signal?: AbortSignal;
+  readonly onToolCall?: (call: ToolCallRequest) => Promise<unknown>;
+  readonly tools?: ToolSchema[];
+  readonly streaming?: boolean;
+  readonly hooks?: readonly AgentLoopHook[];
+  readonly strictHooks?: boolean;
+  readonly execution?: AgentLoopExecutionConfig;
+  readonly limits?: AgentLoopLimitsConfig;
+  readonly resilience?: AgentLoopResilienceConfig;
+  readonly observability?: AgentLoopObservabilityConfig;
+  readonly pipelines?: AgentLoopPipelinesConfig;
+}
+
 /** Configuration for the AgentLoop. */
 export interface AgentLoopConfig {
   readonly adapter: AgentAdapter;

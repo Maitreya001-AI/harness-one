@@ -154,7 +154,7 @@ export function createContextBoundary(
 
   function createScopedContext(agentId: string): SharedContext {
     return {
-      get(key: string): unknown {
+      get<T = unknown>(key: string): T | undefined {
         const policy = policyMap.get(agentId);
         if (policy && !canRead(policy, key)) {
           recordViolation({ type: 'read_denied', agentId, key, timestamp: Date.now() });
@@ -168,7 +168,7 @@ export function createContextBoundary(
           }
           return undefined;
         }
-        return context.get(key);
+        return context.get<T>(key);
       },
       set(key: string, value: unknown): void {
         const policy = policyMap.get(agentId);

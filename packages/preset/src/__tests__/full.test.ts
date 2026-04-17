@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => {
     recordUsage: vi.fn(),
     getTotalCost: vi.fn(() => 0),
     getCostByModel: vi.fn(() => ({})),
+    getCostByModelMap: vi.fn(() => new Map()),
     getCostByTrace: vi.fn(() => 0),
     checkBudget: vi.fn(() => null),
     onAlert: vi.fn(),
@@ -155,9 +156,17 @@ describe('createHarness', () => {
       );
     });
 
-    it('uses custom adapter when provided', () => {
+    it('uses custom adapter when provided (AdapterHarnessConfig shape)', () => {
       const customAdapter = { chat: vi.fn() };
-      createHarness({ ...baseConfig, adapter: customAdapter as unknown as AgentAdapter });
+      // Wave-14: adapter and client are mutually exclusive in HarnessConfig,
+      // so the adapter-override path uses the AdapterHarnessConfig variant
+      // (no provider / client). Non-provider HarnessConfigBase fields from
+      // `baseConfig` (model, pricing, budget, ...) are still valid.
+      const { provider: _p, client: _c, ...rest } = baseConfig as unknown as {
+        provider?: unknown;
+        client?: unknown;
+      } & Record<string, unknown>;
+      createHarness({ ...rest, adapter: customAdapter as unknown as AgentAdapter });
       expect(mocks.createAnthropicAdapter).not.toHaveBeenCalled();
       expect(mocks.createOpenAIAdapter).not.toHaveBeenCalled();
     });
@@ -482,7 +491,13 @@ describe('createHarness', () => {
   describe('partial overrides', () => {
     it('allows overriding adapter while using default everything else', () => {
       const customAdapter = { chat: vi.fn() };
-      const harness = createHarness({ ...baseConfig, adapter: customAdapter as unknown as AgentAdapter });
+      // Wave-14: adapter+client are mutually exclusive, so this uses the
+      // AdapterHarnessConfig shape (no provider/client).
+      const { provider: _p, client: _c, ...rest } = baseConfig as unknown as {
+        provider?: unknown;
+        client?: unknown;
+      } & Record<string, unknown>;
+      const harness = createHarness({ ...rest, adapter: customAdapter as unknown as AgentAdapter });
       expect(harness.loop).toBeDefined();
       expect(harness.memory).toBeDefined();
       expect(mocks.createAnthropicAdapter).not.toHaveBeenCalled();

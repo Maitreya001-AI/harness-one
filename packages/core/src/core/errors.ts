@@ -312,6 +312,12 @@ export class AbortedError extends HarnessError {
 /**
  * Thrown when a guardrail blocks execution.
  *
+ * @deprecated Wave-14: throw `new HarnessError(reason, HarnessErrorCode.GUARD_VIOLATION, ...)`
+ *   directly instead. The runtime guardrail pipeline (see
+ *   `core/guardrail-runner.ts`) now throws the typed `HarnessError` form;
+ *   this class remains exported for back-compat with consumer `instanceof`
+ *   checks and will be removed in v2.0. See MIGRATION.md for details.
+ *
  * @example
  * ```ts
  * throw new GuardrailBlockedError('Content policy violation');

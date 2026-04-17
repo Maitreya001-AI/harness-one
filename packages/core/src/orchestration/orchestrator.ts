@@ -6,7 +6,6 @@
 
 import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import { MessageQueue } from './message-queue.js';
-import { createAsyncLock, type AsyncLock } from '../infra/async-lock.js';
 import type { Logger } from '../infra/logger.js';
 import type {
   AgentMessage,
@@ -18,25 +17,12 @@ import type {
   OrchestratorEvent,
   SharedContext,
 } from './types.js';
+import { createSharedContext } from './shared-context-store.js';
+import { createDelegationTracker } from './delegation-tracker.js';
 
-/**
- * Keys that would bypass own-property checks via prototype pollution if
- * accidentally used as context keys.
- */
-const FORBIDDEN_CONTEXT_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
-
-/**
- * Normalize a key (or policy prefix) via NFKC + casefold so that Unicode
- * visual-variant attacks ("ＡＤＭＩＮ." vs "admin.") cannot bypass prefix-based
- * policies. Exported via the orchestrator internals; callers using
- * `BoundaryPolicy.allowRead/allowWrite` prefixes benefit automatically.
- *
- * Consumers relying on prefix semantics MUST include the literal separator
- * (e.g. `'admin.'`) — we do not silently add it.
- */
-export function normalizeContextKey(key: string): string {
-  return key.normalize('NFKC').toLowerCase();
-}
+// Re-export so existing consumers (context-boundary + external callers) see
+// the canonical symbol at its original path.
+export { normalizeContextKey, FORBIDDEN_CONTEXT_KEYS } from './shared-context-store.js';
 
 // ──────────────────────────────────────────────────────────────────────────
 // Facet interfaces — narrow contracts that `AgentOrchestrator` composes.
@@ -197,30 +183,15 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
   const agents = new Map<string, MutableAgentRegistration>();
   // Set-backed handler registry for O(1) unsubscribe.
   const eventHandlers = new Set<(event: OrchestratorEvent) => void>();
-  const contextStore = new Map<string, unknown>();
   const logger = config?.logger;
   const redactMetadata = config?.redactMetadata;
 
   // Cumulative count of dropped messages (queue overflow).
   let droppedMessages = 0;
 
-  // Track delegation chains to detect cycles.
-  const delegationChain = new Map<string, Set<string>>();
-  // Per-source-agent async lock. The delegate() flow does
-  // "check chain -> await strategy.select() -> mutate chain"; without a lock
-  // two concurrent delegations from the same source agent can both pass the
-  // cycle check and then both mutate the chain, admitting a cycle that the
-  // next caller will observe. Serialise by source agent id so unrelated
-  // source agents stay concurrent.
-  const delegationLocks = new Map<string, AsyncLock>();
-  function getDelegationLock(sourceId: string): AsyncLock {
-    let lock = delegationLocks.get(sourceId);
-    if (!lock) {
-      lock = createAsyncLock();
-      delegationLocks.set(sourceId, lock);
-    }
-    return lock;
-  }
+  const delegationTracker = createDelegationTracker({
+    maxEntries: maxDelegationChainEntries,
+  });
 
   function emit(event: OrchestratorEvent): void {
     // Iterate over a snapshot so that handlers can safely unsubscribe
@@ -320,81 +291,11 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
     return agent;
   }
 
-  const sharedContext: SharedContext = {
-    get(key: string): unknown {
-      // Normalize key for consistent lookup — ensures 'ADMIN' and 'admin'
-      // resolve to the same entry, matching boundary policy normalization.
-      return contextStore.get(normalizeContextKey(key));
-    },
-    /**
-     * Set a value on the shared context.
-     *
-     * Keys that would bypass own-property checks via prototype pollution
-     * (`__proto__`, `constructor`, `prototype`) are rejected with an
-     * `INVALID_KEY` HarnessError. Keys are normalized via NFKC + casefold
-     * before storage so that lookup and boundary policy matching are
-     * consistent (see `normalizeContextKey`).
-     */
-    set(key: string, value: unknown): void {
-      if (typeof key !== 'string' || key.length === 0) {
-        throw new HarnessError(
-          `Invalid context key: keys must be non-empty strings`,
-          HarnessErrorCode.CORE_INVALID_KEY,
-          'Provide a non-empty string key',
-        );
-      }
-      // Normalize before forbidden-key check to catch Unicode variants.
-      const normalized = normalizeContextKey(key);
-      if (FORBIDDEN_CONTEXT_KEYS.has(normalized)) {
-        throw new HarnessError(
-          `Invalid context key "${key}": reserved prototype-polluting identifier`,
-          HarnessErrorCode.CORE_INVALID_KEY,
-          `Avoid keys in {${Array.from(FORBIDDEN_CONTEXT_KEYS).join(', ')}}`,
-        );
-      }
-      // Bound the contextStore size so `sharedContext.set()` cannot grow the
-      // map indefinitely in a long-running orchestrator. Overwriting an
-      // existing key never counts against the cap.
-      if (!contextStore.has(normalized) && contextStore.size >= maxSharedContextEntries) {
-        throw new HarnessError(
-          `Orchestrator shared-context reached the configured cap of ${maxSharedContextEntries} entries`,
-          HarnessErrorCode.ORCH_CONTEXT_LIMIT,
-          'Call sharedContext.delete() to evict stale keys, or raise maxSharedContextEntries.',
-        );
-      }
-      contextStore.set(normalized, value);
-      emit({ type: 'context_updated', key: normalized });
-    },
-    /**
-     * Explicitly evict a key so long-running orchestrators can reclaim space
-     * without wholesale clear(). Returns true if the key existed.
-     */
-    delete(key: string): boolean {
-      return contextStore.delete(normalizeContextKey(key));
-    },
-    deleteByPrefix(prefix: string): number {
-      if (typeof prefix !== 'string' || prefix.length === 0) return 0;
-      const normalizedPrefix = normalizeContextKey(prefix);
-      let removed = 0;
-      // Collect first so we can mutate without invalidating the iterator.
-      const toDelete: string[] = [];
-      for (const key of contextStore.keys()) {
-        if (key.startsWith(normalizedPrefix)) toDelete.push(key);
-      }
-      for (const key of toDelete) {
-        if (contextStore.delete(key)) removed++;
-      }
-      return removed;
-    },
-    clear(): number {
-      const removed = contextStore.size;
-      contextStore.clear();
-      return removed;
-    },
-    entries(): ReadonlyMap<string, unknown> {
-      return new Map(contextStore);
-    },
-  };
+  const sharedContextStore = createSharedContext({
+    maxEntries: maxSharedContextEntries,
+    emit: (event) => emit(event),
+  });
+  const sharedContext: SharedContext = sharedContextStore.context;
 
   const orchestrator: AgentOrchestrator = {
     mode,
@@ -435,16 +336,7 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
       const existed = agents.delete(id);
       if (existed) {
         messageQueue.deleteQueue(id);
-        // Clean up delegation chain
-        delegationChain.delete(id);
-        for (const chain of delegationChain.values()) {
-          chain.delete(id);
-        }
-        // Drop the delegation lock for this source agent. Waiters (if any)
-        // are implausible since the caller would need to still hold a
-        // reference, and the lock is empty once the final critical section
-        // returns.
-        delegationLocks.delete(id);
+        delegationTracker.removeAgent(id);
       }
       return existed;
     },
@@ -534,58 +426,11 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
         const allAgents = Array.from(agents.values()).map(toReadonly);
         const selectedId = await strategy.select(allAgents, task);
         if (selectedId !== undefined) {
-          // Check for delegation cycles.
-          // If task has metadata with delegatedFrom, check chain
+          // Cycle + size-cap bookkeeping lives in the delegation tracker.
           const delegatedFrom = task.metadata?.delegatedFrom as string | undefined;
           if (delegatedFrom && selectedId) {
-            // Check: has selectedId ever (directly or transitively) delegated
-            // to delegatedFrom? If so, delegating from delegatedFrom back to
-            // selectedId would create a cycle.
-            const visited = new Set<string>();
-            const queue = [selectedId];
-            let queueIdx = 0;
-            while (queueIdx < queue.length) {
-              const current = queue[queueIdx++];
-              if (visited.has(current)) continue;
-              visited.add(current);
-              // If selectedId can reach delegatedFrom, it's a cycle
-              if (current === delegatedFrom) {
-                throw new HarnessError(
-                  `Delegation cycle detected: ${selectedId} is already in the delegation chain of ${delegatedFrom}`,
-                  HarnessErrorCode.ORCH_DELEGATION_CYCLE,
-                  'Avoid delegating tasks back to agents that originated the delegation',
-                );
-              }
-              // Check who 'current' has delegated to
-              const delegates = delegationChain.get(current);
-              if (delegates) {
-                for (const d of delegates) {
-                  if (!visited.has(d)) queue.push(d);
-                }
-              }
-            }
-
-            // Record the delegation: delegatedFrom -> selectedId. Cap total
-            // entries across all inner Sets — this guards against unbounded
-            // delegationChain growth when delegations never complete (no
-            // unregister), a silent path to OOM in long-running orchestrators.
-            const existingChain = delegationChain.get(delegatedFrom);
-            const wouldBeNew = existingChain === undefined || !existingChain.has(selectedId);
-            if (wouldBeNew) {
-              let totalEntries = 0;
-              for (const s of delegationChain.values()) totalEntries += s.size;
-              if (totalEntries >= maxDelegationChainEntries) {
-                throw new HarnessError(
-                  `Orchestrator delegation-chain reached the configured cap of ${maxDelegationChainEntries} entries`,
-                  HarnessErrorCode.ORCH_DELEGATION_LIMIT,
-                  'Unregister completed agents or raise maxDelegationChainEntries.',
-                );
-              }
-            }
-            if (existingChain === undefined) {
-              delegationChain.set(delegatedFrom, new Set());
-            }
-            (delegationChain.get(delegatedFrom) as Set<string>).add(selectedId);
+            delegationTracker.assertNoCycle(delegatedFrom, selectedId);
+            delegationTracker.recordEdge(delegatedFrom, selectedId);
           }
 
           emit({ type: 'task_delegated', agentId: selectedId, task });
@@ -601,7 +446,7 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
         }
       };
       if (delegatedFromKey) {
-        return getDelegationLock(delegatedFromKey).withLock(trackedDelegation);
+        return delegationTracker.getLock(delegatedFromKey).withLock(trackedDelegation);
       }
       return trackedDelegation();
     },
@@ -633,9 +478,8 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
       agents.clear();
       messageQueue.clear();
       eventHandlers.clear();
-      contextStore.clear();
-      delegationChain.clear();
-      delegationLocks.clear();
+      sharedContextStore.dispose();
+      delegationTracker.clear();
       droppedMessages = 0;
     },
 

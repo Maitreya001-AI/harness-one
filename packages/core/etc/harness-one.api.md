@@ -117,6 +117,46 @@ export interface AgentLoopConfig {
 }
 
 // @public
+export interface AgentLoopConfigV2 {
+    // (undocumented)
+    readonly adapter: AgentAdapter;
+    // (undocumented)
+    readonly execution?: AgentLoopExecutionConfig;
+    // (undocumented)
+    readonly hooks?: readonly AgentLoopHook[];
+    // (undocumented)
+    readonly limits?: AgentLoopLimitsConfig;
+    // (undocumented)
+    readonly observability?: AgentLoopObservabilityConfig;
+    // (undocumented)
+    readonly onToolCall?: (call: ToolCallRequest) => Promise<unknown>;
+    // (undocumented)
+    readonly pipelines?: AgentLoopPipelinesConfig;
+    // (undocumented)
+    readonly resilience?: AgentLoopResilienceConfig;
+    // (undocumented)
+    readonly signal?: AbortSignal;
+    // (undocumented)
+    readonly streaming?: boolean;
+    // (undocumented)
+    readonly strictHooks?: boolean;
+    // (undocumented)
+    readonly tools?: ToolSchema[];
+}
+
+// @public
+export interface AgentLoopExecutionConfig {
+    // (undocumented)
+    readonly executionStrategy?: ExecutionStrategy;
+    // (undocumented)
+    readonly isSequentialTool?: (name: string) => boolean;
+    // (undocumented)
+    readonly maxParallelToolCalls?: number;
+    // (undocumented)
+    readonly parallel?: boolean;
+}
+
+// @public
 export interface AgentLoopHook {
     onCost?(info: {
         iteration: number;
@@ -133,6 +173,50 @@ export interface AgentLoopHook {
         iteration: number;
         toolCall: ToolCallRequest;
     }): void;
+}
+
+// @public
+export interface AgentLoopLimitsConfig {
+    // (undocumented)
+    readonly maxConversationMessages?: number;
+    // (undocumented)
+    readonly maxIterations?: number;
+    // (undocumented)
+    readonly maxStreamBytes?: number;
+    // (undocumented)
+    readonly maxToolArgBytes?: number;
+    // (undocumented)
+    readonly maxTotalTokens?: number;
+    // (undocumented)
+    readonly toolTimeoutMs?: number;
+}
+
+// @public
+export interface AgentLoopObservabilityConfig {
+    // (undocumented)
+    readonly logger?: {
+        warn: (msg: string, meta?: Record<string, unknown>) => void;
+    };
+    // (undocumented)
+    readonly traceManager?: AgentLoopTraceManager;
+}
+
+// @public
+export interface AgentLoopPipelinesConfig {
+    // (undocumented)
+    readonly input?: GuardrailPipeline;
+    // (undocumented)
+    readonly output?: GuardrailPipeline;
+}
+
+// @public
+export interface AgentLoopResilienceConfig {
+    // (undocumented)
+    readonly baseRetryDelayMs?: number;
+    // (undocumented)
+    readonly maxAdapterRetries?: number;
+    // (undocumented)
+    readonly retryableErrors?: readonly string[];
 }
 
 // @public
@@ -332,6 +416,7 @@ export interface CostTracker {
     checkBudget(): CostAlert | null;
     getAlertMessage(): string | null;
     getCostByModel(): Record<string, number>;
+    getCostByModelMap(): ReadonlyMap<string, number>;
     getCostByTrace(traceId: string): number;
     getTotalCost(): number;
     isBudgetExceeded(): boolean;
@@ -346,6 +431,9 @@ export interface CostTracker {
 
 // @public
 export function createAgentLoop(config: AgentLoopConfig): AgentLoop;
+
+// @public (undocumented)
+export function createAgentLoop(config: AgentLoopConfigV2): AgentLoop;
 
 // @public
 export function createCostTracker(config?: {
@@ -534,7 +622,7 @@ export interface FallbackAdapterConfig {
 // @public
 export type Guardrail = (ctx: GuardrailContext) => Promise<GuardrailVerdict> | GuardrailVerdict;
 
-// @public
+// @public @deprecated
 export class GuardrailBlockedError extends HarnessError {
     constructor(reason: string, cause?: Error);
 }
@@ -1636,12 +1724,12 @@ export interface VectorSearchOptions {
 
 // Warnings were encountered during analysis:
 //
-// dist/cost-tracker-yj3JsvOC.d.ts:70:5 - (ae-forgotten-export) The symbol "RedactConfig" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-yj3JsvOC.d.ts:358:5 - (ae-forgotten-export) The symbol "EvictionStrategyName" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-yj3JsvOC.d.ts:358:5 - (ae-forgotten-export) The symbol "EvictionStrategy" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-yj3JsvOC.d.ts:398:5 - (ae-forgotten-export) The symbol "MetricsPort" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-BlG8TKB9.d.ts:71:5 - (ae-forgotten-export) The symbol "RedactConfig" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-BlG8TKB9.d.ts:372:5 - (ae-forgotten-export) The symbol "EvictionStrategyName" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-BlG8TKB9.d.ts:372:5 - (ae-forgotten-export) The symbol "EvictionStrategy" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-BlG8TKB9.d.ts:412:5 - (ae-forgotten-export) The symbol "MetricsPort" needs to be exported by the entry point index.d.ts
 // dist/pipeline-CCw3TkZG.d.ts:45:5 - (ae-forgotten-export) The symbol "GuardrailEvent" needs to be exported by the entry point index.d.ts
-// dist/resilience-_pX9OWQb.d.ts:253:5 - (ae-forgotten-export) The symbol "MiddlewareContext" needs to be exported by the entry point index.d.ts
+// dist/resilience-BcjSMra-.d.ts:253:5 - (ae-forgotten-export) The symbol "MiddlewareContext" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 

@@ -37,6 +37,7 @@ const mocks = vi.hoisted(() => {
     recordUsage: vi.fn(),
     getTotalCost: vi.fn(() => 0),
     getCostByModel: vi.fn(() => ({})),
+    getCostByModelMap: vi.fn(() => new Map()),
     getCostByTrace: vi.fn(() => 0),
     checkBudget: vi.fn(() => null),
     onAlert: vi.fn(),

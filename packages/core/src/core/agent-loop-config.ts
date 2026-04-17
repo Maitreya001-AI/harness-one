@@ -16,7 +16,7 @@
  */
 
 import type { AgentAdapter, ExecutionStrategy, Message, TokenUsage, ToolCallRequest, ToolSchema } from './types.js';
-import type { AgentLoopConfig, AgentLoopHook } from './agent-loop-types.js';
+import type { AgentLoopConfig, AgentLoopConfigV2, AgentLoopHook } from './agent-loop-types.js';
 import type { AgentLoopTraceManager } from './trace-interface.js';
 import type { GuardrailPipeline } from './guardrail-port.js';
 import { createSequentialStrategy, createParallelStrategy } from './execution-strategies.js';
@@ -150,6 +150,80 @@ export function resolveAgentLoopConfig(
   return Object.freeze(resolved);
 }
 
+/**
+ * Flatten a nested {@link AgentLoopConfigV2} into the wire-format flat
+ * {@link AgentLoopConfig}. Callers that supply both nested and flat
+ * forms receive a shallow merge where nested groups take precedence.
+ *
+ * Pure — does not run validation. The existing `resolveAgentLoopConfig`
+ * above runs validation on the merged shape, so misconfigurations still
+ * surface at construction time.
+ */
+export function flattenNestedAgentLoopConfig(v2: AgentLoopConfigV2): AgentLoopConfig {
+  const flat: AgentLoopConfig = {
+    adapter: v2.adapter,
+    ...(v2.signal !== undefined && { signal: v2.signal }),
+    ...(v2.onToolCall !== undefined && { onToolCall: v2.onToolCall }),
+    ...(v2.tools !== undefined && { tools: v2.tools }),
+    ...(v2.streaming !== undefined && { streaming: v2.streaming }),
+    ...(v2.hooks !== undefined && { hooks: v2.hooks }),
+    ...(v2.strictHooks !== undefined && { strictHooks: v2.strictHooks }),
+    ...(v2.execution?.executionStrategy !== undefined && {
+      executionStrategy: v2.execution.executionStrategy,
+    }),
+    ...(v2.execution?.parallel !== undefined && { parallel: v2.execution.parallel }),
+    ...(v2.execution?.maxParallelToolCalls !== undefined && {
+      maxParallelToolCalls: v2.execution.maxParallelToolCalls,
+    }),
+    ...(v2.execution?.isSequentialTool !== undefined && {
+      isSequentialTool: v2.execution.isSequentialTool,
+    }),
+    ...(v2.limits?.maxIterations !== undefined && { maxIterations: v2.limits.maxIterations }),
+    ...(v2.limits?.maxTotalTokens !== undefined && { maxTotalTokens: v2.limits.maxTotalTokens }),
+    ...(v2.limits?.maxConversationMessages !== undefined && {
+      maxConversationMessages: v2.limits.maxConversationMessages,
+    }),
+    ...(v2.limits?.maxStreamBytes !== undefined && { maxStreamBytes: v2.limits.maxStreamBytes }),
+    ...(v2.limits?.maxToolArgBytes !== undefined && { maxToolArgBytes: v2.limits.maxToolArgBytes }),
+    ...(v2.limits?.toolTimeoutMs !== undefined && { toolTimeoutMs: v2.limits.toolTimeoutMs }),
+    ...(v2.resilience?.maxAdapterRetries !== undefined && {
+      maxAdapterRetries: v2.resilience.maxAdapterRetries,
+    }),
+    ...(v2.resilience?.baseRetryDelayMs !== undefined && {
+      baseRetryDelayMs: v2.resilience.baseRetryDelayMs,
+    }),
+    ...(v2.resilience?.retryableErrors !== undefined && {
+      retryableErrors: v2.resilience.retryableErrors,
+    }),
+    ...(v2.observability?.traceManager !== undefined && {
+      traceManager: v2.observability.traceManager,
+    }),
+    ...(v2.observability?.logger !== undefined && { logger: v2.observability.logger }),
+    ...(v2.pipelines?.input !== undefined && { inputPipeline: v2.pipelines.input }),
+    ...(v2.pipelines?.output !== undefined && { outputPipeline: v2.pipelines.output }),
+  };
+  return flat;
+}
+
+/**
+ * True when the raw object looks like the nested v2 shape (contains
+ * at least one of the v2-exclusive group keys). Used by
+ * `createAgentLoop` to decide whether to flatten first.
+ */
+export function isNestedAgentLoopConfig(
+  raw: AgentLoopConfig | AgentLoopConfigV2,
+): raw is AgentLoopConfigV2 {
+  const v2 = raw as AgentLoopConfigV2;
+  return (
+    v2.execution !== undefined
+    || v2.limits !== undefined
+    || v2.resilience !== undefined
+    || v2.observability !== undefined
+    || v2.pipelines !== undefined
+  );
+}
+
 // Re-export so consumers that only want the types can avoid reaching into
 // `agent-loop-types.js` directly.
 export type { AgentLoopConfig, AgentLoopHook, TokenUsage, Message };
+export type { AgentLoopConfigV2 } from './agent-loop-types.js';

@@ -23,7 +23,7 @@
 
 import { AbortedError, HarnessErrorCode } from './errors.js';
 import type { AgentEvent } from './events.js';
-import { computeBackoffMs } from '../infra/backoff.js';
+import { computeBackoffMs, ADAPTER_RETRY_JITTER_FRACTION } from '../infra/backoff.js';
 import { type CircuitBreaker, CircuitOpenError } from '../infra/circuit-breaker.js';
 
 /**
@@ -100,7 +100,7 @@ export function createRetryPolicy(config: Readonly<RetryPolicyConfig>): RetryPol
   ): { delay: number; promise: Promise<void> } {
     const delay = computeBackoffMs(attempt, {
       baseMs: config.baseRetryDelayMs,
-      jitterFraction: 0.25,
+      jitterFraction: ADAPTER_RETRY_JITTER_FRACTION,
     });
 
     const promise = new Promise<void>((resolve, reject) => {

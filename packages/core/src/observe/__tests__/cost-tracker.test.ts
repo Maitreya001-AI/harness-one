@@ -519,6 +519,54 @@ describe('createCostTracker', () => {
       const byModel = tracker.getCostByModel();
       expect(Object.keys(byModel)).toHaveLength(0);
     });
+
+    // Added alongside the Record<string, number> → ReadonlyMap<string, number>
+    // additive API. Mirrors the Record-shaped coverage above to ensure the two
+    // views never drift.
+    describe('getCostByModelMap (Map view)', () => {
+      it('mirrors getCostByModel but returns a ReadonlyMap', () => {
+        const tracker = createCostTracker({
+          pricing: [
+            { model: 'a', inputPer1kTokens: 1.0, outputPer1kTokens: 0 },
+            { model: 'b', inputPer1kTokens: 2.0, outputPer1kTokens: 0 },
+          ],
+        });
+        tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 1000, outputTokens: 0 });
+        tracker.recordUsage({ traceId: 't2', model: 'b', inputTokens: 1000, outputTokens: 0 });
+
+        const mapView = tracker.getCostByModelMap();
+        expect(mapView).toBeInstanceOf(Map);
+        expect(mapView.size).toBe(2);
+        expect(mapView.has('a')).toBe(true);
+        expect(mapView.get('a')).toBeCloseTo(1.0, 4);
+        expect(mapView.get('b')).toBeCloseTo(2.0, 4);
+      });
+
+      it('is a snapshot — mutations to the returned Map do not affect the tracker', () => {
+        const tracker = createCostTracker({
+          pricing: [{ model: 'a', inputPer1kTokens: 1.0, outputPer1kTokens: 0 }],
+        });
+        tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 1000, outputTokens: 0 });
+
+        const snapshot = tracker.getCostByModelMap() as Map<string, number>;
+        snapshot.set('a', 999);
+        snapshot.set('ghost', 123);
+
+        // Subsequent calls return the tracker's true state, not the caller's mutation.
+        const fresh = tracker.getCostByModelMap();
+        expect(fresh.get('a')).toBeCloseTo(1.0, 4);
+        expect(fresh.has('ghost')).toBe(false);
+      });
+
+      it('is cleared on reset()', () => {
+        const tracker = createCostTracker({
+          pricing: [{ model: 'a', inputPer1kTokens: 1.0, outputPer1kTokens: 0 }],
+        });
+        tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 1000, outputTokens: 0 });
+        tracker.reset();
+        expect(tracker.getCostByModelMap().size).toBe(0);
+      });
+    });
   });
 
   // Fix 5: KahanSum utility class

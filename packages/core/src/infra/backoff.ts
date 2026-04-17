@@ -15,6 +15,24 @@ const MAX_MS_CEILING = 600_000;
 /** Hard ceiling for `baseMs` (5 minutes). Values above this are rejected. */
 const BASE_MS_CEILING = 300_000;
 
+/**
+ * Named jitter-fraction constants. Historically these were scattered as
+ * bare `0.25` / `0.1` literals across the retry policy and agent pool; the
+ * named exports make the intent readable and centralize the audit surface.
+ *
+ * `ADAPTER_RETRY_JITTER_FRACTION` (0.25) — fraction of the exponential
+ * delay that is randomised on each adapter retry. Tuned low enough to
+ * keep the backoff predictable for capacity planning while high enough
+ * to de-synchronise concurrent clients hitting the same rate limit.
+ *
+ * `AGENT_POOL_IDLE_JITTER_FRACTION` (0.1) — fraction of the idle timeout
+ * used to spread agent-pool reclamation timers. Kept smaller than the
+ * retry fraction because pool reclamation is internal to a single
+ * process, not a cross-client coordination problem.
+ */
+export const ADAPTER_RETRY_JITTER_FRACTION = 0.25;
+export const AGENT_POOL_IDLE_JITTER_FRACTION = 0.1;
+
 /** Configuration for a single backoff computation. */
 export interface BackoffConfig {
   /** Base delay in milliseconds (default: 1000). Must be in `[0, 300_000]`. */
