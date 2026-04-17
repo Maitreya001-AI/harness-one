@@ -198,6 +198,41 @@ export function createContextBoundary(
         }
         return context.delete(key);
       },
+      /**
+       * Round-3 cleanup: batch deletion inherits the same write policy as
+       * per-key `delete()`. When no policy is attached to this agent, the
+       * underlying `deleteByPrefix()` runs unfiltered; otherwise only the
+       * writable keys within the prefix are evicted and any denied match
+       * records a boundary violation rather than silently widening the
+       * blast radius.
+       */
+      deleteByPrefix(prefix: string): number {
+        const policy = policyMap.get(agentId);
+        if (!policy) return context.deleteByPrefix(prefix);
+        let removed = 0;
+        for (const [k] of context.entries()) {
+          if (!k.startsWith(prefix)) continue;
+          if (!canWrite(policy, k)) {
+            recordViolation({ type: 'write_denied', agentId, key: k, timestamp: Date.now() });
+            continue;
+          }
+          if (context.delete(k)) removed++;
+        }
+        return removed;
+      },
+      clear(): number {
+        const policy = policyMap.get(agentId);
+        if (!policy) return context.clear();
+        let removed = 0;
+        for (const [k] of context.entries()) {
+          if (!canWrite(policy, k)) {
+            recordViolation({ type: 'write_denied', agentId, key: k, timestamp: Date.now() });
+            continue;
+          }
+          if (context.delete(k)) removed++;
+        }
+        return removed;
+      },
       entries(): ReadonlyMap<string, unknown> {
         const policy = policyMap.get(agentId);
         if (!policy) return context.entries();

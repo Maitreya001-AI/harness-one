@@ -7,18 +7,13 @@
  * @module
  */
 
-import type { AgentAdapter, ExecutionStrategy, Message, TokenUsage, ToolCallRequest, ToolSchema } from './types.js';
+import type { Message, TokenUsage } from './types.js';
 import type { AgentEvent, DoneReason } from './events.js';
 import { AbortedError, HarnessError, MaxIterationsError, TokenBudgetExceededError, HarnessErrorCode} from './errors.js';
-import { createSequentialStrategy, createParallelStrategy } from './execution-strategies.js';
 import { createAdapterCaller, type AdapterCaller } from './adapter-caller.js';
 import { createStreamHandler } from './stream-handler.js';
 import { pruneConversation } from './conversation-pruner.js';
 import type { AgentLoopTraceManager } from './trace-interface.js';
-// Guardrail pipeline integration. Types-only import for the opaque pipeline
-// token; the runtime helpers live in `iteration-runner.ts` and
-// `guardrail-helpers.ts`.
-import type { GuardrailPipeline } from './guardrail-port.js';
 // Per-iteration choreography lives in IterationRunner.
 import {
   createIterationRunner,
@@ -26,9 +21,13 @@ import {
   type IterationRunner,
 } from './iteration-runner.js';
 import { safeWarn } from '../infra/safe-log.js';
-import type { AgentLoopConfig, AgentLoopHook } from './agent-loop-types.js';
+import type { AgentLoopConfig } from './agent-loop-types.js';
 import { createHookDispatcher } from './hook-dispatcher.js';
-import { validateAgentLoopConfig } from './agent-loop-validation.js';
+import {
+  resolveAgentLoopConfig,
+  type ResolvedAgentLoopConfig,
+  MAX_STREAM_BYTES,
+} from './agent-loop-config.js';
 
 // `AgentLoopTraceManager` lives in `./trace-interface.js`. Re-export here so
 // existing imports from `harness-one/core` (which historically pulled the type
@@ -40,10 +39,23 @@ export type { AgentLoopConfig, AgentLoopHook } from './agent-loop-types.js';
 /**
  * Stateful agent loop that calls an LLM adapter in a loop, handling tool calls.
  *
- * Both `new AgentLoop(config)` and `createAgentLoop(config)` are supported and
- * return the same instance shape; the factory is the idiomatic public entry
- * (consistent with the rest of the harness-one API) but the class is the
- * actual return type, needed for `instanceof` checks and type references.
+ * The harness-one API exposes a dual entry point for every long-lived
+ * primitive (session-manager, trace-manager, cost-tracker, agent-pool,
+ * orchestrator, and here, agent-loop):
+ *
+ *   - A `createX(config)` factory — the **preferred construction API** for
+ *     user code. It reads consistently across the codebase and composes
+ *     cleanly with middleware.
+ *   - A `class X` (when the underlying object has public methods worth
+ *     referencing as a type). AgentLoop, TraceManager, SessionManager,
+ *     CostTracker, and AgentPool ship their public surface as a **named type
+ *     in `*-types.ts`** (so you can write `SessionManager` / `TraceManager`
+ *     / `CostTracker` / `AgentPool` freely); AgentLoop is additionally
+ *     exported as a `class` so users can reference it as a return type or
+ *     narrow via `instanceof` when absolutely necessary.
+ *
+ * Prefer `createAgentLoop(config)` for construction; reach for the class
+ * only when a TYPE reference is required.
  *
  * @example
  * ```ts
@@ -54,36 +66,13 @@ export type { AgentLoopConfig, AgentLoopHook } from './agent-loop-types.js';
  * ```
  */
 export class AgentLoop {
-  private readonly adapter: AgentAdapter;
-  private readonly maxIterations: number;
-  private readonly maxTotalTokens: number;
-  private readonly externalSignal?: AbortSignal;
-  private readonly onToolCall?: (call: ToolCallRequest) => Promise<unknown>;
-  private readonly tools?: ToolSchema[];
-  private readonly maxConversationMessages?: number;
-  private readonly streaming: boolean;
-  private readonly executionStrategy: ExecutionStrategy;
-  private readonly isSequentialTool?: (name: string) => boolean;
-  private readonly traceManager?: AgentLoopTraceManager;
-  private readonly toolTimeoutMs?: number;
-  private readonly maxStreamBytes: number;
-  private readonly maxToolArgBytes: number;
-  private readonly maxAdapterRetries: number;
-  private readonly baseRetryDelayMs: number;
-  private readonly retryableErrors: readonly string[];
+  /** Frozen bundle of validated configuration (see `agent-loop-config.ts`). */
+  private readonly resolved: ResolvedAgentLoopConfig;
   private readonly adapterCaller: AdapterCaller;
   /** Per-iteration choreography runner. Stateless across runs. */
   private readonly iterationRunner: IterationRunner;
-  /** Registered iteration-level hooks. Empty array when none. */
-  private readonly hooks: readonly AgentLoopHook[];
-  private readonly strictHooks: boolean;
-  private readonly logger?: { warn: (msg: string, meta?: Record<string, unknown>) => void };
   /** Shared dispatcher over `hooks` with strictHooks + logger semantics. */
   private readonly runHook: ReturnType<typeof createHookDispatcher>;
-  /** Optional input-side guardrail pipeline. */
-  private readonly inputPipeline?: GuardrailPipeline;
-  /** Optional output-side guardrail pipeline (tool + final). */
-  private readonly outputPipeline?: GuardrailPipeline;
   /**
    * Guards the "no-guardrail" warn against duplication across multiple run()
    * calls on the same AgentLoop instance. Flip once and never reset — the
@@ -95,9 +84,8 @@ export class AgentLoop {
   private _externalAbortHandler: (() => void) | undefined;
   /**
    * Pre-built options bag handed to `executionStrategy.execute()` for every
-   * tool-call batch. Building it once at construction time — after
-   * `abortController` and `isSequentialTool` settle — lets us reuse the same
-   * frozen reference across all batches instead of allocating per-batch.
+   * tool-call batch. Building it once at construction time lets us reuse the
+   * same frozen reference across all batches instead of allocating per-batch.
    */
   private readonly _strategyOptions: {
     readonly signal: AbortSignal;
@@ -111,135 +99,102 @@ export class AgentLoop {
   private _totalToolCalls = 0;
   private _status: 'idle' | 'running' | 'completed' | 'disposed' = 'idle';
 
-  // If executionStrategy is explicitly provided, it takes precedence over the parallel flag.
-  // parallel: true is a shorthand that creates a default parallel strategy.
+  /**
+   * Construct an {@link AgentLoop}. Raw `AgentLoopConfig` → validated
+   * `ResolvedAgentLoopConfig` via `resolveAgentLoopConfig()`; the constructor
+   * then only wires the downstream components (abort controller, stream
+   * handler, adapter caller, iteration runner, hook dispatcher) from the
+   * resolved bundle.
+   */
   constructor(config: AgentLoopConfig) {
-    this.adapter = config.adapter;
-    this.maxIterations = config.maxIterations ?? 25;
-    this.maxTotalTokens = config.maxTotalTokens ?? Infinity;
-    // Under `exactOptionalPropertyTypes`, these optional fields are typed as
-    // `readonly field?: Type` (no explicit `| undefined`). Assign only when
-    // the source value is defined so we never set the property to `undefined`
-    // — leaving it absent instead.
-    if (config.signal !== undefined) this.externalSignal = config.signal;
-    if (config.onToolCall !== undefined) this.onToolCall = config.onToolCall;
-    if (config.tools !== undefined) this.tools = config.tools;
-    this.maxConversationMessages = config.maxConversationMessages ?? 200;
-    this.streaming = config.streaming ?? false;
-    if (config.isSequentialTool !== undefined) this.isSequentialTool = config.isSequentialTool;
-    if (config.traceManager !== undefined) this.traceManager = config.traceManager;
-    if (config.toolTimeoutMs !== undefined) this.toolTimeoutMs = config.toolTimeoutMs;
-    this.maxStreamBytes = config.maxStreamBytes ?? AgentLoop.MAX_STREAM_BYTES;
-    this.maxToolArgBytes = config.maxToolArgBytes ?? AgentLoop.MAX_TOOL_ARG_BYTES;
-    this.maxAdapterRetries = config.maxAdapterRetries ?? 0;
-    this.baseRetryDelayMs = config.baseRetryDelayMs ?? 1000;
-    this.retryableErrors = config.retryableErrors ?? ['ADAPTER_RATE_LIMIT'];
-    // Store hooks (defensive empty array, never undefined to simplify
-    // per-iteration dispatch). Logger is optional — when omitted, hook errors
-    // are swallowed silently.
-    this.hooks = config.hooks ?? [];
-    this.strictHooks = config.strictHooks ?? false;
-    if (config.logger !== undefined) this.logger = config.logger;
+    this.resolved = resolveAgentLoopConfig(config);
+    const { hooks, observability, limits, pipelines, streaming } = this.resolved;
+
     this.runHook = createHookDispatcher({
-      hooks: this.hooks,
-      strictHooks: this.strictHooks,
-      ...(this.logger !== undefined && { logger: this.logger }),
-    });
-    // Store optional guardrail pipelines. `exactOptionalPropertyTypes` forbids
-    // writing `undefined` to a `readonly pipe?: GuardrailPipeline`, so we gate
-    // the assignment behind an explicit presence check.
-    if (config.inputPipeline !== undefined) this.inputPipeline = config.inputPipeline;
-    if (config.outputPipeline !== undefined) this.outputPipeline = config.outputPipeline;
-
-    validateAgentLoopConfig({
-      maxIterations: this.maxIterations,
-      maxTotalTokens: this.maxTotalTokens,
-      maxStreamBytes: this.maxStreamBytes,
-      maxToolArgBytes: this.maxToolArgBytes,
-      toolTimeoutMs: this.toolTimeoutMs,
-      baseRetryDelayMs: this.baseRetryDelayMs,
-      maxAdapterRetries: this.maxAdapterRetries,
+      hooks: hooks.registered,
+      strictHooks: hooks.strict,
+      ...(observability.logger !== undefined && { logger: observability.logger }),
     });
 
-    if (config.executionStrategy) {
-      this.executionStrategy = config.executionStrategy;
-    } else if (config.parallel) {
-      this.executionStrategy = createParallelStrategy({
-        maxConcurrency: config.maxParallelToolCalls ?? 5,
-      });
-    } else {
-      this.executionStrategy = createSequentialStrategy();
-    }
-
-    // Create internal AbortController (external signal linking deferred to run())
+    // Internal AbortController (external signal linking deferred to run()).
     this.abortController = new AbortController();
 
-    // Pre-build the strategy options bag once. `isSequentialTool` never
-    // changes after construction and `abortController.signal` is stable for
-    // the lifetime of this loop, so the same object is reused for every
-    // tool-call batch below. `Object.freeze` gives us structural immutability
-    // so strategy implementations can safely cache or share the reference.
+    // Pre-build the strategy options bag once so the same frozen reference
+    // is reused across every tool-call batch.
+    const seqToolPredicate = this.resolved.isSequentialTool;
     this._strategyOptions = Object.freeze(
-      this.isSequentialTool
+      seqToolPredicate
         ? {
             signal: this.abortController.signal,
             getToolMeta: (name: string): { sequential?: boolean } | undefined => ({
-              sequential: this.isSequentialTool?.(name) ?? false,
+              sequential: seqToolPredicate(name),
             }),
           }
         : { signal: this.abortController.signal },
     );
 
-    // Build the StreamHandler once; AdapterCaller delegates to it on the
-    // streaming path. `maxCumulativeStreamBytes` matches run()'s local
-    // derivation (`maxIterations * maxStreamBytes`) so per-run and per-instance
-    // limits stay in lockstep.
+    // StreamHandler — AdapterCaller delegates to it on the streaming path.
+    // `maxCumulativeStreamBytes` matches the per-run derivation so per-run
+    // and per-instance limits stay in lockstep.
     const streamHandler = createStreamHandler({
-      adapter: this.adapter,
+      adapter: this.resolved.adapter,
       signal: this.abortController.signal,
-      maxStreamBytes: this.maxStreamBytes,
-      maxToolArgBytes: this.maxToolArgBytes,
-      maxCumulativeStreamBytes: this.maxIterations * this.maxStreamBytes,
-      ...(this.tools !== undefined && { tools: this.tools }),
+      maxStreamBytes: limits.maxStreamBytes,
+      maxToolArgBytes: limits.maxToolArgBytes,
+      maxCumulativeStreamBytes: limits.maxIterations * limits.maxStreamBytes,
+      ...(this.resolved.tools !== undefined && { tools: this.resolved.tools }),
     });
 
     // Streaming is only effective when the adapter actually exposes `stream`;
     // an adapter without `stream` transparently falls back to chat.
-    const effectiveStreaming = this.streaming && typeof this.adapter.stream === 'function';
+    const effectiveStreaming =
+      streaming && typeof this.resolved.adapter.stream === 'function';
 
     this.adapterCaller = createAdapterCaller({
-      adapter: this.adapter,
+      adapter: this.resolved.adapter,
       signal: this.abortController.signal,
       streaming: effectiveStreaming,
-      maxAdapterRetries: this.maxAdapterRetries,
-      baseRetryDelayMs: this.baseRetryDelayMs,
-      retryableErrors: this.retryableErrors,
+      maxAdapterRetries: limits.maxAdapterRetries,
+      baseRetryDelayMs: limits.baseRetryDelayMs,
+      retryableErrors: limits.retryableErrors,
       streamHandler,
-      // onRetry is provided per-call by IterationRunner so the active
-      // iteration span id is captured cleanly via the freshly-allocated
-      // IterationContext (no instance side-channel).
-      ...(this.tools !== undefined && { tools: this.tools }),
+      // onRetry is provided per-call by IterationRunner.
+      ...(this.resolved.tools !== undefined && { tools: this.resolved.tools }),
     });
 
-    // Build the IterationRunner once. The runner is stateless across runs;
-    // all per-run mutable state lives on the IterationContext we hand it
-    // inside `run()`.
     this.iterationRunner = createIterationRunner({
       adapterCaller: this.adapterCaller,
-      executionStrategy: this.executionStrategy,
+      executionStrategy: this.resolved.executionStrategy,
       strategyOptions: this._strategyOptions,
       abortController: this.abortController,
-      maxTotalTokens: this.maxTotalTokens,
-      hooks: this.hooks,
-      strictHooks: this.strictHooks,
-      ...(this.onToolCall !== undefined && { onToolCall: this.onToolCall }),
-      ...(this.toolTimeoutMs !== undefined && { toolTimeoutMs: this.toolTimeoutMs }),
-      ...(this.inputPipeline !== undefined && { inputPipeline: this.inputPipeline }),
-      ...(this.outputPipeline !== undefined && { outputPipeline: this.outputPipeline }),
-      ...(this.traceManager !== undefined && { traceManager: this.traceManager }),
-      ...(this.logger !== undefined && { logger: this.logger }),
+      maxTotalTokens: limits.maxTotalTokens,
+      hooks: hooks.registered,
+      strictHooks: hooks.strict,
+      ...(this.resolved.onToolCall !== undefined && { onToolCall: this.resolved.onToolCall }),
+      ...(limits.toolTimeoutMs !== undefined && { toolTimeoutMs: limits.toolTimeoutMs }),
+      ...(pipelines.input !== undefined && { inputPipeline: pipelines.input }),
+      ...(pipelines.output !== undefined && { outputPipeline: pipelines.output }),
+      ...(observability.traceManager !== undefined && {
+        traceManager: observability.traceManager,
+      }),
+      ...(observability.logger !== undefined && { logger: observability.logger }),
     });
   }
+
+  // --- Back-compat accessor shims: many helpers below still read the old
+  //     instance field names. Delegate to the resolved bundle so we don't
+  //     have to update every call site.
+  private get adapter() { return this.resolved.adapter; }
+  private get maxIterations() { return this.resolved.limits.maxIterations; }
+  private get maxTotalTokens() { return this.resolved.limits.maxTotalTokens; }
+  private get maxConversationMessages() { return this.resolved.limits.maxConversationMessages; }
+  private get streaming() { return this.resolved.streaming; }
+  private get executionStrategy() { return this.resolved.executionStrategy; }
+  private get traceManager(): AgentLoopTraceManager | undefined { return this.resolved.observability.traceManager; }
+  private get logger() { return this.resolved.observability.logger; }
+  private get inputPipeline() { return this.resolved.pipelines.input; }
+  private get outputPipeline() { return this.resolved.pipelines.output; }
+  private get externalSignal() { return this.resolved.externalSignal; }
 
   /** Get cumulative token usage across all iterations. */
   get usage(): TokenUsage {
@@ -643,9 +598,7 @@ export class AgentLoop {
   }
 
   /** Maximum accumulated stream content size (10 MB) to prevent memory exhaustion. */
-  static readonly MAX_STREAM_BYTES = 10 * 1024 * 1024;
-  /** Maximum size per tool-call argument (5 MB) to prevent oversized payloads. */
-  private static readonly MAX_TOOL_ARG_BYTES = 5 * 1024 * 1024;
+  static readonly MAX_STREAM_BYTES = MAX_STREAM_BYTES;
 
   private isAborted(): boolean {
     return this.abortController.signal.aborted;

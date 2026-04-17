@@ -708,15 +708,14 @@ export enum HarnessErrorCode {
     GUARD_VIOLATION = "GUARD_VIOLATION",
     // (undocumented)
     LOCK_ABORTED = "LOCK_ABORTED",
-    // (undocumented)
     MEMORY_CORRUPT = "MEMORY_CORRUPT",
-    // (undocumented)
+    // @deprecated (undocumented)
     MEMORY_DATA_CORRUPTION = "MEMORY_DATA_CORRUPTION",
     // (undocumented)
     MEMORY_NOT_FOUND = "MEMORY_NOT_FOUND",
     // (undocumented)
     MEMORY_RELAY_CONFLICT = "MEMORY_RELAY_CONFLICT",
-    // (undocumented)
+    // @deprecated (undocumented)
     MEMORY_STORE_CORRUPTION = "MEMORY_STORE_CORRUPTION",
     // (undocumented)
     ORCH_AGENT_NOT_FOUND = "ORCH_AGENT_NOT_FOUND",
@@ -1642,7 +1641,7 @@ export interface VectorSearchOptions {
 // dist/cost-tracker-yj3JsvOC.d.ts:358:5 - (ae-forgotten-export) The symbol "EvictionStrategy" needs to be exported by the entry point index.d.ts
 // dist/cost-tracker-yj3JsvOC.d.ts:398:5 - (ae-forgotten-export) The symbol "MetricsPort" needs to be exported by the entry point index.d.ts
 // dist/pipeline-CCw3TkZG.d.ts:45:5 - (ae-forgotten-export) The symbol "GuardrailEvent" needs to be exported by the entry point index.d.ts
-// dist/resilience-GRs5EBl_.d.ts:253:5 - (ae-forgotten-export) The symbol "MiddlewareContext" needs to be exported by the entry point index.d.ts
+// dist/resilience-_pX9OWQb.d.ts:253:5 - (ae-forgotten-export) The symbol "MiddlewareContext" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 

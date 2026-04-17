@@ -4,7 +4,7 @@
  * @module
  */
 
-import type { TokenUsageRecord, CostAlert } from './types.js';
+import type { TokenUsageRecord } from './types.js';
 import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import { createAsyncLock } from '../infra/async-lock.js';
 import { safeWarn } from '../infra/safe-log.js';
@@ -17,6 +17,7 @@ import {
 } from './cost-tracker-eviction.js';
 import { KahanSum, priceUsage, hasNonFiniteTokens } from './cost-math.js';
 import type { ModelPricing, CostTracker } from './cost-tracker-types.js';
+import { createCostAlertManager } from './cost-alert-manager.js';
 export type { EvictionStrategy, EvictionStrategyName } from './cost-tracker-eviction.js';
 export { overflowBucketStrategy, lruStrategy, getEvictionStrategy } from './cost-tracker-eviction.js';
 export type { ModelPricing, CostTracker } from './cost-tracker-types.js';
@@ -127,12 +128,6 @@ export function createCostTracker(config?: {
 }): CostTracker {
   const pricing = new Map<string, ModelPricing>();
   const records: TokenUsageRecord[] = [];
-  // Set-backed alert handler storage — O(1) unsubscribe, consistent with
-  // session/orchestrator event handler patterns.
-  const alertHandlers = new Set<(alert: CostAlert) => void>();
-  let budget: number | undefined = config?.budget;
-  const warningThreshold = config?.alertThresholds?.warning ?? 0.8;
-  const criticalThreshold = config?.alertThresholds?.critical ?? 0.95;
   const maxRecords = config?.maxRecords ?? 10_000;
   const maxModels = config?.maxModels ?? 1000;
   const maxTraces = config?.maxTraces ?? 10_000;
@@ -148,17 +143,25 @@ export function createCostTracker(config?: {
     description: 'Fraction of budget consumed (0..1+) reported after every recordUsage()',
     unit: '1',
   });
-  const costAlertCounter = metricsPort?.counter('harness.cost.alerts.total', {
-    description: 'Count of emitted budget alerts by type',
+
+  // Running total uses Kahan summation to avoid float drift. Created early
+  // so the alert manager's `getCurrentCost` thunk closes over it.
+  const runningSum = new KahanSum();
+
+  // Budget alerts, thresholds, and handler fan-out live on a dedicated
+  // component. Alert-counter metric emission is wired through this manager.
+  const alertManager = createCostAlertManager({
+    ...(config?.budget !== undefined && { budget: config.budget }),
+    ...(config?.alertThresholds !== undefined && {
+      alertThresholds: config.alertThresholds,
+    }),
+    ...(config?.alertDedupeWindowMs !== undefined && {
+      alertDedupeWindowMs: config.alertDedupeWindowMs,
+    }),
+    ...(logger !== undefined && { logger }),
+    ...(metricsPort !== undefined && { metrics: metricsPort }),
+    getCurrentCost: () => runningSum.total,
   });
-  // Alert dedupe bookkeeping. Tracks the last emission timestamp per alert
-  // type; an alert re-fires only once the dedupe window has passed.
-  const alertDedupeWindowMs = config?.alertDedupeWindowMs ?? 500;
-  const lastAlertTs: Record<CostAlert['type'], number> = {
-    warning: 0,
-    critical: 0,
-    exceeded: 0,
-  };
   // Pluggable eviction strategy. Accept a string or an object so tests can
   // inject custom strategies.
   const evictionStrategy: EvictionStrategy =
@@ -200,9 +203,6 @@ export function createCostTracker(config?: {
       );
     }
   }
-
-  // Running total uses Kahan summation to avoid float drift.
-  const runningSum = new KahanSum();
 
   // Internal async lock serialising post-construction mutators
   // (`updatePricing`, `updateBudget`). The synchronous hot path
@@ -256,112 +256,16 @@ export function createCostTracker(config?: {
     return priceUsage(usage, pricing.get(usage.model));
   }
 
-  function emitAlert(alert: CostAlert): void {
-    // Dedupe within a time window, per alert type. A single budget crossing
-    // during a streaming recordUsage() burst should produce exactly one
-    // alert per type until the window elapses.
-    if (alertDedupeWindowMs > 0) {
-      const now = Date.now();
-      const last = lastAlertTs[alert.type];
-      if (last !== 0 && (now - last) < alertDedupeWindowMs) {
-        return;
-      }
-      lastAlertTs[alert.type] = now;
-    }
-    // Emit a structured warn + metric alongside every alert so budget
-    // crossings surface in logs / observability backends, not just via the
-    // user `onAlert()` callback (which may be unset).
-    if (logger) {
-      try {
-        logger.warn('[harness-one/cost-tracker] budget alert', {
-          type: alert.type,
-          percent_used: alert.percentUsed,
-          current_cost: alert.currentCost,
-          budget: alert.budget,
-        });
-      } catch { /* logger failure non-fatal */ }
-    }
-    costAlertCounter?.add(1, { type: alert.type });
-    for (const handler of alertHandlers) {
-      handler(alert);
-    }
-  }
-
   /**
    * Report the current utilization fraction to the metrics port after every
    * recordUsage()/updateUsage() call, even when no alert fires. Operators
    * get a continuous signal rather than a sawtooth of threshold crossings.
    */
   function reportUtilization(): void {
-    if (!costUtilizationGauge || budget === undefined || budget <= 0) return;
-    costUtilizationGauge.record(runningSum.total / budget);
-  }
-
-  // Standalone functions using closure references instead of `this`
-  function checkBudgetFn(): CostAlert | null {
-    if (budget === undefined || budget <= 0) return null;
-    const currentCost = runningSum.total;
-    const percentUsed = currentCost / budget;
-
-    if (percentUsed >= 1.0) {
-      return {
-        type: 'exceeded',
-        currentCost,
-        budget,
-        percentUsed,
-        message: `Exceeded: ${(percentUsed * 100).toFixed(1)}% of budget used ($${currentCost.toFixed(4)} / $${budget.toFixed(2)})`,
-      };
-    }
-    if (percentUsed >= criticalThreshold) {
-      return {
-        type: 'critical',
-        currentCost,
-        budget,
-        percentUsed,
-        message: `Critical: ${(percentUsed * 100).toFixed(1)}% of budget used ($${currentCost.toFixed(4)} / $${budget.toFixed(2)})`,
-      };
-    }
-    if (percentUsed >= warningThreshold) {
-      return {
-        type: 'warning',
-        currentCost,
-        budget,
-        percentUsed,
-        message: `Warning: ${(percentUsed * 100).toFixed(1)}% of budget used ($${currentCost.toFixed(4)} / $${budget.toFixed(2)})`,
-      };
-    }
-    return null;
-  }
-
-  function getAlertMessageFn(): string | null {
-    if (budget === undefined) return null;
-    const currentCost = runningSum.total;
-    const percentUsed = currentCost / budget;
-
-    if (percentUsed >= 1.0) {
-      return `[BUDGET EXCEEDED] You have used ${(percentUsed * 100).toFixed(0)}% of your token budget. Stop all non-essential operations.`;
-    }
-    if (percentUsed >= criticalThreshold) {
-      return `[BUDGET CRITICAL] You have used ${(percentUsed * 100).toFixed(0)}% of your token budget. Be extremely concise.`;
-    }
-    if (percentUsed >= warningThreshold) {
-      return `[BUDGET WARNING] You have used ${(percentUsed * 100).toFixed(0)}% of your token budget. Please be concise.`;
-    }
-    return null;
-  }
-
-  function isBudgetExceededFn(): boolean {
-    if (budget === undefined || budget <= 0) return false;
-    return runningSum.total >= budget;
-  }
-
-  function budgetUtilizationFn(): number {
-    if (budget === undefined || budget <= 0) return 0;
-    return runningSum.total / budget;
-  }
-
-  function shouldStopFn(): boolean {
-    return isBudgetExceededFn();
+    if (!costUtilizationGauge) return;
+    const currentBudget = alertManager.getBudget();
+    if (currentBudget === undefined || currentBudget <= 0) return;
+    costUtilizationGauge.record(runningSum.total / currentBudget);
   }
 
   return {
@@ -469,13 +373,11 @@ export function createCostTracker(config?: {
       }
 
       // Check budget alerts after recording
-      if (budget !== undefined) {
+      if (alertManager.getBudget() !== undefined) {
         // Report utilization on every update, not only on threshold crossings.
         reportUtilization();
-        const alert = checkBudgetFn();
-        if (alert) {
-          emitAlert(alert);
-        }
+        const alert = alertManager.checkBudget();
+        if (alert) alertManager.emit(alert);
       }
 
       return record;
@@ -558,11 +460,9 @@ export function createCostTracker(config?: {
       }
 
       // Check budget alerts after update
-      if (budget !== undefined) {
-        const alert = checkBudgetFn();
-        if (alert) {
-          emitAlert(alert);
-        }
+      if (alertManager.getBudget() !== undefined) {
+        const alert = alertManager.checkBudget();
+        if (alert) alertManager.emit(alert);
       }
 
       return updatedRecord;
@@ -589,18 +489,13 @@ export function createCostTracker(config?: {
     async updateBudget(newBudget: number): Promise<void> {
       // Serialise against concurrent updatePricing/updateBudget.
       await mutationLock.withLock(async () => {
-        budget = newBudget;
+        alertManager.updateBudget(newBudget);
       });
     },
 
-    checkBudget: checkBudgetFn,
+    checkBudget: () => alertManager.checkBudget(),
 
-    onAlert(handler: (alert: CostAlert) => void): () => void {
-      alertHandlers.add(handler);
-      return () => {
-        alertHandlers.delete(handler);
-      };
-    },
+    onAlert: (handler) => alertManager.registerHandler(handler),
 
     reset(): void {
       records.length = 0;
@@ -612,17 +507,15 @@ export function createCostTracker(config?: {
       evictionBias = 0;
       // Reset dedupe state so alerts can re-fire after an explicit reset
       // (tests + operator-driven "checkpoint" workflows).
-      lastAlertTs.warning = 0;
-      lastAlertTs.critical = 0;
-      lastAlertTs.exceeded = 0;
+      alertManager.resetDedupe();
     },
 
-    getAlertMessage: getAlertMessageFn,
+    getAlertMessage: () => alertManager.getAlertMessage(),
 
-    isBudgetExceeded: isBudgetExceededFn,
+    isBudgetExceeded: () => alertManager.isBudgetExceeded(),
 
-    budgetUtilization: budgetUtilizationFn,
+    budgetUtilization: () => alertManager.budgetUtilization(),
 
-    shouldStop: shouldStopFn,
+    shouldStop: () => alertManager.shouldStop(),
   };
 }

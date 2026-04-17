@@ -4,7 +4,6 @@
  * @module
  */
 
-import { randomInt } from 'node:crypto';
 import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import { asSpanId, asTraceId, prefixedSecureId } from '../infra/ids.js';
 import type { SpanId, TraceId } from '../core/types.js';
@@ -14,10 +13,12 @@ import {
   type RedactConfig,
   type Redactor,
 } from '../infra/redact.js';
-import { createLazyAsync, type LazyAsync } from '../infra/lazy-async.js';
 import type { MetricsPort } from './metrics-port.js';
 import { TraceLruList } from './trace-lru-list.js';
 import { createSpanAttributeKeyWarner } from './span-attribute-keys.js';
+import { createTraceSampler } from './trace-sampler.js';
+import { createTraceRetryCollector } from './trace-retry-collector.js';
+import { createTraceExporterCoordinator } from './trace-exporter-coordinator.js';
 import type { Trace, Span, SpanEvent, SpanEventSeverity, TraceExporter } from './types.js';
 import type { RetryMetrics, TraceManager } from './trace-manager-types.js';
 export type { RetryMetrics, TraceManager } from './trace-manager-types.js';
@@ -113,7 +114,6 @@ export function createTraceManager(config?: {
   const spanEvictionCounter = metricsPort?.counter('harness.trace.span_evictions.total', {
     description: 'Spans evicted by trace LRU pressure',
   });
-  let samplingRate = config?.defaultSamplingRate ?? 1;
   // Default 30s flush deadline. `0` disables the cap.
   const flushTimeoutMs = config?.flushTimeoutMs ?? 30_000;
   if (!Number.isFinite(flushTimeoutMs) || flushTimeoutMs < 0) {
@@ -135,131 +135,21 @@ export function createTraceManager(config?: {
   if (maxTraces < 1) {
     throw new HarnessError('maxTraces must be >= 1', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide a positive maxTraces value');
   }
-  if (!Number.isFinite(samplingRate) || samplingRate < 0 || samplingRate > 1) {
-    throw new HarnessError(
-      'defaultSamplingRate must be a finite number in [0, 1]',
-      HarnessErrorCode.CORE_INVALID_CONFIG,
-      'Provide a rate between 0 and 1 inclusive',
-    );
-  }
 
-  /**
-   * Lazy initialization — track which exporters have had initialize() called.
-   * Exporters are initialized on first export attempt (span or trace) to keep
-   * createTraceManager synchronous.
-   *
-   * Uses `createLazyAsync` per-exporter so concurrent first exports share the
-   * same in-flight init promise (stored synchronously before the first await).
-   * On rejection the cache is cleared so a later export retries instead of
-   * silently re-using the failed result.
-   */
-  const initLazies = new Map<TraceExporter, LazyAsync<void>>();
-
-  function getInitLazy(exporter: TraceExporter): LazyAsync<void> {
-    let lazy = initLazies.get(exporter);
-    if (!lazy) {
-      lazy = createLazyAsync(async () => {
-        if (!exporter.initialize) return;
-        await exporter.initialize();
-      });
-      initLazies.set(exporter, lazy);
-    }
-    return lazy;
-  }
-
-  function ensureInitialized(exporter: TraceExporter): Promise<void> {
-    if (!exporter.initialize) return Promise.resolve();
-    return getInitLazy(exporter)
-      .get()
-      .catch((err) => {
-        // Initialization failure is reported but doesn't stop subsequent
-        // attempts — the exporter's isHealthy() will gate future exports.
-        // `createLazyAsync` already cleared the cached promise, so the next
-        // call will retry from scratch.
-        if (onExportError) onExportError(err);
-        else if (logger) {
-          try { logger.warn('[harness-one] exporter initialize failed', { exporter: exporter.name, error: err }); } catch { /* logger failure non-fatal */ }
-        }
-        // No console.warn fallback — library code must not write to stderr.
-      });
-  }
+  // Sampling state + per-trace decision snapshot live in a dedicated sampler.
+  const sampler = createTraceSampler(config?.defaultSamplingRate ?? 1);
+  // Retry telemetry state machine.
+  const retryCollector = createTraceRetryCollector();
+  // Exporter dispatch + flush/shutdown orchestration.
+  const exporterCoordinator = createTraceExporterCoordinator({
+    exporters,
+    flushTimeoutMs,
+    ...(logger !== undefined && { logger }),
+    ...(onExportError !== undefined && { onExportError }),
+  });
 
   // Reserved span-attribute prefix warner (once per unique key).
   const maybeWarnAttributeKey = createSpanAttributeKeyWarner(logger);
-
-  function reportExportError(err: unknown): void {
-    if (onExportError) onExportError(err);
-    else if (logger) {
-      try { logger.warn('[harness-one] trace export error', { error: err }); } catch { /* logger failure non-fatal */ }
-    }
-    // No console.warn fallback — library code must not write to stderr.
-  }
-
-  /**
-   * Pending in-flight export promises. Tracked so flush() / dispose() can wait
-   * for outstanding span/trace exports to settle — otherwise callers observe
-   * a gap between endSpan() returning and the exporter receiving the span.
-   */
-  const pendingExports = new Set<Promise<unknown>>();
-
-  function trackExport(p: Promise<unknown>): void {
-    pendingExports.add(p);
-    // `.finally()` alone can leak when the underlying promise rejects and a
-    // handler in finally throws — swallow the rejection first so the delete
-    // callback is guaranteed to run. Route swallowed rejections to the
-    // injected logger so ops can see tracker-cleanup failures; fall back to
-    // silent swallow only when no logger is configured (spurious stderr from
-    // a library is worse than a loud but unnoticed warning).
-    p.catch((err: unknown) => {
-      if (logger) {
-        try {
-          logger.warn('[harness-one] export cleanup caught rejection', { error: err });
-        } catch {
-          // Logger itself threw — nothing more we can do without recursing.
-        }
-      }
-      // Intentional silent fallback when no logger is injected.
-    }).finally(() => pendingExports.delete(p));
-  }
-
-  function exportSpanTo(exporter: TraceExporter, span: Span): void {
-    if (exporter.isHealthy && !exporter.isHealthy()) return;
-    const p = ensureInitialized(exporter)
-      .then(() => exporter.exportSpan(span))
-      .catch(reportExportError);
-    trackExport(p);
-  }
-
-  function exportTraceTo(exporter: TraceExporter, trace: Trace, sampled: boolean): void {
-    if (exporter.isHealthy && !exporter.isHealthy()) return;
-    if (exporter.shouldExport && !exporter.shouldExport(trace)) return;
-    // The sampling decision is made at startTrace() time and stored on the
-    // trace. Respect the stored decision rather than re-evaluating here.
-    // Per-exporter shouldExport() hooks take precedence above.
-    if (!exporter.shouldExport && !sampled) return;
-    // Tail-based sampling veto. Evaluated AFTER head-based decisions so
-    // callers can "rescue" a head-dropped trace only by relaxing head
-    // sampling — not by using a tail hook (that would defeat memory bounds).
-    // Here we're already past the head gate so tail hook can only REMOVE
-    // traces, matching the documented export-only contract.
-    if (exporter.shouldSampleTrace) {
-      let keep = true;
-      try {
-        keep = exporter.shouldSampleTrace(trace) !== false;
-      } catch (err) {
-        // A throwing tail hook is treated as an export failure: route to the
-        // usual error sink and drop the export. Don't surface as "kept" so a
-        // buggy sampler can't silently flood the exporter.
-        reportExportError(err);
-        return;
-      }
-      if (!keep) return;
-    }
-    const p = ensureInitialized(exporter)
-      .then(() => exporter.exportTrace(trace))
-      .catch(reportExportError);
-    trackExport(p);
-  }
 
   interface MutableSpan {
     id: string;
@@ -334,14 +224,6 @@ export function createTraceManager(config?: {
   const DEAD_TRACE_PREFIX = 'dead-';
   const DEAD_SPAN_PREFIX = 'dead-span-';
 
-  // Retry telemetry aggregated from span events named `adapter_retry`.
-  let retryTotalRetries = 0;
-  let retrySuccessAfterRetry = 0;
-  let retryFailedAfterRetries = 0;
-  // Spans that had at least one adapter_retry event — consulted on endSpan
-  // to count success/failure outcomes.
-  const retryingSpanIds = new Set<string>();
-
   // Use cryptographically secure IDs instead of predictable counter +
   // timestamp. Prevents trace/span ID enumeration in multi-tenant deployments.
   function genTraceId(): TraceId {
@@ -392,7 +274,7 @@ export function createTraceManager(config?: {
             allEvictedSpanIds.push(...evictedSpans);
             for (const spanId of trace.spanIds) {
               spans.delete(spanId);
-              retryingSpanIds.delete(spanId);
+              retryCollector.forget(spanId);
             }
             // Metric per evicted trace + span count.
             traceEvictionCounter?.add(1, { reason: 'ended' });
@@ -410,7 +292,7 @@ export function createTraceManager(config?: {
           allEvictedSpanIds.push(...evictedSpans);
           for (const spanId of oldest.spanIds) {
             spans.delete(spanId);
-            retryingSpanIds.delete(spanId);
+            retryCollector.forget(spanId);
           }
           traceEvictionCounter?.add(1, { reason: 'lru' });
           if (oldest.spanIds.length > 0) {
@@ -444,84 +326,6 @@ export function createTraceManager(config?: {
     return allEvictedSpanIds;
   }
 
-  /**
-   * Invoke `exporter.flush()` with a per-exporter deadline so a single slow
-   * exporter can no longer block the aggregate `flush()` beyond
-   * `perExporterTimeoutMs`. A `0` timeout disables the cap for the legacy
-   * wait-forever path.
-   */
-  function flushExporterBounded(
-    exporter: TraceExporter,
-    perExporterTimeoutMs: number,
-  ): Promise<void> {
-    if (perExporterTimeoutMs <= 0) {
-      return Promise.resolve(exporter.flush()).then(() => undefined);
-    }
-    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-    const timeoutPromise = new Promise<'timeout'>((resolve) => {
-      timeoutHandle = setTimeout(() => resolve('timeout'), perExporterTimeoutMs);
-    });
-    return Promise.race([
-      Promise.resolve(exporter.flush()).then(() => 'ok' as const),
-      timeoutPromise,
-    ])
-      .then((outcome) => {
-        if (outcome === 'timeout') {
-          const msg = `[harness-one/trace-manager] exporter "${exporter.name}" flush() timed out after ${perExporterTimeoutMs}ms`;
-          if (logger) {
-            try { logger.warn(msg, { exporter: exporter.name, perExporterTimeoutMs }); } catch { /* non-fatal */ }
-          }
-        }
-      })
-      .finally(() => {
-        if (timeoutHandle) clearTimeout(timeoutHandle);
-      });
-  }
-
-  /**
-   * Wait for every in-flight export to settle, bounded by `flushTimeoutMs`.
-   * On timeout, abandon the remainder (the promises remain tracked but are
-   * no longer awaited) and log a warn.
-   *
-   * `flushTimeoutMs === 0` disables the cap — callers explicitly opted into
-   * wait-forever behaviour.
-   */
-  async function waitForPendingWithTimeout(phase: 'flush' | 'dispose'): Promise<void> {
-    if (flushTimeoutMs === 0) {
-      while (pendingExports.size > 0) {
-        await Promise.allSettled(pendingExports);
-      }
-      return;
-    }
-    const deadline = Date.now() + flushTimeoutMs;
-    while (pendingExports.size > 0) {
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) break;
-      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-      const timeoutPromise = new Promise<'timeout'>((resolve) => {
-        timeoutHandle = setTimeout(() => resolve('timeout'), remaining);
-      });
-      try {
-        const outcome = await Promise.race([
-          Promise.allSettled(pendingExports).then(() => 'settled' as const),
-          timeoutPromise,
-        ]);
-        if (outcome === 'timeout') break;
-      } finally {
-        if (timeoutHandle) clearTimeout(timeoutHandle);
-      }
-    }
-    if (pendingExports.size > 0) {
-      const abandoned = pendingExports.size;
-      const msg = `[harness-one/trace-manager] ${phase} timed out after ${flushTimeoutMs}ms; abandoning ${abandoned} in-flight export(s)`;
-      if (logger) {
-        try { logger.warn(msg, { phase, abandoned, flushTimeoutMs }); } catch { /* logger failure non-fatal */ }
-      } else if (onExportError) {
-        try { onExportError(new Error(msg)); } catch { /* sink failure non-fatal */ }
-      }
-      // Intentional: no console.warn fallback (library code must not write to stderr).
-    }
-  }
 
   function toReadonlyTrace(mt: MutableTrace): Trace {
     const traceSpans: Span[] = mt.spanIds.map(sid => {
@@ -585,9 +389,8 @@ export function createTraceManager(config?: {
         : {};
       // Make the sampling decision at trace-start so that changing the
       // sampling rate after startTrace() does not affect already-started
-      // traces.
-      const rateSnapshot = samplingRate;
-      const sampled = rateSnapshot >= 1 || randomInt(0, 1 << 30) / (1 << 30) < rateSnapshot;
+      // traces. Head verdict is snapshotted on the mutable trace record.
+      const { rateSnapshot, sampled } = sampler.decide();
       const mutable: MutableTrace = {
         id,
         name,
@@ -701,8 +504,7 @@ export function createTraceManager(config?: {
 
       // Track adapter_retry events for aggregate telemetry.
       if (event.name === 'adapter_retry') {
-        retryTotalRetries++;
-        retryingSpanIds.add(spanId);
+        retryCollector.noteRetry(spanId);
       }
     },
 
@@ -768,14 +570,7 @@ export function createTraceManager(config?: {
       span.status = finalStatus;
 
       // Attribute retry outcome now that the span is complete.
-      if (retryingSpanIds.has(spanId)) {
-        retryingSpanIds.delete(spanId);
-        if (finalStatus === 'completed') {
-          retrySuccessAfterRetry++;
-        } else {
-          retryFailedAfterRetries++;
-        }
-      }
+      retryCollector.noteSpanEnded(spanId, finalStatus);
 
       // Build one frozen readonly snapshot and reuse it across every
       // exporter (avoids N allocations for the same payload with N exporters).
@@ -795,9 +590,7 @@ export function createTraceManager(config?: {
         events: Object.freeze(span.events.slice()) as readonly SpanEvent[],
         status: span.status,
       });
-      for (const exporter of exporters) {
-        exportSpanTo(exporter, snapshot);
-      }
+      exporterCoordinator.exportSpan(snapshot);
     },
 
     endTrace(traceId: string, status?: 'completed' | 'error'): void {
@@ -823,10 +616,7 @@ export function createTraceManager(config?: {
       // Export — respects isHealthy(), shouldExport(), lazy initialize(), and sampling.
       // Pass the sampling decision made at trace-start so concurrent
       // `setSamplingRate()` calls can't flip the decision.
-      const readonlyTrace = toReadonlyTrace(trace);
-      for (const exporter of exporters) {
-        exportTraceTo(exporter, readonlyTrace, trace.sampled);
-      }
+      exporterCoordinator.exportTrace(toReadonlyTrace(trace), trace.sampled);
     },
 
     getTrace(traceId: string): Trace | undefined {
@@ -857,142 +647,40 @@ export function createTraceManager(config?: {
       // to race past it. `Promise.allSettled(pendingExports)` accepts any
       // iterable, so we pass the Set directly instead of materialising a
       // fresh array on every loop turn. Loop because a settled export's
-      // `finally` hook runs asynchronously and new exports can race in while
-      // we awaited. The whole settle-loop is wrapped in a Promise.race with
-      // an abortable timeout (`flushTimeoutMs === 0` disables the cap) so a
-      // stuck exporter cannot hang shutdown. Ensure every lazy-init promise
-      // is tracked by pendingExports BEFORE we settle, so flush waits for
-      // in-flight exporter initialize() calls too.
-      for (const e of exporters) {
-        if (!e.initialize) continue;
-        const initPromise = ensureInitialized(e);
-        if (!pendingExports.has(initPromise)) {
-          trackExport(initPromise);
-        }
-      }
-      await waitForPendingWithTimeout('flush');
-      // Promise.allSettled + per-exporter deadline so the slowest exporter
-      // cannot block flush(). Timed-out exporters are logged but NOT
-      // re-thrown — flush must remain best-effort.
-      const perExporterTimeout = flushTimeoutMs > 0 && exporters.length > 0
-        ? Math.max(1, Math.floor(flushTimeoutMs / exporters.length))
-        : 0;
-      const flushResults = await Promise.allSettled(
-        exporters.map(e => flushExporterBounded(e, perExporterTimeout)),
-      );
-      for (let i = 0; i < flushResults.length; i++) {
-        const r = flushResults[i];
-        if (r.status === 'rejected') {
-          reportExportError(r.reason);
-        }
-      }
+      // Drain pending exports + run each exporter's flush() with per-exporter
+      // deadlines. Delegated to the coordinator so the trace-manager core has
+      // no timer/promise-tracking code of its own.
+      await exporterCoordinator.flushAll();
     },
 
     async initialize(): Promise<void> {
-      // Use allSettled so one slow exporter doesn't block the others, AND
-      // track every init promise in pendingExports so flush() awaits them if
-      // called concurrently.
-      const initPromises: Promise<void>[] = [];
-      for (const e of exporters) {
-        const p = ensureInitialized(e);
-        trackExport(p);
-        initPromises.push(p);
-      }
-      const results = await Promise.allSettled(initPromises);
-      for (let i = 0; i < results.length; i++) {
-        const r = results[i];
-        if (r.status === 'rejected') {
-          const exporter = exporters[i];
-          const name = exporter?.name ?? 'unknown';
-          if (logger) {
-            try { logger.warn('[harness-one/trace-manager] exporter initialize failed', { exporter: name, error: r.reason }); } catch { /* non-fatal */ }
-          } else if (onExportError) {
-            try { onExportError(r.reason); } catch { /* non-fatal */ }
-          }
-        }
-      }
+      await exporterCoordinator.initializeAll();
     },
 
     setSamplingRate(rate: number): void {
-      if (!Number.isFinite(rate) || rate < 0 || rate > 1) {
-        throw new HarnessError(
-          'samplingRate must be a finite number in [0, 1]',
-          HarnessErrorCode.CORE_INVALID_CONFIG,
-          'Provide a rate between 0 and 1 inclusive',
-        );
-      }
-      samplingRate = rate;
+      sampler.setRate(rate);
     },
 
     // Snapshot accessor (tests + introspection).
     getSamplingRate(): number {
-      return samplingRate;
+      return sampler.getRate();
     },
 
     getRetryMetrics(): RetryMetrics {
-      return {
-        totalRetries: retryTotalRetries,
-        successAfterRetry: retrySuccessAfterRetry,
-        failedAfterRetries: retryFailedAfterRetries,
-      };
+      return retryCollector.snapshot();
     },
 
     async dispose(): Promise<void> {
-      // Settle outstanding in-flight export promises before asking exporters
-      // to flush — otherwise a span fired milliseconds ago may still be in
-      // the exporter's queue when we clear internal state. Pass the Set
-      // directly to `Promise.allSettled` instead of allocating
-      // `Array.from(pendingExports)` per turn. Bounded by flushTimeoutMs so
-      // a hanging exporter cannot block dispose forever.
-      await waitForPendingWithTimeout('dispose');
-      // Flush every exporter — use allSettled so one failure doesn't block others.
-      const flushResults = await Promise.allSettled(exporters.map(e => e.flush()));
-      for (const result of flushResults) {
-        if (result.status === 'rejected') {
-          reportExportError(result.reason);
-        }
-      }
-      // Call `shutdown()` on each exporter with a bounded per-exporter
-      // timeout. Racing against a 5s cap keeps the DAG responsive even when
-      // one exporter hangs.
-      const EXPORTER_SHUTDOWN_TIMEOUT_MS = 5_000;
-      for (const e of exporters) {
-        if (!e.shutdown) continue;
-        let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-        const timeoutPromise = new Promise<'timeout'>((resolve) => {
-          timeoutHandle = setTimeout(() => resolve('timeout'), EXPORTER_SHUTDOWN_TIMEOUT_MS);
-        });
-        try {
-          const outcome = await Promise.race([
-            Promise.resolve(e.shutdown())
-              .then(() => 'ok' as const)
-              .catch((err: unknown) => {
-                reportExportError(err);
-                return 'error' as const;
-              }),
-            timeoutPromise,
-          ]);
-          if (outcome === 'timeout') {
-            reportExportError(
-              new Error(`exporter "${e.name}" shutdown timed out after ${EXPORTER_SHUTDOWN_TIMEOUT_MS}ms`),
-            );
-          }
-        } finally {
-          if (timeoutHandle) clearTimeout(timeoutHandle);
-        }
-      }
+      // Coordinator drains in-flight exports, flushes each exporter, then
+      // calls `shutdown()` with per-exporter deadlines.
+      await exporterCoordinator.shutdownAll();
       // Clear internal maps so the process can exit cleanly.
       traces.clear();
       spans.clear();
-      // Reset the linked-list LRU state.
       lru.clear();
-      retryingSpanIds.clear();
       deadTraceIds.clear();
       deadSpanIds.clear();
-      initLazies.clear();
-      retryTotalRetries = 0;
-      retrySuccessAfterRetry = 0;
-      retryFailedAfterRetries = 0;
+      retryCollector.reset();
     },
   };
 }

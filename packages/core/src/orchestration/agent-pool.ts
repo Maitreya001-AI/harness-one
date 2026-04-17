@@ -142,6 +142,15 @@ export function createAgentPool(
   const disposeErrorCounter = metrics?.counter('harness.pool.dispose_errors', {
     description: 'Count of underlying AgentLoop.dispose() rejections',
   });
+  /**
+   * Emitted when `resize()` cannot fully trim the pool because too many
+   * agents are in `active` state. Tagged with `reason` so operators can
+   * distinguish "expected backpressure" (too busy to shrink) from other
+   * skipped paths a future change might introduce.
+   */
+  const resizeSkippedCounter = metrics?.counter('harness.pool.resize_skipped', {
+    description: 'Count of resize() calls that could not reach the target size',
+  });
 
   const entries = new Map<string, PoolEntry>();
   let disposed = false;
@@ -580,12 +589,36 @@ export function createAgentPool(
 
       if (stats.total > target) {
         let toRemove = stats.total - target;
+        const requestedRemoval = toRemove;
         for (const entry of entries.values()) {
           if (toRemove <= 0) break;
           if (entry.state === 'idle') {
             disposeEntrySync(entry);
             totalRecycled++;
             toRemove--;
+          }
+        }
+        // If `toRemove > 0` after sweeping idle entries, the pool could not
+        // shrink to the target because the remaining overage is held by
+        // in-flight `active` agents. Surface a counter + log so operators
+        // can see why the autoscaler's intent was not satisfied.
+        if (toRemove > 0) {
+          resizeSkippedCounter?.add(1, {
+            pool_id: poolId,
+            reason: 'active_agents',
+          });
+          if (logger) {
+            try {
+              logger.info('pool resize skipped: insufficient idle agents', {
+                pool_id: poolId,
+                target,
+                requested_removal: requestedRemoval,
+                actual_removal: requestedRemoval - toRemove,
+                still_active: stats.active,
+              });
+            } catch {
+              /* logger failure non-fatal */
+            }
           }
         }
       } else if (stats.total < target) {

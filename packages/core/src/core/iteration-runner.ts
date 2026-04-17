@@ -18,14 +18,18 @@
 
 import type { ExecutionStrategy, Message, TokenUsage, ToolCallRequest } from './types.js';
 import type { AgentEvent, DoneReason } from './events.js';
-import { assertNever } from './events.js';
 import { AbortedError, HarnessError, TokenBudgetExceededError, HarnessErrorCode} from './errors.js';
 import type { AgentLoopHook } from './agent-loop-types.js';
 import { createHookDispatcher } from './hook-dispatcher.js';
 import type { AdapterCaller } from './adapter-caller.js';
 import type { AgentLoopTraceManager } from './trace-interface.js';
 import type { GuardrailPipeline } from './guardrail-port.js';
-import { findLatestUserMessage, pickBlockingGuardName } from './guardrail-helpers.js';
+import {
+  runInputGuardrail,
+  runOutputGuardrail,
+  runToolOutputGuardrail,
+} from './guardrail-runner.js';
+import { safeStringifyToolResult } from './tool-serialization.js';
 
 // ---------------------------------------------------------------------------
 // Public surface
@@ -113,118 +117,8 @@ export interface IterationRunner {
 }
 
 // ---------------------------------------------------------------------------
-// Private bailOut input shapes (discriminated union)
-// ---------------------------------------------------------------------------
-
-type ErrorBail = {
-  /**
-   * `'max_iterations'` is intentionally absent: the max-iterations terminal
-   * is emitted by `AgentLoop`'s `emitTerminal` path, not through `bailOut`.
-   * Narrowing here prevents a future code path from accidentally routing it
-   * through the runner.
-   */
-  readonly reason: 'error' | 'aborted';
-  readonly errorEvent?: Extract<AgentEvent, { type: 'error' }>;
-  /**
-   * Skip yielding errorEvent when the event is already on the wire
-   * (streaming failure path — StreamHandler yielded it). Default: false.
-   */
-  readonly errorAlreadyYielded?: boolean;
-};
-
-type GuardrailBail = {
-  readonly reason: 'error';
-  /** Required — guardrail blocks ALWAYS abort upstream work. */
-  readonly abort: true;
-  readonly guardrailEvent: Extract<AgentEvent, { type: 'guardrail_blocked' }>;
-  readonly errorEvent: Extract<AgentEvent, { type: 'error' }>;
-};
-
-type BudgetBail = {
-  readonly reason: 'token_budget';
-  /** Required — we yield the message before the error. */
-  readonly messageEvent: Extract<AgentEvent, { type: 'message' }>;
-  readonly errorEvent: Extract<AgentEvent, { type: 'error' }>;
-};
-
-type EndTurnBail = {
-  readonly reason: 'end_turn';
-  /** Required — end_turn MUST yield the final assistant message. */
-  readonly messageEvent: Extract<AgentEvent, { type: 'message' }>;
-};
-
-type BailOutInput = ErrorBail | GuardrailBail | BudgetBail | EndTurnBail;
-
-// ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
-
-/** Maximum serialized tool result size (1 MiB). */
-const MAX_TOOL_RESULT_BYTES = 1 * 1024 * 1024;
-/** Maximum object nesting depth for tool-result serialization. */
-const MAX_TOOL_RESULT_DEPTH = 10;
-/**
- * Truncation marker appended when the serialized result exceeds
- * {@link MAX_TOOL_RESULT_BYTES}. Consumers/LLMs can detect the marker to know
- * the result was cut; the prefix of the payload is still useful context.
- */
-const TRUNCATION_MARKER = '...[truncated: result exceeded 1MiB]';
-
-/**
- * Defensive serialization for tool-call results.
- *
- * Depth-limited replacer (default depth 10) tracks TRUE nesting via the
- * replacer's `this` binding (the container object) — a shared counter would
- * over-count siblings and mis-trigger the depth guard on wide objects.
- * Cycles are broken via `WeakSet`. After serialize, oversized payloads are
- * truncated with a marker instead of dropped entirely so the LLM still sees
- * useful context.
- */
-function safeStringifyToolResult(value: unknown): string {
-  const seen = new WeakSet<object>();
-  /**
-   * Map container object → its depth relative to the root. `undefined`
-   * means "root" (not yet entered). Depth increments only when we descend
-   * into a new container, not on sibling keys.
-   */
-  const depthMap = new WeakMap<object, number>();
-
-  const replacer = function (this: unknown, _key: string, val: unknown): unknown {
-    if (val === null || typeof val !== 'object') return val;
-    if (seen.has(val as object)) return '[circular]';
-    // Determine this value's depth: parent depth + 1 (or 0 if root).
-    const parent = this as object | undefined;
-    const parentDepth =
-      parent !== undefined && depthMap.has(parent) ? depthMap.get(parent)! : -1;
-    const nextDepth = parentDepth + 1;
-    if (nextDepth > MAX_TOOL_RESULT_DEPTH) {
-      // Returning undefined drops the key from the output; for an array
-      // slot this produces `null`, which matches JSON.stringify's default
-      // behaviour for dropped values in arrays.
-      return undefined;
-    }
-    seen.add(val as object);
-    depthMap.set(val as object, nextDepth);
-    return val;
-  };
-
-  let serialized: string;
-  try {
-    serialized = JSON.stringify(value, replacer);
-  } catch {
-    return '[Object could not be serialized]';
-  }
-  if (serialized === undefined) return '[result not serializable]';
-  if (serialized.length > MAX_TOOL_RESULT_BYTES) {
-    // Truncate with marker instead of discarding entirely. Subtract the
-    // marker length so the final string stays within budget.
-    return (
-      serialized.slice(0, MAX_TOOL_RESULT_BYTES - TRUNCATION_MARKER.length) +
-      TRUNCATION_MARKER
-    );
-  }
-  return serialized;
-}
 
 function snapshotUsage(u: { inputTokens: number; outputTokens: number }): TokenUsage {
   return { inputTokens: u.inputTokens, outputTokens: u.outputTokens };
@@ -272,57 +166,96 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
     runHook('onIterationEnd', { iteration: ctx.iteration, done });
   }
 
-  /**
-   * Discriminated-union terminal — yields the right event sequence and
-   * returns a {@link IterationOutcome}. ADR §4 v2.
-   */
-  async function* bailOut(
+  // -----------------------------------------------------------------------
+  // Terminal helpers — one per {@link DoneReason} the runner is allowed to
+  // emit. They replace the Wave-5B `bailOut` discriminated-union dispatcher
+  // (round-3 cleanup, commit post-603f526). Each helper owns exactly the
+  // yields/side-effects its reason needs:
+  //
+  //   bailEndTurn    → yield message;              span=completed; fire end(done=true)
+  //   bailTokenBudget→ yield message + error;      span=error;     fire end(done=true)
+  //   bailAborted    → yield error?;               span=error;     fire end(done=true)
+  //   bailError      → yield error (or skip);      span=error;     fire end(done=true)
+  //   bailGuardrail  → abort + yield guardrail+err;span=error;     fire end(done=true)
+  //
+  // Splitting makes each exit path reviewable on its own; adding a new
+  // terminal reason no longer touches a shared switch statement.
+  // -----------------------------------------------------------------------
+
+  function terminated(
     ctx: IterationContext,
-    input: BailOutInput,
+    reason: DoneReason,
+  ): IterationOutcome {
+    return {
+      kind: 'terminated',
+      reason,
+      totalUsage: snapshotUsage(ctx.cumulativeUsage),
+    };
+  }
+
+  async function* bailEndTurn(
+    ctx: IterationContext,
+    messageEvent: Extract<AgentEvent, { type: 'message' }>,
   ): AsyncGenerator<AgentEvent, IterationOutcome> {
-    switch (input.reason) {
-      case 'end_turn': {
-        yield input.messageEvent;
-        endSpan(ctx, 'completed');
-        fireIterationEnd(ctx, true);
-        return {
-          kind: 'terminated',
-          reason: 'end_turn',
-          totalUsage: snapshotUsage(ctx.cumulativeUsage),
-        };
-      }
-      case 'token_budget': {
-        yield input.messageEvent;
-        yield input.errorEvent;
-        endSpan(ctx, 'error');
-        fireIterationEnd(ctx, true);
-        return {
-          kind: 'terminated',
-          reason: 'token_budget',
-          totalUsage: snapshotUsage(ctx.cumulativeUsage),
-        };
-      }
-      case 'error':
-      case 'aborted': {
-        // ErrorBail OR GuardrailBail (both discriminate on reason:'error').
-        if ('abort' in input && input.abort) config.abortController.abort();
-        if ('guardrailEvent' in input) yield input.guardrailEvent;
-        const alreadyYielded =
-          'errorAlreadyYielded' in input && input.errorAlreadyYielded === true;
-        if (!alreadyYielded && input.errorEvent) yield input.errorEvent;
-        endSpan(ctx, 'error');
-        fireIterationEnd(ctx, true);
-        return {
-          kind: 'terminated',
-          reason: input.reason,
-          totalUsage: snapshotUsage(ctx.cumulativeUsage),
-        };
-      }
-      default:
-        // Compile-time exhaustiveness: adding a new `reason` to
-        // {@link BailOutInput} without a matching case will fail here.
-        return assertNever(input);
-    }
+    yield messageEvent;
+    endSpan(ctx, 'completed');
+    fireIterationEnd(ctx, true);
+    return terminated(ctx, 'end_turn');
+  }
+
+  async function* bailTokenBudget(
+    ctx: IterationContext,
+    messageEvent: Extract<AgentEvent, { type: 'message' }>,
+    errorEvent: Extract<AgentEvent, { type: 'error' }>,
+  ): AsyncGenerator<AgentEvent, IterationOutcome> {
+    yield messageEvent;
+    yield errorEvent;
+    endSpan(ctx, 'error');
+    fireIterationEnd(ctx, true);
+    return terminated(ctx, 'token_budget');
+  }
+
+  async function* bailAborted(
+    ctx: IterationContext,
+    errorEvent: Extract<AgentEvent, { type: 'error' }>,
+  ): AsyncGenerator<AgentEvent, IterationOutcome> {
+    yield errorEvent;
+    endSpan(ctx, 'error');
+    fireIterationEnd(ctx, true);
+    return terminated(ctx, 'aborted');
+  }
+
+  /**
+   * General error terminal. `errorAlreadyYielded` skips the `error` event when
+   * StreamHandler has already yielded it (streaming path) to preserve the
+   * "exactly one error event per failed turn" contract.
+   */
+  async function* bailError(
+    ctx: IterationContext,
+    errorEvent: Extract<AgentEvent, { type: 'error' }> | undefined,
+    errorAlreadyYielded: boolean,
+  ): AsyncGenerator<AgentEvent, IterationOutcome> {
+    if (!errorAlreadyYielded && errorEvent) yield errorEvent;
+    endSpan(ctx, 'error');
+    fireIterationEnd(ctx, true);
+    return terminated(ctx, 'error');
+  }
+
+  /**
+   * Guardrail block terminal — always aborts upstream work and yields the
+   * guardrail event before the error event so downstream filters see both.
+   */
+  async function* bailGuardrail(
+    ctx: IterationContext,
+    guardrailEvent: Extract<AgentEvent, { type: 'guardrail_blocked' }>,
+    errorEvent: Extract<AgentEvent, { type: 'error' }>,
+  ): AsyncGenerator<AgentEvent, IterationOutcome> {
+    config.abortController.abort();
+    yield guardrailEvent;
+    yield errorEvent;
+    endSpan(ctx, 'error');
+    fireIterationEnd(ctx, true);
+    return terminated(ctx, 'error');
   }
 
   // -----------------------------------------------------------------------
@@ -333,34 +266,10 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
     ctx: IterationContext,
   ): AsyncGenerator<AgentEvent, IterationOutcome> {
     // [1] Input guardrail.
-    if (config.inputPipeline) {
-      const latestUser = findLatestUserMessage(ctx.conversation);
-      if (latestUser !== undefined) {
-        const result = await config.inputPipeline.runInput({ content: latestUser });
-        if (!result.passed && result.verdict.action === 'block') {
-          const guardName = pickBlockingGuardName(result, 'input');
-          const reason = result.verdict.reason;
-          const guardrailEvent: Extract<AgentEvent, { type: 'guardrail_blocked' }> = {
-            type: 'guardrail_blocked',
-            phase: 'input',
-            guardName,
-            details: { reason },
-          };
-          const errorEvent: Extract<AgentEvent, { type: 'error' }> = {
-            type: 'error',
-            error: new HarnessError(
-              `guardrail "${guardName}" blocked input — ${reason}`,
-              HarnessErrorCode.GUARD_VIOLATION,
-              'Review the input pipeline configuration and sanitize the user message',
-            ),
-          };
-          return yield* bailOut(ctx, {
-            reason: 'error',
-            abort: true,
-            guardrailEvent,
-            errorEvent,
-          });
-        }
+    {
+      const outcome = await runInputGuardrail(ctx.conversation, config.inputPipeline);
+      if (outcome.kind === 'blocked') {
+        return yield* bailGuardrail(ctx, outcome.guardrailEvent, outcome.errorEvent);
       }
     }
 
@@ -415,10 +324,7 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
 
       if (errorCategory === HarnessErrorCode.CORE_ABORTED) {
         // Abort fired during backoff (synthetic category from AdapterCaller).
-        return yield* bailOut(ctx, {
-          reason: 'aborted',
-          errorEvent: { type: 'error', error: new AbortedError() },
-        });
+        return yield* bailAborted(ctx, { type: 'error', error: new AbortedError() });
       }
 
       if (path === 'chat') {
@@ -434,11 +340,11 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
                   err instanceof Error ? err : undefined,
                 ),
         };
-        return yield* bailOut(ctx, { reason: 'error', errorEvent });
+        return yield* bailError(ctx, errorEvent, false);
       }
       // path === 'stream' — StreamHandler already yielded the {type:'error'}
       // event inside handle(); re-yielding would double-emit.
-      return yield* bailOut(ctx, { reason: 'error', errorAlreadyYielded: true });
+      return yield* bailError(ctx, undefined, true);
     }
 
     // Success: accumulate bytesRead (streaming path only — chat is 0).
@@ -470,10 +376,7 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
 
     // [3] Post-call abort check.
     if (isAborted()) {
-      return yield* bailOut(ctx, {
-        reason: 'aborted',
-        errorEvent: { type: 'error', error: new AbortedError() },
-      });
+      return yield* bailAborted(ctx, { type: 'error', error: new AbortedError() });
     }
 
     // Accumulate usage (clamp to safe bounds — paranoia against buggy adapters).
@@ -487,14 +390,14 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
     const postCallTokens =
       ctx.cumulativeUsage.inputTokens + ctx.cumulativeUsage.outputTokens;
     if (postCallTokens > config.maxTotalTokens) {
-      return yield* bailOut(ctx, {
-        reason: 'token_budget',
-        messageEvent: { type: 'message', message: assistantMsg, usage: responseUsage },
-        errorEvent: {
+      return yield* bailTokenBudget(
+        ctx,
+        { type: 'message', message: assistantMsg, usage: responseUsage },
+        {
           type: 'error',
           error: new TokenBudgetExceededError(postCallTokens, config.maxTotalTokens),
         },
-      });
+      );
     }
 
     const toolCalls =
@@ -502,39 +405,17 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
 
     // [5] No tool calls → output guardrail then end_turn.
     if (!toolCalls || toolCalls.length === 0) {
-      if (config.outputPipeline) {
-        const finalContent = assistantMsg.content ?? '';
-        const outputResult = await config.outputPipeline.runOutput({
-          content: finalContent,
-        });
-        if (!outputResult.passed && outputResult.verdict.action === 'block') {
-          const guardName = pickBlockingGuardName(outputResult, 'output');
-          const reason = outputResult.verdict.reason;
-          const guardrailEvent: Extract<AgentEvent, { type: 'guardrail_blocked' }> = {
-            type: 'guardrail_blocked',
-            phase: 'output',
-            guardName,
-            details: { reason },
-          };
-          const errorEvent: Extract<AgentEvent, { type: 'error' }> = {
-            type: 'error',
-            error: new HarnessError(
-              `guardrail "${guardName}" blocked output — ${reason}`,
-              HarnessErrorCode.GUARD_VIOLATION,
-              'Review the output pipeline configuration and the model response',
-            ),
-          };
-          return yield* bailOut(ctx, {
-            reason: 'error',
-            abort: true,
-            guardrailEvent,
-            errorEvent,
-          });
-        }
+      const outcome = await runOutputGuardrail(
+        assistantMsg.content ?? '',
+        config.outputPipeline,
+      );
+      if (outcome.kind === 'blocked') {
+        return yield* bailGuardrail(ctx, outcome.guardrailEvent, outcome.errorEvent);
       }
-      return yield* bailOut(ctx, {
-        reason: 'end_turn',
-        messageEvent: { type: 'message', message: assistantMsg, usage: responseUsage },
+      return yield* bailEndTurn(ctx, {
+        type: 'message',
+        message: assistantMsg,
+        usage: responseUsage,
       });
     }
 
@@ -634,31 +515,17 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
       }
 
       // Tool-output guardrail — block REWRITES the tool result into a stub;
-      // loop continues. No bailOut, no abort.
-      if (config.outputPipeline) {
-        const originTool = toolCalls.find((c) => c.id === execResult.toolCallId);
-        const toolGuardResult = await config.outputPipeline.runToolOutput(
-          resultContent,
-          originTool?.name,
-        );
-        if (!toolGuardResult.passed && toolGuardResult.verdict.action === 'block') {
-          const guardName = pickBlockingGuardName(toolGuardResult, 'output');
-          const reason = toolGuardResult.verdict.reason;
-          yield {
-            type: 'guardrail_blocked',
-            phase: 'tool_output',
-            guardName,
-            details: {
-              toolCallId: execResult.toolCallId,
-              toolName: originTool?.name,
-              reason,
-            },
-          };
-          resultContent = JSON.stringify({
-            error: `${HarnessErrorCode.GUARD_VIOLATION}: ${guardName}`,
-            reason,
-          });
-        }
+      // loop continues. No bail, no abort.
+      const originTool = toolCalls.find((c) => c.id === execResult.toolCallId);
+      const toolOutcome = await runToolOutputGuardrail(
+        resultContent,
+        originTool?.name,
+        execResult.toolCallId,
+        config.outputPipeline,
+      );
+      if (toolOutcome.kind === 'blocked') {
+        yield toolOutcome.guardrailEvent;
+        resultContent = toolOutcome.replacementContent;
       }
 
       const toolResultMsg: Message = {
@@ -671,10 +538,7 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
 
     // [7] Post-tools abort check.
     if (isAborted()) {
-      return yield* bailOut(ctx, {
-        reason: 'aborted',
-        errorEvent: { type: 'error', error: new AbortedError() },
-      });
+      return yield* bailAborted(ctx, { type: 'error', error: new AbortedError() });
     }
 
     // [8] Iteration completed normally; fire onIterationEnd(done=false), keep

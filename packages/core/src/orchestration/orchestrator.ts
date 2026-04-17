@@ -372,6 +372,25 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
     delete(key: string): boolean {
       return contextStore.delete(normalizeContextKey(key));
     },
+    deleteByPrefix(prefix: string): number {
+      if (typeof prefix !== 'string' || prefix.length === 0) return 0;
+      const normalizedPrefix = normalizeContextKey(prefix);
+      let removed = 0;
+      // Collect first so we can mutate without invalidating the iterator.
+      const toDelete: string[] = [];
+      for (const key of contextStore.keys()) {
+        if (key.startsWith(normalizedPrefix)) toDelete.push(key);
+      }
+      for (const key of toDelete) {
+        if (contextStore.delete(key)) removed++;
+      }
+      return removed;
+    },
+    clear(): number {
+      const removed = contextStore.size;
+      contextStore.clear();
+      return removed;
+    },
     entries(): ReadonlyMap<string, unknown> {
       return new Map(contextStore);
     },

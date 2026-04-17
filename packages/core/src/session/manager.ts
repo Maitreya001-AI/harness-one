@@ -9,6 +9,7 @@ import { asSessionId, prefixedSecureId } from '../infra/ids.js';
 import type { SessionId } from '../core/types.js';
 import type { Session, SessionEvent } from './types.js';
 import type { SessionManager } from './manager-types.js';
+import { startSessionGc } from './session-gc.js';
 export type { SessionManager } from './manager-types.js';
 
 /**
@@ -393,18 +394,10 @@ export function createSessionManager(config?: {
     }
   }
 
-  // Auto-GC interval
-  const gcTimer = gcIntervalMs > 0
-    ? setInterval(() => { manager.gc(); }, gcIntervalMs)
-    : null;
-
-  // The GC timer is unref'd so it will not prevent process exit. If your
-  // application needs session persistence across restarts, use an external
-  // store (e.g., Redis, database).
-  if (gcTimer && typeof gcTimer === 'object' && 'unref' in gcTimer) {
-    gcTimer.unref();
-  }
-
+  // Auto-GC timer is wired AFTER the manager object below — see
+  // `gcHandle` declaration below the manager literal. Keeping the timer in a
+  // dedicated helper avoids closing over `manager` while it is still in the
+  // TDZ.
   const manager: SessionManager = {
     create(metadata?: Record<string, unknown>): Session {
       // O(1) capacity check: if we're at cap and have no evictable sessions,
@@ -630,10 +623,15 @@ export function createSessionManager(config?: {
         // external state that would otherwise be retained by the disposed manager.
         eventHandlers.clear();
       } finally {
-        if (gcTimer) clearInterval(gcTimer);
+        gcHandle.stop();
       }
     },
   };
+
+  // Start the GC timer after `manager` is bound so the callback closure sees
+  // a live reference. `session-gc.ts` handles the `.unref()` / error-swallow
+  // contract.
+  const gcHandle = startSessionGc(() => manager.gc(), gcIntervalMs);
 
   return manager;
 }

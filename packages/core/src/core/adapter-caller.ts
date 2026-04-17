@@ -21,9 +21,9 @@ import type { AgentAdapter, Message, TokenUsage, ToolSchema } from './types.js';
 import type { AgentEvent } from './events.js';
 import { AbortedError, HarnessError, HarnessErrorCode} from './errors.js';
 import { categorizeAdapterError } from './error-classifier.js';
-import { computeBackoffMs } from '../infra/backoff.js';
 import { type CircuitBreaker, CircuitOpenError } from '../infra/circuit-breaker.js';
 import type { StreamHandler } from './stream-handler.js';
+import { createRetryPolicy } from './retry-policy.js';
 
 /** Successful single-attempt adapter call result. */
 export interface AdapterCallOnceOk {
@@ -202,67 +202,15 @@ export interface AdapterCaller {
  * `call()` invocation).
  */
 export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): AdapterCaller {
-  /**
-   * Precompute a `Set<string>` for O(1) `retryableErrors` membership checks
-   * on the hot retry path (replaces linear `includes()` per retry decision).
-   * The public API keeps accepting `readonly string[]` so callers remain
-   * source-compatible.
-   */
-  const retryableErrorSet = new Set<string>(config.retryableErrors);
-
-  /**
-   * Sleep for exponential backoff with jitter. Rejects with AbortedError if
-   * `config.signal` fires during the wait. Returns the delay used so the
-   * caller can accumulate a cumulative backoff total and publish per-retry
-   * observability.
-   */
-  function backoff(attempt: number): { delay: number; promise: Promise<void> } {
-    const delay = computeBackoffMs(attempt, {
-      baseMs: config.baseRetryDelayMs,
-      jitterFraction: 0.25,
-    });
-
-    const promise = new Promise<void>((resolve, reject) => {
-      if (config.signal.aborted) {
-        reject(new AbortedError());
-        return;
-      }
-
-      let settled = false;
-      // Hoist the timer handle so the abort listener can reference it BEFORE
-      // the timer is armed. Registering the listener AFTER `setTimeout`
-      // returns leaves a micro-race where a synchronously-fired abort between
-      // the two statements would not cancel the timer.
-      // eslint-disable-next-line prefer-const -- late-bound; onAbort closes over it before assignment
-      let timer: ReturnType<typeof setTimeout> | undefined;
-
-      const onAbort = (): void => {
-        if (!settled) {
-          settled = true;
-          if (timer !== undefined) clearTimeout(timer);
-          // Listener auto-removed by { once: true } — no removeEventListener needed
-          reject(new AbortedError());
-        }
-      };
-
-      // Register abort listener BEFORE arming the timer.
-      config.signal.addEventListener('abort', onAbort, { once: true });
-
-      timer = setTimeout(() => {
-        if (!settled) {
-          settled = true;
-          config.signal.removeEventListener('abort', onAbort);
-          resolve();
-        }
-      }, delay);
-
-      // Ensure timer doesn't keep the process alive
-      if (typeof timer === 'object' && 'unref' in timer) {
-        (timer as NodeJS.Timeout).unref();
-      }
-    });
-    return { delay, promise };
-  }
+  // Resilience primitives (backoff sleep, circuit-breaker gate, retryable
+  // classifier) live on a dedicated policy so this caller only dispatches.
+  const policy = createRetryPolicy({
+    maxAdapterRetries: config.maxAdapterRetries,
+    baseRetryDelayMs: config.baseRetryDelayMs,
+    retryableErrors: config.retryableErrors,
+    signal: config.signal,
+    ...(config.circuitBreaker !== undefined && { circuitBreaker: config.circuitBreaker }),
+  });
 
   async function callOnce(
     conversation: readonly Message[],
@@ -425,19 +373,16 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
 
         // Circuit breaker check — applies to BOTH streaming and chat paths.
         // Fast-fail before reaching the adapter when the circuit is OPEN.
-        if (config.circuitBreaker) {
-          const cbState = config.circuitBreaker.state();
-          if (cbState === 'open') {
-            return {
-              ok: false,
-              error: new CircuitOpenError(),
-              errorCategory: HarnessErrorCode.ADAPTER_CIRCUIT_OPEN,
-              path,
-              attempts: attempt,
-              totalBackoffMs,
-              totalDurationMs: Date.now() - callStartedAt,
-            };
-          }
+        const circuitOpen = policy.checkCircuitOpen();
+        if (circuitOpen) {
+          return {
+            ...circuitOpen,
+            ok: false,
+            path,
+            attempts: attempt,
+            totalBackoffMs,
+            totalDurationMs: Date.now() - callStartedAt,
+          };
         }
 
         if (config.streaming) {
@@ -471,7 +416,7 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
                 if (streamResult.ok) {
                   // Success: drop any buffered error (there shouldn't be
                   // one — StreamHandler only yields error before ok:false).
-                  config.circuitBreaker?.recordSuccess();
+                  policy.recordSuccess();
                   return {
                     ok: true,
                     message: streamResult.message,
@@ -486,8 +431,8 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
                 // Stream attempt failed — decide retry vs terminal.
                 const errorCategory = streamResult.errorCategory;
                 if (
-                  retryableErrorSet.has(errorCategory)
-                  && attempt < config.maxAdapterRetries
+                  policy.isRetryableCategory(errorCategory)
+                  && attempt < policy.maxRetries
                 ) {
                   // Retry. Swallow the buffered error event: the consumer
                   // should see only the FINAL terminal error, not one per
@@ -495,7 +440,7 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
                   pendingError = undefined;
                   // Compute backoff BEFORE firing the retry hook so the hook
                   // receives the actual sleep duration for span attribution.
-                  const bo = backoff(attempt);
+                  const bo = policy.scheduleBackoff(attempt);
                   fireRetry?.({
                     attempt,
                     errorCategory,
@@ -515,7 +460,7 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
                 // Terminal failure: forward the buffered error event verbatim
                 // so the observer-visible stream preserves "yield then return"
                 // ordering.
-                config.circuitBreaker?.recordFailure();
+                policy.recordFailure();
                 if (pendingError) yield pendingError;
                 return {
                   ok: false,
@@ -573,13 +518,13 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
         }
         const { error: err, errorCategory } = r;
         if (
-          retryableErrorSet.has(errorCategory)
-          && attempt < config.maxAdapterRetries
+          policy.isRetryableCategory(errorCategory)
+          && attempt < policy.maxRetries
         ) {
           const errorPreview = (err instanceof Error ? err.message : String(err)).slice(0, 500);
           // Compute backoff BEFORE firing the retry hook so the hook observer
           // sees the actual sleep duration and retry #.
-          const bo = backoff(attempt);
+          const bo = policy.scheduleBackoff(attempt);
           fireRetry?.({
             attempt,
             errorCategory,

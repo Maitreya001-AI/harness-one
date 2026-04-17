@@ -83,9 +83,28 @@ export enum HarnessErrorCode {
   SESSION_EXPIRED = 'SESSION_EXPIRED',
 
   // ── MEMORY_* ─────────────────────────────────────────────────────────────
+  /**
+   * Canonical "the persisted memory is not what we expected" code.
+   * Thrown when a memory store or the in-memory schema validator detects
+   * shape, schema, or semantic corruption. Prefer this code over the two
+   * historical variants below.
+   */
   MEMORY_CORRUPT = 'MEMORY_CORRUPT',
+  /**
+   * @deprecated (round-3 cleanup) kept for back-compat with existing
+   * consumers — throw sites that historically distinguished "store-level"
+   * (filesystem I/O, index envelope) vs "data-level" corruption should
+   * continue to use this value so wrapping alerts keep classifying them.
+   * New throw sites should use {@link MEMORY_CORRUPT}.
+   */
   MEMORY_STORE_CORRUPTION = 'MEMORY_STORE_CORRUPTION',
   MEMORY_NOT_FOUND = 'MEMORY_NOT_FOUND',
+  /**
+   * @deprecated (round-3 cleanup) kept for back-compat. Historically thrown
+   * by remote memory stores (e.g. Redis) when the payload round-trip found a
+   * semantically broken value. New throw sites should use
+   * {@link MEMORY_CORRUPT}.
+   */
   MEMORY_DATA_CORRUPTION = 'MEMORY_DATA_CORRUPTION',
   MEMORY_RELAY_CONFLICT = 'MEMORY_RELAY_CONFLICT',
 

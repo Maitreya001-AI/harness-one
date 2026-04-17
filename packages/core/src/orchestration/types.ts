@@ -78,6 +78,20 @@ export interface SharedContext {
    * Returns true when the key existed.
    */
   delete(key: string): boolean;
+  /**
+   * Round-3 cleanup: batch-evict every key whose normalized form starts with
+   * `prefix` so long-lived orchestrators can recycle a whole namespace
+   * (e.g. `user:42:*`) without walking the map client-side. The provided
+   * prefix is normalized via the same rules as `set()` / `get()`, so case and
+   * Unicode variants match consistently. Returns the number of keys removed.
+   */
+  deleteByPrefix(prefix: string): number;
+  /**
+   * Round-3 cleanup: wholesale clear. Surfaces the capability that was
+   * previously only available during `dispose()`. Returns the number of keys
+   * removed.
+   */
+  clear(): number;
   /** Get all entries as a readonly map. */
   entries(): ReadonlyMap<string, unknown>;
 }
