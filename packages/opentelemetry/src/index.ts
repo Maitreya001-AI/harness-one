@@ -188,9 +188,17 @@ export function createOTelExporter(config?: OTelExporterConfig): OTelTraceExport
       root.setAttribute('harness.trace.status', harnessTrace.status);
       root.setAttribute('harness.span.count', harnessTrace.spans.length);
 
-      attributes.applyAttributes(root, Object.fromEntries(
-        Object.entries(harnessTrace.metadata).map(([k, v]) => [`harness.meta.${k}`, v]),
-      ));
+      // User metadata exported under `harness.meta.*`; system metadata
+      // (library-authored) under `harness.sys.*` so OTel observers can
+      // tell them apart.
+      attributes.applyAttributes(root, Object.fromEntries([
+        ...Object.entries(harnessTrace.userMetadata).map(
+          ([k, v]) => [`harness.meta.${k}`, v] as const,
+        ),
+        ...Object.entries(harnessTrace.systemMetadata).map(
+          ([k, v]) => [`harness.sys.${k}`, v] as const,
+        ),
+      ]));
 
       if (harnessTrace.status === 'error') {
         root.setStatus({ code: SpanStatusCode.ERROR });

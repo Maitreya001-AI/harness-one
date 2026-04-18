@@ -94,8 +94,8 @@ describe('createLangfuseCostTracker', () => {
     tracker.recordUsage({ traceId: 't2', model: 'b', inputTokens: 1000, outputTokens: 1000 });
 
     const byModel = tracker.getCostByModel();
-    expect(byModel['a']).toBeCloseTo(0.003);
-    expect(byModel['b']).toBeCloseTo(0.03);
+    expect(byModel.get('a')).toBeCloseTo(0.003);
+    expect(byModel.get('b')).toBeCloseTo(0.03);
   });
 
   it('tracks cost by trace', () => {
@@ -633,9 +633,9 @@ describe('createLangfuseCostTracker', () => {
 
       const byModel = tracker.getCostByModel();
       // model 'a': 1 record remaining (the other was evicted) => 0.001
-      expect(byModel['a']).toBeCloseTo(0.001, 8);
+      expect(byModel.get('a')).toBeCloseTo(0.001, 8);
       // model 'b': 2 records => 0.004
-      expect(byModel['b']).toBeCloseTo(0.004, 8);
+      expect(byModel.get('b')).toBeCloseTo(0.004, 8);
     });
 
     it('getCostByTrace is O(1) via maintained map and excludes evicted traces', () => {
@@ -667,12 +667,12 @@ describe('createLangfuseCostTracker', () => {
       });
 
       tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 1000, outputTokens: 1000 });
-      expect(tracker.getCostByModel()['a']).toBeCloseTo(0.003);
+      expect(tracker.getCostByModel().get('a')).toBeCloseTo(0.003);
       expect(tracker.getCostByTrace('t1')).toBeCloseTo(0.003);
 
       // Double the tokens on the same record — cost doubles
       tracker.updateUsage!('t1', { inputTokens: 2000, outputTokens: 2000 });
-      expect(tracker.getCostByModel()['a']).toBeCloseTo(0.006);
+      expect(tracker.getCostByModel().get('a')).toBeCloseTo(0.006);
       expect(tracker.getCostByTrace('t1')).toBeCloseTo(0.006);
     });
   });

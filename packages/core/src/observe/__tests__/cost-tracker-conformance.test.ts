@@ -35,7 +35,8 @@ for (const strategy of ['overflow-bucket', 'lru'] satisfies EvictionStrategyName
       t.recordUsage({ traceId: 'a', model: 'claude', inputTokens: 1000, outputTokens: 0 });
       t.recordUsage({ traceId: 'b', model: 'claude', inputTokens: 1000, outputTokens: 0 });
       const byModel = t.getCostByModel();
-      expect(Object.values(byModel).reduce((a, b) => a + b, 0)).toBeCloseTo(t.getTotalCost());
+      const sum = Array.from(byModel.values()).reduce((a, b) => a + b, 0);
+      expect(sum).toBeCloseTo(t.getTotalCost());
       expect(t.getCostByTrace('a')).toBeCloseTo(2);
       expect(t.getCostByTrace('b')).toBeCloseTo(1);
     });
@@ -56,7 +57,7 @@ for (const strategy of ['overflow-bucket', 'lru'] satisfies EvictionStrategyName
       expect(t.getTotalCost()).toBeGreaterThan(0);
       t.reset();
       expect(t.getTotalCost()).toBe(0);
-      expect(Object.keys(t.getCostByModel()).length).toBe(0);
+      expect(t.getCostByModel().size).toBe(0);
       expect(t.getCostByTrace('tr')).toBe(0);
     });
   });
@@ -74,7 +75,7 @@ describe('CostTracker strategy divergence (ARCH-008)', () => {
     // First record has been evicted from the record buffer; getTotalCost()
     // tracks only the retained window, but getCostByModel() is cumulative.
     expect(t.getTotalCost()).toBeCloseTo(1);
-    expect(t.getCostByModel()['claude']).toBeCloseTo(2);
+    expect(t.getCostByModel().get('claude')).toBeCloseTo(2);
   });
 
   it('lru decrements per-model totals on record eviction', () => {
@@ -86,7 +87,7 @@ describe('CostTracker strategy divergence (ARCH-008)', () => {
     t.recordUsage({ traceId: 'x', model: 'claude', inputTokens: 1000, outputTokens: 0 });
     t.recordUsage({ traceId: 'y', model: 'claude', inputTokens: 1000, outputTokens: 0 });
     expect(t.getTotalCost()).toBeCloseTo(1);
-    expect(t.getCostByModel()['claude']).toBeCloseTo(1);
+    expect(t.getCostByModel().get('claude')).toBeCloseTo(1);
     expect(t.getCostByTrace('x')).toBe(0); // evicted
     expect(t.getCostByTrace('y')).toBeCloseTo(1);
   });
@@ -103,8 +104,8 @@ describe('CostTracker strategy divergence (ARCH-008)', () => {
     t.recordUsage({ traceId: 'x', model: 'a', inputTokens: 1000, outputTokens: 0 });
     t.recordUsage({ traceId: 'y', model: 'b', inputTokens: 1000, outputTokens: 0 });
     const byModel = t.getCostByModel();
-    expect(byModel['a']).toBeCloseTo(1);
-    expect(byModel['__overflow__']).toBeCloseTo(1);
-    expect(byModel['b']).toBeUndefined();
+    expect(byModel.get('a')).toBeCloseTo(1);
+    expect(byModel.get('__overflow__')).toBeCloseTo(1);
+    expect(byModel.has('b')).toBe(false);
   });
 });

@@ -11,7 +11,7 @@ describe('createTraceManager', () => {
     expect(trace).toBeDefined();
     expect(trace!.name).toBe('test-trace');
     expect(trace!.status).toBe('running');
-    expect(trace!.metadata.env).toBe('test');
+    expect(trace!.userMetadata.env).toBe('test');
     expect(trace!.spans).toHaveLength(0);
   });
 
@@ -1047,7 +1047,7 @@ describe('SEC-007 secret redaction', () => {
     const exportedTraces: Record<string, unknown>[] = [];
     const exporter: TraceExporter = {
       name: 'capture',
-      async exportTrace(trace) { exportedTraces.push({ ...trace.metadata }); },
+      async exportTrace(trace) { exportedTraces.push({ ...trace.userMetadata }); },
       async exportSpan() {},
       async flush() {},
     };
@@ -1093,7 +1093,7 @@ describe('SEC-007 secret redaction', () => {
     const tm = createTraceManager({ redact: { extraKeys: ['ssn'] } });
     const tid = tm.startTrace('t', { ssn: 'xxx-xx-xxxx' });
     const trace = tm.getTrace(tid);
-    expect(trace!.metadata.ssn).toBe('[REDACTED]');
+    expect(trace!.userMetadata.ssn).toBe('[REDACTED]');
   });
 
   it('redacts by default when no redact config is provided (T03 secure-by-default)', async () => {
@@ -1103,7 +1103,7 @@ describe('SEC-007 secret redaction', () => {
     const tm = createTraceManager();
     const tid = tm.startTrace('t', { api_key: 'visible' });
     const trace = tm.getTrace(tid);
-    expect(trace!.metadata.api_key).toBe('[REDACTED]');
+    expect(trace!.userMetadata.api_key).toBe('[REDACTED]');
   });
 });
 
@@ -1117,13 +1117,6 @@ describe('SEC-016 metadata namespace split', () => {
     const trace = tm.getTrace(tid)!;
     expect(trace.userMetadata).toEqual({ caller: 'user' });
     expect(trace.systemMetadata).toEqual({ samplingTag: 'premium' });
-  });
-
-  it('legacy metadata field still exposes user data for backward compat', () => {
-    const tm = createTraceManager();
-    const tid = tm.startTrace('t', { env: 'prod' });
-    const trace = tm.getTrace(tid)!;
-    expect(trace.metadata.env).toBe('prod');
   });
 
   it('systemMetadata bypasses redaction', async () => {

@@ -1,8 +1,6 @@
 /**
- * Unit tests for the extracted readonly-trace view builder. Pins the
- * back-compat mapping behaviour previously inlined in trace-manager.ts
- * — specifically, the `metadata` / `userMetadata` / `systemMetadata`
- * merging rules and the span-snapshot semantics.
+ * Unit tests for the readonly-trace view builder: userMetadata /
+ * systemMetadata snapshotting and span-lookup semantics.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -47,28 +45,14 @@ describe('toReadonlyTrace', () => {
     expect(t.endTime).toBe(10);
   });
 
-  it('preserves back-compat: metadata mirrors userMetadata when no system metadata', () => {
-    const mt = makeTrace({ userMetadata: { foo: 'bar' } });
-    const t = toReadonlyTrace(mt, () => undefined);
-    expect(t.metadata).toEqual({ foo: 'bar' });
-  });
-
-  it('exposes systemMetadata under __system__ inside metadata when present', () => {
+  it('snapshots userMetadata and systemMetadata separately', () => {
     const mt = makeTrace({
-      userMetadata: { user: 'x' },
-      systemMetadata: { sys: 'y' },
+      userMetadata: { foo: 'bar' },
+      systemMetadata: { samplingTag: 'premium' },
     });
     const t = toReadonlyTrace(mt, () => undefined);
-    expect(t.metadata).toEqual({
-      user: 'x',
-      __system__: { sys: 'y' },
-    });
-  });
-
-  it('does not include __system__ when systemMetadata is empty', () => {
-    const mt = makeTrace({ userMetadata: { user: 'x' } });
-    const t = toReadonlyTrace(mt, () => undefined);
-    expect(t.metadata).not.toHaveProperty('__system__');
+    expect(t.userMetadata).toEqual({ foo: 'bar' });
+    expect(t.systemMetadata).toEqual({ samplingTag: 'premium' });
   });
 
   it('embeds resolved spans in insertion order', () => {
@@ -104,12 +88,9 @@ describe('toReadonlyTrace', () => {
     const user = { count: 1 };
     const sys = { sys: 1 };
     const mt = makeTrace({ userMetadata: user, systemMetadata: sys });
-    const t = toReadonlyTrace(mt, () => undefined) as {
-      userMetadata: Record<string, unknown>;
-      systemMetadata: Record<string, unknown>;
-    };
-    t.userMetadata.count = 999;
-    t.systemMetadata.sys = 999;
+    const t = toReadonlyTrace(mt, () => undefined);
+    (t.userMetadata as Record<string, unknown>).count = 999;
+    (t.systemMetadata as Record<string, unknown>).sys = 999;
     expect(user.count).toBe(1);
     expect(sys.sys).toBe(1);
   });

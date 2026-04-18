@@ -7,10 +7,10 @@
 /**
  * Attribute values allowed on traces and spans. Matches the OpenTelemetry
  * attribute type constraint (primitive or homogeneous primitive array) so
- * exporters don't silently drop nested objects or mixed arrays. Applies as
- * a *soft* constraint — the Trace/Span type still declares
- * `Record<string, unknown>` for backward compat, but new code and
- * exporters should use this type.
+ * exporters don't silently drop nested objects or mixed arrays. Applies
+ * as a *soft* constraint — `Trace` / `Span` declare
+ * `Record<string, unknown>` because some callers pass pre-serialized
+ * JSON blobs; new exporters should use `SpanAttributeValue`.
  */
 export type SpanAttributeValue =
   | string
@@ -23,57 +23,45 @@ export type SpanAttributeValue =
 /**
  * Typed attribute bag for spans and traces.
  *
- * ARCH-009: span-attribute keys follow a reserved-prefix discipline. Using a
- * non-reserved key without `user.` prefix triggers a `logger.warn` from
- * `setSpanAttributes()` (the call still succeeds — this is a lint, not an
- * error). Reserved prefixes:
+ * Span-attribute keys follow a reserved-prefix discipline. Using a
+ * non-reserved key without the `user.` prefix triggers a `logger.warn`
+ * from `setSpanAttributes()` (the call still succeeds — this is a lint,
+ * not an error). Reserved prefixes:
  *
- * - `system.*` — owned by harness-one. Library-authored attributes (sampling
+ * - `system.*` — harness-one library-authored attributes (sampling
  *   decisions, internal correlation IDs, build metadata).
- * - `error.*` — error attributes set by harness-one error paths
+ * - `error.*` — attributes set by harness-one error paths
  *   (`error.message`, `error.category`, `error.stack`).
- * - `cost.*` — cost-tracking attributes set by `CostTracker` and the
- *   AgentLoop's per-iteration cost recording.
- * - `user.*` — free-form caller attributes. Use this prefix to avoid the
- *   warning when adding bespoke attributes.
+ * - `cost.*` — attributes set by `CostTracker` and the AgentLoop's
+ *   per-iteration cost recording.
+ * - `user.*` — free-form caller attributes. Use this prefix to avoid
+ *   the warning when adding bespoke attributes.
  *
- * Other historically-used prefixes recognised for backwards compatibility
- * (no warning emitted):
- *
- * - `harness.*`, `chunk.*`, `tool*`, `iteration`, `attempt`, `model`,
- *   `inputTokens`, `outputTokens`, `cacheReadTokens`, `cacheWriteTokens`,
- *   `path`, `latencyMs`, `passed`, `verdict`, `reason`, `events`,
- *   `parentId`, `eviction.reason`, `errorCategory`, `errorMessage`,
- *   `errorName`, `error`, `streaming`, `conversationLength`, `adapter`,
- *   `toolCount`, `toolName`, `toolCallId`, `input`, `output`, `usage`,
- *   `metadata`, `status`, `spanCount`.
- *
- * Unknown / non-prefixed keys are still accepted — the warning is advisory
- * so callers can either add `user.` or extend the reserved-prefix list in
- * future versions.
+ * The allow-list in `setSpanAttributes()` also recognises a few legacy
+ * shorthands (`harness.*`, `tool*`, `iteration`, `attempt`, `model`,
+ * token counts, etc.) without warning. Unknown / non-prefixed keys are
+ * still accepted — the warning is advisory, not fatal.
  */
 export type SpanAttributes = Readonly<Record<string, SpanAttributeValue>>;
 
 /**
  * A distributed trace containing spans.
  *
- * SEC-016: Metadata is partitioned into `userMetadata` (caller-supplied,
- * subject to redaction) and `systemMetadata` (library-authored, consumed by
- * `shouldExport()` sampling hooks). The `metadata` field is retained as a
- * backward-compatible alias that exposes user metadata plus any system
- * metadata under a namespaced `__system__` key.
+ * SEC-016: metadata is partitioned into `userMetadata` (caller-supplied,
+ * subject to redaction) and `systemMetadata` (library-authored, consumed
+ * by `shouldExport()` sampling hooks). Exporters that forward user
+ * content to external services (Langfuse, etc.) MUST use `userMetadata`
+ * only; `systemMetadata` stays internal.
  */
 export interface Trace {
   readonly id: string;
   readonly name: string;
   readonly startTime: number;
   readonly endTime?: number;
-  /** Backwards-compatible view: user metadata with `__system__` sub-object when system metadata is present. */
-  readonly metadata: Record<string, unknown>;
-  /** SEC-016: caller-supplied metadata (may be redacted). */
-  readonly userMetadata?: Record<string, unknown>;
-  /** SEC-016: library-authored metadata; `shouldExport()` hooks MUST only read this. */
-  readonly systemMetadata?: Record<string, unknown>;
+  /** Caller-supplied metadata (may be redacted). */
+  readonly userMetadata: Record<string, unknown>;
+  /** Library-authored metadata; `shouldExport()` hooks MUST only read this. */
+  readonly systemMetadata: Record<string, unknown>;
   readonly spans: readonly Span[];
   readonly status: 'running' | 'completed' | 'error';
 }

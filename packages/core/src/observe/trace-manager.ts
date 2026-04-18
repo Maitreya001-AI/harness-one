@@ -72,10 +72,10 @@ export function createTraceManager(config?: {
   flushTimeoutMs?: number;
   /**
    * Secret redaction applied to all USER-SUPPLIED span attributes, trace
-   * metadata, and span events at the ingestion boundary. Because exporters
-   * (console, OTel, Langfuse) read `span.attributes` and `trace.metadata`
-   * verbatim, scrubbing here guarantees downstream observers never see
-   * unredacted secrets.
+   * userMetadata, and span events at the ingestion boundary. Because
+   * exporters (console, OTel, Langfuse) read `span.attributes` and
+   * `trace.userMetadata` verbatim, scrubbing here guarantees downstream
+   * observers never see unredacted secrets.
    *
    * Secure-by-default: when omitted (`undefined`), the `DEFAULT_SECRET_PATTERN`
    * is active so common key names (api_key, authorization, password, token,

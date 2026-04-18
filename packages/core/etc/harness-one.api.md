@@ -331,8 +331,7 @@ export interface CostTracker {
     budgetUtilization(): number;
     checkBudget(): CostAlert | null;
     getAlertMessage(): string | null;
-    getCostByModel(): Record<string, number>;
-    getCostByModelMap(): ReadonlyMap<string, number>;
+    getCostByModel(): ReadonlyMap<string, number>;
     getCostByTrace(traceId: string): number;
     getTotalCost(): number;
     isBudgetExceeded(): boolean;
@@ -1590,7 +1589,6 @@ export interface Trace {
     readonly endTime?: number;
     // (undocumented)
     readonly id: string;
-    readonly metadata: Record<string, unknown>;
     // (undocumented)
     readonly name: string;
     // (undocumented)
@@ -1599,8 +1597,8 @@ export interface Trace {
     readonly startTime: number;
     // (undocumented)
     readonly status: 'running' | 'completed' | 'error';
-    readonly systemMetadata?: Record<string, unknown>;
-    readonly userMetadata?: Record<string, unknown>;
+    readonly systemMetadata: Record<string, unknown>;
+    readonly userMetadata: Record<string, unknown>;
 }
 
 // @public
@@ -1678,15 +1676,15 @@ export interface VectorSearchOptions {
 
 // Warnings were encountered during analysis:
 //
-// dist/cost-tracker-BlC5vT5N.d.ts:334:5 - (ae-forgotten-export) The symbol "EvictionStrategyName" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-BlC5vT5N.d.ts:334:5 - (ae-forgotten-export) The symbol "EvictionStrategy" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-BlC5vT5N.d.ts:374:5 - (ae-forgotten-export) The symbol "MetricsPort" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-DBbl4-3v.d.ts:395:5 - (ae-forgotten-export) The symbol "RedactConfig" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-DBbl4-3v.d.ts:402:5 - (ae-forgotten-export) The symbol "Redactor" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-DBbl4-3v.d.ts:738:5 - (ae-forgotten-export) The symbol "EvictionStrategyName" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-DBbl4-3v.d.ts:738:5 - (ae-forgotten-export) The symbol "EvictionStrategy" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-DBbl4-3v.d.ts:778:5 - (ae-forgotten-export) The symbol "MetricsPort" needs to be exported by the entry point index.d.ts
 // dist/pipeline-CCw3TkZG.d.ts:45:5 - (ae-forgotten-export) The symbol "GuardrailEvent" needs to be exported by the entry point index.d.ts
-// dist/resilience-eURT8sLO.d.ts:64:5 - (ae-forgotten-export) The symbol "MiddlewareContext" needs to be exported by the entry point index.d.ts
+// dist/resilience-LIkNFUm7.d.ts:64:5 - (ae-forgotten-export) The symbol "MiddlewareContext" needs to be exported by the entry point index.d.ts
 // dist/session/index.d.ts:162:5 - (ae-forgotten-export) The symbol "SessionStore" needs to be exported by the entry point index.d.ts
 // dist/session/index.d.ts:163:9 - (ae-forgotten-export) The symbol "SessionId" needs to be exported by the entry point index.d.ts
-// dist/trace-manager-C3gtYT7b.d.ts:178:5 - (ae-forgotten-export) The symbol "RedactConfig" needs to be exported by the entry point index.d.ts
-// dist/trace-manager-C3gtYT7b.d.ts:185:5 - (ae-forgotten-export) The symbol "Redactor" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 

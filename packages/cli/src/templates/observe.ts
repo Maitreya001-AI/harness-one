@@ -54,5 +54,5 @@ costTracker.recordUsage({
 });
 
 console.log('Total cost:', costTracker.getTotalCost().toFixed(4));
-console.log('Cost by model:', costTracker.getCostByModel());
+console.log('Cost by model:', Object.fromEntries(costTracker.getCostByModel()));
 `;

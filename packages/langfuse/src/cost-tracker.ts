@@ -302,18 +302,9 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): La
       return runningSum.total;
     },
 
-    getCostByModel(): Record<string, number> {
-      // CQ-010(b): O(k) over distinct models — no per-record scan.
-      const result: Record<string, number> = {};
-      for (const [model, sum] of modelTotals) {
-        result[model] = sum.total;
-      }
-      return result;
-    },
-
-    getCostByModelMap(): ReadonlyMap<string, number> {
-      // Snapshot a frozen copy so callers cannot mutate the internal
-      // KahanSum map. Preserves insertion order.
+    getCostByModel(): ReadonlyMap<string, number> {
+      // Snapshot a copy so callers cannot mutate the internal KahanSum
+      // map. O(k) over distinct models; insertion order preserved.
       const snapshot = new Map<string, number>();
       for (const [model, sum] of modelTotals) {
         snapshot.set(model, sum.total);

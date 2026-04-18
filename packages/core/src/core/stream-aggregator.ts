@@ -238,9 +238,9 @@ export class StreamAggregator {
         if (last.argsBytes > this.options.maxToolArgBytes) {
           yield {
             type: 'error',
-            // Wave-13 P0-1 / Wave-18: per-call wire-size limits are operationally
-            // distinct from cumulative budget exhaustion. Match the WITH-ID
-            // path above — both paths must use ADAPTER_PAYLOAD_OVERSIZED so
+            // Per-call wire-size limits are operationally distinct from
+            // cumulative budget exhaustion. Match the WITH-ID path above
+            // — both paths must use ADAPTER_PAYLOAD_OVERSIZED so
             // downstream retry/alert heuristics classify them identically.
             error: new HarnessError(
               `Tool call "${last.name}" arguments exceeded maximum size (${this.options.maxToolArgBytes} bytes)`,

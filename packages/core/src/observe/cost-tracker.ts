@@ -523,19 +523,11 @@ export function createCostTracker(config?: {
       return runningSum.total;
     },
 
-    // getCostByModel() returns from permanent modelTotals accumulator,
-    // consistent with getTotalCost() even after buffer eviction.
-    getCostByModel(): Record<string, number> {
-      const result: Record<string, number> = {};
-      for (const [model, sum] of modelTotals) {
-        result[model] = sum.total;
-      }
-      return result;
-    },
-
-    getCostByModelMap(): ReadonlyMap<string, number> {
-      // Snapshot a frozen copy so callers cannot mutate the internal
-      // KahanSum map. The snapshot preserves insertion order.
+    // Returns from the permanent `modelTotals` accumulator so the sum
+    // stays consistent with getTotalCost() even after buffer eviction.
+    // Snapshot — callers cannot mutate the internal KahanSum map through
+    // the returned view.
+    getCostByModel(): ReadonlyMap<string, number> {
       const snapshot = new Map<string, number>();
       for (const [model, sum] of modelTotals) {
         snapshot.set(model, sum.total);

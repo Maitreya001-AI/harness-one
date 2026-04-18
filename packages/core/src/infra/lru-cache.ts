@@ -29,20 +29,17 @@
 import { HarnessError, HarnessErrorCode } from './errors-base.js';
 
 /**
- * Options accepted by {@link LRUCache}. Wave-15 added `onEvict` so callers
- * that maintain side-tables (the trace-manager's span count, for example)
- * can keep their accounting in lockstep with the cache's eviction without
- * reaching into private state.
+ * Options accepted by {@link LRUCache}.
  */
 export interface LRUCacheOptions<K, V> {
   /**
    * Fires synchronously for every key/value removed from the cache —
-   * capacity-driven eviction **and** explicit `delete(key)` / `clear()`.
-   * Wave-18 unified this: every exit path notifies side-tables so accounting
-   * stays in lockstep regardless of which API removed the entry.
+   * capacity-driven eviction, explicit `delete(key)`, and `clear()`
+   * all route through the hook so side-table accounting stays in
+   * lockstep regardless of which API removed the entry.
    *
-   * Thrown errors from the hook are caught and swallowed to protect cache
-   * invariants (the cache never half-evicts on a hook failure).
+   * Thrown errors from the hook are caught and swallowed to protect
+   * cache invariants (the cache never half-evicts on a hook failure).
    */
   onEvict?: (key: K, value: V) => void;
 }
@@ -98,8 +95,8 @@ export class LRUCache<K, V> {
   }
 
   delete(key: K): boolean {
-    // Wave-18: explicit deletes fire onEvict so callers that maintain
-    // side-tables do not need to special-case the "I removed it myself" path.
+    // Explicit deletes fire onEvict so callers that maintain side-tables
+    // don't need to special-case the "I removed it myself" path.
     if (!this.map.has(key)) return false;
     const value = this.map.get(key) as V;
     this.map.delete(key);
@@ -131,9 +128,10 @@ export class LRUCache<K, V> {
   }
 
   clear(): void {
-    // Wave-18: mirror delete() — fire onEvict for every entry before clearing
-    // so side-table accounting (trace-manager span counts, cost-tracker per-key
-    // totals, etc.) stays consistent regardless of how the cache was drained.
+    // Mirror delete() — fire onEvict for every entry before clearing so
+    // side-table accounting (trace-manager span counts, cost-tracker
+    // per-key totals, etc.) stays consistent regardless of how the cache
+    // was drained.
     if (this.onEvict && this.map.size > 0) {
       // Snapshot first so a hook that mutates the cache cannot affect the
       // iteration we are driving.

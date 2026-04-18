@@ -1,10 +1,8 @@
 /**
- * Branded-id primitives used by infra (e.g. id generation) and re-exported
- * from `core/core/types.ts` for the rest of the codebase.
- *
- * Wave-15 moved these to L1 so `infra/ids.ts` can reference `TraceId`,
- * `SpanId`, and `SessionId` without reaching up into core — completing the
- * "L1 imports nothing" rule in the layering contract.
+ * Branded-id primitives used by infra (e.g. id generation) and
+ * re-exported from `core/core/types.ts` for the rest of the codebase.
+ * Lives at L1 so `infra/ids.ts` can reference these types without
+ * reaching up into core.
  *
  * @module
  */

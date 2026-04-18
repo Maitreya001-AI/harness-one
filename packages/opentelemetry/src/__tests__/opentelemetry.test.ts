@@ -60,7 +60,8 @@ describe('createOTelExporter', () => {
       name: 'agent-run',
       startTime: 1000,
       endTime: 2000,
-      metadata: { userId: 'u1' },
+      userMetadata: { userId: 'u1' },
+      systemMetadata: {},
       spans: [],
       status: 'completed',
     };
@@ -88,7 +89,8 @@ describe('createOTelExporter', () => {
       id: 'trace-2',
       name: 'failed-run',
       startTime: 1000,
-      metadata: {},
+      userMetadata: {},
+      systemMetadata: {},
       spans: [],
       status: 'error',
     };
@@ -800,7 +802,8 @@ describe('createOTelExporter', () => {
         name: 'traced-run',
         startTime: 1000,
         endTime: 3000,
-        metadata: {},
+        userMetadata: {},
+        systemMetadata: {},
         spans: [
           {
             id: 'trace-child-1',
@@ -863,7 +866,8 @@ describe('createOTelExporter', () => {
         id: 'trace-running',
         name: 'running-trace',
         startTime: 1000,
-        metadata: {},
+        userMetadata: {},
+        systemMetadata: {},
         spans: [],
         status: 'running',
       };
@@ -881,7 +885,8 @@ describe('createOTelExporter', () => {
         id: 'trace-no-end',
         name: 'no-end-trace',
         startTime: 1000,
-        metadata: {},
+        userMetadata: {},
+        systemMetadata: {},
         spans: [],
         status: 'completed',
       };
@@ -1172,7 +1177,8 @@ describe('createOTelExporter', () => {
         name: 'meta-trace',
         startTime: 1000,
         endTime: 2000,
-        metadata: { region: 'us-east', version: 3, debug: true },
+        userMetadata: { region: 'us-east', version: 3, debug: true },
+        systemMetadata: {},
         spans: [],
         status: 'completed',
       };

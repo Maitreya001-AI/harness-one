@@ -1,12 +1,7 @@
 /**
- * Guardrail helpers — small pure utilities lifted out of `AgentLoop` so the
- * orchestration code and the new `IterationRunner` can share them without a
- * dependency back into the loop class.
- *
- * Wave-5B Step 3: extracted from the `AgentLoop.findLatestUserMessage` and
- * `AgentLoop.pickBlockingGuardName` static methods (former L1104-L1125 of
- * `agent-loop.ts`). Behaviour preserved verbatim — the move is a pure
- * relocation. See `docs/forge-fix/wave-5/wave-5b-adr-v2.md` §6 / §7 Step 3.
+ * Guardrail helpers — small pure utilities shared between `AgentLoop` and
+ * `IterationRunner`. Kept in their own module so the runner doesn't need
+ * a dependency back into the loop class.
  *
  * @module
  */

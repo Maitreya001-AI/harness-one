@@ -1,10 +1,10 @@
 /**
- * T03: createTraceManager default redaction behavior.
+ * createTraceManager default redaction behaviour.
  *
- * Verifies the secure-by-default contract:
+ * Secure-by-default contract:
  *   - `redact` omitted (undefined) => DEFAULT_SECRET_PATTERN is active
  *   - `redact: false` => redaction is explicitly disabled
- *   - `redact: RedactConfig` => back-compat, honor the object as-is
+ *   - `redact: RedactConfig` => honor the object as-is
  */
 import { describe, it, expect } from 'vitest';
 import { createTraceManager } from '../trace-manager.js';
@@ -33,12 +33,12 @@ describe('T03 createTraceManager default redaction', () => {
     expect(exported[0].safe).toBe('ok');
   });
 
-  it('redacts trace metadata secret keys by default', () => {
+  it('redacts trace userMetadata secret keys by default', () => {
     const tm = createTraceManager();
     const traceId = tm.startTrace('t', { authorization: 'Bearer xxx', env: 'prod' });
     const trace = tm.getTrace(traceId)!;
-    expect(trace.metadata.authorization).toBe('[REDACTED]');
-    expect(trace.metadata.env).toBe('prod');
+    expect(trace.userMetadata.authorization).toBe('[REDACTED]');
+    expect(trace.userMetadata.env).toBe('prod');
   });
 
   it('redacts span-event attribute secrets by default', () => {
@@ -75,26 +75,26 @@ describe('T03 createTraceManager default redaction', () => {
     expect(exported[0].api_key).toBe('sk-plain');
     expect(exported[0].secret).toBe('raw');
     const trace = tm.getTrace(traceId)!;
-    expect(trace.metadata.api_key).toBe('visible');
+    expect(trace.userMetadata.api_key).toBe('visible');
   });
 
-  it('remains back-compat with RedactConfig object (custom keys only)', () => {
+  it('RedactConfig object with custom keys only', () => {
     const tm = createTraceManager({
       redact: { useDefaultPattern: false, extraKeys: ['x'] },
     });
     const traceId = tm.startTrace('t', { x: 'hide-me', api_key: 'leak' });
     const trace = tm.getTrace(traceId)!;
     // `x` is in extraKeys, so redacted.
-    expect(trace.metadata.x).toBe('[REDACTED]');
+    expect(trace.userMetadata.x).toBe('[REDACTED]');
     // `api_key` would match DEFAULT_SECRET_PATTERN, but useDefaultPattern=false.
-    expect(trace.metadata.api_key).toBe('leak');
+    expect(trace.userMetadata.api_key).toBe('leak');
   });
 
-  it('back-compat with redact: {} still uses default pattern', () => {
+  it('redact: {} still uses the default pattern', () => {
     const tm = createTraceManager({ redact: {} });
     const traceId = tm.startTrace('t', { token: 'secret123', ok: 'yep' });
     const trace = tm.getTrace(traceId)!;
-    expect(trace.metadata.token).toBe('[REDACTED]');
-    expect(trace.metadata.ok).toBe('yep');
+    expect(trace.userMetadata.token).toBe('[REDACTED]');
+    expect(trace.userMetadata.ok).toBe('yep');
   });
 });

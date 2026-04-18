@@ -44,16 +44,6 @@
       "import": "./dist/observe/index.js",
       "require": "./dist/cjs/observe/index.cjs"
     },
-    "./observe/trace": {
-      "types": "./dist/observe/trace.d.ts",
-      "import": "./dist/observe/trace.js",
-      "require": "./dist/cjs/observe/trace.cjs"
-    },
-    "./observe/usage": {
-      "types": "./dist/observe/usage.d.ts",
-      "import": "./dist/observe/usage.js",
-      "require": "./dist/cjs/observe/usage.cjs"
-    },
     "./session": {
       "types": "./dist/session/index.d.ts",
       "import": "./dist/session/index.js",

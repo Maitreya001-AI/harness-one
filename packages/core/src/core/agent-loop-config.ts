@@ -3,14 +3,9 @@
  * values the `AgentLoop` constructor can consume without branching on
  * `undefined` in every line.
  *
- * Extracted from `agent-loop.ts` in round-3 cleanup. The constructor used to
- * carry 26 per-field default / presence checks interleaved with assignments;
- * moving the logic here lets the class store a handful of grouped bundles
- * instead of 26 individual readonly fields.
- *
- * Kept `readonly` end-to-end and `Object.freeze`-ed at the return boundary so
- * downstream consumers cannot mutate the resolved shape. Validation is done
- * eagerly so a misconfigured loop never fails silently at run() time.
+ * Kept `readonly` end-to-end and `Object.freeze`-ed at the return boundary
+ * so downstream consumers cannot mutate the resolved shape. Validation
+ * runs eagerly so a misconfigured loop never fails silently at run() time.
  *
  * @module
  */

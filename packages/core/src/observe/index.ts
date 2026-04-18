@@ -27,8 +27,10 @@ export type { TraceManager, RetryMetrics } from './trace-manager.js';
 export { createTraceManager, createConsoleExporter, createNoOpExporter } from './trace-manager.js';
 
 // Instrumentation port (ARCH-012) — slim tracing contract used by RAG and
-// other sub-systems that don't need the full TraceManager surface.
-export type { InstrumentationPort } from './instrumentation-port.js';
+// other sub-systems that don't need the full TraceManager surface. Canonical
+// L2 home is `core/instrumentation-port.ts`; re-exported here so consumers
+// wiring exporters see it alongside `TraceManager` / `TraceExporter`.
+export type { InstrumentationPort } from '../core/instrumentation-port.js';
 
 // Cost tracker
 export type { ModelPricing, CostTracker } from './cost-tracker.js';
@@ -60,10 +62,10 @@ export { createDatasetExporter } from './dataset-exporter.js';
 // Safe-log primitive (fallback logger + safeWarn/safeError helpers)
 export { createDefaultLogger, safeWarn, safeError } from '../infra/safe-log.js';
 
-// Wave-5D ARCH-5 / Wave-15: MetricsPort is the vendor-neutral metric
-// interface. Its canonical L2 home is `../core/metrics-port.js`; this
-// barrel re-exports it so `harness-one/observe` consumers still see the
-// symbols next to the trace / cost APIs they are using.
+// MetricsPort — vendor-neutral counter/gauge/histogram surface. Canonical
+// L2 home is `../core/metrics-port.js`; re-exported here so the observe
+// barrel exposes the symbols alongside the trace / cost APIs callers
+// typically reach for together.
 export type {
   MetricsPort,
   MetricAttributes,
@@ -73,7 +75,7 @@ export type {
 } from '../core/metrics-port.js';
 export { createNoopMetricsPort } from '../core/metrics-port.js';
 
-// Wave-5D ARCH-6: lifecycle state machine + aggregated health.
+// Lifecycle state machine + aggregated health.
 export type {
   HarnessLifecycle,
   HarnessLifecycleState,

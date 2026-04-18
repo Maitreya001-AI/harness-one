@@ -24,10 +24,10 @@ export interface TraceManager {
   /**
    * Start a new trace. Returns the trace ID.
    *
-   * SEC-016: The `metadata` argument is treated as USER metadata — it is
-   * redacted (if configured) and surfaced on `trace.metadata` as well as
-   * `trace.userMetadata`. System-authored metadata is emitted via
-   * `setTraceSystemMetadata()` and kept on `trace.systemMetadata`.
+   * The `metadata` argument is USER metadata — it is redacted (when
+   * configured) and surfaced on `trace.userMetadata`. Library-authored
+   * metadata flows through `setTraceSystemMetadata()` and lands on
+   * `trace.systemMetadata` unredacted.
    */
   startTrace(name: string, metadata?: Record<string, unknown>): TraceId;
   /** Start a new span within a trace. Returns the span ID. */

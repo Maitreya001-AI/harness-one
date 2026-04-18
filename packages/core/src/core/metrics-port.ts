@@ -1,15 +1,12 @@
 /**
  * MetricsPort — minimal counter / gauge / histogram surface.
  *
- * Wave-15 promoted this from observe (L3) to core/core (L2) because the
- * orchestration subsystem depends on the surface and L3→L3 imports violate
- * the layering contract (see docs/ARCHITECTURE.md). The observe barrel
- * re-exports these types for backward compatibility.
- *
- * This module intentionally does NOT import `@opentelemetry/api` — the
- * interface is vendor-neutral so consumers can bind any backend
- * (StatsD, Prometheus push gateway, custom aggregator). The OTel bridge
- * lives in `@harness-one/opentelemetry`.
+ * Lives at L2 (`core/core`) so orchestration and observe can both depend
+ * on it without violating the layering contract (see
+ * docs/ARCHITECTURE.md). Intentionally does NOT import
+ * `@opentelemetry/api` — the interface is vendor-neutral so consumers
+ * can bind any backend (StatsD, Prometheus push gateway, custom
+ * aggregator). The OTel bridge lives in `@harness-one/opentelemetry`.
  *
  * @module
  */

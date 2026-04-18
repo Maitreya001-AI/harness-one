@@ -1,17 +1,11 @@
 /**
  * Error primitives — the base `HarnessError` class and the full
- * `HarnessErrorCode` enum live in the L1 infra layer so L1 is truly
- * dependency-free (infra no longer imports from `core/errors`). L2/L3
- * subclasses (`MaxIterationsError`, `AbortedError`, …) live in
+ * `HarnessErrorCode` enum live at L1 so infra stays dependency-free.
+ * L2 subclasses (`MaxIterationsError`, `AbortedError`, …) live in
  * `core/core/errors.ts` and augment this module.
  *
- * Wave-15 refactor: prior to this wave infra imported `HarnessError`
- * and `HarnessErrorCode` from `../core/errors.js`, which violated the
- * documented "L1 imports from nothing" rule. Moving the primitives
- * down makes that rule enforceable by eslint without a carve-out.
- *
- * For extensibility (registering subsystem-specific error codes
- * without mutating the enum) see {@link createCustomErrorCode}.
+ * For extensibility (registering subsystem-specific error codes without
+ * mutating the enum) see {@link createCustomErrorCode}.
  *
  * @module
  */
@@ -177,9 +171,9 @@ export enum HarnessErrorCode {
  * consumers can branch on provider taxonomies without polluting the main
  * {@link HarnessErrorCode} enum.
  *
- * Wave-15 adds `namespace` as the canonical container for custom codes
- * registered via {@link createCustomErrorCode} — it parallels `adapterCode`
- * but is subsystem-shaped rather than adapter-shaped.
+ * `namespace` is the canonical container for custom codes registered via
+ * {@link createCustomErrorCode} — it parallels `adapterCode` but is
+ * subsystem-shaped rather than adapter-shaped.
  */
 export interface HarnessErrorDetails {
   readonly adapterCode?: string;

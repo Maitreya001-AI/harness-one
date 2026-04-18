@@ -75,15 +75,11 @@ export interface CircuitBreaker {
 /**
  * Error thrown when attempting to call through an open circuit.
  *
- * Wave-13 A-1: extends {@link HarnessError} with code
+ * Extends {@link HarnessError} with code
  * {@link HarnessErrorCode.ADAPTER_CIRCUIT_OPEN} so the circuit-breaker
- * failure participates in the canonical error taxonomy. Code paths that
- * key on `error.code` (retry policies, alerting heuristics) now classify
- * circuit-breaker rejections uniformly with other adapter errors.
- *
- * The class name is preserved for backwards compatibility with any test
- * that uses `instanceof CircuitOpenError`, and `instanceof HarnessError`
- * now also matches.
+ * failure participates in the canonical error taxonomy. Retry policies
+ * and alerting heuristics key on `error.code` to classify circuit-breaker
+ * rejections uniformly with other adapter errors.
  */
 export class CircuitOpenError extends HarnessError {
   constructor(message?: string) {

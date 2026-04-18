@@ -2,16 +2,9 @@
  * StreamHandler — translate one `adapter.stream()` call into an AgentEvent
  * sequence and return a {@link StreamResult} discriminated union.
  *
- * Wave-5B Step 2 extraction: body of the previous
- * `AgentLoop.handleStream` (L1106-L1160) lives here. The side-channel
- * `_lastStreamErrorCategory` it used to set on `AgentLoop` is gone —
- * the error category travels with the result instead.
- *
- * Observer-visible behaviour is identical to today: on failure the
- * `{type:'error', error}` event is yielded JUST BEFORE returning
- * `{ok:false,...}`, matching today's L1138 / L1154 yield points.
- *
- * See `docs/forge-fix/wave-5/wave-5b-adr-v2.md` §2.2 and §7 Step 2.
+ * On failure the `{type:'error', error}` event is yielded JUST BEFORE
+ * returning `{ok:false,...}`. The error category travels with the
+ * result (there is no side-channel on the AgentLoop instance).
  *
  * @module
  */

@@ -83,20 +83,12 @@ export interface CostTracker {
    * landing after `maxModels` is reached are aggregated under
    * `OVERFLOW_BUCKET_KEY` rather than evicting existing totals.
    *
-   * Returns a plain `Record<string, number>` for back-compat. Prefer
-   * {@link CostTracker.getCostByModelMap} for new code — it exposes the
-   * same data as a `ReadonlyMap` which admits O(1) membership tests
-   * (`map.has(model)`) and ordered iteration without the boxing overhead
-   * of `Object.entries()`.
+   * Returns a frozen `ReadonlyMap` so callers get O(1) membership tests
+   * (`map.has(model)`), ordered iteration, and no boxing overhead from
+   * `Object.entries()`. Snapshot — mutations on the returned map are
+   * forbidden and mutations on the tracker are not reflected in the map.
    */
-  getCostByModel(): Record<string, number>;
-  /**
-   * Map-shaped view of {@link CostTracker.getCostByModel}. Same semantics
-   * (cumulative-since-start, overflow-bucketed); returned as a frozen
-   * `ReadonlyMap` so callers can iterate, look up keys in O(1), and
-   * compute the key set without allocating an intermediate array.
-   */
-  getCostByModelMap(): ReadonlyMap<string, number>;
+  getCostByModel(): ReadonlyMap<string, number>;
   /**
    * Cumulative-since-start cost for a specific trace. Unknown traces
    * arriving after `maxTraces` is reached bucket into `OVERFLOW_BUCKET_KEY`

@@ -1,13 +1,12 @@
 /**
  * AgentLoop — the core agent execution loop.
  *
- * Calls the LLM adapter in a loop, dispatching tool calls and feeding results
- * back until the LLM stops requesting tools, or a safety valve triggers.
- *
- * Wave-15 extracted the event-sequencing state machine (startRun, emitTerminal,
- * checkPreIteration, startIteration, finalizeRun) into {@link
- * import('./iteration-coordinator.js')}. AgentLoop now owns configuration,
- * lifecycle state, and composition; choreography lives next door.
+ * Calls the LLM adapter in a loop, dispatching tool calls and feeding
+ * results back until the LLM stops requesting tools, or a safety valve
+ * triggers. The class owns configuration, lifecycle state, and
+ * composition; the event-sequencing state machine (startRun,
+ * checkPreIteration, startIteration, finalizeRun) lives in
+ * {@link import('./iteration-coordinator.js')}.
  *
  * @module
  */
@@ -39,11 +38,7 @@ import {
   type CoordinatorState,
 } from './iteration-coordinator.js';
 
-// `AgentLoopTraceManager` lives in `./trace-interface.js`. Re-export here so
-// existing imports from `harness-one/core` (which historically pulled the type
-// from `agent-loop.ts`) keep working without a code change.
 export type { AgentLoopTraceManager } from './trace-interface.js';
-// Re-export the config + hook contracts so existing consumers keep working.
 export type { AgentLoopConfig, AgentLoopHook } from './agent-loop-types.js';
 
 /**
@@ -196,10 +191,10 @@ export class AgentLoop {
    */
   dispose(): void {
     try {
-      // Wave-18: single-owner listener cleanup. If finalizeRun() already
-      // detached the handler, releaseExternalSignal is a cheap no-op; if
-      // dispose() runs first (e.g. the consumer never called run()), we
-      // ensure no dangling listener survives.
+      // Single-owner listener cleanup. If finalizeRun() already detached
+      // the handler, releaseExternalSignal is a cheap no-op; if dispose()
+      // runs first (e.g. the consumer never called run()), we ensure no
+      // dangling listener survives.
       releaseExternalSignal(this.coordDeps, this.state);
       this.abortController.abort();
       const strategyDispose = this.resolved.executionStrategy.dispose;

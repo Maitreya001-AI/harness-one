@@ -150,7 +150,9 @@ export function createLangfuseExporter(config: LangfuseExporterConfig): TraceExp
         lfTrace = client.trace({
           id: trace.id,
           name: trace.name,
-          metadata: trace.metadata,
+          // Only user-supplied metadata is forwarded to Langfuse. System
+          // metadata is library-internal and stays off the wire.
+          metadata: trace.userMetadata,
         });
         traceMap.set(trace.id, lfTrace);
         touchTrace(trace.id);
@@ -159,13 +161,13 @@ export function createLangfuseExporter(config: LangfuseExporterConfig): TraceExp
         touchTrace(trace.id);
       }
 
-      // Wave-12 P1-23: If `update()` throws after we cached the trace object,
-      // leave no poisoned entry behind — subsequent spans would otherwise
-      // reuse a partially-initialised handle until LRU eviction.
+      // If update() throws after we cached the trace object, leave no
+      // poisoned entry behind — subsequent spans would otherwise reuse a
+      // partially-initialised handle until LRU eviction.
       try {
         lfTrace.update({
           metadata: {
-            ...trace.metadata,
+            ...trace.userMetadata,
             status: trace.status,
             spanCount: trace.spans.length,
           },

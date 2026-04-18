@@ -1,21 +1,12 @@
 /**
- * Iteration choreography — the event-sequencing state machine extracted
- * from `AgentLoop` in Wave-15.
+ * Iteration choreography — the event-sequencing state machine that
+ * drives `AgentLoop.run()`.
  *
- * AgentLoop used to own four private generator helpers — `startRun`,
- * `emitTerminal`, `checkPreIteration`, `startIteration`, and `finalizeRun`
- * — that together coordinated the ordering of yields, hooks, spans, and
- * abort checks. That coupling made the class hard to read and easy to
- * break on reorder. This module hoists the state machine out so:
- *
- *  - the loop becomes composition over choreography
- *  - the yield/hook/span ordering contract has a single owner
- *  - adding a new pre-iteration check doesn't require editing the loop
- *
- * The coordinator is deliberately dependency-light: it consumes a
- * {@link CoordinatorDeps} bag (just the handful of fields the state
- * machine needs) and leaves long-lived state — the IterationContext,
- * cumulativeUsage, abort controller — on the AgentLoop instance.
+ * The coordinator owns the ordering contract for yields, hooks, spans,
+ * and abort checks. It is deliberately dependency-light: it consumes a
+ * {@link CoordinatorDeps} bag (just the fields the state machine needs)
+ * and leaves long-lived state — the IterationContext, cumulativeUsage,
+ * abort controller — on the AgentLoop instance.
  *
  * @module
  */
@@ -265,11 +256,10 @@ export function* startIteration(
 /**
  * Detach the external-signal abort listener and null the handler slot.
  *
- * Wave-18: single owner for listener cleanup. `startRun()` is the only
- * installer; {@link finalizeRun} and `AgentLoop.dispose()` both call
- * {@link releaseExternalSignal} instead of hand-rolling the removal.
- * Idempotent — calling twice is a no-op because the handler slot is cleared
- * on first call.
+ * Single owner for listener cleanup: `startRun()` is the only installer;
+ * {@link finalizeRun} and `AgentLoop.dispose()` both route through this
+ * helper instead of hand-rolling the removal. Idempotent — calling twice
+ * is a no-op because the handler slot is cleared on the first call.
  */
 export function releaseExternalSignal(
   deps: CoordinatorDeps,

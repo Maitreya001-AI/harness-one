@@ -69,8 +69,8 @@ describe('createCostTracker', () => {
       tracker.recordUsage({ traceId: 't1', model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
       tracker.recordUsage({ traceId: 't2', model: 'gpt-4', inputTokens: 1000, outputTokens: 0 });
       const byModel = tracker.getCostByModel();
-      expect(byModel['claude-3']).toBeCloseTo(0.003, 4);
-      expect(byModel['gpt-4']).toBeCloseTo(0.01, 4);
+      expect(byModel.get('claude-3')).toBeCloseTo(0.003, 4);
+      expect(byModel.get('gpt-4')).toBeCloseTo(0.01, 4);
     });
   });
 
@@ -231,9 +231,9 @@ describe('createCostTracker', () => {
 
       const byModel = tracker.getCostByModel();
       // cheap: 1*0.001 + 1*0.002 = 0.003
-      expect(byModel['cheap']).toBeCloseTo(0.003, 4);
+      expect(byModel.get('cheap')).toBeCloseTo(0.003, 4);
       // expensive: 1*0.01 + 1*0.03 = 0.04
-      expect(byModel['expensive']).toBeCloseTo(0.04, 4);
+      expect(byModel.get('expensive')).toBeCloseTo(0.04, 4);
       // total: 0.003 + 0.04 = 0.043
       expect(tracker.getTotalCost()).toBeCloseTo(0.043, 4);
     });
@@ -474,9 +474,9 @@ describe('createCostTracker', () => {
     });
   });
 
-  // Fix 4: getCostByModel uses permanent modelTotals (not affected by buffer eviction)
+  // getCostByModel uses permanent modelTotals (not affected by buffer eviction)
   describe('getCostByModel with permanent modelTotals', () => {
-    it('getCostByModel remains consistent after buffer eviction', () => {
+    it('remains consistent after buffer eviction', () => {
       const tracker = createCostTracker({
         pricing: [{ model: 'a', inputPer1kTokens: 1.0, outputPer1kTokens: 0 }],
       });
@@ -486,13 +486,12 @@ describe('createCostTracker', () => {
         tracker.recordUsage({ traceId: `t${i}`, model: 'a', inputTokens: 1, outputTokens: 0 });
       }
 
-      // getCostByModel should reflect ALL recorded usage, not just buffer
       const byModel = tracker.getCostByModel();
       // Each record: 1/1000 * 1.0 = 0.001; total = 10,001 * 0.001 = 10.001
-      expect(byModel['a']).toBeCloseTo(10_001 * 0.001, 2);
+      expect(byModel.get('a')).toBeCloseTo(10_001 * 0.001, 2);
     });
 
-    it('getCostByModel tracks multiple models independently', () => {
+    it('tracks multiple models independently', () => {
       const tracker = createCostTracker({
         pricing: [
           { model: 'a', inputPer1kTokens: 1.0, outputPer1kTokens: 0 },
@@ -504,11 +503,14 @@ describe('createCostTracker', () => {
       tracker.recordUsage({ traceId: 't2', model: 'b', inputTokens: 1000, outputTokens: 0 });
 
       const byModel = tracker.getCostByModel();
-      expect(byModel['a']).toBeCloseTo(1.0, 4);
-      expect(byModel['b']).toBeCloseTo(2.0, 4);
+      expect(byModel).toBeInstanceOf(Map);
+      expect(byModel.size).toBe(2);
+      expect(byModel.has('a')).toBe(true);
+      expect(byModel.get('a')).toBeCloseTo(1.0, 4);
+      expect(byModel.get('b')).toBeCloseTo(2.0, 4);
     });
 
-    it('getCostByModel is cleared on reset', () => {
+    it('is cleared on reset', () => {
       const tracker = createCostTracker({
         pricing: [{ model: 'a', inputPer1kTokens: 1.0, outputPer1kTokens: 0 }],
       });
@@ -516,56 +518,23 @@ describe('createCostTracker', () => {
       tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 1000, outputTokens: 0 });
       tracker.reset();
 
-      const byModel = tracker.getCostByModel();
-      expect(Object.keys(byModel)).toHaveLength(0);
+      expect(tracker.getCostByModel().size).toBe(0);
     });
 
-    // Added alongside the Record<string, number> → ReadonlyMap<string, number>
-    // additive API. Mirrors the Record-shaped coverage above to ensure the two
-    // views never drift.
-    describe('getCostByModelMap (Map view)', () => {
-      it('mirrors getCostByModel but returns a ReadonlyMap', () => {
-        const tracker = createCostTracker({
-          pricing: [
-            { model: 'a', inputPer1kTokens: 1.0, outputPer1kTokens: 0 },
-            { model: 'b', inputPer1kTokens: 2.0, outputPer1kTokens: 0 },
-          ],
-        });
-        tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 1000, outputTokens: 0 });
-        tracker.recordUsage({ traceId: 't2', model: 'b', inputTokens: 1000, outputTokens: 0 });
-
-        const mapView = tracker.getCostByModelMap();
-        expect(mapView).toBeInstanceOf(Map);
-        expect(mapView.size).toBe(2);
-        expect(mapView.has('a')).toBe(true);
-        expect(mapView.get('a')).toBeCloseTo(1.0, 4);
-        expect(mapView.get('b')).toBeCloseTo(2.0, 4);
+    it('is a snapshot — mutations to the returned Map do not affect the tracker', () => {
+      const tracker = createCostTracker({
+        pricing: [{ model: 'a', inputPer1kTokens: 1.0, outputPer1kTokens: 0 }],
       });
+      tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 1000, outputTokens: 0 });
 
-      it('is a snapshot — mutations to the returned Map do not affect the tracker', () => {
-        const tracker = createCostTracker({
-          pricing: [{ model: 'a', inputPer1kTokens: 1.0, outputPer1kTokens: 0 }],
-        });
-        tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 1000, outputTokens: 0 });
+      const snapshot = tracker.getCostByModel() as Map<string, number>;
+      snapshot.set('a', 999);
+      snapshot.set('ghost', 123);
 
-        const snapshot = tracker.getCostByModelMap() as Map<string, number>;
-        snapshot.set('a', 999);
-        snapshot.set('ghost', 123);
-
-        // Subsequent calls return the tracker's true state, not the caller's mutation.
-        const fresh = tracker.getCostByModelMap();
-        expect(fresh.get('a')).toBeCloseTo(1.0, 4);
-        expect(fresh.has('ghost')).toBe(false);
-      });
-
-      it('is cleared on reset()', () => {
-        const tracker = createCostTracker({
-          pricing: [{ model: 'a', inputPer1kTokens: 1.0, outputPer1kTokens: 0 }],
-        });
-        tracker.recordUsage({ traceId: 't1', model: 'a', inputTokens: 1000, outputTokens: 0 });
-        tracker.reset();
-        expect(tracker.getCostByModelMap().size).toBe(0);
-      });
+      // Subsequent calls return the tracker's true state, not the caller's mutation.
+      const fresh = tracker.getCostByModel();
+      expect(fresh.get('a')).toBeCloseTo(1.0, 4);
+      expect(fresh.has('ghost')).toBe(false);
     });
   });
 
@@ -864,7 +833,7 @@ describe('createCostTracker', () => {
 
       const byModel = tracker.getCostByModel();
       // 1000/1000 * 0.003 + 500/1000 * 0.015 = 0.0105
-      expect(byModel['claude-3']).toBeCloseTo(0.0105, 4);
+      expect(byModel.get('claude-3')).toBeCloseTo(0.0105, 4);
     });
 
     it('updates most recent record when multiple records for same traceId exist', () => {
@@ -1023,14 +992,14 @@ describe('createCostTracker', () => {
       const byModel = tracker.getCostByModel();
       // The first three models must still be present — SEC-009 forbids eviction
       // by caller keys.
-      expect(byModel['m0']).toBeCloseTo(1.0, 6);
-      expect(byModel['m1']).toBeCloseTo(1.0, 6);
-      expect(byModel['m2']).toBeCloseTo(1.0, 6);
+      expect(byModel.get('m0')).toBeCloseTo(1.0, 6);
+      expect(byModel.get('m1')).toBeCloseTo(1.0, 6);
+      expect(byModel.get('m2')).toBeCloseTo(1.0, 6);
       // Later models aggregate into the overflow bucket.
-      expect(byModel[OVERFLOW_BUCKET_KEY]).toBeCloseTo(2.0, 6);
+      expect(byModel.get(OVERFLOW_BUCKET_KEY)).toBeCloseTo(2.0, 6);
       // Overflowed keys are NOT queryable individually.
-      expect(byModel['m3']).toBeUndefined();
-      expect(byModel['m4']).toBeUndefined();
+      expect(byModel.has('m3')).toBe(false);
+      expect(byModel.has('m4')).toBe(false);
     });
 
     it('aggregates new traces under OVERFLOW_BUCKET_KEY without evicting existing entries', () => {
@@ -1129,7 +1098,7 @@ describe('createCostTracker', () => {
       tracker.recordUsage({ traceId: 't3', model: 'c3', inputTokens: 1000, outputTokens: 0 });
 
       // 3 records * 1.0 = 3.0 cumulative, even though buffer evicted the oldest.
-      expect(tracker.getCostByModel()['c3']).toBeCloseTo(3.0, 6);
+      expect(tracker.getCostByModel().get('c3')).toBeCloseTo(3.0, 6);
       // Recent window dropped the oldest record.
       expect(tracker.getTotalCost()).toBeCloseTo(2.0, 6);
     });

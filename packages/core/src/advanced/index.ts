@@ -56,7 +56,7 @@ export type { ResilientLoopConfig, ResilientLoop } from '../core/resilience.js';
 export { createResilientLoop } from '../core/resilience.js';
 export type { ResiliencePolicy } from '../core/retry-policy.js';
 
-// ─── Iteration coordinator (Wave-15 state machine) ───────────────────────
+// ─── Iteration coordinator (event-sequencing state machine) ──────────────
 export {
   startRun,
   checkPreIteration,
@@ -93,7 +93,7 @@ export {
 } from '../infra/backoff.js';
 export type { BackoffConfig, BackoffSchedule } from '../infra/backoff.js';
 
-// ─── Trusted system-message factories (Wave-5E SEC-A07) ──────────────────
+// ─── Trusted system-message factories ────────────────────────────────────
 export {
   createTrustedSystemMessage,
   isTrustedSystemMessage,

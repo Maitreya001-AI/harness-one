@@ -36,11 +36,9 @@ export interface ViewableMutableTrace {
 }
 
 /**
- * Build a `Trace` snapshot with embedded span snapshots. `metadata`
- * preserves back-compat: callers reading `.metadata` see the user
- * metadata; when system metadata is present, it is exposed under the
- * `__system__` namespaced key so legacy observers still see it
- * without colliding with user keys.
+ * Build a `Trace` snapshot with embedded span snapshots. `userMetadata`
+ * and `systemMetadata` are copied defensively so mutations on the
+ * returned snapshot cannot reach back into the live trace.
  */
 export function toReadonlyTrace(
   mt: ViewableMutableTrace,
@@ -64,24 +62,14 @@ export function toReadonlyTrace(
     })
     .filter((s): s is Span => s !== null);
 
-  const combinedMetadata: Record<string, unknown> = { ...mt.userMetadata };
-  if (Object.keys(mt.systemMetadata).length > 0) {
-    combinedMetadata.__system__ = { ...mt.systemMetadata };
-  }
-
-  const result: Trace & {
-    readonly userMetadata?: Record<string, unknown>;
-    readonly systemMetadata?: Record<string, unknown>;
-  } = {
+  return {
     id: mt.id,
     name: mt.name,
     startTime: mt.startTime,
     ...(mt.endTime !== undefined && { endTime: mt.endTime }),
-    metadata: combinedMetadata,
     userMetadata: { ...mt.userMetadata },
     systemMetadata: { ...mt.systemMetadata },
     spans: traceSpans,
     status: mt.status,
   };
-  return result;
 }

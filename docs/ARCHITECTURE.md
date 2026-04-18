@@ -1,14 +1,12 @@
 # harness-one Architecture — Layering Contract
 
-This document codifies the layering contract that the audit waves 5–16
-have converged on. It is intentionally short — the details live in
-`docs/architecture/*.md` per-module. This file is the single-page
-mental model that every PR and review should respect.
+This is the single-page mental model every PR and review should
+respect. Per-module deep dives live in `docs/architecture/*.md`.
 
 ## Dependency direction
 
-The `harness-one` monorepo has **five conceptual layers**, and
-imports may only flow top-to-bottom:
+The monorepo has **five conceptual layers**, and imports may only
+flow top-to-bottom:
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -36,7 +34,9 @@ imports may only flow top-to-bottom:
 ├─────────────────────────────────────────────────────┤
 │  L2  domain primitives       core/core (AgentLoop,    │
 │                              errors, events, types,   │
-│                              middleware, ...)         │
+│                              middleware, ports,       │
+│                              pricing, iteration      │
+│                              coordinator, ...)        │
 ├─────────────────────────────────────────────────────┤
 │  L1  infra                   core/infra (ids,         │
 │                              backoff, async-lock,     │
@@ -48,147 +48,125 @@ imports may only flow top-to-bottom:
 
 ## Allowed import edges
 
-- **L1 → nothing** — infra must not import from any higher layer.
-  Wave-15 made this rule strict: error primitives (`HarnessError` +
-  `HarnessErrorCode`) now live in `infra/errors-base.ts` and branded-id
-  types (`TraceId`, `SpanId`, `SessionId`) live in `infra/brands.ts`, so
-  the Wave-14 carve-out for `core/errors.js` / `core/types.js` is gone.
-- **L2 → L1** — `core/core` freely imports from `core/infra`. L2 is
-  also where the cross-cutting ports now live after Wave-15:
-  `core/metrics-port.ts` and `core/instrumentation-port.ts` (hoisted
-  out of observe), `core/pricing.ts` (the canonical model-pricing home),
-  and `core/iteration-coordinator.ts` (the event-sequencing state
-  machine extracted from AgentLoop).
+- **L1 → nothing** — infra imports nothing upward. Error primitives
+  (`HarnessError`, `HarnessErrorCode`, `HarnessErrorDetails`,
+  `createCustomErrorCode`) live in `infra/errors-base.ts`; branded-id
+  types (`TraceId`, `SpanId`, `SessionId`) live in `infra/brands.ts`.
+- **L2 → L1** — `core/core` freely imports from `core/infra`. L2 also
+  hosts cross-cutting ports: `core/metrics-port.ts`,
+  `core/instrumentation-port.ts`, `core/pricing.ts` (canonical
+  model-pricing home), and `core/iteration-coordinator.ts`
+  (event-sequencing state machine).
 - **L3 → L1, L2** — each subsystem (`orchestration`, `observe`, …)
-  imports from `core/core` and `core/infra`. Subsystems do **not**
-  import from each other (not even type-only); shared abstractions
-  belong in L2. Wave-17 tightened this: `orchestration/agent-pool`
-  now depends on the L2 `InstrumentationPort` rather than the L3
-  `TraceManager`, removing the last L3→L3 edge in the tree.
-- **L4 → L1, L2, L3 (via public subpath barrels)** — adapter packages
-  (`@harness-one/openai`, etc.) depend on the `harness-one` package
-  through its published subpath exports (`harness-one/core`,
-  `harness-one/observe`, `harness-one/redact`, …). They MUST NOT reach
-  into `harness-one/src/...` internal paths.
+  imports from `core/core` and `core/infra`. **Subsystems do not
+  import each other** (not even type-only); shared abstractions belong
+  in L2.
+- **L4 → L1, L2, L3 via public subpath barrels** — adapter packages
+  depend on `harness-one` through its published subpath exports
+  (`harness-one/core`, `harness-one/observe`, `harness-one/redact`, …).
+  They MUST NOT reach into `harness-one/src/**` internal paths.
 - **L5 → L1…L4 via public subpath barrels** — presets and CLI compose
-  adapter packages the same way as end users.
+  adapter packages the same way end users do.
 
 ## Enforcement
 
-Runtime: the dependency direction is enforced by the TypeScript type
-graph and the `exports` map in each package's `package.json`.
+Runtime: the `exports` map in each `package.json` plus TypeScript's
+type graph enforce direction.
 
-Build time: the root `eslint.config.js` enforces the layering via
-`no-restricted-imports` rules:
+Build time: the root `eslint.config.js` enforces it via
+`no-restricted-imports`:
 
-- In `core/src/infra/**`, importing from `../core/**` or
-  `../orchestration/**`, etc., is forbidden (infra must stay
-  dependency-free).
-- In sibling packages, importing from `harness-one/src/**` (i.e.
-  reaching into the source tree rather than the published barrels)
-  is forbidden.
+- Inside `core/src/infra/**`, importing from any higher layer is
+  forbidden.
+- Inside sibling packages, importing from `harness-one/src/**` is
+  forbidden.
 
 ## Rules of thumb for PR review
 
-- **"Where does this new symbol live?"** — answer the question at
-  definition time, not later. If it's a dependency-free utility → L1.
-  If it's a shared domain type or base error → L2. If it's feature
-  state → L3. If it's a provider binding → L4. If it's
-  configuration-wiring → L5.
+- **"Where does this new symbol live?"** — decide at definition
+  time. Dependency-free utility → L1. Shared domain type or base
+  error → L2. Feature state → L3. Provider binding → L4.
+  Config wiring → L5.
 - **"Does this subsystem need to call that subsystem?"** — if yes,
   the shared abstraction needs to move down to L2 first. L3 modules
   never import each other at runtime.
 - **"Should this be re-exported from the observe barrel?"** — only
   if it's genuinely observability-shaped. Redaction primitives
-  (previously re-exported from `observe`) were hoisted to
-  `harness-one/redact` in Wave-14 for exactly this reason.
+  ship from `harness-one/redact`, not `harness-one/observe`.
 
 ## LRU caches
 
-Two LRU shapes live in core. Pick the right one:
+Two shapes live in core. Pick the right one:
 
-- **`core/infra/lru-cache.ts`** — generic `Map`-backed key/value cache.
-  Reach for this first: it holds values, supports any key type, and
-  fires `onEvict` hooks for side-table accounting.
-- **`core/observe/trace-lru-list.ts`** — intrusive doubly-linked list of
-  trace-id strings with O(1) `move-to-tail` / `pop-head`. Holds no
-  payload; callers store values in a sibling `Map<string, T>`. Use it
-  when (a) eviction must fan out to multiple sibling side-tables,
-  (b) nodes already exist in a parent structure where embedding
-  prev/next pointers is cheaper than a separate wrapper, or (c)
-  move-to-tail is called on every read.
+- **`core/infra/lru-cache.ts`** — generic `Map`-backed key/value
+  cache. Reach for this first: it holds values, supports any key
+  type, and fires `onEvict` on every removal path (capacity
+  eviction, explicit `delete`, `clear`).
+- **`core/observe/trace-lru-list.ts`** — intrusive doubly-linked
+  list of trace-id strings with O(1) `move-to-tail` / `pop-head`.
+  Holds no payload; callers store values in a sibling `Map`. Use it
+  only when (a) eviction must fan out to multiple sibling
+  side-tables, (b) prev/next pointers can live on nodes that
+  already exist, or (c) move-to-tail runs on every read.
 
-Both modules carry a header comment with the same decision rule.
+Header comments on both files carry the same decision rule.
 
 ## Validation helpers
 
-Primitive numeric guards live in one place: `core/infra/validate.ts`
+Primitive numeric guards live in `core/infra/validate.ts`
 (`requirePositiveInt`, `requireNonNegativeInt`, `requireFinitePositive`,
 `requireFiniteNonNegative`, `requireUnitInterval`, `validatePricingEntry`,
-`validatePricingArray`). They're surfaced on the public
-`harness-one/advanced` barrel for adapter authors and the preset to
-share; internal call sites import straight from `../infra/validate.js`.
-Every subsystem (core, admission controller, circuit breaker, execution
-strategies, trace sampler, trace manager, agent-loop config, ajv
-validator, langfuse, preset) delegates to those helpers — do not
-reintroduce a bespoke inline guard. The `validate.test.ts` witness
-tests lock this in per Wave-16 m3.
+`validatePricingArray`). Re-exported on `harness-one/advanced` for
+adapter authors and the preset. Every subsystem delegates — do not
+reintroduce a bespoke inline guard. Witness tests in `validate.test.ts`
+lock delegation in place.
 
-## Public-surface split (Wave-17)
+## Public-surface split
 
-`harness-one/core` is the end-user surface: message types, errors,
-events, `createAgentLoop` + hooks + config, model pricing, and the
-two observability ports. Anything a typical consumer imports when
-wiring an agent loop is here.
+- **`harness-one/core`** — end-user surface: message types, errors,
+  events, `createAgentLoop` + hooks + config, model pricing, the
+  two observability ports. Anything a typical consumer imports
+  when wiring an agent loop.
+- **`harness-one/advanced`** — extension-author surface: middleware
+  factory, stream aggregator, output parser, fallback adapter, SSE
+  helpers, execution-strategy factories, error classifier, custom
+  error-code helper, conversation pruner, resilient-loop factory,
+  iteration-coordinator primitives (including
+  `releaseExternalSignal`), validators, pricing math, backoff
+  primitives, trusted system-message factories, and the mock
+  adapters used by tests.
+- **Root `harness-one`** re-exports the UJ-1 value symbols
+  (`createMiddlewareChain`, `createResilientLoop`, …) so top-level
+  imports of those primitives don't have to know about `/advanced`.
 
-`harness-one/advanced` is the extension-author surface: middleware
-factory, stream aggregator, output parser, fallback adapter, SSE
-helpers, execution-strategy factories, error classifier, custom
-error-code helper, conversation pruner, resilient-loop factory,
-iteration-coordinator primitives, validators, pricing math, backoff
-primitives, trusted system-message factories, and the mock adapters
-used by tests. These were previously on `harness-one/core` and moved
-in Wave-17 so the end-user surface is narrow and the extension-author
-surface is separately declared.
-
-The root `harness-one` barrel continues to re-export the UJ-1 value
-symbols (`createMiddlewareChain`, `createResilientLoop`, …) so
-top-level imports of those primitives don't have to know about the
-`/advanced` split.
-
-## Construction: factories, not classes (Wave-18)
+## Construction: factories, not classes
 
 Every public primitive in harness-one is constructed through a
-`create*` factory; the underlying class is deliberately hidden.
-Concretely:
+`create*` factory; the implementing class is deliberately hidden
+(`createRegistry`, `createSessionManager`, `createTraceManager`,
+`createCostTracker`, `createLogger`, `createPipeline`,
+`createMiddlewareChain`, `createResilientLoop`,
+`createFallbackAdapter`, `createBackoffSchedule`, `createAgentPool`,
+`createMemoryStore`, …). Consumers never type `new SomeClass()`.
 
-- `createRegistry`, `createSessionManager`, `createTraceManager`,
-  `createCostTracker`, `createLogger`, `createPipeline`,
-  `createMiddlewareChain`, `createResilientLoop`, `createFallbackAdapter`,
-  `createBackoffSchedule`, `createAgentPool`, `createMemoryStore`, …
-  are the public entry points. Consumers never type `new SomeClass()`.
-- `AgentLoop` is the single documented exception: the factory
-  `createAgentLoop` is the idiomatic entry point, but the class is
-  also exported so tests and callers can narrow types with
-  `instanceof AgentLoop` (for generator-return narrowing in tooling
-  that can't follow the factory's return type transitively).
+`AgentLoop` is the single documented exception: the factory
+`createAgentLoop` is the idiomatic entry point, but the class is
+also exported so tests and callers can narrow types with
+`instanceof AgentLoop` (for generator-return narrowing in tooling
+that can't follow the factory's return type transitively).
 
-The rule of thumb when adding a new primitive: export the factory
-and the result type; do **not** export the implementing class unless
-`instanceof` narrowing is part of the public contract.
+When adding a new primitive: export the factory and the result
+type; do **not** export the implementing class unless `instanceof`
+narrowing is part of the public contract.
 
-## Config shape: flat, single-form (Wave-18)
+## Config shape: flat, single-form
 
 `AgentLoopConfig` is the one-and-only config shape accepted by
-`createAgentLoop`. Wave-14 briefly introduced a nested `AgentLoopConfigV2`
-bundle alongside the flat shape; Wave-18 removed it along with the
-`flattenNestedAgentLoopConfig` / `isNestedAgentLoopConfig` bridge and
-the dual-overload on `createAgentLoop`. Two parallel shapes meant every
-test, example, and downstream caller had to pick one and the bridge sat
-in the hot path forever — not worth the nominal ergonomics gain.
+`createAgentLoop`. All concerns (limits, hooks, pipelines,
+observability, resilience, execution) are flat fields on the same
+struct.
 
 ## Also see
 
-- `MIGRATION.md` — deprecation timelines.
 - `docs/architecture/00-overview.md` — module-by-module deep dive.
 - `docs/architecture/*.md` — per-subsystem design notes.
