@@ -68,6 +68,9 @@ importers:
       '@harness-one/opentelemetry':
         specifier: workspace:*
         version: link:../packages/opentelemetry
+      '@harness-one/preset':
+        specifier: workspace:*
+        version: link:../packages/preset
       '@harness-one/redis':
         specifier: workspace:*
         version: link:../packages/redis
