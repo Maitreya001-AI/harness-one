@@ -1,6 +1,6 @@
 # harness-one
 
-Framework-agnostic primitives for AI agent harness engineering. Zero-runtime-dep core with submodule exports (`agent-loop`, `tools`, `guardrails`, `memory`, `observe`, `context`, `prompt`, `eval`, `rag`, `orchestration`).
+Framework-agnostic primitives for AI agent harness engineering. Zero-runtime-dep core with subpath exports (`core`, `advanced`, `prompt`, `context`, `tools`, `guardrails`, `observe`, `session`, `memory`, `evolve-check`, `rag`, `orchestration`, `redact`, `infra`). `eval` and `evolve` ship from `@harness-one/devkit`.
 
 ## Install
 
@@ -61,12 +61,12 @@ Available submodules: `core`, `advanced`, `prompt`, `context`, `tools`, `guardra
 
 > **Wave-5C** — `harness-one/eval` and `harness-one/evolve` were extracted to **[`@harness-one/devkit`](../devkit)**. The `harness-one/cli` subpath was extracted to **[`@harness-one/cli`](../cli)**. `harness-one/evolve-check` (architecture rules only) stays in core.
 >
-> The root barrel is now curated to **19 value symbols** (UJ-1..UJ-5 user-journey set). Other factories like `toSSEStream`, `categorizeAdapterError` etc. live on subpaths only.
+> The root barrel is now curated to **18 value symbols** (UJ-1..UJ-5 user-journey set; the original ADR slot 11 `createSecurePreset` was dropped per R-01 to break the `harness-one` ↔ `@harness-one/preset` cycle). Other factories like `toSSEStream`, `categorizeAdapterError` etc. live on subpaths only.
 
 > **Wave-5D additions** (subpath-only): `harness-one/observe` exports `MetricsPort` + `createNoopMetricsPort` (vendor-neutral metric instruments), `HarnessLifecycle` + `createHarnessLifecycle` (init→ready→draining→shutdown state machine + aggregated `health()`); `harness-one/infra` exports `createAdmissionController` (per-tenant in-process token bucket with abort/timeout fail-closed).
 
 > **Wave-5E additions** (subpath-only): `harness-one/core` exports `createTrustedSystemMessage`, `isTrustedSystemMessage`, `sanitizeRestoredMessage` for the system-message brand pattern (SEC-A07); `harness-one/guardrails` exports `runRagContext` for per-chunk input scanning of retrieved context (SEC-A16).
 
-> **Wave-5C `HarnessErrorCode` is closed and prefixed.** Switch on `HarnessError.code` exhaustively. Always **value-import** (`import { HarnessErrorCode }`) — type-only import drops the runtime `Object.values()` record (lint rule `harness-one/no-type-only-harness-error-code` enforces). See root [`CHANGELOG.md`](../../CHANGELOG.md) for the full rename mapping.
+> **Wave-5C `HarnessErrorCode` is closed and prefixed.** Switch on `HarnessError.code` exhaustively. Always **value-import** (`import { HarnessErrorCode }`) — type-only import drops the runtime `Object.values()` record (lint rule `harness-one/no-type-only-harness-error-code` enforces). See root [`MIGRATION.md`](../../MIGRATION.md) and the git log for the full rename mapping (`CHANGELOG.md` is intentionally empty pre-release).
 
 See the main [repository README](../../README.md) and [architecture docs](../../docs/architecture/) for the full API surface.

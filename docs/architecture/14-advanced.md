@@ -46,7 +46,8 @@
 3. **tree-shake 友好**：只用 `/core` 的用户不会被 `/advanced` 的原语拖累。
 4. **避免根桶爆炸**：`createResilientLoop` / `createMiddlewareChain` 在根
    桶保留了 value 导出（UJ-1），其余扩展原语统一从 `/advanced` 获取，
-   让根桶停留在 19 个精选值符号。
+   让根桶停留在 18 个精选值符号（原 ADR 排布 19 个槽位，slot 11
+   `createSecurePreset` 因循环风险下放到 `@harness-one/preset`）。
 
 ## 公共 API 快速索引
 

@@ -62,6 +62,7 @@ Each file stands alone — no external SDK needed.
 | [`orchestration/multi-agent.ts`](orchestration/multi-agent.ts) | `createAgentPool` + `createHandoff` + `createContextBoundary` |
 | [`evolve/component-registry-drift-taste.ts`](evolve/component-registry-drift-taste.ts) | `ComponentRegistry` + `DriftDetector` + `TasteCodingRegistry` (devkit) |
 | [`eval/generator-evaluator-flywheel.ts`](eval/generator-evaluator-flywheel.ts) | `runGeneratorEvaluator` + batch `EvalRunner` + `extractNewCases` (devkit) |
+| [`infra/admission-control.ts`](infra/admission-control.ts) | `createAdmissionController` + `unrefTimeout` / `unrefInterval` — per-tenant backpressure + non-blocking timers |
 
 ## Quick Start
 

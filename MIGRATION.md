@@ -10,7 +10,7 @@ Once the first release ships (driven by `@changesets/cli`, see
 migration steps — API renames, removed symbols, behaviour changes.
 Until then, read the source.
 
-## Unreleased — post Wave-19 audit pass
+## Unreleased — through Wave-25 audit pass
 
 Breaking + observable changes that downstream consumers on a SHA-pinned
 build should know about:

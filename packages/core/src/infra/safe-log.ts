@@ -54,6 +54,12 @@ export function isWarnActive(
 /**
  * Emits a warn-level record using the provided logger, falling back to the
  * redaction-enabled default logger when none is supplied.
+ *
+ * A user-supplied logger that throws from `.warn()` must NOT propagate up
+ * the hot path — call sites in `cost-tracker`, `trace-exporter-coordinator`
+ * etc. all wrap their direct `logger.warn(...)` calls in `try/catch` for
+ * exactly this reason. `safeWarn` follows the same convention so the
+ * indirection cannot break the project-wide invariant.
  */
 export function safeWarn(
   logger: Logger | undefined,
@@ -61,12 +67,17 @@ export function safeWarn(
   meta?: Record<string, unknown>,
 ): void {
   const target = logger ?? createDefaultLogger();
-  target.warn(msg, meta);
+  try {
+    target.warn(msg, meta);
+  } catch {
+    /* logger failure non-fatal — never let observability kill a hot path */
+  }
 }
 
 /**
  * Emits an error-level record using the provided logger, falling back to the
- * redaction-enabled default logger when none is supplied.
+ * redaction-enabled default logger when none is supplied. Same throw-tolerant
+ * contract as {@link safeWarn}.
  */
 export function safeError(
   logger: Logger | undefined,
@@ -74,5 +85,9 @@ export function safeError(
   meta?: Record<string, unknown>,
 ): void {
   const target = logger ?? createDefaultLogger();
-  target.error(msg, meta);
+  try {
+    target.error(msg, meta);
+  } catch {
+    /* logger failure non-fatal — never let observability kill a hot path */
+  }
 }

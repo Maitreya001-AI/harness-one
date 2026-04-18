@@ -123,6 +123,14 @@ export default tseslint.config(
   // cross-subsystem edges fail CI. Each L3 subsystem gets its own block so
   // the "you can't import your own subsystem" case is not accidentally
   // blocked — a file inside `observe/` can still reach for `./foo.js`.
+  //
+  // Note: `advanced/` is intentionally NOT in this list. It is a
+  // re-export-only barrel (`packages/core/src/advanced/index.ts`) that
+  // surfaces extension primitives from `../core/**` to the public
+  // `harness-one/advanced` subpath. It owns no implementation files of its
+  // own, so it has no L3 peers to import. If a future commit adds real
+  // implementation files under `advanced/`, add `'advanced'` to both arrays
+  // below so cross-subsystem edges fail CI.
   ...[
     'orchestration',
     'session',

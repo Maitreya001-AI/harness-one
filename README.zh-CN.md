@@ -172,7 +172,7 @@ await harness.shutdown();
 
 ### Wave-5C — 包边界与 API 收口
 
-- **根桶收紧到 19 个值导出**（UJ-1..UJ-5 主路径）。其余工厂走子路径（`harness-one/core`、`harness-one/tools`、`harness-one/observe`、`harness-one/infra` 等）或兄弟包。**`createSecurePreset` 不再从根桶导出**——直接从 `@harness-one/preset` 导入。
+- **根桶收紧到 18 个值导出**（UJ-1..UJ-5 主路径；原 ADR 19 槽位中 slot 11 `createSecurePreset` 被下放到 `@harness-one/preset` 以避免三角循环，剩 18 个）。其余工厂走子路径（`harness-one/core`、`harness-one/tools`、`harness-one/observe`、`harness-one/infra` 等）或兄弟包。**`createSecurePreset` 不再从根桶导出**——直接从 `@harness-one/preset` 导入。
 - **`HarnessErrorCode` 收口 + 模块前缀**：`UNKNOWN` → `CORE_UNKNOWN`、`MAX_ITERATIONS` → `CORE_MAX_ITERATIONS`、`GUARDRAIL_VIOLATION` → `GUARD_VIOLATION` 等。`HarnessError.code` 不再 `(string & {})` widening；switch 现在可以穷举校验。**必须值导入** `import { HarnessErrorCode }`——`import type` 会静默丢失 `Object.values()`，自定义 lint 规则 `harness-one/no-type-only-harness-error-code` 在 lint 时拦截。
 - **`@harness-one/cli` 与 `@harness-one/devkit` 抽离**：`harness-one/cli` 子路径迁移到 [`@harness-one/cli`](./packages/cli)（`pnpm dlx @harness-one/cli init`）。`harness-one/eval` 与 `harness-one/evolve` 迁移到 [`@harness-one/devkit`](./packages/devkit)；运行时架构规则保留在 core 的 `harness-one/evolve-check` 子路径。
 

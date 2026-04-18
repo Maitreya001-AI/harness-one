@@ -101,6 +101,31 @@ describe('safe-log', () => {
       expect(logger.warn).toHaveBeenCalledTimes(1);
       expect(logger.warn).toHaveBeenCalledWith('plain', undefined);
     });
+
+    it('swallows a throwing user logger so a hot path never crashes', () => {
+      const logger = makeSpyLogger();
+      logger.warn.mockImplementation(() => {
+        throw new Error('user logger blew up');
+      });
+      // The whole point of `safeWarn`: cost-tracker, retry-policy, etc. call
+      // it from hot paths and must remain resilient against user-supplied
+      // loggers that throw (broken transport, OOM, etc.).
+      expect(() => safeWarn(logger, 'hot-path msg', { k: 1 })).not.toThrow();
+      expect(logger.warn).toHaveBeenCalledTimes(1);
+    });
+
+    it('swallows when the default-logger fallback itself throws', () => {
+      const spy = vi
+        .spyOn(console, 'log')
+        .mockImplementation(() => {
+          throw new Error('console.log replaced with a thrower');
+        });
+      try {
+        expect(() => safeWarn(undefined, 'hi')).not.toThrow();
+      } finally {
+        spy.mockRestore();
+      }
+    });
   });
 
   describe('safeError', () => {
@@ -141,6 +166,28 @@ describe('safe-log', () => {
       safeError(logger, 'no-meta');
       expect(logger.error).toHaveBeenCalledTimes(1);
       expect(logger.error).toHaveBeenCalledWith('no-meta', undefined);
+    });
+
+    it('swallows a throwing user logger so a hot path never crashes', () => {
+      const logger = makeSpyLogger();
+      logger.error.mockImplementation(() => {
+        throw new Error('user logger blew up');
+      });
+      expect(() => safeError(logger, 'hot-path err', { k: 1 })).not.toThrow();
+      expect(logger.error).toHaveBeenCalledTimes(1);
+    });
+
+    it('swallows when the default-logger fallback itself throws', () => {
+      const spy = vi
+        .spyOn(console, 'log')
+        .mockImplementation(() => {
+          throw new Error('console.log replaced with a thrower');
+        });
+      try {
+        expect(() => safeError(undefined, 'boom')).not.toThrow();
+      } finally {
+        spy.mockRestore();
+      }
     });
   });
 
