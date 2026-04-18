@@ -35,7 +35,15 @@ import { HarnessError, HarnessErrorCode } from './errors-base.js';
  * reaching into private state.
  */
 export interface LRUCacheOptions<K, V> {
-  /** Fires synchronously for every key/value evicted from the cache. */
+  /**
+   * Fires synchronously for every key/value removed from the cache —
+   * capacity-driven eviction **and** explicit `delete(key)` / `clear()`.
+   * Wave-18 unified this: every exit path notifies side-tables so accounting
+   * stays in lockstep regardless of which API removed the entry.
+   *
+   * Thrown errors from the hook are caught and swallowed to protect cache
+   * invariants (the cache never half-evicts on a hook failure).
+   */
   onEvict?: (key: K, value: V) => void;
 }
 
@@ -71,7 +79,9 @@ export class LRUCache<K, V> {
   }
 
   set(key: K, value: V): void {
-    // If key already exists, delete first so re-set moves it to end
+    // A re-set is not an eviction — overwriting a live entry must NOT fire
+    // onEvict, otherwise side-tables would double-count. Drop-and-reinsert
+    // only to move the entry to the tail for LRU ordering.
     if (this.map.has(key)) {
       this.map.delete(key);
     }
@@ -83,14 +93,28 @@ export class LRUCache<K, V> {
       const evictedKey = iter.value;
       const evictedValue = this.map.get(evictedKey) as V;
       this.map.delete(evictedKey);
-      if (this.onEvict) {
-        try { this.onEvict(evictedKey, evictedValue); } catch { /* never let an evict hook corrupt the cache */ }
-      }
+      this.fireEvict(evictedKey, evictedValue);
     }
   }
 
   delete(key: K): boolean {
-    return this.map.delete(key);
+    // Wave-18: explicit deletes fire onEvict so callers that maintain
+    // side-tables do not need to special-case the "I removed it myself" path.
+    if (!this.map.has(key)) return false;
+    const value = this.map.get(key) as V;
+    this.map.delete(key);
+    this.fireEvict(key, value);
+    return true;
+  }
+
+  /** Invoke the user-supplied onEvict hook, swallowing any errors. */
+  private fireEvict(key: K, value: V): void {
+    if (!this.onEvict) return;
+    try {
+      this.onEvict(key, value);
+    } catch {
+      /* never let an evict hook corrupt the cache */
+    }
   }
 
   has(key: K): boolean {
@@ -107,6 +131,19 @@ export class LRUCache<K, V> {
   }
 
   clear(): void {
+    // Wave-18: mirror delete() — fire onEvict for every entry before clearing
+    // so side-table accounting (trace-manager span counts, cost-tracker per-key
+    // totals, etc.) stays consistent regardless of how the cache was drained.
+    if (this.onEvict && this.map.size > 0) {
+      // Snapshot first so a hook that mutates the cache cannot affect the
+      // iteration we are driving.
+      const snapshot = Array.from(this.map.entries());
+      this.map.clear();
+      for (const [key, value] of snapshot) {
+        this.fireEvict(key, value);
+      }
+      return;
+    }
     this.map.clear();
   }
 

@@ -57,16 +57,6 @@ export { assertNever } from './events.js';
 // ─── AgentLoop + config + hooks (the idiomatic entry point) ──────────────
 export { AgentLoop, createAgentLoop } from './agent-loop.js';
 export type { AgentLoopConfig, AgentLoopHook } from './agent-loop.js';
-// Nested-form public config (additive; flat AgentLoopConfig remains
-// accepted by `createAgentLoop`). Prefer the nested shape in new code.
-export type {
-  AgentLoopConfigV2,
-  AgentLoopExecutionConfig,
-  AgentLoopLimitsConfig,
-  AgentLoopResilienceConfig,
-  AgentLoopObservabilityConfig,
-  AgentLoopPipelinesConfig,
-} from './agent-loop-types.js';
 
 // ─── Pricing types (consumers declare model rates against this shape) ────
 export type { ModelPricing, TokenUsageRecord } from './pricing.js';

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { AgentLoop } from '../agent-loop.js';
+import { HarnessError, HarnessErrorCode } from '../errors.js';
 import type { AgentAdapter, StreamChunk } from '../types.js';
 import type { AgentEvent } from '../events.js';
 
@@ -255,6 +256,10 @@ describe('AgentLoop streaming error scenarios', () => {
       expect(errorEvent).toBeDefined();
       expect((errorEvent.error as Error).message).toContain('arguments exceeded maximum size');
       expect((errorEvent.error as Error).message).toContain('bigTool');
+      // Wave-18: per-call wire-size limits MUST classify as ADAPTER_PAYLOAD_OVERSIZED
+      // so downstream retry/alert heuristics can distinguish them from cumulative budget.
+      expect(errorEvent.error).toBeInstanceOf(HarnessError);
+      expect((errorEvent.error as HarnessError).code).toBe(HarnessErrorCode.ADAPTER_PAYLOAD_OVERSIZED);
 
       const doneEvent = events.find((e) => e.type === 'done') as Extract<AgentEvent, { type: 'done' }>;
       expect(doneEvent.reason).toBe('error');
@@ -280,6 +285,9 @@ describe('AgentLoop streaming error scenarios', () => {
       const errorEvent = events.find((e) => e.type === 'error') as Extract<AgentEvent, { type: 'error' }>;
       expect(errorEvent).toBeDefined();
       expect((errorEvent.error as Error).message).toContain('arguments exceeded maximum size');
+      // Wave-18: NO-ID path must match WITH-ID path — both are ADAPTER_PAYLOAD_OVERSIZED.
+      expect(errorEvent.error).toBeInstanceOf(HarnessError);
+      expect((errorEvent.error as HarnessError).code).toBe(HarnessErrorCode.ADAPTER_PAYLOAD_OVERSIZED);
     });
   });
 

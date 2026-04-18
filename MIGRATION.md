@@ -6,6 +6,77 @@ rather than carrying both shapes — every entry below is a breaking
 change landed in the noted wave. Source re-exports exist where they
 add no cost, but the "old name" is never the recommended path.
 
+## Wave-18 — post-Wave-17 deep review
+
+Five residual issues identified in a fresh Wave-17 architecture audit.
+Unreleased project → breaking changes land without aliases.
+
+### Config shape: drop `AgentLoopConfigV2`
+
+Wave-14 shipped a nested `AgentLoopConfigV2` alongside the flat
+`AgentLoopConfig`. Carrying two shapes meant every test, example, and
+downstream caller had to pick one and the flatten/isNested bridge sat
+in the hot path forever. Wave-18 collapses the surface to the flat
+`AgentLoopConfig`; the nested shape, its five sub-bundles, and the
+bridge helpers are gone.
+
+Removed types: `AgentLoopConfigV2`, `AgentLoopExecutionConfig`,
+`AgentLoopLimitsConfig`, `AgentLoopResilienceConfig`,
+`AgentLoopObservabilityConfig`, `AgentLoopPipelinesConfig`.
+
+Removed functions: `flattenNestedAgentLoopConfig`,
+`isNestedAgentLoopConfig`. The `createAgentLoop(AgentLoopConfigV2)`
+overload is gone too.
+
+```diff
+ createAgentLoop({
+   adapter,
+-  limits: { maxIterations: 40, maxTotalTokens: 10_000 },
+-  resilience: { maxAdapterRetries: 2, baseRetryDelayMs: 500 },
+-  observability: { logger, traceManager: tm },
+-  pipelines: { input: inputPipeline, output: outputPipeline },
+-  execution: { parallel: true, maxParallelToolCalls: 3 },
++  maxIterations: 40,
++  maxTotalTokens: 10_000,
++  maxAdapterRetries: 2,
++  baseRetryDelayMs: 500,
++  logger,
++  traceManager: tm,
++  inputPipeline,
++  outputPipeline,
++  parallel: true,
++  maxParallelToolCalls: 3,
+ });
+```
+
+### `LRUCache` fires `onEvict` on every removal path
+
+Previously, only capacity-driven eviction fired the `onEvict` hook;
+`delete()` and `clear()` silently orphaned side-tables. Wave-18
+unified the semantics: every exit path notifies the hook.
+
+Callers that wrap `LRUCache` and ALSO maintain their own side-table
+that explicitly subtracts on `delete()` / `clear()` must stop
+double-counting — `onEvict` will now drive the side-table on those
+paths too.
+
+### Error code fix: `stream-aggregator` per-call arg overflow
+
+Streamed tool calls whose arguments exceed `maxToolArgBytes` now emit
+`HarnessErrorCode.ADAPTER_PAYLOAD_OVERSIZED` on both the with-id and
+no-id accumulation paths. The no-id path previously emitted
+`CORE_TOKEN_BUDGET_EXCEEDED`. Alert rules keying on error code should
+drop the `CORE_TOKEN_BUDGET_EXCEEDED` branch for this scenario and
+consolidate onto `ADAPTER_PAYLOAD_OVERSIZED`.
+
+### New helper on `/advanced`: `releaseExternalSignal`
+
+Consumers composing their own iteration coordinator (via the
+primitives on `harness-one/advanced`) can now call
+`releaseExternalSignal(deps, state)` to detach the external-abort
+listener installed by `startRun`. Idempotent; `finalizeRun` and
+`AgentLoop.dispose` both route through it.
+
 ## Wave-17 — unreleased cleanup
 
 Seven structural issues identified in the Wave-16 post-review. Every

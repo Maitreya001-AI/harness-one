@@ -4,7 +4,10 @@ import {
   MaxIterationsError,
   AbortedError,
   ToolValidationError,
-  TokenBudgetExceededError, HarnessErrorCode} from '../errors.js';
+  TokenBudgetExceededError,
+  HarnessErrorCode,
+  createCustomErrorCode,
+} from '../errors.js';
 
 describe('HarnessError', () => {
   it('sets message, code, and suggestion', () => {
@@ -119,5 +122,73 @@ describe('Wave-5 error codes', () => {
     );
     expect(err.code).toBe(HarnessErrorCode.PROVIDER_REGISTRY_SEALED);
     expect(err).toBeInstanceOf(HarnessError);
+  });
+});
+
+describe('createCustomErrorCode (Wave-15 extension point — Wave-18 witness test)', () => {
+  // The closed HarnessErrorCode enum can't be extended by downstream packages
+  // without forking. `createCustomErrorCode` is the canonical escape hatch:
+  // downstream packages (@harness-one/prompt, adapter SDKs, etc.) thread a
+  // Readonly<HarnessErrorDetails> bag through `HarnessError` while the code
+  // itself stays `ADAPTER_CUSTOM` so switch-exhaustiveness checks keep working.
+  // These tests lock the contract in place so the helper cannot rot silently.
+
+  it('returns a frozen { namespace, customCode } details bag', () => {
+    const details = createCustomErrorCode('prompt', 'TEMPLATE_NOT_FOUND');
+    expect(details).toEqual({ namespace: 'prompt', customCode: 'TEMPLATE_NOT_FOUND' });
+    expect(Object.isFrozen(details)).toBe(true);
+  });
+
+  it('wraps into HarnessError with ADAPTER_CUSTOM code + preserved namespace bag', () => {
+    const details = createCustomErrorCode('@harness-one/redis', 'CONNECTION_LOST');
+    const err = new HarnessError(
+      'redis connection dropped mid-transaction',
+      HarnessErrorCode.ADAPTER_CUSTOM,
+      'Reconnect and retry',
+      undefined,
+      details,
+    );
+    expect(err.code).toBe(HarnessErrorCode.ADAPTER_CUSTOM);
+    expect(err.details).toEqual({
+      namespace: '@harness-one/redis',
+      customCode: 'CONNECTION_LOST',
+    });
+    // The underlying enum member stays unchanged so a consumer can keep its
+    // switch-on-code exhaustiveness check without adding new cases per package.
+    switch (err.code) {
+      case HarnessErrorCode.ADAPTER_CUSTOM:
+        expect(err.details?.customCode).toBe('CONNECTION_LOST');
+        break;
+      default:
+        throw new Error('unreachable — custom errors must land on ADAPTER_CUSTOM');
+    }
+  });
+
+  it('rejects empty namespace', () => {
+    expect(() => createCustomErrorCode('', 'X')).toThrow(HarnessError);
+    try {
+      createCustomErrorCode('', 'X');
+    } catch (err) {
+      expect((err as HarnessError).code).toBe(HarnessErrorCode.CORE_INVALID_INPUT);
+    }
+  });
+
+  it('rejects empty code', () => {
+    expect(() => createCustomErrorCode('ns', '')).toThrow(HarnessError);
+    try {
+      createCustomErrorCode('ns', '');
+    } catch (err) {
+      expect((err as HarnessError).code).toBe(HarnessErrorCode.CORE_INVALID_INPUT);
+    }
+  });
+
+  it('rejects non-string inputs (runtime-only invariant)', () => {
+    // Runtime callers from JS can pass anything; the helper must refuse.
+    expect(() =>
+      createCustomErrorCode(undefined as unknown as string, 'X'),
+    ).toThrow(HarnessError);
+    expect(() =>
+      createCustomErrorCode('ns', 123 as unknown as string),
+    ).toThrow(HarnessError);
   });
 });

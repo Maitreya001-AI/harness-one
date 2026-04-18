@@ -156,6 +156,37 @@ symbols (`createMiddlewareChain`, `createResilientLoop`, …) so
 top-level imports of those primitives don't have to know about the
 `/advanced` split.
 
+## Construction: factories, not classes (Wave-18)
+
+Every public primitive in harness-one is constructed through a
+`create*` factory; the underlying class is deliberately hidden.
+Concretely:
+
+- `createRegistry`, `createSessionManager`, `createTraceManager`,
+  `createCostTracker`, `createLogger`, `createPipeline`,
+  `createMiddlewareChain`, `createResilientLoop`, `createFallbackAdapter`,
+  `createBackoffSchedule`, `createAgentPool`, `createMemoryStore`, …
+  are the public entry points. Consumers never type `new SomeClass()`.
+- `AgentLoop` is the single documented exception: the factory
+  `createAgentLoop` is the idiomatic entry point, but the class is
+  also exported so tests and callers can narrow types with
+  `instanceof AgentLoop` (for generator-return narrowing in tooling
+  that can't follow the factory's return type transitively).
+
+The rule of thumb when adding a new primitive: export the factory
+and the result type; do **not** export the implementing class unless
+`instanceof` narrowing is part of the public contract.
+
+## Config shape: flat, single-form (Wave-18)
+
+`AgentLoopConfig` is the one-and-only config shape accepted by
+`createAgentLoop`. Wave-14 briefly introduced a nested `AgentLoopConfigV2`
+bundle alongside the flat shape; Wave-18 removed it along with the
+`flattenNestedAgentLoopConfig` / `isNestedAgentLoopConfig` bridge and
+the dual-overload on `createAgentLoop`. Two parallel shapes meant every
+test, example, and downstream caller had to pick one and the bridge sat
+in the hot path forever — not worth the nominal ergonomics gain.
+
 ## Also see
 
 - `MIGRATION.md` — deprecation timelines.

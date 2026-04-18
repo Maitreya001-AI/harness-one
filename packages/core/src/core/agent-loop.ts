@@ -22,8 +22,7 @@ import {
   createIterationRunner,
   type IterationRunner,
 } from './iteration-runner.js';
-import type { AgentLoopConfig, AgentLoopConfigV2 } from './agent-loop-types.js';
-import { flattenNestedAgentLoopConfig, isNestedAgentLoopConfig } from './agent-loop-config.js';
+import type { AgentLoopConfig } from './agent-loop-types.js';
 import { createHookDispatcher } from './hook-dispatcher.js';
 import {
   resolveAgentLoopConfig,
@@ -35,6 +34,7 @@ import {
   checkPreIteration,
   startIteration,
   finalizeRun,
+  releaseExternalSignal,
   type CoordinatorDeps,
   type CoordinatorState,
 } from './iteration-coordinator.js';
@@ -196,17 +196,11 @@ export class AgentLoop {
    */
   dispose(): void {
     try {
-      if (this.state.externalAbortHandler && this.coordDeps.externalSignal) {
-        try {
-          this.coordDeps.externalSignal.removeEventListener(
-            'abort',
-            this.state.externalAbortHandler,
-          );
-        } catch {
-          // Non-fatal — reference is dropped below.
-        }
-        this.state.externalAbortHandler = undefined;
-      }
+      // Wave-18: single-owner listener cleanup. If finalizeRun() already
+      // detached the handler, releaseExternalSignal is a cheap no-op; if
+      // dispose() runs first (e.g. the consumer never called run()), we
+      // ensure no dangling listener survives.
+      releaseExternalSignal(this.coordDeps, this.state);
       this.abortController.abort();
       const strategyDispose = this.resolved.executionStrategy.dispose;
       if (typeof strategyDispose === 'function') {
@@ -328,13 +322,6 @@ export class AgentLoop {
  * for await (const event of loop.run(messages)) { ... }
  * ```
  */
-export function createAgentLoop(config: AgentLoopConfig): AgentLoop;
-export function createAgentLoop(config: AgentLoopConfigV2): AgentLoop;
-export function createAgentLoop(
-  config: AgentLoopConfig | AgentLoopConfigV2,
-): AgentLoop {
-  if (isNestedAgentLoopConfig(config)) {
-    return new AgentLoop(flattenNestedAgentLoopConfig(config));
-  }
+export function createAgentLoop(config: AgentLoopConfig): AgentLoop {
   return new AgentLoop(config);
 }

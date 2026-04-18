@@ -117,46 +117,6 @@ export interface AgentLoopConfig {
 }
 
 // @public
-export interface AgentLoopConfigV2 {
-    // (undocumented)
-    readonly adapter: AgentAdapter;
-    // (undocumented)
-    readonly execution?: AgentLoopExecutionConfig;
-    // (undocumented)
-    readonly hooks?: readonly AgentLoopHook[];
-    // (undocumented)
-    readonly limits?: AgentLoopLimitsConfig;
-    // (undocumented)
-    readonly observability?: AgentLoopObservabilityConfig;
-    // (undocumented)
-    readonly onToolCall?: (call: ToolCallRequest) => Promise<unknown>;
-    // (undocumented)
-    readonly pipelines?: AgentLoopPipelinesConfig;
-    // (undocumented)
-    readonly resilience?: AgentLoopResilienceConfig;
-    // (undocumented)
-    readonly signal?: AbortSignal;
-    // (undocumented)
-    readonly streaming?: boolean;
-    // (undocumented)
-    readonly strictHooks?: boolean;
-    // (undocumented)
-    readonly tools?: ToolSchema[];
-}
-
-// @public
-export interface AgentLoopExecutionConfig {
-    // (undocumented)
-    readonly executionStrategy?: ExecutionStrategy;
-    // (undocumented)
-    readonly isSequentialTool?: (name: string) => boolean;
-    // (undocumented)
-    readonly maxParallelToolCalls?: number;
-    // (undocumented)
-    readonly parallel?: boolean;
-}
-
-// @public
 export interface AgentLoopHook {
     onIterationEnd?(info: {
         iteration: number;
@@ -173,50 +133,6 @@ export interface AgentLoopHook {
         iteration: number;
         toolCall: ToolCallRequest;
     }): void;
-}
-
-// @public
-export interface AgentLoopLimitsConfig {
-    // (undocumented)
-    readonly maxConversationMessages?: number;
-    // (undocumented)
-    readonly maxIterations?: number;
-    // (undocumented)
-    readonly maxStreamBytes?: number;
-    // (undocumented)
-    readonly maxToolArgBytes?: number;
-    // (undocumented)
-    readonly maxTotalTokens?: number;
-    // (undocumented)
-    readonly toolTimeoutMs?: number;
-}
-
-// @public
-export interface AgentLoopObservabilityConfig {
-    // (undocumented)
-    readonly logger?: {
-        warn: (msg: string, meta?: Record<string, unknown>) => void;
-    };
-    // (undocumented)
-    readonly traceManager?: AgentLoopTraceManager;
-}
-
-// @public
-export interface AgentLoopPipelinesConfig {
-    // (undocumented)
-    readonly input?: GuardrailPipeline;
-    // (undocumented)
-    readonly output?: GuardrailPipeline;
-}
-
-// @public
-export interface AgentLoopResilienceConfig {
-    // (undocumented)
-    readonly baseRetryDelayMs?: number;
-    // (undocumented)
-    readonly maxAdapterRetries?: number;
-    // (undocumented)
-    readonly retryableErrors?: readonly string[];
 }
 
 // @public
@@ -431,9 +347,6 @@ export interface CostTracker {
 
 // @public
 export function createAgentLoop(config: AgentLoopConfig): AgentLoop;
-
-// @public (undocumented)
-export function createAgentLoop(config: AgentLoopConfigV2): AgentLoop;
 
 // @public
 export function createCostTracker(config?: {
@@ -1769,7 +1682,7 @@ export interface VectorSearchOptions {
 // dist/cost-tracker-BlC5vT5N.d.ts:334:5 - (ae-forgotten-export) The symbol "EvictionStrategy" needs to be exported by the entry point index.d.ts
 // dist/cost-tracker-BlC5vT5N.d.ts:374:5 - (ae-forgotten-export) The symbol "MetricsPort" needs to be exported by the entry point index.d.ts
 // dist/pipeline-CCw3TkZG.d.ts:45:5 - (ae-forgotten-export) The symbol "GuardrailEvent" needs to be exported by the entry point index.d.ts
-// dist/resilience-B8mvmtrc.d.ts:64:5 - (ae-forgotten-export) The symbol "MiddlewareContext" needs to be exported by the entry point index.d.ts
+// dist/resilience-eURT8sLO.d.ts:64:5 - (ae-forgotten-export) The symbol "MiddlewareContext" needs to be exported by the entry point index.d.ts
 // dist/session/index.d.ts:162:5 - (ae-forgotten-export) The symbol "SessionStore" needs to be exported by the entry point index.d.ts
 // dist/session/index.d.ts:163:9 - (ae-forgotten-export) The symbol "SessionId" needs to be exported by the entry point index.d.ts
 // dist/trace-manager-C3gtYT7b.d.ts:178:5 - (ae-forgotten-export) The symbol "RedactConfig" needs to be exported by the entry point index.d.ts

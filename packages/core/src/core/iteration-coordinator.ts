@@ -263,6 +263,29 @@ export function* startIteration(
 }
 
 /**
+ * Detach the external-signal abort listener and null the handler slot.
+ *
+ * Wave-18: single owner for listener cleanup. `startRun()` is the only
+ * installer; {@link finalizeRun} and `AgentLoop.dispose()` both call
+ * {@link releaseExternalSignal} instead of hand-rolling the removal.
+ * Idempotent — calling twice is a no-op because the handler slot is cleared
+ * on first call.
+ */
+export function releaseExternalSignal(
+  deps: CoordinatorDeps,
+  state: CoordinatorState,
+): void {
+  const handler = state.externalAbortHandler;
+  if (!handler || !deps.externalSignal) return;
+  try {
+    deps.externalSignal.removeEventListener('abort', handler);
+  } catch {
+    // Non-fatal — reference is dropped below.
+  }
+  state.externalAbortHandler = undefined;
+}
+
+/**
  * run() finally-block teardown. Releases the external signal listener,
  * closes any leaked iteration span, ends the trace, and aborts the internal
  * controller when the generator was closed externally via `.return()` /
@@ -276,14 +299,7 @@ export function finalizeRun(
   traceId: string | undefined,
   finalEventEmitted: boolean,
 ): void {
-  if (state.externalAbortHandler && deps.externalSignal) {
-    try {
-      deps.externalSignal.removeEventListener('abort', state.externalAbortHandler);
-    } catch {
-      // Non-fatal — reference is dropped below.
-    }
-    state.externalAbortHandler = undefined;
-  }
+  releaseExternalSignal(deps, state);
 
   if (ctx.iterationSpanId && tm) {
     try { tm.endSpan(ctx.iterationSpanId, 'error'); } catch { /* already ended */ }

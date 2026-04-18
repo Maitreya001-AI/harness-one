@@ -62,6 +62,7 @@ export {
   checkPreIteration,
   startIteration,
   finalizeRun,
+  releaseExternalSignal,
 } from '../core/iteration-coordinator.js';
 export type {
   CoordinatorDeps,

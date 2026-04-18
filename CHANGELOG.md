@@ -8,6 +8,61 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed — Wave-18 (post-Wave-17 deep architecture review — 5 issues resolved)
+
+Fifth-wave deep review found 5 residual concerns across correctness, API
+consistency, and documentation. All resolved in a single pass; the
+unreleased project status means breaking changes landed without
+deprecation aliases.
+
+**Correctness bugs fixed:**
+- `stream-aggregator.ts` no-id path now emits
+  `ADAPTER_PAYLOAD_OVERSIZED` for per-call arg-size violations, matching
+  the with-id path. Downstream retry/alert heuristics previously saw the
+  same error as two different codes.
+- `LRUCache.delete()` and `LRUCache.clear()` now fire the `onEvict`
+  callback for every removed entry. Only capacity-driven eviction used
+  to fire it; explicit removal orphaned side-table accounting. `clear()`
+  snapshots entries before clearing so a re-entrant hook (`set()` during
+  `onEvict`) stays safe. Seven new tests in `lru-cache.test.ts` lock the
+  semantics: capacity eviction fires once, overwrite does not fire,
+  delete fires, clear fires for every entry, empty-clear is a no-op,
+  hook errors are swallowed, re-entrant set-during-clear survives.
+
+**Cleanup:**
+- External abort-signal listener cleanup consolidated. `AgentLoop.dispose()`
+  and `iteration-coordinator.finalizeRun()` both routed through the new
+  `releaseExternalSignal(deps, state)` helper so there is a single owner
+  for the removal. Either caller may run first; the other is a no-op.
+  Exported on `harness-one/advanced` for consumers composing custom
+  coordinators.
+
+**Breaking — API surface tightened:**
+- `AgentLoopConfigV2` and its sub-bundles (`AgentLoopExecutionConfig`,
+  `AgentLoopLimitsConfig`, `AgentLoopResilienceConfig`,
+  `AgentLoopObservabilityConfig`, `AgentLoopPipelinesConfig`) are
+  removed. `flattenNestedAgentLoopConfig()` / `isNestedAgentLoopConfig()`
+  are removed. `createAgentLoop` takes only the flat `AgentLoopConfig`.
+  Wave-14 introduced the nested shape alongside the flat one; Wave-18
+  collapsed to a single canonical shape so tests, examples, and
+  downstream callers stop having to pick. Migration: move nested
+  groupings back onto the flat shape (`config.limits.maxIterations` →
+  `config.maxIterations`, `config.pipelines.input` → `config.inputPipeline`,
+  `config.observability.logger` → `config.logger`, etc.).
+
+**Documentation:**
+- `docs/ARCHITECTURE.md` grew a "Construction: factories, not classes"
+  section documenting that every public primitive ships a `create*`
+  factory, and `AgentLoop` is the single documented exception where the
+  class is also exported (for `instanceof` narrowing).
+- Same doc grew a "Config shape: flat, single-form" section recording
+  the V2 removal rationale.
+- `createCustomErrorCode()` is now exercised by a witness test suite in
+  `errors.test.ts` that locks in the `Readonly<HarnessErrorDetails>`
+  shape, the `ADAPTER_CUSTOM` code propagation, and the reject-empty
+  invariants. Before Wave-18 the helper was exported but had no tests,
+  so the extension contract was free to rot silently.
+
 ### Changed — Wave-15 (post-Wave-14 architecture review — 20 findings resolved)
 
 Driven by a fresh blue-team architecture review against the post-Wave-14

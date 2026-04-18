@@ -371,4 +371,121 @@ describe('LRUCache', () => {
       expect(cache.size).toBeLessThanOrEqual(maxSize);
     });
   });
+
+  describe('onEvict callback (Wave-18: unified across set/delete/clear)', () => {
+    it('fires onEvict exactly once for each capacity-driven eviction', () => {
+      const evicted: Array<[string, number]> = [];
+      const cache = new LRUCache<string, number>(2, {
+        onEvict: (k, v) => {
+          evicted.push([k, v]);
+        },
+      });
+      cache.set('a', 1);
+      cache.set('b', 2);
+      cache.set('c', 3); // evicts 'a'
+      cache.set('d', 4); // evicts 'b'
+      expect(evicted).toEqual([
+        ['a', 1],
+        ['b', 2],
+      ]);
+    });
+
+    it('does NOT fire onEvict when set() overwrites a live key', () => {
+      const evicted: Array<[string, number]> = [];
+      const cache = new LRUCache<string, number>(3, {
+        onEvict: (k, v) => {
+          evicted.push([k, v]);
+        },
+      });
+      cache.set('a', 1);
+      cache.set('a', 2); // overwrite — not an eviction
+      cache.set('a', 3);
+      expect(evicted).toEqual([]);
+      expect(cache.get('a')).toBe(3);
+    });
+
+    it('fires onEvict when delete() removes a live key', () => {
+      const evicted: Array<[string, number]> = [];
+      const cache = new LRUCache<string, number>(5, {
+        onEvict: (k, v) => {
+          evicted.push([k, v]);
+        },
+      });
+      cache.set('a', 1);
+      cache.set('b', 2);
+      expect(cache.delete('a')).toBe(true);
+      expect(cache.delete('missing')).toBe(false);
+      expect(evicted).toEqual([['a', 1]]);
+    });
+
+    it('fires onEvict for every entry when clear() drains the cache', () => {
+      const evicted: Array<[string, number]> = [];
+      const cache = new LRUCache<string, number>(5, {
+        onEvict: (k, v) => {
+          evicted.push([k, v]);
+        },
+      });
+      cache.set('a', 1);
+      cache.set('b', 2);
+      cache.set('c', 3);
+      cache.clear();
+      expect(cache.size).toBe(0);
+      expect(evicted.sort()).toEqual([
+        ['a', 1],
+        ['b', 2],
+        ['c', 3],
+      ]);
+    });
+
+    it('clear() on an empty cache does not fire onEvict', () => {
+      const evicted: Array<[string, number]> = [];
+      const cache = new LRUCache<string, number>(5, {
+        onEvict: (k, v) => {
+          evicted.push([k, v]);
+        },
+      });
+      cache.clear();
+      expect(evicted).toEqual([]);
+    });
+
+    it('swallows hook errors so cache invariants hold', () => {
+      const cache = new LRUCache<string, number>(1, {
+        onEvict: () => {
+          throw new Error('hook boom');
+        },
+      });
+      // Capacity 1 — the second set must succeed and evict the first despite
+      // the hook throwing.
+      cache.set('a', 1);
+      expect(() => cache.set('b', 2)).not.toThrow();
+      expect(cache.size).toBe(1);
+      expect(cache.get('b')).toBe(2);
+      expect(cache.get('a')).toBeUndefined();
+      // delete + clear likewise tolerate hook failures.
+      expect(() => cache.delete('b')).not.toThrow();
+      cache.set('c', 3);
+      expect(() => cache.clear()).not.toThrow();
+      expect(cache.size).toBe(0);
+    });
+
+    it('clear() snapshots entries before firing hooks (re-entrant set is safe)', () => {
+      // If a hook re-inserts into the cache, those new entries must survive
+      // because the snapshot was taken before clear() emptied the map.
+      const ref: { cache: LRUCache<string, number> | null } = { cache: null };
+      const evictedKeys: string[] = [];
+      ref.cache = new LRUCache<string, number>(5, {
+        onEvict: (k) => {
+          evictedKeys.push(k);
+          if (k === 'a') ref.cache!.set('reinserted', 99);
+        },
+      });
+      ref.cache.set('a', 1);
+      ref.cache.set('b', 2);
+      ref.cache.clear();
+      expect(evictedKeys.sort()).toEqual(['a', 'b']);
+      // The reinsert happened DURING clear() — its key survives because clear
+      // snapshot-then-cleared-then-fired-hooks.
+      expect(ref.cache.get('reinserted')).toBe(99);
+    });
+  });
 });
