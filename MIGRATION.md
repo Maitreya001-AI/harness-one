@@ -10,11 +10,37 @@ Once the first release ships (driven by `@changesets/cli`, see
 migration steps — API renames, removed symbols, behaviour changes.
 Until then, read the source.
 
-## Unreleased — through Wave-25 audit pass
+## Unreleased — through Wave-27 audit pass
 
 Breaking + observable changes that downstream consumers on a SHA-pinned
 build should know about:
 
+- `harness-one/testing` subpath added; mock `AgentAdapter` factories moved
+  off `harness-one/advanced`. Wave-27: `createMockAdapter` /
+  `createFailingAdapter` / `createStreamingMockAdapter` /
+  `createErrorStreamingMockAdapter` + `MockAdapterConfig` used to ship from
+  `harness-one/advanced` alongside production extension primitives. They
+  are test doubles — routing them through the same surface as
+  `createFallbackAdapter` / `createResilientLoop` misled adapter authors
+  into treating them as production fallback. Migration:
+  ```diff
+  -import { createMockAdapter } from 'harness-one/advanced';
+  +import { createMockAdapter } from 'harness-one/testing';
+  ```
+  Shape unchanged. Source file also moved: `src/core/test-utils.ts` →
+  `src/testing/test-utils.ts`. See `docs/architecture/17-testing.md`.
+- `StreamAggregator` UTF-8 byte counter now carries a `pendingHighSurrogate`
+  flag across chunks so a supplementary codepoint split across two chunks
+  (high surrogate at end of chunk N, low surrogate at start of chunk N+1)
+  is accounted as 4 bytes rather than 7. The pair-completion rule is
+  documented at the `utf8ByteLength` call site. Reset on `reset()`. Visible
+  to consumers only as *tighter* byte-budget semantics; no pre-existing
+  caller could have been relying on the over-count.
+- Documentation: `docs/guides/fallback.md` + `docs/provider-spec.md` now
+  reference the **public subpath** import paths (`harness-one/advanced`,
+  `harness-one/core`, `harness-one/infra`) rather than the internal
+  `packages/core/src/...` file layout, which is not reachable through the
+  `exports` map from an npm install.
 - `harness-one/infra` subpath is now actually published. Docs have
   promised `createAdmissionController` + `unrefTimeout` / `unrefInterval`
   under this path since Wave-5D/5F, but the package.json `exports` entry

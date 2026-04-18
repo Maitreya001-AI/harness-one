@@ -323,5 +323,124 @@ describe('StreamAggregator', () => {
       const err = events.find((e) => e.type === 'error');
       expect(err).toBeDefined();
     });
+
+    describe('cross-chunk surrogate-pair handling (Wave-27)', () => {
+      // A single emoji like '🎉' (U+1F389) is 4 UTF-8 bytes AND two UTF-16
+      // code units — a high surrogate (0xd83c) + low surrogate (0xdf89).
+      // An adapter that splits streaming text at arbitrary JS string
+      // positions can land the chunk boundary between the two halves. The
+      // aggregator must still produce 4 bytes total (not 7) for the
+      // completed pair across chunks.
+      const EMOJI_HIGH = '\ud83c'; // high surrogate of 🎉
+      const EMOJI_LOW = '\udf89'; // low surrogate of 🎉
+
+      it('counts a surrogate pair split across two text_delta chunks as 4 bytes', () => {
+        const agg = new StreamAggregator(UTF8_OPTS);
+        drain(agg, [
+          { type: 'text_delta', text: EMOJI_HIGH },
+          { type: 'text_delta', text: EMOJI_LOW },
+        ]);
+        expect(agg.bytesRead).toBe(4);
+      });
+
+      it('counts surrounding ASCII + split pair correctly', () => {
+        const agg = new StreamAggregator(UTF8_OPTS);
+        drain(agg, [
+          { type: 'text_delta', text: `ab${EMOJI_HIGH}` }, // 2 ASCII + pending
+          { type: 'text_delta', text: `${EMOJI_LOW}cd` }, // completes pair + 2 ASCII
+        ]);
+        // 2 + 4 (completed pair) + 2 = 8
+        expect(agg.bytesRead).toBe(8);
+      });
+
+      it('completes multiple consecutive split pairs', () => {
+        const agg = new StreamAggregator(UTF8_OPTS);
+        drain(agg, [
+          { type: 'text_delta', text: EMOJI_HIGH },
+          { type: 'text_delta', text: `${EMOJI_LOW}${EMOJI_HIGH}` },
+          { type: 'text_delta', text: EMOJI_LOW },
+        ]);
+        // Two completed surrogate pairs = 8 bytes.
+        expect(agg.bytesRead).toBe(8);
+      });
+
+      it('charges 3 bytes (U+FFFD) when a trailing high is orphan at end of stream', () => {
+        const agg = new StreamAggregator(UTF8_OPTS);
+        drain(agg, [{ type: 'text_delta', text: `a${EMOJI_HIGH}` }]);
+        // utf8ByteLength (pending flush on single-string) charges
+        // 1 (ASCII 'a') + 3 (lone high → U+FFFD) = 4, because the chunk
+        // is processed in isolation and no follow-up low arrives. BUT the
+        // aggregator leaves the pending-high state set; bytesRead reflects
+        // the in-flight accounting (1 byte for 'a', high held back for
+        // potential pair completion on the next chunk).
+        expect(agg.bytesRead).toBe(1);
+        // Now flush with a non-low follow-up: the orphan high resolves as
+        // 3 bytes, then the ASCII 'b' adds 1.
+        drain(agg, [{ type: 'text_delta', text: 'b' }]);
+        expect(agg.bytesRead).toBe(1 + 3 + 1);
+      });
+
+      it('charges 3 bytes when a chunk starts with a lone low surrogate (no pending high)', () => {
+        const agg = new StreamAggregator(UTF8_OPTS);
+        drain(agg, [{ type: 'text_delta', text: EMOJI_LOW }]);
+        // Lone low surrogate with no prior pending → U+FFFD (3 bytes).
+        expect(agg.bytesRead).toBe(3);
+      });
+
+      it('charges 3 bytes for a high followed by a non-low in the same chunk', () => {
+        const agg = new StreamAggregator(UTF8_OPTS);
+        drain(agg, [{ type: 'text_delta', text: `${EMOJI_HIGH}x` }]);
+        // 3 (lone high → U+FFFD) + 1 (ASCII 'x') = 4
+        expect(agg.bytesRead).toBe(4);
+      });
+
+      it('resets pending-high-surrogate state on reset()', () => {
+        const agg = new StreamAggregator(UTF8_OPTS);
+        drain(agg, [{ type: 'text_delta', text: EMOJI_HIGH }]);
+        agg.reset();
+        // After reset, a standalone low surrogate must NOT complete a
+        // stale pair — it should count as 3 bytes (U+FFFD).
+        drain(agg, [{ type: 'text_delta', text: EMOJI_LOW }]);
+        expect(agg.bytesRead).toBe(3);
+      });
+
+      it('does not cross-contaminate pending state between text and tool-call streams', () => {
+        const agg = new StreamAggregator(UTF8_OPTS);
+        drain(agg, [
+          { type: 'text_delta', text: EMOJI_HIGH },
+          // A tool_call_delta arriving with a low surrogate in its args
+          // MUST NOT consume the text stream's pending high — they are
+          // separate logical streams.
+          { type: 'tool_call_delta', toolCall: { id: 'tc', name: 'n', arguments: EMOJI_LOW } },
+          { type: 'text_delta', text: EMOJI_LOW },
+        ]);
+        // text stream: high + low (completed across the interleaving) = 4 bytes
+        // tool args: lone low in isolation = 3 bytes
+        expect(agg.bytesRead).toBe(4 + 3);
+      });
+
+      it('completes tool-call arg pair split across two deltas on same id', () => {
+        const agg = new StreamAggregator(UTF8_OPTS);
+        drain(agg, [
+          { type: 'tool_call_delta', toolCall: { id: 'tc', name: 'n', arguments: EMOJI_HIGH } },
+          { type: 'tool_call_delta', toolCall: { id: 'tc', arguments: EMOJI_LOW } },
+        ]);
+        // Pair completes across the two tool-call deltas with the same id:
+        // 0 (pending) + 4 (complete) = 4 bytes total charged against the
+        // stream (and against the tool's argsBytes accounting).
+        expect(agg.bytesRead).toBe(4);
+      });
+
+      it('completes tool-call arg pair split across two deltas on no-id-append path', () => {
+        const agg = new StreamAggregator(UTF8_OPTS);
+        drain(agg, [
+          { type: 'tool_call_delta', toolCall: { id: 'tc', name: 'n', arguments: '{' } },
+          { type: 'tool_call_delta', toolCall: { arguments: EMOJI_HIGH } }, // no id → append to last
+          { type: 'tool_call_delta', toolCall: { arguments: EMOJI_LOW } },
+        ]);
+        // 1 ({) + 0 (pending) + 4 (complete pair) = 5 bytes.
+        expect(agg.bytesRead).toBe(5);
+      });
+    });
   });
 });

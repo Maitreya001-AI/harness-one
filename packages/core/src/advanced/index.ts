@@ -89,11 +89,14 @@ export {
   sanitizeRestoredMessage,
 } from '../core/trusted-system-message.js';
 
-// ─── Test utilities (for adapter / loop tests) ───────────────────────────
-export type { MockAdapterConfig } from '../core/test-utils.js';
-export {
-  createMockAdapter,
-  createFailingAdapter,
-  createStreamingMockAdapter,
-  createErrorStreamingMockAdapter,
-} from '../core/test-utils.js';
+// Test utilities moved to `harness-one/testing` in Wave-27.
+// Rationale: `createMockAdapter` / `createFailingAdapter` /
+// `createStreamingMockAdapter` / `createErrorStreamingMockAdapter` are mock
+// AgentAdapter factories for tests only. Sharing the /advanced surface with
+// production extension primitives (middleware, resilient-loop, fallback,
+// output parsers) misled adapter authors into treating them as a supported
+// production surface. Import from `harness-one/testing` in test code:
+//
+//   import { createMockAdapter } from 'harness-one/testing';
+//
+// See docs/architecture/14-advanced.md and 17-testing.md.

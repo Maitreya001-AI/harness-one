@@ -187,6 +187,14 @@ Established seams:
   `/core` + `/advanced` + `/observe`; specialised tools (e.g. a
   RAG-only consumer) can reach for the relevant subsystem barrel
   instead.
+- **`harness-one/testing`** (Wave-27 split from `/advanced`) — mock
+  `AgentAdapter` factories for test code. Keeps the `/advanced` surface
+  focused on composable **production** primitives: the four mock
+  factories (`createMockAdapter`, `createFailingAdapter`,
+  `createStreamingMockAdapter`, `createErrorStreamingMockAdapter`)
+  previously re-exported there are test doubles and should not appear
+  on a production import graph. Never import from production code.
+  Detail: `docs/architecture/17-testing.md`.
 
 ## Construction: factories, not classes
 

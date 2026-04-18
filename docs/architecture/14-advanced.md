@@ -35,7 +35,11 @@
 | 验证 + pricing | `infra/validate.ts` + `core/pricing.ts` | `requirePositiveInt` / `requireNonNegativeInt` / `requireFinitePositive` / `requireFiniteNonNegative` / `requireUnitInterval` / `validatePricingEntry` / `validatePricingArray` / `priceUsage` / `hasNonFiniteTokens` / `PricingNumericFields` |
 | Backoff | `infra/backoff.ts` | `computeBackoffMs`, `computeJitterMs`, `createBackoffSchedule`, 两个 jitter 常量 |
 | 可信系统消息 | `core/trusted-system-message.ts` | `createTrustedSystemMessage`, `isTrustedSystemMessage`, `sanitizeRestoredMessage` |
-| 测试工具 | `core/test-utils.ts` | `createMockAdapter`, `createFailingAdapter`, `createStreamingMockAdapter`, `createErrorStreamingMockAdapter`, `MockAdapterConfig` |
+
+> Wave-27 拆分：以前 `/advanced` 里还挂着 `createMockAdapter` / `createFailingAdapter`
+> / `createStreamingMockAdapter` / `createErrorStreamingMockAdapter` 这组 mock
+> adapter 工厂，会让 adapter 作者误以为是"生产级 fallback"。这些工厂已搬到
+> 独立的 `harness-one/testing` 子路径，见 [`17-testing.md`](./17-testing.md)。
 
 ## 为什么要单独一个子路径
 
@@ -106,10 +110,10 @@ preset 的配置校验、circuit-breaker / execution-strategies 的内部检查
 system 消息会被降级为 `user`，防止 memory/session 回填被提权为 prompt
 指令。
 
-### Test utilities
-`createMockAdapter` / `createFailingAdapter` / `createStreamingMockAdapter`
-/ `createErrorStreamingMockAdapter`——harness 自己的测试套件和用户
-测试共享同一套 mock；行为契约稳定，不会随内部重构漂移。
+### Test utilities（已迁出 /advanced）
+Wave-27 起，mock `AgentAdapter` 工厂从 `/advanced` 迁移到独立的
+`harness-one/testing` 子路径。详见 [`17-testing.md`](./17-testing.md) —
+这些是测试 double，不应出现在生产 import 图里。
 
 ## 依赖关系
 
@@ -125,6 +129,8 @@ system 消息会被降级为 `user`，防止 memory/session 回填被提权为 p
    实现负担。
 2. **`/advanced` 契约弱于 `/core`**：`MIGRATION.md` 记录 break change，但
    不保证 0.x / 1.x 跨版本兼容。
-3. **Test utilities 也在这里**：`createMockAdapter` 等本质上是"给扩展
-   作者的 mock"，放在 `/advanced` 而不是独立 `/testing` 子路径，减少
-   公共入口数量。
+3. **Test utilities 不在这里**（Wave-27 拆分）：mock adapter 工厂搬到
+   `harness-one/testing` 子路径。理由：`/advanced` 的其他导出都是生产
+   代码能安全组合的原语（middleware、resilient-loop、fallback、SSE），
+   而 mock 工厂是 test doubles — 混在一起让 adapter 作者误读为"生产
+   级 fallback"。详见 [`17-testing.md`](./17-testing.md)。

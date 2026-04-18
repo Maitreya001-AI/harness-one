@@ -1,6 +1,6 @@
 # harness-one
 
-Framework-agnostic primitives for AI agent harness engineering. Zero-runtime-dep core with subpath exports (`core`, `advanced`, `prompt`, `context`, `tools`, `guardrails`, `observe`, `session`, `memory`, `evolve-check`, `rag`, `orchestration`, `redact`, `infra`). `eval` and `evolve` ship from `@harness-one/devkit`.
+Framework-agnostic primitives for AI agent harness engineering. Zero-runtime-dep core with subpath exports (`core`, `advanced`, `prompt`, `context`, `tools`, `guardrails`, `observe`, `session`, `memory`, `evolve-check`, `rag`, `orchestration`, `redact`, `infra`, `testing`). `eval` and `evolve` ship from `@harness-one/devkit`.
 
 ## Install
 
@@ -57,7 +57,9 @@ import { createPipeline, createInjectionDetector } from 'harness-one/guardrails'
 import { createTraceManager, createCostTracker } from 'harness-one/observe';
 ```
 
-Available submodules: `core`, `advanced`, `prompt`, `context`, `tools`, `guardrails`, `observe`, `session`, `memory`, `evolve-check`, `rag`, `orchestration`, `redact`, `infra`.
+Available submodules: `core`, `advanced`, `prompt`, `context`, `tools`, `guardrails`, `observe`, `session`, `memory`, `evolve-check`, `rag`, `orchestration`, `redact`, `infra`, `testing`.
+
+> **Wave-27** — `harness-one/testing` subpath added. Mock `AgentAdapter` factories (`createMockAdapter`, `createFailingAdapter`, `createStreamingMockAdapter`, `createErrorStreamingMockAdapter`) moved out of `harness-one/advanced` so the `/advanced` surface carries only production extension primitives. See [`docs/architecture/17-testing.md`](../../docs/architecture/17-testing.md).
 
 > **Wave-5C** — `harness-one/eval` and `harness-one/evolve` were extracted to **[`@harness-one/devkit`](../devkit)**. The `harness-one/cli` subpath was extracted to **[`@harness-one/cli`](../cli)**. `harness-one/evolve-check` (architecture rules only) stays in core.
 >

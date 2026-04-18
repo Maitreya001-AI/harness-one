@@ -10,7 +10,7 @@
  * All four primitives live on `harness-one/orchestration`.
  */
 import { AgentLoop } from 'harness-one/core';
-import { createMockAdapter } from 'harness-one/advanced';
+import { createMockAdapter } from 'harness-one/testing';
 import {
   createOrchestrator,
   createAgentPool,

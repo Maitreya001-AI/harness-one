@@ -170,6 +170,10 @@ await harness.shutdown();
 > 项目仍为 pre-release（所有包 `0.1.0`，未发 npm），以下是 Wave-5 系列落地
 > 的关键里程碑。完整逐项映射见 [MIGRATION.md](./MIGRATION.md) 的 Unreleased 段。
 
+### Wave-27 — `harness-one/testing` 子路径
+
+- **mock adapter 工厂迁出 `/advanced`**：`createMockAdapter` / `createFailingAdapter` / `createStreamingMockAdapter` / `createErrorStreamingMockAdapter` 搬到新的 `harness-one/testing` 子路径。`/advanced` 现在只导出生产代码可以直接组合的扩展原语（middleware / resilient-loop / fallback-adapter / SSE / 执行策略 / validators / backoff / output parser / trusted system-message）。详见 [`docs/architecture/17-testing.md`](./docs/architecture/17-testing.md)。
+
 ### Wave-5C — 包边界与 API 收口
 
 - **根桶收紧到 18 个值导出**（UJ-1..UJ-5 主路径；原 ADR 19 槽位中 slot 11 `createSecurePreset` 被下放到 `@harness-one/preset` 以避免三角循环，剩 18 个）。其余工厂走子路径（`harness-one/core`、`harness-one/tools`、`harness-one/observe`、`harness-one/infra` 等）或兄弟包。**`createSecurePreset` 不再从根桶导出**——直接从 `@harness-one/preset` 导入。

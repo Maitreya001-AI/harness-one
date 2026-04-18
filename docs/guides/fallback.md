@@ -97,7 +97,11 @@ setInterval(() => {
 
 ## Related
 
-- `packages/core/src/core/fallback-adapter.ts` — implementation
-- `packages/core/src/core/error-classifier.ts` — classification table
+- `harness-one/advanced` — public subpath exporting `createFallbackAdapter`,
+  `FallbackAdapterConfig`, and `categorizeAdapterError`. Import from here
+  in application code. (Implementation lives in
+  `packages/core/src/core/fallback-adapter.ts` + `error-classifier.ts` in
+  the repo; that path is **not** reachable through an npm install.)
 - `examples/observe/error-handling.ts` — end-to-end runnable demo
 - `docs/architecture/01-core.md` — AgentLoop + resilience wiring
+- `docs/architecture/14-advanced.md` — the full `/advanced` surface

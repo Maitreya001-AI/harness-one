@@ -13,7 +13,8 @@
  *
  * Not retried: `end_turn` (normal completion) and `aborted` (user signal).
  */
-import { createResilientLoop, createMockAdapter } from 'harness-one/advanced';
+import { createResilientLoop } from 'harness-one/advanced';
+import { createMockAdapter } from 'harness-one/testing';
 import type { Message } from 'harness-one/core';
 
 async function main(): Promise<void> {

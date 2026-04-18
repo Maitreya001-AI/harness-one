@@ -14,7 +14,11 @@ resolver.
 import type { AgentAdapter } from 'harness-one/core';
 ```
 
-Source: `packages/core/src/core/types.ts` → `AgentAdapter`.
+The canonical type definition is exported from the `harness-one/core`
+subpath; the interface is re-declared verbatim below for reference.
+(Repo-internal source: `packages/core/src/core/types.ts` → `AgentAdapter`.
+That path is the canonical implementation but is **not** reachable through
+an npm install — consume the public subpath.)
 
 ```ts
 interface AgentAdapter {
@@ -108,9 +112,10 @@ model variant.
 
 ## OPTIONAL: `stream(params)`
 
-Yields `StreamChunk`s as the provider emits them. The real shape (see
-`packages/core/src/core/types.ts` → `StreamChunk`) is a flat interface
-discriminated by `type`; the three variants adapters actually emit are:
+Yields `StreamChunk`s as the provider emits them. The canonical
+`StreamChunk` type is exported from `harness-one/core`; the repo source
+(`packages/core/src/core/types.ts`) declares it as a flat interface
+discriminated by `type`. The three variants adapters actually emit are:
 
 ```ts
 // Shape accepted by the harness — only the fields relevant to `type` are set.
@@ -131,19 +136,20 @@ Rules:
 - `tool_call_delta.toolCall` is `Partial<ToolCallRequest>` — `id`,
   `name`, and `arguments` may each be absent or partial across chunks.
   Adapters MUST NOT cast partial argument JSON as a parsed object. See
-  the `anthropic/tool_use input` guard in
-  `packages/anthropic/src/index.ts`: on JSON-parse failure, substitute
-  `{}` and log, never `as Record`.
+  the `anthropic/tool_use input` guard in `@harness-one/anthropic`
+  (repo source `packages/anthropic/src/index.ts`): on JSON-parse failure,
+  substitute `{}` and log, never `as Record`.
 - Adapters MUST propagate `params.signal` to the streaming SDK so that
   `loop.abort()` cancels the in-flight stream promptly.
 
 ## OPTIONAL: `countTokens(messages)`
 
 Returns an accurate provider-side token count. When omitted, the
-harness falls back to the heuristic in
-`packages/core/src/infra/token-estimator.ts`. Implement this only
-if the provider has an official tokenizer (e.g., `tiktoken` for OpenAI);
-a wrong answer is worse than the heuristic's deliberate approximation.
+harness falls back to the built-in heuristic estimator that lives in
+`harness-one/infra` (repo source: `packages/core/src/infra/token-estimator.ts`).
+Implement `countTokens` only if the provider has an official tokenizer
+(e.g., `tiktoken` for OpenAI); a wrong answer is worse than the
+heuristic's deliberate approximation.
 
 ## Error mapping
 
@@ -163,8 +169,9 @@ decisions:
 | Unclassified provider error | `ADAPTER_ERROR` |
 | Fully unknown throwable | `ADAPTER_UNKNOWN` |
 
-Wrap errors in `HarnessError(message, code, suggestion?, cause?)` — see
-`packages/core/src/core/errors.ts`. The human-readable `message` is the
+Wrap errors in `HarnessError(message, code, suggestion?, cause?)` — the
+class is exported from `harness-one/core` (repo source:
+`packages/core/src/core/errors.ts`). The human-readable `message` is the
 first argument, followed by the programmatic `code`. Preserve the
 original error as `cause` so operators can debug.
 

@@ -30,6 +30,19 @@ import type { Message, ToolCallRequest, TokenUsage } from './types.js';
 import { HarnessError, HarnessErrorCode } from './errors.js';
 
 /**
+ * Outcome of a single-chunk UTF-8 byte-length measurement.
+ *
+ * `bytes` is the count for the input string under the given pending-high
+ * continuation; `pendingHigh` carries the trailing unpaired high surrogate
+ * (if any) so the caller can thread it into the next chunk and finish the
+ * pair. See {@link measureUtf8} for the pair-completion rule.
+ */
+interface Utf8Measure {
+  readonly bytes: number;
+  readonly pendingHigh: boolean;
+}
+
+/**
  * UTF-8 byte length of `s` without allocating a `Buffer` or `TextEncoder` in
  * the hot path. Ten times faster than `Buffer.byteLength(s, 'utf8')` on short
  * strings while matching its result bit-for-bit for the whole BMP +
@@ -40,25 +53,90 @@ import { HarnessError, HarnessErrorCode } from './errors.js';
  * leaves Node, so a 5 MB `maxStreamBytes` budget expressed as code units
  * effectively became a 10–20 MB budget. Switching to UTF-8 bytes makes
  * `maxStreamBytes` / `maxToolArgBytes` match what the docstring says.
+ *
+ * **Cross-chunk surrogate handling.** A supplementary codepoint
+ * (emoji / CJK extension) is two UTF-16 code units (high surrogate +
+ * low surrogate). Adapters that split streaming text at arbitrary JS
+ * string positions can land a chunk boundary between the two halves:
+ *
+ *   chunk N    = "\uD83D"   (lone high surrogate)
+ *   chunk N+1  = "\uDE00"   (lone low surrogate → paired with prior)
+ *
+ * A naive per-chunk counter overcounts: the high surrogate claims 4 bytes
+ * thinking its paired low is "already seen", then the orphan low on the
+ * next chunk falls into the "else" 3-byte branch, reaching 7 bytes for
+ * what is a single 4-byte UTF-8 codepoint. We thread a `pendingHigh` flag
+ * through the measurement so a pair completed across a boundary counts
+ * 4 bytes total (0 for the high on chunk N, 4 for the low on chunk N+1
+ * once the pair resolves).
+ *
+ * Lone surrogates (high without a low, or low without a high) encode as
+ * the U+FFFD replacement character in `Buffer.byteLength` / `TextEncoder`
+ * — 3 bytes each. This helper matches that behaviour to stay byte-for-byte
+ * consistent with the wire format downstream serialisers produce.
  */
-function utf8ByteLength(s: string): number {
+function measureUtf8(s: string, priorPendingHigh: boolean): Utf8Measure {
   let bytes = 0;
-  for (let i = 0; i < s.length; i++) {
+  let i = 0;
+  let pendingHigh = priorPendingHigh;
+
+  if (pendingHigh && s.length > 0) {
+    const first = s.charCodeAt(0);
+    if (first >= 0xdc00 && first <= 0xdfff) {
+      // Pair completes across the chunk boundary: full supplementary
+      // codepoint is 4 UTF-8 bytes. The high surrogate on the prior chunk
+      // contributed 0; we pay all 4 here.
+      bytes += 4;
+      i = 1;
+      pendingHigh = false;
+    } else {
+      // Prior chunk's trailing high was orphan — encode as U+FFFD (3 bytes)
+      // to match Buffer.byteLength / TextEncoder behaviour on lone surrogates.
+      bytes += 3;
+      pendingHigh = false;
+      // Fall through without advancing i — s[0] still needs classification.
+    }
+  }
+
+  while (i < s.length) {
     const code = s.charCodeAt(i);
     if (code < 0x80) {
       bytes += 1;
+      i++;
     } else if (code < 0x800) {
       bytes += 2;
+      i++;
     } else if (code >= 0xd800 && code <= 0xdbff) {
-      // High surrogate — the paired low surrogate contributes 0 bytes; the
-      // full supplementary code point is 4 UTF-8 bytes, accounted here.
-      bytes += 4;
+      // High surrogate. Try to pair with the next code unit in this chunk.
+      if (i + 1 < s.length) {
+        const next = s.charCodeAt(i + 1);
+        if (next >= 0xdc00 && next <= 0xdfff) {
+          bytes += 4;
+          i += 2;
+          continue;
+        }
+        // High followed by non-low in the same chunk: lone high → U+FFFD.
+        bytes += 3;
+        i++;
+        continue;
+      }
+      // High is the last code unit of this chunk — stash for pair
+      // completion on the next chunk. No bytes counted yet; if the next
+      // chunk does not start with a low, the prior branch above will
+      // charge 3 bytes for the replacement character.
+      pendingHigh = true;
+      i++;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      // Lone low surrogate (no preceding pending high consumed it) → U+FFFD.
+      bytes += 3;
       i++;
     } else {
       bytes += 3;
+      i++;
     }
   }
-  return bytes;
+
+  return { bytes, pendingHigh };
 }
 
 /**
@@ -127,6 +205,12 @@ interface ToolCallEntry {
   readonly argsParts: string[];
   /** Running total of `argsParts` byte length — kept in sync on each push. */
   argsBytes: number;
+  /**
+   * Wave-27: per-tool pending high surrogate so two successive deltas on
+   * the same tool-call id that happen to split a supplementary codepoint
+   * are accounted as 4 bytes end-to-end rather than 7.
+   */
+  pendingHighSurrogate: boolean;
 }
 
 export class StreamAggregator {
@@ -137,6 +221,17 @@ export class StreamAggregator {
    */
   private readonly textParts: string[] = [];
   private accumulatedBytes = 0;
+  /**
+   * Wave-27: carries an unpaired high surrogate from the previous
+   * `text_delta` chunk so a supplementary codepoint split across a chunk
+   * boundary is counted as 4 bytes (not 7). See {@link measureUtf8}.
+   *
+   * Scoped to the text_delta stream — tool-call deltas are accounted
+   * separately via per-tool pending flags so a high surrogate trailing one
+   * tool's args cannot "pair" with a low surrogate arriving on a different
+   * tool's delta.
+   */
+  private textPendingHighSurrogate = false;
   /** Map for O(1) id lookups. Mirrors `toolCallList` exactly. */
   private readonly accumulatedToolCalls: Map<string, ToolCallEntry> = new Map();
   /**
@@ -144,6 +239,13 @@ export class StreamAggregator {
    * `accumulatedToolCalls.values()` to build the final message (PERF-032).
    */
   private readonly toolCallList: ToolCallEntry[] = [];
+  /**
+   * Wave-27: pending high surrogate for the "append-to-last-tool" path
+   * where deltas arrive without an id. Kept separate from the per-tool
+   * pending flag on `ToolCallEntry` so both routes stay correct without
+   * cross-contamination.
+   */
+  private lastToolPendingHighSurrogate = false;
 
   constructor(options: StreamAggregatorOptions) {
     this.options = options;
@@ -174,7 +276,11 @@ export class StreamAggregator {
    */
   *handleChunk(chunk: StreamAggregatorChunk): Generator<StreamAggregatorEvent> {
     if (chunk.type === 'text_delta' && chunk.text) {
-      this.accumulatedBytes += utf8ByteLength(chunk.text);
+      // Wave-27: thread pending-high-surrogate across text_delta chunks so
+      // a supplementary codepoint split mid-pair counts 4 bytes (not 7).
+      const measure = measureUtf8(chunk.text, this.textPendingHighSurrogate);
+      this.accumulatedBytes += measure.bytes;
+      this.textPendingHighSurrogate = measure.pendingHigh;
       const sizeErr = this.checkSizeLimits();
       if (sizeErr) {
         yield { type: 'error', error: sizeErr };
@@ -190,9 +296,25 @@ export class StreamAggregator {
       const partial = chunk.toolCall;
       yield { type: 'tool_call_delta', toolCall: partial };
 
-      const partialArgsBytes = partial.arguments !== undefined
-        ? utf8ByteLength(partial.arguments)
-        : 0;
+      // Pick the pending-high-surrogate state that would pair with this
+      // delta's args. With-id deltas use the per-entry flag on the tool
+      // call; no-id deltas append to the last tool, so they use the
+      // sibling "last tool pending high" flag. The two flags are reset
+      // independently in `reset()` and on size-limit failures.
+      const withExistingId = partial.id !== undefined
+        ? this.accumulatedToolCalls.get(partial.id)
+        : undefined;
+      let priorArgsPendingHigh = false;
+      if (partial.id !== undefined) {
+        priorArgsPendingHigh = withExistingId?.pendingHighSurrogate ?? false;
+      } else if (this.toolCallList.length > 0) {
+        priorArgsPendingHigh = this.lastToolPendingHighSurrogate;
+      }
+
+      const argsMeasure = partial.arguments !== undefined
+        ? measureUtf8(partial.arguments, priorArgsPendingHigh)
+        : { bytes: 0, pendingHigh: priorArgsPendingHigh };
+      const partialArgsBytes = argsMeasure.bytes;
       if (partial.arguments) {
         this.accumulatedBytes += partialArgsBytes;
         const sizeErr = this.checkSizeLimits();
@@ -210,6 +332,7 @@ export class StreamAggregator {
             existing.argsParts.push(partial.arguments);
             existing.argsBytes += partialArgsBytes;
           }
+          existing.pendingHighSurrogate = argsMeasure.pendingHigh;
           if (existing.argsBytes > this.options.maxToolArgBytes) {
             yield {
               type: 'error',
@@ -254,6 +377,7 @@ export class StreamAggregator {
             name: partial.name ?? '',
             argsParts: partial.arguments ? [partial.arguments] : [],
             argsBytes: partialArgsBytes,
+            pendingHighSurrogate: argsMeasure.pendingHigh,
           };
           this.accumulatedToolCalls.set(partial.id, entry);
           this.toolCallList.push(entry);
@@ -270,6 +394,7 @@ export class StreamAggregator {
           last.argsParts.push(partial.arguments);
           last.argsBytes += partialArgsBytes;
         }
+        this.lastToolPendingHighSurrogate = argsMeasure.pendingHigh;
         if (last.argsBytes > this.options.maxToolArgBytes) {
           yield {
             type: 'error',
@@ -330,6 +455,9 @@ export class StreamAggregator {
     this.accumulatedBytes = 0;
     this.accumulatedToolCalls.clear();
     this.toolCallList.length = 0;
+    // Wave-27: cross-chunk surrogate state is per-stream; clear on reuse.
+    this.textPendingHighSurrogate = false;
+    this.lastToolPendingHighSurrogate = false;
   }
 
   private checkSizeLimits(): HarnessError | null {

@@ -13,8 +13,9 @@
  *     re-allocations, works under Bun / Node / Deno / edge runtimes.
  */
 import { createAgentLoop } from 'harness-one';
-import { createMockAdapter, toSSEStream, formatSSE } from 'harness-one/advanced';
+import { toSSEStream, formatSSE } from 'harness-one/advanced';
 import type { SSEChunk } from 'harness-one/advanced';
+import { createMockAdapter } from 'harness-one/testing';
 
 async function main(): Promise<void> {
   const adapter = createMockAdapter({

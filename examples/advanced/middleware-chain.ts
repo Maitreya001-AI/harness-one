@@ -10,8 +10,8 @@
  *   - `ToolDefinition.middleware` from `harness-one/tools` (per-tool onion)
  */
 import { createMiddlewareChain } from 'harness-one/advanced';
-import { createMockAdapter } from 'harness-one/advanced';
 import type { MiddlewareFn } from 'harness-one/advanced';
+import { createMockAdapter } from 'harness-one/testing';
 
 async function main(): Promise<void> {
   const chain = createMiddlewareChain({

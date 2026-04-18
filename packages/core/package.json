@@ -78,6 +78,11 @@
       "types": "./dist/infra/index.d.ts",
       "import": "./dist/infra/index.js",
       "require": "./dist/cjs/infra/index.cjs"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "import": "./dist/testing/index.js",
+      "require": "./dist/cjs/testing/index.cjs"
     }
   },
   "files": [

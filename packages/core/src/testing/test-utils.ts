@@ -4,10 +4,18 @@
  * Consolidates duplicated mock adapter patterns that previously appeared
  * across 6+ test files into a single reusable testkit.
  *
+ * Published as the `harness-one/testing` subpath (Wave-27). Previously
+ * re-exported from `harness-one/advanced`, which mis-signalled "production
+ * extension point" to adapter authors — the factories here are mock doubles
+ * for **test code only** and intentionally live on their own subpath so
+ * production bundles do not pull them in by default and so the naming in
+ * `package.json` matches the intent (`testing` = test-only; `advanced` =
+ * composable production primitives).
+ *
  * @module
  */
 
-import type { AgentAdapter, AssistantMessage, ChatParams, ChatResponse, Message, StreamChunk, TokenUsage } from './types.js';
+import type { AgentAdapter, AssistantMessage, ChatParams, ChatResponse, Message, StreamChunk, TokenUsage } from '../core/types.js';
 
 /** Configuration for the mock adapter. */
 export interface MockAdapterConfig {

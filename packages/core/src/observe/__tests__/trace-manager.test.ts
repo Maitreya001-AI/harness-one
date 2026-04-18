@@ -83,8 +83,13 @@ describe('createTraceManager', () => {
       const spanId = tm.startSpan(traceId, 's');
       tm.endSpan(spanId);
       const trace = tm.getTrace(traceId);
-      expect(trace!.spans[0].status).toBe('completed');
-      expect(trace!.spans[0].endTime).toBeDefined();
+      const span = trace!.spans[0];
+      expect(span.status).toBe('completed');
+      // Wave-27: assert endTime is a real timestamp >= startTime, not just
+      // "defined" — the prior `toBeDefined()` would have passed even if
+      // the implementation stored a placeholder like 0 or NaN.
+      expect(typeof span.endTime).toBe('number');
+      expect(span.endTime).toBeGreaterThanOrEqual(span.startTime);
     });
 
     it('ends a span with error status', () => {
@@ -109,7 +114,10 @@ describe('createTraceManager', () => {
       tm.endTrace(traceId);
       const trace = tm.getTrace(traceId);
       expect(trace!.status).toBe('completed');
-      expect(trace!.endTime).toBeDefined();
+      // Wave-27: endTime must be a real timestamp >= startTime, not just
+      // "defined". Previously `toBeDefined()` would have passed on NaN/0.
+      expect(typeof trace!.endTime).toBe('number');
+      expect(trace!.endTime).toBeGreaterThanOrEqual(trace!.startTime);
     });
 
     it('ends a trace with error status', () => {
@@ -132,8 +140,11 @@ describe('createTraceManager', () => {
       const id2 = tm.startTrace('second');
       const id3 = tm.startTrace('third');
       expect(tm.getTrace(id1)).toBeUndefined();
-      expect(tm.getTrace(id2)).toBeDefined();
-      expect(tm.getTrace(id3)).toBeDefined();
+      // Wave-27: verify the retained traces are the ACTUAL ones we started,
+      // not just some placeholder. `toBeDefined()` alone would pass even if
+      // eviction corrupted the payload and replaced it with a stub.
+      expect(tm.getTrace(id2)?.name).toBe('second');
+      expect(tm.getTrace(id3)?.name).toBe('third');
     });
 
     it('cleans up spans of evicted traces', () => {
@@ -535,7 +546,11 @@ describe('edge cases', () => {
     // Evict by adding a new trace
     const traceId2 = tm.startTrace('replacement');
     expect(tm.getTrace(traceId)).toBeUndefined();
-    expect(tm.getTrace(traceId2)).toBeDefined();
+    // Wave-27: verify the replacement trace is intact (name matches what we
+    // started; status is 'running'), not a stub-shaped placeholder.
+    const replacementTrace = tm.getTrace(traceId2);
+    expect(replacementTrace?.name).toBe('replacement');
+    expect(replacementTrace?.status).toBe('running');
 
     // Attempting to add events or end evicted spans should throw
     expect(() => tm.addSpanEvent(s1, { name: 'test' })).toThrow(HarnessError);
@@ -737,10 +752,14 @@ describe('traceOrder memory leak fix', () => {
       activeIds.push(tm.startTrace(`active-${i}`));
     }
 
-    // All active traces should be retrievable
-    for (const id of activeIds) {
-      expect(tm.getTrace(id)).toBeDefined();
-    }
+    // All active traces should be retrievable AND carry the name we
+    // originally started them with. Wave-27: prior assertion used
+    // `toBeDefined()` alone, which would pass on any non-nullish stub.
+    activeIds.forEach((id, i) => {
+      const trace = tm.getTrace(id);
+      expect(trace?.name).toBe(`active-${i}`);
+      expect(trace?.status).toBe('running');
+    });
   });
 
   it('endTrace removes ID from traceOrder but trace stays in Map until eviction', () => {
@@ -749,10 +768,12 @@ describe('traceOrder memory leak fix', () => {
     const id = tm.startTrace('my-trace');
     tm.endTrace(id);
 
-    // Trace should still be in the Map (queryable) — no eviction has run
+    // Trace should still be in the Map (queryable) — no eviction has run.
+    // Wave-27: also verify name is preserved (evicted traces would return
+    // undefined; a corrupted trace payload would have the wrong name).
     const trace = tm.getTrace(id);
-    expect(trace).toBeDefined();
-    expect(trace!.status).toBe('completed');
+    expect(trace?.name).toBe('my-trace');
+    expect(trace?.status).toBe('completed');
   });
 
   it('ended traces are evicted before running traces when capacity is exceeded', () => {
@@ -770,9 +791,13 @@ describe('traceOrder memory leak fix', () => {
 
     // t1 was ended and evicted first (it's completed, not running)
     expect(tm.getTrace(t1)).toBeUndefined();
-    // t2 and t3 should both exist (running traces preserved)
-    expect(tm.getTrace(t2)).toBeDefined();
-    expect(tm.getTrace(t3)).toBeDefined();
+    // t2 and t3 should both exist AND still be in their expected states.
+    // Wave-27: `toBeDefined()` alone would pass even if eviction corrupted
+    // the preserved traces' name or status.
+    expect(tm.getTrace(t2)?.name).toBe('second');
+    expect(tm.getTrace(t2)?.status).toBe('running');
+    expect(tm.getTrace(t3)?.name).toBe('third');
+    expect(tm.getTrace(t3)?.status).toBe('running');
   });
 
   it('rapid create-end cycles do not grow traceOrder unboundedly', () => {
@@ -795,10 +820,14 @@ describe('traceOrder memory leak fix', () => {
       newIds.push(tm.startTrace(`new-${i}`));
     }
 
-    // All 5 new traces should exist (no spurious eviction from stale traceOrder entries)
-    for (const id of newIds) {
-      expect(tm.getTrace(id)).toBeDefined();
-    }
+    // All 5 new traces should exist (no spurious eviction from stale
+    // traceOrder entries). Wave-27: also verify names survived so we're
+    // actually checking that eviction didn't swap them with stubs.
+    newIds.forEach((id, i) => {
+      const trace = tm.getTrace(id);
+      expect(trace?.name).toBe(`new-${i}`);
+      expect(trace?.status).toBe('running');
+    });
   });
 
   it('spans of ended traces are cleaned up during eviction', () => {
@@ -905,14 +934,17 @@ describe('getActiveSpans olderThanMs filter', () => {
 // Fix 3: Re-entrance guard for eviction
 describe('eviction re-entrance guard', () => {
   it('eviction does not fail under normal sequential usage', () => {
-    // This tests that the isEvicting guard does not break normal operation
+    // This tests that the isEvicting guard does not break normal operation.
+    // Wave-27: verify surviving traces retain their original payload so we
+    // don't merely confirm "something got returned" — we confirm the right
+    // trace was kept.
     const tm = createTraceManager({ maxTraces: 2 });
     const t1 = tm.startTrace('first');
     const t2 = tm.startTrace('second');
     const t3 = tm.startTrace('third'); // triggers eviction
     expect(tm.getTrace(t1)).toBeUndefined();
-    expect(tm.getTrace(t2)).toBeDefined();
-    expect(tm.getTrace(t3)).toBeDefined();
+    expect(tm.getTrace(t2)?.name).toBe('second');
+    expect(tm.getTrace(t3)?.name).toBe('third');
   });
 });
 
