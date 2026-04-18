@@ -73,6 +73,11 @@
       "types": "./dist/redact/index.d.ts",
       "import": "./dist/redact/index.js",
       "require": "./dist/cjs/redact/index.cjs"
+    },
+    "./infra": {
+      "types": "./dist/infra/index.d.ts",
+      "import": "./dist/infra/index.js",
+      "require": "./dist/cjs/infra/index.cjs"
     }
   },
   "files": [

@@ -57,9 +57,9 @@ import { createPipeline, createInjectionDetector } from 'harness-one/guardrails'
 import { createTraceManager, createCostTracker } from 'harness-one/observe';
 ```
 
-Available submodules: `core`, `prompt`, `context`, `tools`, `guardrails`, `observe`, `session`, `memory`, `evolve-check`, `rag`, `orchestration`, `infra`.
+Available submodules: `core`, `advanced`, `prompt`, `context`, `tools`, `guardrails`, `observe`, `session`, `memory`, `evolve-check`, `rag`, `orchestration`, `redact`, `infra`.
 
-> **Wave-5C (1.0-rc)** — `harness-one/eval` and `harness-one/evolve` were extracted to **[`@harness-one/devkit`](../devkit)**. The `harness-one/cli` subpath was extracted to **[`@harness-one/cli`](../cli)**. `harness-one/evolve-check` (architecture rules only) stays in core.
+> **Wave-5C** — `harness-one/eval` and `harness-one/evolve` were extracted to **[`@harness-one/devkit`](../devkit)**. The `harness-one/cli` subpath was extracted to **[`@harness-one/cli`](../cli)**. `harness-one/evolve-check` (architecture rules only) stays in core.
 >
 > The root barrel is now curated to **19 value symbols** (UJ-1..UJ-5 user-journey set). Other factories like `toSSEStream`, `categorizeAdapterError` etc. live on subpaths only.
 

@@ -222,17 +222,17 @@ const messages = mq.getMessages('agent-a', { type: 'request' });
 ```ts
 throw new HarnessError(
   `Delegation cycle detected: ${selectedId} is already in the delegation chain of ${delegatedFrom}`,
-  'DELEGATION_CYCLE',
+  HarnessErrorCode.ORCH_DELEGATION_CYCLE,
   'Avoid delegating tasks back to agents that originated the delegation',
 );
 ```
 
-错误码 `DELEGATION_CYCLE` 是稳定契约；调用方 catch 时可据此与其他 `HarnessError` 区分处理。
+错误码 `ORCH_DELEGATION_CYCLE` 是稳定契约；调用方 catch 时可据此与其他 `HarnessError` 区分处理。
 
 ### 调用方如何处理
 
 ```ts
-import { HarnessError } from 'harness-one';
+import { HarnessError, HarnessErrorCode } from 'harness-one';
 
 try {
   const target = await orch.delegate({
@@ -241,7 +241,7 @@ try {
   });
   // target 可能为 undefined——strategy 没有选出任何 Agent
 } catch (err) {
-  if (err instanceof HarnessError && err.code === 'DELEGATION_CYCLE') {
+  if (err instanceof HarnessError && err.code === HarnessErrorCode.ORCH_DELEGATION_CYCLE) {
     // 降级策略：改写任务、交给 supervisor、或短路终结
     logger.warn('cycle detected, falling back to supervisor', { err });
     await orch.sendMessage({ /* ... */ });
@@ -251,7 +251,7 @@ try {
 }
 ```
 
-建议的处理选项：**(a)** 重写 strategy 挑选规则（跳过已在链上的 Agent）；**(b)** 把任务升级到 supervisor / orchestrator 层直接回答；**(c)** 拒绝任务并沿原路回传错误结果。**不要** 吞掉 `DELEGATION_CYCLE` 后再次调用 `delegate()`——会再次命中同一环。
+建议的处理选项：**(a)** 重写 strategy 挑选规则（跳过已在链上的 Agent）；**(b)** 把任务升级到 supervisor / orchestrator 层直接回答；**(c)** 拒绝任务并沿原路回传错误结果。**不要** 吞掉 `ORCH_DELEGATION_CYCLE` 后再次调用 `delegate()`——会再次命中同一环。
 
 ### 安全委派图示例
 
@@ -263,7 +263,7 @@ planner ──> worker ──> specialist
 
 上面的 DAG 不会触发检测：`planner` 委派给 `worker` 和 `reviewer`，`worker` 再委派给 `specialist` 和 `reviewer`。即使 `reviewer` 有两个入边，委派链只向下流动，没有任何下游会再指回 `planner` 或 `worker`。
 
-**反例（会抛 `DELEGATION_CYCLE`）**：`worker` 在处理中尝试 `delegate({ metadata: { delegatedFrom: 'worker' } })` 并被 strategy 选回 `planner`——因为 `planner` → `worker` 已登记在链上，从 `worker` 出发的 BFS 会发现 `planner` 可达。
+**反例（会抛 `ORCH_DELEGATION_CYCLE`）**：`worker` 在处理中尝试 `delegate({ metadata: { delegatedFrom: 'worker' } })` 并被 strategy 选回 `planner`——因为 `planner` → `worker` 已登记在链上，从 `worker` 出发的 BFS 会发现 `planner` 可达。
 
 ### 链的清理时机
 

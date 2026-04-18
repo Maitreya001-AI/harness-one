@@ -15,6 +15,14 @@ Until then, read the source.
 Breaking + observable changes that downstream consumers on a SHA-pinned
 build should know about:
 
+- `harness-one/infra` subpath is now actually published. Docs have
+  promised `createAdmissionController` + `unrefTimeout` / `unrefInterval`
+  under this path since Wave-5D/5F, but the package.json `exports` entry
+  and tsup entry point were missing, so `import … from 'harness-one/infra'`
+  resolved to `ERR_PACKAGE_PATH_NOT_EXPORTED`. The subpath now exports
+  exactly those documented symbols and nothing else — the rest of
+  `src/infra/` stays private. Additive; no consumer could have depended
+  on the broken state.
 - `MessageQueue` is now a factory: `createMessageQueue(config)` returns
   a `MessageQueue` interface. `new MessageQueue(...)` no longer works.
   The implementing class is hidden per `docs/ARCHITECTURE.md`

@@ -23,7 +23,7 @@ core 模块定义了 harness-one 的共享类型契约（Message、TokenUsage、
 | `src/core/output-parser.ts` | JSON 输出解析器 + `parseWithRetry` 重试（定时器已修复 `try/finally` 清理） | ~218 |
 | `src/core/index.ts` | 公共导出桶文件 | ~38 |
 
-> **历史变更**：Wave-5B 的 AgentLoop 模块分解、Wave-5H 架构加固、Wave-8 / Wave-9 / Wave-10 审计修复等详细记录已抽出至 [`01-core-changelog.md`](./01-core-changelog.md)。本文件只维护当前的稳定参考。
+> **历史变更**：Wave-5B 的 AgentLoop 模块分解、Wave-5H 架构加固、Wave-8 / Wave-9 / Wave-10 审计修复等详细记录见仓库根目录的 [`MIGRATION.md`](../../MIGRATION.md) 与 `git log`。本文件只维护当前的稳定参考。
 
 ## 公共 API
 
