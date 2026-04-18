@@ -21,8 +21,8 @@ infra 模块里不对一般用户暴露的实现封成稳定 API。
 
 | 文件 | 职责 | 约行数 |
 |------|------|--------|
-| `src/infra/redact.ts` | 实现：pattern 编译、递归扫描、结构保留替换、引用 cycle 检测、DoS 保险 | ~180 |
-| `src/redact/index.ts` | 公共桶；不增加代码 | ~19 |
+| `src/infra/redact.ts` | 实现：pattern 编译、递归扫描、结构保留替换、引用 cycle 检测、DoS 保险 | 123 |
+| `src/redact/index.ts` | 公共桶；不增加代码 | 18 |
 
 ## 公共 API
 

@@ -23,16 +23,55 @@ observe 模块提供两个核心能力：TraceManager 管理分布式追踪（Tr
 
 ## 文件结构
 
+observe 子系统由 22 个实现文件组成。一部分是 public API 的入口
+（trace-manager / cost-tracker / logger / failure-taxonomy / cache-monitor
+/ lifecycle / dataset-exporter），其余是为热点模块抽取的专职子模块
+（trace-lru-list / trace-eviction / cost-record-buffer 等）。`MetricsPort`
+与 `InstrumentationPort` 两个跨切 port 的**定义**已上提到 L2
+（`core/metrics-port.ts`、`core/instrumentation-port.ts`），observe barrel
+只做 type-only 再导出让消费者可以从一个地方同时拿到 metrics 与 tracing。
+
+### 入口 + 类型
+
 | 文件 | 职责 | 约行数 |
 |------|------|--------|
-| `src/observe/types.ts` | 类型定义：Trace、Span、SpanEvent、TokenUsageRecord、CostAlert、TraceExporter | ~67 |
-| `src/observe/trace-manager.ts` | createTraceManager + createConsoleExporter + createNoOpExporter；trace/span ID 使用 `prefixedSecureId` 生成（SEC-002） | ~273 |
-| `src/observe/cost-tracker.ts` | createCostTracker——成本追踪与预算告警；警告通过 `safeWarn` 结构化日志输出（不再直接 `console.warn`） | ~177 |
-| `src/observe/lifecycle.ts` | HarnessLifecycle 状态机：init → ready → draining → shutdown；聚合健康检查（Wave-5D ARCH-6） | ~119 |
-| `src/observe/metrics-port.ts` | MetricsPort 接口：vendor-neutral counter/gauge/histogram + createNoopMetricsPort（Wave-5D ARCH-5） | ~65 |
-| `src/observe/failure-taxonomy.ts` | createFailureTaxonomy——从 Trace 分类失败模式 | ~189 |
-| `src/observe/cache-monitor.ts` | createCacheMonitor——KV-cache 命中率监控 | ~133 |
-| `src/observe/index.ts` | 公共导出桶文件 | ~20 |
+| `src/observe/types.ts` | `Trace`、`Span`、`SpanEvent`、`SpanEventSeverity`、`SpanAttributes`、`TokenUsageRecord`、`CostAlert`、`TraceExporter`、`FailureMode`/`FailureClassification`、`CacheMetrics` 等 | 254 |
+| `src/observe/index.ts` | 公共导出桶；再导出 `InstrumentationPort`、`MetricsPort`、safe-log 原语、eviction strategy 等 | 92 |
+| `src/observe/logger.ts` | （re-export 门面）保持历史 import 路径可用 | 17 |
+
+### Trace 管线
+
+| 文件 | 职责 | 约行数 |
+|------|------|--------|
+| `src/observe/trace-manager.ts` | `createTraceManager` + `createConsoleExporter` + `createNoOpExporter`；trace/span ID 使用 `prefixedSecureId` 生成（SEC-002） | 575 |
+| `src/observe/trace-manager-types.ts` | `TraceManager` / `RetryMetrics` 接口 | 104 |
+| `src/observe/trace-view.ts` | `toReadonlyTrace` — 内部 Mutable* 结构到只读快照的转换 | 75 |
+| `src/observe/trace-builtins.ts` | 内置 exporter（console / no-op）实现 | 69 |
+| `src/observe/trace-exporter-coordinator.ts` | 按 exporter 分别触发 initialize/shouldExport/exportSpan/exportTrace/shutdown；追踪 in-flight promise，供 flush/dispose 等待 | 418 |
+| `src/observe/trace-sampler.ts` | 全局 sampling 决策（`Math.random() < rate`）；在 `startTrace()` 时锁定 | 58 |
+| `src/observe/trace-retry-collector.ts` | 聚合 adapter_retry span event 为可查询的 `RetryMetrics` | 75 |
+| `src/observe/trace-lru-list.ts` | Intrusive 双链表 + prev/next 指针，给 trace-eviction 做 O(1) `move-to-tail` / `pop-head` | 110 |
+| `src/observe/trace-eviction.ts` | 按 `maxTraces` 做 LRU 淘汰；try-finally 保证内部 Map / accessOrder 一致性 | 206 |
+| `src/observe/span-attribute-keys.ts` | Span attribute key 规范化 + 未知 key 警告器（关闭 fail-closed） | 66 |
+
+### Cost tracker 管线
+
+| 文件 | 职责 | 约行数 |
+|------|------|--------|
+| `src/observe/cost-tracker.ts` | `createCostTracker`——成本追踪与预算告警；警告通过 `safeWarn` 结构化日志输出 | 497 |
+| `src/observe/cost-tracker-types.ts` | `CostTracker` / `ModelPricing` 接口 | 127 |
+| `src/observe/cost-record-buffer.ts` | 有界环形缓冲 + 每 trace 倒排索引；raw / effective index 两个 branded 类型防止混用 | 142 |
+| `src/observe/cost-tracker-eviction.ts` | 可插拔 eviction strategy：overflow-bucket / LRU；导出给 `@harness-one/langfuse` | 169 |
+| `src/observe/cost-alert-manager.ts` | 预算告警门限判断、去重、onAlert 分发 | 205 |
+
+### 其他子系统
+
+| 文件 | 职责 | 约行数 |
+|------|------|--------|
+| `src/observe/lifecycle.ts` | `HarnessLifecycle` 状态机：init → ready → draining → shutdown；聚合健康检查；`markReadyAfterHealthCheck()` | 160 |
+| `src/observe/failure-taxonomy.ts` | `createFailureTaxonomy`——5 个内置检测器（tool_loop / early_stop / budget_exceeded / timeout / hallucination） | 203 |
+| `src/observe/cache-monitor.ts` | `createCacheMonitor`——KV-cache 命中率监控与成本节约估算 | 152 |
+| `src/observe/dataset-exporter.ts` | `createDatasetExporter`——把完成的 Trace 导出为评估数据集 | 202 |
 
 ## 公共 API
 

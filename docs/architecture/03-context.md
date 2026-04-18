@@ -10,14 +10,14 @@ context 模块处理 LLM 上下文窗口的工程问题：通过 TokenBudget 分
 
 | 文件 | 职责 | 约行数 |
 |------|------|--------|
-| `src/context/types.ts` | 类型定义：Segment、TokenBudget、ContextLayout、CompressionStrategy 等 | ~84 |
-| `src/context/count-tokens.ts` | countTokens + registerTokenizer——委托 infra 估算器 | ~44 |
-| `src/context/budget.ts` | createBudget 工厂——分段 token 预算管理 | ~98 |
-| `src/context/pack.ts` | packContext——HEAD/MID/TAIL 打包 | ~57 |
-| `src/context/compress.ts` | compress + 4 种内置策略 + compactIfNeeded 条件压缩 | ~280 |
-| `src/context/cache-stability.ts` | analyzeCacheStability——缓存稳定性分析 | ~102 |
-| `src/context/checkpoint.ts` | createCheckpointManager——消息快照与恢复 | ~149 |
-| `src/context/index.ts` | 公共导出桶文件 | ~28 |
+| `src/context/types.ts` | 类型定义：Segment、TokenBudget、ContextLayout、CompressionStrategy、Checkpoint 等 | 163 |
+| `src/context/count-tokens.ts` | `countTokens` + `registerTokenizer`——委托 `infra/token-estimator.ts` | 73 |
+| `src/context/budget.ts` | `createBudget` 工厂——分段 token 预算管理 | 161 |
+| `src/context/pack.ts` | `packContext`——HEAD/MID/TAIL 打包 | 73 |
+| `src/context/compress.ts` | `compress` + 4 种内置策略 + `compactIfNeeded` 条件压缩 + `createAdapterSummarizer` | 434 |
+| `src/context/cache-stability.ts` | `analyzeCacheStability`——缓存稳定性分析 | 192 |
+| `src/context/checkpoint.ts` | `createCheckpointManager`——消息快照与恢复 | 153 |
+| `src/context/index.ts` | 公共导出桶文件 | 34 |
 
 ## 公共 API
 

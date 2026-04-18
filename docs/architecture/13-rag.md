@@ -12,12 +12,12 @@ rag 模块提供将文档转化为可检索上下文的完整流水线：加载 
 
 | 文件 | 职责 | 约行数 |
 |------|------|--------|
-| `src/rag/types.ts` | 核心类型：Document、DocumentChunk、EmbeddingModel、Retriever、RetrievalResult 等 | ~84 |
-| `src/rag/loaders.ts` | 内置加载器：createTextLoader、createDocumentArrayLoader | ~54 |
-| `src/rag/chunking.ts` | 内置分块策略：FixedSize、Paragraph、SlidingWindow | ~213 |
-| `src/rag/retriever.ts` | 内置检索器：createInMemoryRetriever（余弦相似度 + LRU 查询缓存 + 多租户隔离 SEC-010） | ~270 |
-| `src/rag/pipeline.ts` | 流水线编排：createRAGPipeline | ~158 |
-| `src/rag/index.ts` | 公共导出桶文件 | ~36 |
+| `src/rag/types.ts` | 核心类型：`Document`、`DocumentChunk`、`EmbeddingModel`、`Retriever`、`RetrievalResult`、`IngestMetrics` 等 | 124 |
+| `src/rag/loaders.ts` | 内置加载器：`createTextLoader`、`createDocumentArrayLoader` | 63 |
+| `src/rag/chunking.ts` | 内置分块策略：`FixedSize`、`Paragraph`、`SlidingWindow`；CJK 字符边界 + emoji surrogate-pair 识别 | 279 |
+| `src/rag/retriever.ts` | 内置检索器：`createInMemoryRetriever`（余弦相似度 + LRU 查询缓存 + 多租户隔离 SEC-010 + `clear()`） | 314 |
+| `src/rag/pipeline.ts` | 流水线编排：`createRAGPipeline`；去重 + 容量上限 + AbortSignal | 380 |
+| `src/rag/index.ts` | 公共导出桶文件 | 36 |
 
 ## 公共 API
 

@@ -1,6 +1,6 @@
 # Guardrails
 
-> 安全护栏：Pipeline 编排、自愈重试、4 个内置护栏，AgentLoop 强制 hook。
+> 安全护栏：Pipeline 编排、自愈重试、5 个内置护栏，AgentLoop 强制 hook。
 
 ## Wave-5A: AgentLoop 强制 hook 点（T10）
 
@@ -25,20 +25,21 @@
 
 ## 概述
 
-guardrails 模块实现 AI 安全层：通过 Pipeline 将多个护栏串联执行（输入/输出双向），支持 fail-closed 默认行为；通过 `withSelfHealing` 在护栏拦截后自动重试并重新生成；内置 4 个护栏——注入检测、内容过滤、速率限制、Schema 验证。
+guardrails 模块实现 AI 安全层：通过 Pipeline 将多个护栏串联执行（输入/输出/工具输出/RAG 上下文四个钩子点），支持 fail-closed 默认行为；通过 `withSelfHealing` 在护栏拦截后自动重试并重新生成；内置 5 个护栏——注入检测、内容过滤、速率限制、Schema 验证、PII 检测。
 
 ## 文件结构
 
 | 文件 | 职责 | 约行数 |
 |------|------|--------|
-| `src/guardrails/types.ts` | 类型定义：GuardrailVerdict、Guardrail、PipelineResult 等 | ~36 |
-| `src/guardrails/pipeline.ts` | createPipeline + runInput/runOutput——串行执行护栏 | ~131 |
-| `src/guardrails/self-healing.ts` | withSelfHealing——护栏失败后自动重试 | ~62 |
-| `src/guardrails/rate-limiter.ts` | createRateLimiter——滑动窗口速率限制 | ~67 |
-| `src/guardrails/injection-detector.ts` | createInjectionDetector——prompt 注入检测 | ~111 |
-| `src/guardrails/schema-validator.ts` | createSchemaValidator——JSON Schema 验证 | ~39 |
-| `src/guardrails/content-filter.ts` | createContentFilter——关键词/正则过滤 | ~44 |
-| `src/guardrails/index.ts` | 公共导出桶文件 | ~28 |
+| `src/guardrails/types.ts` | 类型定义：`GuardrailVerdict`、`Guardrail`、`PipelineResult`、`PermissionLevel` 等 | 19 |
+| `src/guardrails/pipeline.ts` | `createPipeline` + `runInput`/`runOutput`/`runToolOutput`/`runRagContext`——串行执行护栏 | 417 |
+| `src/guardrails/self-healing.ts` | `withSelfHealing`——护栏失败后自动重试 | 194 |
+| `src/guardrails/rate-limiter.ts` | `createRateLimiter`——滑动窗口速率限制 | 199 |
+| `src/guardrails/injection-detector.ts` | `createInjectionDetector`——prompt 注入检测 | 234 |
+| `src/guardrails/schema-validator.ts` | `createSchemaValidator`——JSON Schema 验证 | 127 |
+| `src/guardrails/content-filter.ts` | `createContentFilter`——关键词/正则过滤（导出 `isReDoSCandidate` 供 pii-detector 复用） | 157 |
+| `src/guardrails/pii-detector.ts` | `createPIIDetector`——邮箱/电话/SSN/信用卡/IPv4/API key/PEM 私钥检测（Luhn 校验） | 163 |
+| `src/guardrails/index.ts` | 公共导出桶文件 | 29 |
 
 ## 公共 API
 
@@ -105,6 +106,17 @@ function createSchemaValidator(schema: JsonSchema): { name: string; guard: Guard
 function createContentFilter(config: {
   blocked?: string[]; blockedPatterns?: RegExp[];
 }): { name: string; guard: Guardrail }
+
+function createPIIDetector(config?: {
+  email?: boolean;       // 默认 true
+  phone?: boolean;       // 默认 true
+  ssn?: boolean;         // 默认 true
+  creditCard?: boolean;  // 默认 true（Luhn 校验）
+  ipAddress?: boolean;   // 默认 false（opt-in，避免误报）
+  apiKey?: boolean;      // 默认 false（OpenAI/AWS/GitHub/Stripe/Google 格式）
+  privateKey?: boolean;  // 默认 false（PEM 头检测）
+  customPatterns?: Array<{ name: string; pattern: RegExp }>;
+}): { name: string; guard: Guardrail }
 ```
 
 ## 内部实现
@@ -145,6 +157,19 @@ createInjectionDetector 的标准化流程：
 withSelfHealing 执行逻辑：对每次尝试，逐个运行 guardrails，收集 block/modify 失败原因。全部通过则返回成功；否则用 `buildRetryPrompt` 构建重试提示，调用 `regenerate` 获取新内容，重复直到 maxRetries。
 
 `estimateTokens` 回调用于累计各轮内容的 token 用量，与 `maxTotalTokens` 配合实现自愈过程的总 token 预算控制。内置默认估算器已优化为单次遍历（`Math.ceil(text.length / 4)`），避免不必要的中间字符串分配。
+
+### PII 检测
+
+`createPIIDetector` 内置 7 种常见 PII 模式：
+
+- 默认 on：email（拒绝连续点号）、phone（要求至少一个分隔符）、SSN（支持有无连字符）、creditCard（带 Luhn 校验）
+- 默认 off（opt-in）：ipAddress（带 0–255 八位组校验）、apiKey（OpenAI `sk-*` / AWS `AKIA*` / GitHub `ghp_` 等 + 上下文限定）、privateKey（PEM 头）
+
+信用卡正则匹配后再跑 Luhn 校验确认有效性，大幅降低 16 位连号误报。API
+key 检测要求键值前有 `=` / `:` / `"` / 空白等语法锚点，避免讨论文本里
+的随机字符串被误判。`customPatterns` 接受用户扩展列表，每个正则在注册
+时跑与 `createContentFilter` 相同的 ReDoS 预检（通过 `isReDoSCandidate`
+共享实现）。
 
 ## 依赖关系
 
