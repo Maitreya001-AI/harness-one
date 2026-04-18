@@ -64,7 +64,7 @@ function createLangfuseExporter(publicKey: string, secretKey: string): TraceExpo
   return {
     name: 'langfuse',
     async exportTrace(trace: Trace) {
-      langfuse.trace({ id: trace.id, name: trace.name, metadata: trace.metadata });
+      langfuse.trace({ id: trace.id, name: trace.name, metadata: trace.userMetadata });
     },
     async exportSpan(span: Span) {
       const lfTrace = langfuse.trace({ id: span.traceId });
@@ -88,7 +88,7 @@ function setupTokenizer() {
 // 4. GUARDRAILS: LLM injection detector -> Guardrail
 // ============================================================================
 
-function createLLMGuardrail(client: Anthropic): { name: string; guard: Guardrail } {
+function createLLMGuardrail(client: InstanceType<typeof Anthropic>): { name: string; guard: Guardrail } {
   const guard: Guardrail = async (ctx: GuardrailContext): Promise<GuardrailVerdict> => {
     const resp = await client.messages.create({
       model: 'claude-sonnet-4-20250514', max_tokens: 64,

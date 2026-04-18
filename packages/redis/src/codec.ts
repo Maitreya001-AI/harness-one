@@ -86,7 +86,10 @@ export async function setEntry(
   const key = keyspace.entryKey(entry.id);
   const value = JSON.stringify(entry);
   const pipeline = client.multi();
-  if (defaultTTL) {
+  // `defaultTTL === undefined` → persist without an expiry; any explicit
+  // numeric value (including `0`, which Redis treats as "expire
+  // immediately") is forwarded verbatim via SET EX.
+  if (defaultTTL !== undefined) {
     pipeline.set(key, value, 'EX', defaultTTL);
   } else {
     pipeline.set(key, value);

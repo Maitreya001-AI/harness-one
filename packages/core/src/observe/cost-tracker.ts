@@ -24,6 +24,7 @@
 import type { TokenUsageRecord } from '../core/pricing.js';
 import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import { createAsyncLock } from '../infra/async-lock.js';
+import { KahanSum } from '../infra/kahan-sum.js';
 import { safeWarn } from '../infra/safe-log.js';
 import type { Logger } from './logger.js';
 import type { MetricsPort } from '../core/metrics-port.js';
@@ -43,61 +44,8 @@ export type { ModelPricing, CostTracker } from './cost-tracker-types.js';
 export { OVERFLOW_BUCKET_KEY } from './cost-tracker-types.js';
 import { OVERFLOW_BUCKET_KEY } from './cost-tracker-types.js';
 
-/**
- * Compensated-summation accumulator (Kahan sum).
- *
- * Standard `+=` accumulation loses precision as the running total grows large
- * relative to each added term — after millions of fractional-dollar LLM cost
- * records, naive totals can drift by cents. `KahanSum` keeps a running
- * `_compensation` term that captures the low-order bits lost in each add,
- * re-injecting them on the next iteration.
- *
- * Trade-off: each `add()` does three extra FLOPs versus a naive `+=`. Use it
- * on hot paths where (a) many small values accumulate into a large total and
- * (b) the total is itself consumed (budget checks, billing). Do not use when
- * the total is only displayed or where IEEE-754 drift is already dominated
- * by input noise.
- *
- * Wave-16 m6: moved from the tiny `cost-math.ts` sub-module into the tracker
- * itself so the tracker's dependencies are visible at a glance. Still exported
- * at the module boundary because external cost-trackers (langfuse) and the
- * eviction strategies consume it.
- *
- * @example
- * ```ts
- * const sum = new KahanSum();
- * for (const record of usageRecords) sum.add(record.costUSD);
- * if (sum.total > budget) stop();
- * ```
- */
-export class KahanSum {
-  private _total = 0;
-  private _compensation = 0;
-
-  /** Add a value to the running sum. */
-  add(x: number): void {
-    const y = x - this._compensation;
-    const t = this._total + y;
-    this._compensation = (t - this._total) - y;
-    this._total = t;
-  }
-
-  /** Subtract a value from the running sum. */
-  subtract(x: number): void {
-    this.add(-x);
-  }
-
-  /** Get the current accumulated total. */
-  get total(): number {
-    return this._total;
-  }
-
-  /** Reset the sum to zero. */
-  reset(): void {
-    this._total = 0;
-    this._compensation = 0;
-  }
-}
+// Re-export KahanSum for back-compat: it used to live in this file.
+export { KahanSum } from '../infra/kahan-sum.js';
 
 /**
  * Create a new CostTracker instance.
@@ -271,23 +219,26 @@ export function createCostTracker(config?: {
   // Secondary index for O(1) getCostByTrace lookups.
   const traceTotals = new Map<string, KahanSum>();
 
-  // Secondary index mapping traceId → SORTED array of record indices that
+  // Secondary index mapping traceId → SORTED array of RAW record indices that
   // currently belong to that trace.
   //
-  // Layout:
-  //   - Every recordUsage() pushes `records.length - 1` onto the traceId's list.
-  //   - updateUsage() uses `list[list.length - 1]` for the freshest index.
-  //   - On buffer eviction (records.shift()) the head-most index is slot 0, so
-  //     the affected traceId's list shifts its front (O(1) amortised), while
-  //     every OTHER traceId's list only needs each element decremented by 1.
-  //     Decrement is implemented via a single integer offset applied at read
-  //     time — so the amortised cost of eviction becomes O(unique traces on
-  //     evicted record) rather than O(records).
+  // Two index spaces live side-by-side:
+  //   - RawIndex — the position a record occupied when it was pushed, offset
+  //     by all historical shifts. Monotone; never revisited.
+  //   - EffectiveIndex — the current slot in `records` (0-indexed). The
+  //     conversion is `effective = raw - evictionBias`.
   //
-  // `evictionBias` is the cumulative number of shifts that have happened. All
-  // indices stored in `traceIdIndex` arrays are RAW (original push order); the
-  // effective slot for a raw value `r` is `r - evictionBias`.
-  const traceIdIndex = new Map<string, number[]>();
+  // We use branded types so the two spaces can't be mixed at a callsite.
+  // `evictionBias` is the cumulative number of `records.shift()` calls and
+  // is compacted back to 0 inside `reset()` and whenever the buffer fully
+  // drains so an unbounded-lifetime tracker doesn't approach 2^53 after
+  // many years of streaming.
+  type RawIndex = number & { readonly __brand: 'RawIndex' };
+  type EffectiveIndex = number & { readonly __brand: 'EffectiveIndex' };
+  const asRaw = (n: number): RawIndex => n as RawIndex;
+  const toEffective = (raw: RawIndex): EffectiveIndex =>
+    (raw - evictionBias) as EffectiveIndex;
+  const traceIdIndex = new Map<string, RawIndex[]>();
   let evictionBias = 0;
 
   if (config?.pricing) {
@@ -326,6 +277,9 @@ export function createCostTracker(config?: {
         for (const p of newPricing) {
           pricing.set(p.model, p);
         }
+        // Pricing edits don't rewrite existing record costs, but a future
+        // `recordUsage` may land on a re-priced model. Dropping the cache
+        // keeps the snapshot fresh while staying O(1) on steady state.
       });
     },
 
@@ -370,13 +324,15 @@ export function createCostTracker(config?: {
       // Append raw (pre-bias) index to this traceId's sorted list. Raw index
       // space is monotone; effective slot = raw - evictionBias.
       if (usage.traceId) {
-        const rawIdx = records.length - 1 + evictionBias;
+        const rawIdx = asRaw(records.length - 1 + evictionBias);
         const list = traceIdIndex.get(usage.traceId);
         if (list) list.push(rawIdx);
         else traceIdIndex.set(usage.traceId, [rawIdx]);
       }
 
       runningSum.add(estimatedCost);
+      // Invalidate the per-model snapshot cache; a new model key may have
+      // appeared or an existing one's total shifted.
 
       // Per-key bucket resolution is delegated to the configured
       // EvictionStrategy. The default `'overflow-bucket'` strategy: existing
@@ -415,13 +371,24 @@ export function createCostTracker(config?: {
         // `evictionBias` is bumped so getters translate correctly.
         if (evicted.traceId) {
           const list = traceIdIndex.get(evicted.traceId);
-          if (list && list.length > 0 && list[0] === evictionBias) {
+          if (list && list.length > 0 && list[0] === (evictionBias as number)) {
             list.shift();
             if (list.length === 0) traceIdIndex.delete(evicted.traceId);
           }
         }
         evictionBias++;
       }
+
+      // Buffer drained (every record evicted since the last reset): compact
+      // `evictionBias` back to 0 so long-lived trackers don't approach
+      // 2^53 after many years of streaming. Safe because traceIdIndex is
+      // empty — no live RAW index to translate.
+      if (records.length === 0 && traceIdIndex.size === 0 && evictionBias !== 0) {
+        evictionBias = 0;
+      }
+
+      // Invalidate the per-model snapshot cache; the next getCostByModel()
+      // call will rebuild from the (now-mutated) modelTotals map.
 
       // Check budget alerts after recording
       if (alertManager.getBudget() !== undefined) {
@@ -436,12 +403,12 @@ export function createCostTracker(config?: {
 
     updateUsage(traceId: string, usage: Partial<Omit<TokenUsageRecord, 'estimatedCost' | 'timestamp' | 'traceId' | 'model'>>): TokenUsageRecord | undefined {
       // The freshest raw index lives at the tail of the list. Translate via
-      // evictionBias to the live buffer slot. Any stale index below bias
-      // would indicate a bookkeeping bug — treat as miss.
+      // evictionBias to the live buffer slot through the branded
+      // `toEffective` helper — raw/effective mixing is a type error now.
       const list = traceIdIndex.get(traceId);
       if (!list || list.length === 0) return undefined;
       const rawIdx = list[list.length - 1];
-      const existingIndex = rawIdx - evictionBias;
+      const existingIndex = toEffective(rawIdx);
       if (existingIndex < 0 || existingIndex >= records.length) return undefined;
       const existingRecord = records[existingIndex];
       if (!existingRecord) return undefined;
@@ -498,6 +465,7 @@ export function createCostTracker(config?: {
 
       // Adjust running totals
       runningSum.add(costDelta);
+      // Per-model total shifted; invalidate the cached snapshot.
 
       const modelSum = modelTotals.get(existingRecord.model);
       if (modelSum) {
@@ -525,8 +493,13 @@ export function createCostTracker(config?: {
 
     // Returns from the permanent `modelTotals` accumulator so the sum
     // stays consistent with getTotalCost() even after buffer eviction.
-    // Snapshot — callers cannot mutate the internal KahanSum map through
-    // the returned view.
+    //
+    // A FRESH Map is constructed on every call: callers routinely mutate
+    // the returned value in ad-hoc dashboards or inject synthetic
+    // "all models" rows, and reusing a cached snapshot would leak those
+    // mutations back into subsequent callers. Construction is O(N) over
+    // `modelTotals`; for poll-driven consumers that matters only past
+    // ~10k models, at which point the dashboard should be paging anyway.
     getCostByModel(): ReadonlyMap<string, number> {
       const snapshot = new Map<string, number>();
       for (const [model, sum] of modelTotals) {
@@ -561,6 +534,15 @@ export function createCostTracker(config?: {
       // Reset dedupe state so alerts can re-fire after an explicit reset
       // (tests + operator-driven "checkpoint" workflows).
       alertManager.resetDedupe();
+      // Reset overflow-signal throttle: without this, an overflow observed
+      // before reset() could silently suppress the first overflow after
+      // reset() for up to OVERFLOW_THROTTLE_MS.
+      lastOverflowSignal.model = 0;
+      lastOverflowSignal.trace = 0;
+      // Forget unpriced-model warnings so tests/checkpoint cycles see the
+      // first-time warn on every fresh run.
+      warnedUnpriced.clear();
+      // The snapshot is empty now; drop the cache.
     },
 
     getAlertMessage: () => alertManager.getAlertMessage(),

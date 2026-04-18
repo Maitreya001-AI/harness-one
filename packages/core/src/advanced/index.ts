@@ -18,6 +18,9 @@ export type { MiddlewareContext, MiddlewareFn, MiddlewareChain } from '../core/m
 export { createMiddlewareChain } from '../core/middleware.js';
 export type { AgentLoopTraceManager } from '../core/trace-interface.js';
 
+// ─── Adapter stream limits (shared with anthropic/openai adapters) ───────
+export { MAX_STREAM_BYTES, MAX_TOOL_ARG_BYTES, MAX_TOOL_CALLS } from '../core/agent-loop-config.js';
+
 // ─── Stream aggregation (for custom adapter stream() generators) ─────────
 export { StreamAggregator } from '../core/stream-aggregator.js';
 export type {

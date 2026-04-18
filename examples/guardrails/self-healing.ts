@@ -1,50 +1,45 @@
 /**
  * Example: Self-Healing Guardrails with retry and backoff
  *
- * When a guardrail blocks output, self-healing retries with the LLM
- * using exponential backoff. The blocked content is fed back as context
- * so the LLM can produce a compliant response.
+ * When a guardrail blocks output, self-healing retries with the LLM.
+ * The blocked content + a retry prompt are fed back so the LLM can
+ * produce a compliant response.
  */
 import {
-  createPipeline,
   createContentFilter,
   withSelfHealing,
-  runOutput,
 } from 'harness-one/guardrails';
 
 async function main() {
   // Create a content filter that blocks profanity
   const filter = createContentFilter({ blocked: ['badword', 'offensive'] });
 
-  // Create a pipeline with the content filter
-  const pipeline = createPipeline({
-    input: [],
-    output: [{ name: filter.name, guard: filter.guard }],
-  });
+  // Run a single piece of content through self-healing. `withSelfHealing`
+  // accepts a flat config bag: the guardrail list, a retry-prompt builder,
+  // and a regenerate() hook that re-queries the LLM.
+  const initialContent = 'This is perfectly fine content.';
 
-  // Wrap with self-healing: retries up to 3 times with exponential backoff
-  const selfHealing = withSelfHealing(pipeline, {
-    maxRetries: 3,
-    backoffMs: 500,
-    regenerate: async (feedback) => {
-      // In production, call the LLM again with the feedback
-      console.log('Regenerating after guardrail block:', feedback);
-      // Return a cleaned-up response
-      return 'Here is a clean response without any problematic content.';
+  const result = await withSelfHealing(
+    {
+      maxRetries: 3,
+      guardrails: [{ name: filter.name, guard: filter.guard }],
+      buildRetryPrompt: (_content, failures) =>
+        `Rewrite the response, avoiding: ${failures[0]?.reason ?? 'unknown'}`,
+      regenerate: async (prompt) => {
+        // In production, call the LLM again with the retry prompt.
+        console.log('Regenerating after guardrail block:', prompt);
+        return 'Here is a clean response without any problematic content.';
+      },
     },
-  });
+    initialContent,
+  );
 
-  // Test with clean content (passes immediately)
-  const cleanResult = await runOutput(selfHealing.pipeline, {
-    content: 'This is perfectly fine content.',
-  });
-  console.log('Clean content:', cleanResult.passed ? 'PASSED' : 'BLOCKED');
-
-  // In production, the self-healing would be used inside the agent loop
-  // to automatically retry when guardrails block the LLM's output.
-  console.log('\nSelf-healing config:');
-  console.log(`  Max retries: ${selfHealing.maxRetries}`);
-  console.log(`  Backoff: ${selfHealing.backoffMs}ms (exponential)`);
+  console.log(`Content: ${result.content}`);
+  console.log(`Attempts: ${result.attempts}`);
+  console.log(`Passed: ${result.passed}`);
+  if (result.failureReason) {
+    console.log(`Final failure reason: ${result.failureReason}`);
+  }
 }
 
 main().catch(console.error);

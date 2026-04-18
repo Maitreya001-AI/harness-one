@@ -116,7 +116,10 @@ export async function transactionalUpdate(
       const value = JSON.stringify(updated);
 
       const pipeline = client.multi();
-      if (defaultTTL) {
+      // `defaultTTL === undefined` → persist forever; any explicit numeric
+      // value (including 0, which Redis treats as "expire immediately")
+      // flows straight into SET EX so the caller's intent is preserved.
+      if (defaultTTL !== undefined) {
         pipeline.set(key, value, 'EX', defaultTTL);
       } else {
         pipeline.set(key, value);

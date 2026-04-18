@@ -163,6 +163,13 @@ export function createAgentPool(
    */
   let disposePromise: Promise<void> | null = null;
   let warmedUp = false;
+  /**
+   * Most-recently-observed role, threaded into `resize()`'s pre-warm path so
+   * role-differentiated factories (`factory('writer')` vs `factory('reader')`)
+   * don't silently build default-shaped agents when the autoscaler grows
+   * the pool. Updated on every `acquire*()` call.
+   */
+  let lastAcquireRole: string | undefined;
   let totalCreated = 0;
   let totalRecycled = 0;
   /** Counter for dispose errors silently dropped during teardown. */
@@ -346,6 +353,10 @@ export function createAgentPool(
     if (disposed) {
       throw new HarnessError('Agent pool is disposed', HarnessErrorCode.POOL_DISPOSED);
     }
+    // Remember the role on every acquire so a later resize() / warm-up
+    // path builds same-shape agents even if the autoscaler doesn't know
+    // which role is active.
+    if (role !== undefined) lastAcquireRole = role;
     warmUp(role);
     for (const entry of entries.values()) {
       if (entry.state === 'idle') {
@@ -628,9 +639,13 @@ export function createAgentPool(
           }
         }
       } else if (stats.total < target) {
-        // Pre-warm up to target
+        // Pre-warm up to target. Thread the last-observed role so a
+        // role-differentiated factory stays consistent with the agents the
+        // pool already hands out via `acquire(role)`. When no role has been
+        // observed yet we pass undefined so the factory sees its documented
+        // default shape.
         while (entries.size < target && entries.size < max) {
-          const entry = createEntry();
+          const entry = createEntry(lastAcquireRole);
           entries.set(entry.agent.id, entry);
           startIdleTimer(entry);
         }
@@ -653,7 +668,16 @@ export function createAgentPool(
           }
         }
         if (!hasActive) break;
-        await new Promise((r) => setTimeout(r, 50));
+        // Poll with an unref'd timer so the Node event loop can still exit
+        // cleanly if drain is waiting on a stuck agent. The 50 ms interval
+        // is short enough that drain resolves within tens of milliseconds
+        // of the last agent release, and long enough to avoid burning CPU.
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, 50);
+          if (typeof (timer as NodeJS.Timeout).unref === 'function') {
+            (timer as NodeJS.Timeout).unref();
+          }
+        });
       }
 
       // Force-dispose all (including any still active after timeout). The

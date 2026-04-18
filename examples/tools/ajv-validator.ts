@@ -114,7 +114,9 @@ async function demo() {
           description: 'The action to perform',
         },
         target: {
-          // oneOf: target is either a user or a resource
+          // JsonSchema requires `type` at every level; the sibling `oneOf`
+          // narrows the object shape (user vs resource).
+          type: 'object',
           oneOf: [
             {
               type: 'object',

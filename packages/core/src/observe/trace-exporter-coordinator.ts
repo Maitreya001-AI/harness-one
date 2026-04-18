@@ -21,13 +21,17 @@
  */
 
 import { createLazyAsync, type LazyAsync } from '../infra/lazy-async.js';
+import type { Logger } from '../infra/logger.js';
 import type { Span, Trace, TraceExporter } from './types.js';
 
-/** Shape injected from the trace-manager — just the logger it already has. */
-export interface CoordinatorLogger {
-  warn: (msg: string, meta?: Record<string, unknown>) => void;
-  debug?: (msg: string, meta?: Record<string, unknown>) => void;
-}
+/**
+ * Subset of the canonical {@link Logger} port the coordinator actually
+ * consumes. Accepting a full `Logger` via structural subtyping means a
+ * single `createLogger()` can be threaded into every observability
+ * subsystem without type casts.
+ */
+export type CoordinatorLogger = Pick<Logger, 'warn'> &
+  Partial<Pick<Logger, 'debug' | 'info' | 'error' | 'child' | 'isWarnEnabled'>>;
 
 export interface TraceExporterCoordinatorConfig {
   readonly exporters: readonly TraceExporter[];

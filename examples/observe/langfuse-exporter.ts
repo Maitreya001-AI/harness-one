@@ -50,7 +50,9 @@ export function createLangfuseExporter(config: {
         lfTrace = langfuse.trace({
           id: trace.id,
           name: trace.name,
-          metadata: trace.metadata,
+          // Only user-supplied metadata flows to external systems;
+          // systemMetadata is library-authored and stays internal.
+          metadata: trace.userMetadata,
         });
         traceMap.set(trace.id, lfTrace);
       }
@@ -58,7 +60,7 @@ export function createLangfuseExporter(config: {
       // Update the trace with final status
       lfTrace.update({
         metadata: {
-          ...trace.metadata,
+          ...trace.userMetadata,
           status: trace.status,
           spanCount: trace.spans.length,
         },

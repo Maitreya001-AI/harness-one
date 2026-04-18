@@ -98,14 +98,25 @@ export function createStreamHandler(config: Readonly<StreamHandlerConfig>): Stre
       let usage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
 
       try {
-        // Caller's contract: `adapter.stream` is defined. Narrow via
-        // the same non-null assertion pattern used by the previous
-        // inline handleStream (agent-loop.ts L1124).
-        const streamFn = config.adapter.stream as NonNullable<typeof config.adapter.stream>;
-        const stream = streamFn({
-          messages: conversation as Message[],
+        // Caller's contract: `adapter.stream` is defined. Assert once at
+        // the boundary with a typed HarnessError so a buggy caller lands on
+        // a typed error instead of a cryptic `undefined is not a function`.
+        const streamFn = config.adapter.stream;
+        if (typeof streamFn !== 'function') {
+          throw new HarnessError(
+            'StreamHandler invoked on an adapter without a stream() method',
+            HarnessErrorCode.CORE_INVALID_STATE,
+            'Guard against streaming=true when the adapter lacks stream()',
+          );
+        }
+        // The `ChatParams` shape accepted by adapters expects mutable arrays
+        // so the SDKs can reuse them internally. We pass through copies so
+        // downstream mutation can't corrupt the caller's conversation. The
+        // same pattern applies to `tools`.
+        const stream = streamFn.call(config.adapter, {
+          messages: conversation.slice(),
           signal: config.signal,
-          ...(config.tools !== undefined && { tools: config.tools as ToolSchema[] }),
+          ...(config.tools !== undefined && { tools: config.tools.slice() }),
         });
 
         for await (const chunk of stream) {

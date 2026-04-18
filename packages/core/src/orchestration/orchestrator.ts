@@ -5,7 +5,7 @@
  */
 
 import { HarnessError, HarnessErrorCode} from '../core/errors.js';
-import { MessageQueue } from './message-queue.js';
+import { createMessageQueue } from './message-queue.js';
 import type { Logger } from '../infra/logger.js';
 import type {
   AgentMessage,
@@ -256,7 +256,7 @@ export function createOrchestrator(config?: OrchestratorConfig): AgentOrchestrat
   if (config?.onWarning !== undefined) {
     mqConfig.onWarning = config.onWarning;
   }
-  const messageQueue = new MessageQueue(mqConfig);
+  const messageQueue = createMessageQueue(mqConfig);
 
   function toReadonly(agent: MutableAgentRegistration): AgentRegistration {
     return {

@@ -146,3 +146,89 @@ describe('createRetryPolicy', () => {
     expect(state.failure).toBe(1);
   });
 });
+
+// Integration coverage — retry policy composed with the REAL circuit breaker
+// (no hand-rolled stub). Exercises the retry-decision + breaker-transition
+// seam that the Evidence Synthesizer audit flagged as hand-rolled-only.
+describe('createRetryPolicy + real CircuitBreaker integration', () => {
+  it('failed retries transition breaker closed → open at the threshold', async () => {
+    const { createCircuitBreaker } = await import('../../infra/circuit-breaker.js');
+    const breaker = createCircuitBreaker({
+      failureThreshold: 3,
+      resetTimeoutMs: 30_000,
+    });
+    const policy = createRetryPolicy({
+      maxAdapterRetries: 0,
+      baseRetryDelayMs: 1,
+      retryableErrors: [],
+      signal: new AbortController().signal,
+      circuitBreaker: breaker,
+    });
+
+    expect(breaker.state()).toBe('closed');
+    expect(policy.checkCircuitOpen()).toBeUndefined();
+
+    policy.recordFailure();
+    policy.recordFailure();
+    policy.recordFailure();
+
+    expect(breaker.state()).toBe('open');
+    const open = policy.checkCircuitOpen();
+    expect(open).toBeDefined();
+    expect(open?.error).toBeDefined();
+    expect(open?.errorCategory).toBe(HarnessErrorCode.ADAPTER_CIRCUIT_OPEN);
+  });
+
+  it('success after threshold resets the breaker back to closed', async () => {
+    const { createCircuitBreaker } = await import('../../infra/circuit-breaker.js');
+    const breaker = createCircuitBreaker({
+      failureThreshold: 2,
+      resetTimeoutMs: 30_000,
+    });
+    const policy = createRetryPolicy({
+      maxAdapterRetries: 0,
+      baseRetryDelayMs: 1,
+      retryableErrors: [],
+      signal: new AbortController().signal,
+      circuitBreaker: breaker,
+    });
+
+    policy.recordFailure();
+    policy.recordSuccess(); // interleaved success resets the failure count
+    policy.recordFailure();
+    expect(breaker.state()).toBe('closed');
+    expect(policy.checkCircuitOpen()).toBeUndefined();
+  });
+
+  it('probe failure during HALF_OPEN re-opens the breaker', async () => {
+    const { createCircuitBreaker } = await import('../../infra/circuit-breaker.js');
+    const breaker = createCircuitBreaker({
+      failureThreshold: 1,
+      resetTimeoutMs: 1,
+    });
+    const policy = createRetryPolicy({
+      maxAdapterRetries: 0,
+      baseRetryDelayMs: 1,
+      retryableErrors: [],
+      signal: new AbortController().signal,
+      circuitBreaker: breaker,
+    });
+
+    policy.recordFailure();
+    expect(breaker.state()).toBe('open');
+
+    // Wait past the reset timeout so the next execute() transitions to half-open.
+    await new Promise((r) => setTimeout(r, 5));
+
+    // Execute a failing probe through the breaker. After a half-open
+    // failure, the breaker must return to OPEN.
+    await expect(
+      breaker.execute(async () => {
+        throw new Error('probe failed');
+      }),
+    ).rejects.toThrow('probe failed');
+
+    expect(breaker.state()).toBe('open');
+    expect(policy.checkCircuitOpen()).toBeDefined();
+  });
+});

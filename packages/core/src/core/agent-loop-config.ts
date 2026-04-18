@@ -21,6 +21,13 @@ import { validateAgentLoopConfig } from './agent-loop-validation.js';
 export const MAX_STREAM_BYTES = 10 * 1024 * 1024;
 /** Maximum size per tool-call argument (5 MB) to prevent oversized payloads. */
 export const MAX_TOOL_ARG_BYTES = 5 * 1024 * 1024;
+/**
+ * Default upper bound on the number of distinct tool calls a single adapter
+ * stream can emit. Applied both by {@link StreamAggregator} (core-side) and
+ * provider adapters (anthropic / openai) so truncation happens at the same
+ * boundary and user-visible error codes stay uniform.
+ */
+export const MAX_TOOL_CALLS = 128;
 
 /** Logger shape used by AgentLoop + its downstream components. */
 export type AgentLoopLogger = {

@@ -19,7 +19,8 @@ import type {
 } from 'harness-one/core';
 import { HarnessError, HarnessErrorCode } from 'harness-one/core';
 import type { Logger } from 'harness-one/observe';
-import { createDefaultLogger } from 'harness-one/observe';
+import { createDefaultLogger, isWarnActive } from 'harness-one/observe';
+import { MAX_TOOL_ARG_BYTES, MAX_TOOL_CALLS } from 'harness-one/advanced';
 
 import {
   filterExtra,
@@ -68,6 +69,19 @@ export interface OpenAIAdapterConfig {
    * a tiktoken-based counter without coupling the adapter to the tokenizer package.
    */
   readonly countTokens?: (text: string) => number;
+  /**
+   * Per-stream safety caps enforced inside the adapter's stream pump.
+   * Unbounded tool-call count or argument size is a memory-exhaustion vector
+   * for long-running streams. Defaults match the shared
+   * `harness-one/advanced` constants (`MAX_TOOL_ARG_BYTES` / `MAX_TOOL_CALLS`)
+   * so `createAgentLoop({ limits: { maxToolArgBytes } })` and the adapter
+   * see the same budget out of the box. Override per-factory when running
+   * on constrained hosts.
+   */
+  readonly streamLimits?: {
+    readonly maxToolCalls?: number;
+    readonly maxToolArgBytes?: number;
+  };
 }
 
 /**
@@ -146,6 +160,8 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
   // singleton instead of a hand-rolled console.warn/error fallback.
   const logger: Pick<Logger, 'warn' | 'error'> = config.logger ?? createDefaultLogger();
   const tokenizer = config.countTokens;
+  const maxToolCalls = config.streamLimits?.maxToolCalls ?? MAX_TOOL_CALLS;
+  const maxToolArgBytes = config.streamLimits?.maxToolArgBytes ?? MAX_TOOL_ARG_BYTES;
   // Wave-13 G-1 (P0-3): per-instance zero-usage warned-models LRU. Scoped
   // to this adapter instance so a single tenant's "rare model" warn does
   // not silence every other tenant's first-touch alert for the same model.
@@ -192,13 +208,10 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
       const missingInput = usage?.prompt_tokens === undefined || usage?.prompt_tokens === null;
       const missingOutput = usage?.completion_tokens === undefined || usage?.completion_tokens === null;
       if ((missingInput || missingOutput) && !zeroUsageWarned.has(model)) {
-        // Wave-12 P2-9: guard the warn metadata behind an optional
-        // `isWarnEnabled()` gate when the host logger exposes one. The Logger
-        // base type in `@harness-one/core/observe` does not define it today
-        // so we probe defensively with `typeof === 'function'`.
-        const maybeGate = (logger as { isWarnEnabled?: () => boolean }).isWarnEnabled;
-        const warnEnabled = typeof maybeGate === 'function' ? maybeGate.call(logger) : true;
-        if (warnEnabled) {
+        // Guard the warn metadata behind the shared `isWarnActive()` probe
+        // exposed by `harness-one/observe` so both adapters treat
+        // level-aware loggers consistently.
+        if (isWarnActive(logger)) {
           zeroUsageWarned.record(model);
           logger.warn(
             `[harness-one/openai] chat() response for model "${model}" had missing prompt/completion token counts — cost tracking will under-report. (This warning is emitted once per model per adapter instance.)`,
@@ -249,10 +262,6 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
       // can be resolved to the correct accumulator entry via their positional index.
       const indexToId = new Map<number, string>();
 
-      // Safety limits to prevent OOM from malformed streams
-      const MAX_TOOL_CALLS = 128;
-      const MAX_TOOL_ARG_BYTES = 1_048_576; // 1MB
-
       try {
         for await (const chunk of stream) {
           const delta = chunk.choices[0]?.delta;
@@ -269,7 +278,7 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
               const id = tc.id ?? indexToId.get(tc.index) ?? `tool_${tc.index}`;
 
               // Skip new tool calls beyond the safety limit
-              if (toolCallAccum.size >= MAX_TOOL_CALLS && !toolCallAccum.has(id)) {
+              if (toolCallAccum.size >= maxToolCalls && !toolCallAccum.has(id)) {
                 continue;
               }
 
@@ -286,7 +295,7 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
               if (tc.function?.name) accum.name = tc.function.name;
               if (tc.function?.arguments) {
                 // Skip arguments that would exceed the size limit
-                if (accum.arguments.length + tc.function.arguments.length > MAX_TOOL_ARG_BYTES) {
+                if (accum.arguments.length + tc.function.arguments.length > maxToolArgBytes) {
                   continue;
                 }
                 accum.arguments += tc.function.arguments;

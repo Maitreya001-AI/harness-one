@@ -22,6 +22,17 @@ export interface HookDispatcherConfig {
 }
 
 /**
+ * Type of the dispatcher function returned by {@link createHookDispatcher}.
+ *
+ * Exposed so `IterationRunner` can receive a single dispatcher instance from
+ * `AgentLoop` rather than rebuilding one from the same hooks + strict flag.
+ */
+export type AgentLoopHookDispatcher = <E extends keyof AgentLoopHook>(
+  event: E,
+  info: Parameters<NonNullable<AgentLoopHook[E]>>[0],
+) => void;
+
+/**
  * Build a `(event, info) => void` dispatcher over the registered hooks.
  * Hooks are invoked synchronously in registration order. A throwing hook
  * is logged (or forwarded to `console.error` when no logger is configured)
@@ -30,10 +41,7 @@ export interface HookDispatcherConfig {
  */
 export function createHookDispatcher(
   config: HookDispatcherConfig,
-): <E extends keyof AgentLoopHook>(
-  event: E,
-  info: Parameters<NonNullable<AgentLoopHook[E]>>[0],
-) => void {
+): AgentLoopHookDispatcher {
   const { hooks, strictHooks = false, logger } = config;
   return function dispatch<E extends keyof AgentLoopHook>(
     event: E,

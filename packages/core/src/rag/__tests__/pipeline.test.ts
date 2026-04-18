@@ -802,4 +802,36 @@ describe('createRAGPipeline', () => {
       expect(ingestTraces[0].status).toBe('completed');
     });
   });
+
+  // ---- Unicode normalization-aware deduplication ----
+  describe('deduplication — Unicode normalization', () => {
+    it('NFC and NFD forms of the same grapheme are treated as duplicates', async () => {
+      // "café" as NFC is 4 code units (é is a single precomposed codepoint);
+      // as NFD it decomposes to 5 code units (e + combining acute). Both
+      // render identically — the dedup cache must treat them as one chunk.
+      const composed = 'café'; // NFC
+      const decomposed = 'cafe\u0301'; // NFD: e + U+0301 combining acute
+      expect(composed).not.toBe(decomposed); // prove they differ byte-wise
+      expect(composed.normalize('NFC')).toBe(decomposed.normalize('NFC'));
+
+      const warnings: string[] = [];
+      const pipeline = createRAGPipeline({
+        loader: createDocumentArrayLoader([
+          { id: 'd1', content: composed },
+          { id: 'd2', content: decomposed },
+        ]),
+        chunking: createFixedSizeChunking({ chunkSize: 1_000 }),
+        embedding,
+        retriever: createInMemoryRetriever({ embedding }),
+        onWarning: (w) => warnings.push(w.message),
+      });
+
+      const result = await pipeline.ingest();
+      // One unique chunk admitted; the duplicate is skipped with a warning.
+      expect(result.chunks).toBe(1);
+      expect(
+        warnings.some((m) => m.startsWith('Duplicate chunk skipped')),
+      ).toBe(true);
+    });
+  });
 });

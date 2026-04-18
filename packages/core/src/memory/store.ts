@@ -289,25 +289,14 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
           ...(input.tags !== undefined && { tags: input.tags }),
         });
       }
-      // Commit all entries and indexes atomically: if any index update
-      // throws, roll back all entries written in this batch.
-      const committedIds: string[] = [];
-      try {
-        for (const entry of prepared) {
-          entries.set(entry.id, entry);
-          addToIndexes(entry);
-          committedIds.push(entry.id);
-        }
-      } catch (err) {
-        // Rollback: remove all entries and indexes from this batch
-        for (const id of committedIds) {
-          const entry = entries.get(id);
-          if (entry) {
-            removeFromIndexes(entry);
-            entries.delete(id);
-          }
-        }
-        throw err;
+      // Commit all entries and indexes. `Map.set` and our index mutations
+      // are pure synchronous operations that cannot throw — so "rollback on
+      // failure" is dead code for the in-memory backend. A real
+      // rollback contract only applies to storage backends that can fail
+      // mid-commit (see `@harness-one/redis`).
+      for (const entry of prepared) {
+        entries.set(entry.id, entry);
+        addToIndexes(entry);
       }
       // Apply grade-aware eviction after batch commit (same logic as write()).
       if (maxEntries !== undefined) {

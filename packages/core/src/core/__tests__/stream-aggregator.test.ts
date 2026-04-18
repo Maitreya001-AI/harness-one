@@ -270,4 +270,58 @@ describe('StreamAggregator', () => {
       expect(errEvent).toBeUndefined();
     });
   });
+
+  describe('UTF-8 byte accounting', () => {
+    // The aggregator previously counted `string.length` (UTF-16 code units),
+    // so a CJK-heavy stream appeared to be about half its real wire size.
+    // These tests pin the current UTF-8 accounting so the byte budget matches
+    // what downstream readers of the serialized JSON actually see.
+    const UTF8_OPTS = {
+      maxStreamBytes: 1_000_000,
+      maxToolArgBytes: 1_000_000,
+      cumulativeStreamBytesSoFar: 0,
+      maxCumulativeStreamBytes: 10_000_000,
+    };
+
+    it('counts ASCII as 1 byte per char', () => {
+      const agg = new StreamAggregator(UTF8_OPTS);
+      drain(agg, [{ type: 'text_delta', text: 'hello' }]);
+      expect(agg.bytesRead).toBe(5);
+    });
+
+    it('counts CJK characters as 3 bytes each', () => {
+      const agg = new StreamAggregator(UTF8_OPTS);
+      drain(agg, [{ type: 'text_delta', text: '你好世界' }]);
+      expect(agg.bytesRead).toBe(12); // 4 chars × 3 bytes
+    });
+
+    it('counts emoji (surrogate pairs) as 4 bytes each', () => {
+      const agg = new StreamAggregator(UTF8_OPTS);
+      drain(agg, [{ type: 'text_delta', text: '🎉🚀' }]);
+      expect(agg.bytesRead).toBe(8); // 2 emoji × 4 bytes
+    });
+
+    it('enforces maxStreamBytes using UTF-8 bytes, not code units', () => {
+      const agg = new StreamAggregator({ ...UTF8_OPTS, maxStreamBytes: 20 });
+      // 8 CJK chars = 24 UTF-8 bytes; only 16 UTF-16 code units — should
+      // overflow under UTF-8 accounting.
+      const events = drain(agg, [{ type: 'text_delta', text: '你好世界你好世界' }]);
+      const err = events.find((e) => e.type === 'error');
+      expect(err).toBeDefined();
+    });
+
+    it('counts tool-call argument bytes in UTF-8', () => {
+      const agg = new StreamAggregator({ ...UTF8_OPTS, maxToolArgBytes: 10 });
+      // Per-tool-call overflow is only detected on the APPEND path (second
+      // chunk onward) — the first chunk just seeds the entry. Feed two
+      // CJK chunks so the existing-entry branch fires: 3+6 bytes total exceeds
+      // the 10-byte cap once we add 5 more bytes.
+      const events = drain(agg, [
+        { type: 'tool_call_delta', toolCall: { id: 'tc', name: 'n', arguments: '一' } }, // 3B
+        { type: 'tool_call_delta', toolCall: { id: 'tc', arguments: '二三四' } }, // +9B → 12B > 10
+      ]);
+      const err = events.find((e) => e.type === 'error');
+      expect(err).toBeDefined();
+    });
+  });
 });

@@ -2,50 +2,44 @@
  * Tests for safe-log primitive: default logger factory + safeWarn/safeError
  * helpers used as fallbacks throughout the monorepo.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, type Mock } from 'vitest';
 import {
   createDefaultLogger,
-  safeWarn,
+  isWarnActive,
   safeError,
+  safeWarn,
 } from '../safe-log.js';
 import type { Logger } from '../../observe/logger.js';
 
-function makeFakeLogger(): Logger & {
-  calls: {
-    debug: Array<[string, Record<string, unknown> | undefined]>;
-    info: Array<[string, Record<string, unknown> | undefined]>;
-    warn: Array<[string, Record<string, unknown> | undefined]>;
-    error: Array<[string, Record<string, unknown> | undefined]>;
-  };
+/**
+ * Build a `Logger` whose methods are `vi.fn()` spies. Using real spies
+ * (instead of a hand-rolled calls array) means:
+ *   - TypeScript enforces the Logger interface at build time, so drift in
+ *     the canonical interface surfaces here.
+ *   - Vitest's spy semantics (`mock.calls`, `toHaveBeenCalledWith`, …) work
+ *     out of the box without custom matchers.
+ */
+function makeSpyLogger(): Logger & {
+  debug: Mock;
+  info: Mock;
+  warn: Mock;
+  error: Mock;
 } {
-  const calls = {
-    debug: [] as Array<[string, Record<string, unknown> | undefined]>,
-    info: [] as Array<[string, Record<string, unknown> | undefined]>,
-    warn: [] as Array<[string, Record<string, unknown> | undefined]>,
-    error: [] as Array<[string, Record<string, unknown> | undefined]>,
-  };
-  const logger: Logger = {
-    debug: (m, meta) => {
-      calls.debug.push([m, meta]);
-    },
-    info: (m, meta) => {
-      calls.info.push([m, meta]);
-    },
-    warn: (m, meta) => {
-      calls.warn.push([m, meta]);
-    },
-    error: (m, meta) => {
-      calls.error.push([m, meta]);
-    },
-    child: () => logger,
-  };
-  return Object.assign(logger, { calls });
+  const logger = {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  } as unknown as Logger & { debug: Mock; info: Mock; warn: Mock; error: Mock };
+  // The Logger contract requires a `child()` method. Return `this` so
+  // downstream calls can still emit.
+  (logger as Logger & { child: (meta: Record<string, unknown>) => Logger }).child = () => logger;
+  return logger;
 }
 
 describe('safe-log', () => {
   describe('createDefaultLogger', () => {
     it('redacts secret-looking keys in warn output', () => {
-      // Capture console.log output because createLogger uses it by default.
       const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
       try {
         const logger = createDefaultLogger();
@@ -91,24 +85,21 @@ describe('safe-log', () => {
     });
 
     it('forwards to logger.warn with msg and meta when logger is provided', () => {
-      const fake = makeFakeLogger();
+      const logger = makeSpyLogger();
       const meta = { foo: 'bar' };
-      safeWarn(fake, 'hello', meta);
-      expect(fake.calls.warn).toHaveLength(1);
-      expect(fake.calls.warn[0]![0]).toBe('hello');
-      expect(fake.calls.warn[0]![1]).toBe(meta);
-      // Should not touch other levels.
-      expect(fake.calls.error).toHaveLength(0);
-      expect(fake.calls.info).toHaveLength(0);
-      expect(fake.calls.debug).toHaveLength(0);
+      safeWarn(logger, 'hello', meta);
+      expect(logger.warn).toHaveBeenCalledTimes(1);
+      expect(logger.warn).toHaveBeenCalledWith('hello', meta);
+      expect(logger.error).not.toHaveBeenCalled();
+      expect(logger.info).not.toHaveBeenCalled();
+      expect(logger.debug).not.toHaveBeenCalled();
     });
 
     it('forwards without meta when meta is omitted', () => {
-      const fake = makeFakeLogger();
-      safeWarn(fake, 'plain');
-      expect(fake.calls.warn).toHaveLength(1);
-      expect(fake.calls.warn[0]![0]).toBe('plain');
-      expect(fake.calls.warn[0]![1]).toBeUndefined();
+      const logger = makeSpyLogger();
+      safeWarn(logger, 'plain');
+      expect(logger.warn).toHaveBeenCalledTimes(1);
+      expect(logger.warn).toHaveBeenCalledWith('plain', undefined);
     });
   });
 
@@ -137,21 +128,39 @@ describe('safe-log', () => {
     });
 
     it('forwards to logger.error with msg and meta when logger is provided', () => {
-      const fake = makeFakeLogger();
+      const logger = makeSpyLogger();
       const meta = { code: 500 };
-      safeError(fake, 'kaboom', meta);
-      expect(fake.calls.error).toHaveLength(1);
-      expect(fake.calls.error[0]![0]).toBe('kaboom');
-      expect(fake.calls.error[0]![1]).toBe(meta);
-      expect(fake.calls.warn).toHaveLength(0);
+      safeError(logger, 'kaboom', meta);
+      expect(logger.error).toHaveBeenCalledTimes(1);
+      expect(logger.error).toHaveBeenCalledWith('kaboom', meta);
+      expect(logger.warn).not.toHaveBeenCalled();
     });
 
     it('forwards without meta when meta is omitted', () => {
-      const fake = makeFakeLogger();
-      safeError(fake, 'no-meta');
-      expect(fake.calls.error).toHaveLength(1);
-      expect(fake.calls.error[0]![0]).toBe('no-meta');
-      expect(fake.calls.error[0]![1]).toBeUndefined();
+      const logger = makeSpyLogger();
+      safeError(logger, 'no-meta');
+      expect(logger.error).toHaveBeenCalledTimes(1);
+      expect(logger.error).toHaveBeenCalledWith('no-meta', undefined);
+    });
+  });
+
+  describe('isWarnActive', () => {
+    it('returns true for an undefined logger', () => {
+      expect(isWarnActive(undefined)).toBe(true);
+    });
+
+    it('returns true for a logger without isWarnEnabled', () => {
+      const logger = makeSpyLogger();
+      expect(isWarnActive(logger)).toBe(true);
+    });
+
+    it('delegates to isWarnEnabled() when present', () => {
+      const logger = makeSpyLogger();
+      (logger as unknown as { isWarnEnabled: () => boolean }).isWarnEnabled = () => false;
+      expect(isWarnActive(logger)).toBe(false);
+
+      (logger as unknown as { isWarnEnabled: () => boolean }).isWarnEnabled = () => true;
+      expect(isWarnActive(logger)).toBe(true);
     });
   });
 });

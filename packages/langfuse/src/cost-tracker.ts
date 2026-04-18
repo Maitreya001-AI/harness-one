@@ -263,21 +263,34 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): La
         }
       }
 
-      // Export to Langfuse as a generation with cost metadata
-      const trace = client.trace({ id: usage.traceId, name: 'cost-tracking' });
-      trace.generation({
-        name: `usage-${usage.model}`,
-        model: usage.model,
-        usage: {
-          input: usage.inputTokens,
-          output: usage.outputTokens,
-        },
-        metadata: {
-          estimatedCost,
-          cacheReadTokens: usage.cacheReadTokens,
-          cacheWriteTokens: usage.cacheWriteTokens,
-        },
-      });
+      // Export to Langfuse as a generation with cost metadata.
+      // `client.trace()` and `.generation()` are synchronous builders that
+      // can throw on malformed input or a torn-down client. A throw here
+      // MUST NOT escape recordUsage() — the in-memory bookkeeping above
+      // is already committed, so the caller would otherwise see a
+      // half-applied record. Route failures through the same exportHealth
+      // pipeline as async flush errors.
+      try {
+        const trace = client.trace({ id: usage.traceId, name: 'cost-tracking' });
+        trace.generation({
+          name: `usage-${usage.model}`,
+          model: usage.model,
+          usage: {
+            input: usage.inputTokens,
+            output: usage.outputTokens,
+          },
+          metadata: {
+            estimatedCost,
+            cacheReadTokens: usage.cacheReadTokens,
+            cacheWriteTokens: usage.cacheWriteTokens,
+          },
+        });
+      } catch (err) {
+        exportHealth.handleExportError(err, 'record', {
+          reason: 'generation_failed',
+          traceId: usage.traceId,
+        });
+      }
 
       // OBS-015: Flush errors surface through the configured hook / logger
       // instead of being swallowed with a bare console.warn. The error is

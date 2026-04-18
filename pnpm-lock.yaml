@@ -56,6 +56,9 @@ importers:
       '@harness-one/anthropic':
         specifier: workspace:*
         version: link:../packages/anthropic
+      '@harness-one/devkit':
+        specifier: workspace:*
+        version: link:../packages/devkit
       '@harness-one/langfuse':
         specifier: workspace:*
         version: link:../packages/langfuse

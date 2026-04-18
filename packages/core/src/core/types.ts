@@ -241,5 +241,23 @@ export interface ExecutionStrategy {
   ): Promise<readonly ToolExecutionResult[]>;
 }
 
-/** Lifecycle status of an AgentLoop instance. */
-export type AgentLoopStatus = 'idle' | 'running' | 'completed' | 'disposed';
+/**
+ * Lifecycle status of an AgentLoop instance.
+ *
+ * - `idle` — constructed, never ran or last run torn down cleanly.
+ * - `running` — currently inside `run()`.
+ * - `completed` — last run ended with a normal `end_turn` (LLM stopped).
+ * - `errored` — last run ended with `aborted`, `max_iterations`,
+ *   `token_budget`, a guardrail block, or an adapter/tool error. Consumers
+ *   that previously coupled their "success" branch to `status === 'completed'`
+ *   keep working unchanged; the new state carves off the abnormal terminals
+ *   so operators can distinguish them without inspecting the last event.
+ * - `disposed` — `dispose()` has been called; the loop is torn down and
+ *   must not be re-used.
+ */
+export type AgentLoopStatus =
+  | 'idle'
+  | 'running'
+  | 'completed'
+  | 'errored'
+  | 'disposed';

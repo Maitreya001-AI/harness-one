@@ -147,7 +147,8 @@ Every public primitive in harness-one is constructed through a
 `createCostTracker`, `createLogger`, `createPipeline`,
 `createMiddlewareChain`, `createResilientLoop`,
 `createFallbackAdapter`, `createBackoffSchedule`, `createAgentPool`,
-`createMemoryStore`, …). Consumers never type `new SomeClass()`.
+`createMemoryStore`, `createMessageQueue`, …). Consumers never type
+`new SomeClass()`.
 
 `AgentLoop` is the single documented exception: the factory
 `createAgentLoop` is the idiomatic entry point, but the class is
@@ -159,12 +160,54 @@ When adding a new primitive: export the factory and the result
 type; do **not** export the implementing class unless `instanceof`
 narrowing is part of the public contract.
 
+## Lifecycle status values
+
+`AgentLoop.status` and the `AgentLoopStatus` type surface five states:
+
+- `idle` — constructed, never ran or last run torn down cleanly.
+- `running` — currently inside `run()`.
+- `completed` — last run ended with a normal `end_turn` (LLM stopped).
+- `errored` — last run ended with `aborted`, `max_iterations`,
+  `token_budget`, a guardrail block, or an adapter/tool error.
+- `disposed` — `dispose()` has been called; the loop cannot be re-used
+  and its status cannot be flipped back to `completed` / `errored` by a
+  concurrent in-flight terminal.
+
+Operators that previously coupled their "success" branch to
+`status === 'completed'` keep working unchanged, but they now also get
+a dedicated `'errored'` state for dashboards instead of having to
+inspect the last `done.reason` event.
+
 ## Config shape: flat, single-form
 
 `AgentLoopConfig` is the one-and-only config shape accepted by
 `createAgentLoop`. All concerns (limits, hooks, pipelines,
 observability, resilience, execution) are flat fields on the same
 struct.
+
+## Adapter stream limits
+
+Provider adapters (`@harness-one/anthropic`, `@harness-one/openai`)
+and core's `StreamAggregator` share the same pre-truncation budgets
+so a stream cannot silently balloon past what the loop can absorb.
+The constants `MAX_STREAM_BYTES` / `MAX_TOOL_ARG_BYTES` /
+`MAX_TOOL_CALLS` live in `core/agent-loop-config.ts` and are
+re-exported from `harness-one/advanced`. Both adapter factories
+accept an optional `streamLimits: { maxToolCalls?, maxToolArgBytes? }`
+override whose defaults match the shared constants, so tightening
+the loop-level `maxToolArgBytes` and the adapter-level cap is a
+single-place change on each side.
+
+`StreamAggregator` now tracks bytes in **UTF-8**, not UTF-16 code
+units — the documented `maxStreamBytes` / `maxToolArgBytes` names
+finally match what downstream serialisers see on the wire.
+
+## Shared adapter helpers
+
+`harness-one/observe` exposes `isWarnActive(logger)` — the probe
+adapters use before allocating warn-level metadata. Both Anthropic
+and OpenAI adapters import from here instead of rolling their own
+`typeof logger.isWarnEnabled === 'function'` inline checks.
 
 ## Also see
 

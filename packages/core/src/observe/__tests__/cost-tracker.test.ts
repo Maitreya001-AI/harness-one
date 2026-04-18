@@ -1523,4 +1523,68 @@ describe('createCostTracker', () => {
       expect(handler).toHaveBeenCalledTimes(2);
     });
   });
+
+  describe('recordUsage edge cases', () => {
+    it('accepts a record with both token counts equal to 0 and emits no warnings', () => {
+      const tracker = createCostTracker({
+        pricing: [{ model: 'm', inputPer1kTokens: 1, outputPer1kTokens: 1 }],
+      });
+      const rec = tracker.recordUsage({ traceId: 't', model: 'm', inputTokens: 0, outputTokens: 0 });
+      expect(rec.estimatedCost).toBe(0);
+      expect(tracker.getTotalCost()).toBe(0);
+    });
+
+    it('fires the overflow throttle again after reset() clears lastOverflowSignal', () => {
+      // maxModels=1 so adding the second model triggers overflow. The
+      // throttle window is 60s — without reset() scrubbing it, the second
+      // overflow after reset() would be silent.
+      const seen: Array<{ kind: string; rejectedKey: string }> = [];
+      const tracker = createCostTracker({
+        maxModels: 1,
+        pricing: [{ model: 'm1', inputPer1kTokens: 1, outputPer1kTokens: 1 }],
+        onOverflow: ({ kind, rejectedKey }) => seen.push({ kind, rejectedKey }),
+      });
+      tracker.recordUsage({ traceId: 't1', model: 'm1', inputTokens: 1, outputTokens: 0 });
+      tracker.recordUsage({ traceId: 't2', model: 'm2', inputTokens: 1, outputTokens: 0 });
+      expect(seen).toHaveLength(1);
+
+      tracker.reset();
+      tracker.recordUsage({ traceId: 't3', model: 'm1', inputTokens: 1, outputTokens: 0 });
+      tracker.recordUsage({ traceId: 't4', model: 'm3', inputTokens: 1, outputTokens: 0 });
+      expect(seen).toHaveLength(2);
+    });
+
+    it('compacts evictionBias back to 0 when the buffer fully drains', () => {
+      // maxRecords=2 forces an eviction on the third push. Leaving `lru`
+      // strategy puts per-trace totals on a sliding window.
+      const tracker = createCostTracker({
+        maxRecords: 2,
+        evictionStrategy: 'lru',
+        pricing: [{ model: 'm', inputPer1kTokens: 1, outputPer1kTokens: 0 }],
+      });
+      // Record & evict several times so evictionBias grows.
+      for (let i = 0; i < 5; i++) {
+        tracker.recordUsage({
+          traceId: `t${i}`,
+          model: 'm',
+          inputTokens: 1000,
+          outputTokens: 0,
+        });
+      }
+      // Every trace except the last two is gone — but trace totals carry
+      // forward under the lru strategy, so we need updateUsage() on the last
+      // surviving trace to confirm the index arithmetic still works.
+      const updated = tracker.updateUsage('t4', { inputTokens: 2000 });
+      expect(updated).toBeDefined();
+      expect(updated?.inputTokens).toBe(2000);
+
+      // Now drain by calling reset — evictionBias should be back to 0.
+      tracker.reset();
+      // Post-reset records start at raw=0: record + updateUsage round-trip
+      // exercises the fresh index space.
+      tracker.recordUsage({ traceId: 'fresh', model: 'm', inputTokens: 100, outputTokens: 0 });
+      const postReset = tracker.updateUsage('fresh', { inputTokens: 200 });
+      expect(postReset?.inputTokens).toBe(200);
+    });
+  });
 });

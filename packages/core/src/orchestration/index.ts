@@ -61,5 +61,10 @@ export { createHandoff } from './handoff.js';
 export { createContextBoundary } from './context-boundary.js';
 
 // Message Queue
-export { MessageQueue } from './message-queue.js';
-export type { QueueWarningHandler, QueueEventEmitter, MessageQueueConfig } from './message-queue.js';
+export { createMessageQueue } from './message-queue.js';
+export type {
+  MessageQueue,
+  QueueWarningHandler,
+  QueueEventEmitter,
+  MessageQueueConfig,
+} from './message-queue.js';

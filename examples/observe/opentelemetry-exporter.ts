@@ -44,8 +44,9 @@ export function createOTelExporter(config?: {
         otelSpan.setAttribute('harness.trace.status', harnessTrace.status);
         otelSpan.setAttribute('harness.span.count', harnessTrace.spans.length);
 
-        // Copy trace metadata as OTel attributes
-        for (const [key, value] of Object.entries(harnessTrace.metadata)) {
+        // Copy user-supplied metadata as OTel attributes. `systemMetadata`
+        // is library-authored and stays in-process.
+        for (const [key, value] of Object.entries(harnessTrace.userMetadata)) {
           if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
             otelSpan.setAttribute(`harness.meta.${key}`, value);
           }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { MessageQueue } from '../message-queue.js';
+import { createMessageQueue } from '../message-queue.js';
 import { HarnessError, HarnessErrorCode} from '../../core/errors.js';
 import type { AgentMessage } from '../types.js';
 
@@ -17,32 +17,32 @@ function makeMessage(overrides: Partial<AgentMessage> = {}): AgentMessage {
 describe('MessageQueue', () => {
   describe('createQueue / deleteQueue / hasQueue', () => {
     it('creates a queue for an agent', () => {
-      const mq = new MessageQueue();
+      const mq = createMessageQueue();
       mq.createQueue('a1');
       expect(mq.hasQueue('a1')).toBe(true);
     });
 
     it('deleteQueue removes the queue', () => {
-      const mq = new MessageQueue();
+      const mq = createMessageQueue();
       mq.createQueue('a1');
       expect(mq.deleteQueue('a1')).toBe(true);
       expect(mq.hasQueue('a1')).toBe(false);
     });
 
     it('deleteQueue returns false for non-existent queue', () => {
-      const mq = new MessageQueue();
+      const mq = createMessageQueue();
       expect(mq.deleteQueue('nope')).toBe(false);
     });
 
     it('hasQueue returns false for non-existent agent', () => {
-      const mq = new MessageQueue();
+      const mq = createMessageQueue();
       expect(mq.hasQueue('nope')).toBe(false);
     });
   });
 
   describe('push', () => {
     it('pushes a message to an agent queue', () => {
-      const mq = new MessageQueue();
+      const mq = createMessageQueue();
       mq.createQueue('a1');
       const msg = makeMessage({ to: 'a1' });
       expect(mq.push('a1', msg)).toBe(true);
@@ -51,12 +51,12 @@ describe('MessageQueue', () => {
     });
 
     it('returns false when agent has no queue', () => {
-      const mq = new MessageQueue();
+      const mq = createMessageQueue();
       expect(mq.push('nope', makeMessage())).toBe(false);
     });
 
     it('drops oldest message when queue is full (drop-oldest policy)', () => {
-      const mq = new MessageQueue({ maxQueueSize: 2 });
+      const mq = createMessageQueue({ maxQueueSize: 2 });
       mq.createQueue('a1');
       const msg1 = makeMessage({ content: 'first', to: 'a1' });
       const msg2 = makeMessage({ content: 'second', to: 'a1' });
@@ -72,7 +72,7 @@ describe('MessageQueue', () => {
 
     it('calls onWarning when a message is dropped', () => {
       const warnings: Array<{ message: string; droppedCount: number; queueSize: number }> = [];
-      const mq = new MessageQueue({
+      const mq = createMessageQueue({
         maxQueueSize: 1,
         onWarning: (w) => warnings.push(w),
       });
@@ -87,7 +87,7 @@ describe('MessageQueue', () => {
 
     it('calls onEvent when a message is dropped', () => {
       const events: Array<{ type: string; agentId: string; droppedCount: number }> = [];
-      const mq = new MessageQueue({
+      const mq = createMessageQueue({
         maxQueueSize: 1,
         onEvent: (e) => events.push(e),
       });
@@ -101,7 +101,7 @@ describe('MessageQueue', () => {
     });
 
     it('continues accepting messages after drops', () => {
-      const mq = new MessageQueue({ maxQueueSize: 2 });
+      const mq = createMessageQueue({ maxQueueSize: 2 });
       mq.createQueue('a1');
       for (let i = 0; i < 10; i++) {
         mq.push('a1', makeMessage({ content: `msg-${i}` }));
@@ -115,18 +115,18 @@ describe('MessageQueue', () => {
 
   describe('getMessages', () => {
     it('returns empty array for agent with no queue', () => {
-      const mq = new MessageQueue();
+      const mq = createMessageQueue();
       expect(mq.getMessages('nope')).toEqual([]);
     });
 
     it('returns empty array for agent with empty queue', () => {
-      const mq = new MessageQueue();
+      const mq = createMessageQueue();
       mq.createQueue('a1');
       expect(mq.getMessages('a1')).toEqual([]);
     });
 
     it('filters by type', () => {
-      const mq = new MessageQueue();
+      const mq = createMessageQueue();
       mq.createQueue('a1');
       mq.push('a1', makeMessage({ type: 'request', content: 'req' }));
       mq.push('a1', makeMessage({ type: 'response', content: 'res' }));
@@ -136,7 +136,7 @@ describe('MessageQueue', () => {
     });
 
     it('filters by since timestamp', () => {
-      const mq = new MessageQueue();
+      const mq = createMessageQueue();
       mq.createQueue('a1');
       mq.push('a1', makeMessage({ timestamp: 1000, content: 'old' }));
       mq.push('a1', makeMessage({ timestamp: 2000, content: 'new' }));
@@ -148,7 +148,7 @@ describe('MessageQueue', () => {
     // P2-22: `since` uses strict greater-than semantics — a message with
     // `timestamp === since` is excluded, matching the CQ-026 docstring.
     it('P2-22: since boundary is strict > — excludes messages with timestamp === since', () => {
-      const mq = new MessageQueue();
+      const mq = createMessageQueue();
       mq.createQueue('a1');
       mq.push('a1', makeMessage({ timestamp: 1000, content: 'before' }));
       mq.push('a1', makeMessage({ timestamp: 1500, content: 'boundary' }));
@@ -162,7 +162,7 @@ describe('MessageQueue', () => {
     });
 
     it('filters by both type and since', () => {
-      const mq = new MessageQueue();
+      const mq = createMessageQueue();
       mq.createQueue('a1');
       mq.push('a1', makeMessage({ type: 'request', timestamp: 1000, content: 'old-req' }));
       mq.push('a1', makeMessage({ type: 'response', timestamp: 2000, content: 'new-res' }));
@@ -175,7 +175,7 @@ describe('MessageQueue', () => {
 
   describe('clear', () => {
     it('removes all queues', () => {
-      const mq = new MessageQueue();
+      const mq = createMessageQueue();
       mq.createQueue('a1');
       mq.createQueue('a2');
       mq.push('a1', makeMessage());
@@ -191,7 +191,7 @@ describe('MessageQueue', () => {
       // This test verifies that the synchronous check+modify in push() is safe
       // because JS is single-threaded. The push method reads queue.length, shifts
       // if full, then pushes — all in one synchronous call with no interleaving.
-      const mq = new MessageQueue({ maxQueueSize: 2 });
+      const mq = createMessageQueue({ maxQueueSize: 2 });
       mq.createQueue('a1');
 
       // Fill to capacity
@@ -211,7 +211,7 @@ describe('MessageQueue', () => {
 
   describe('default maxQueueSize', () => {
     it('defaults to 1000', () => {
-      const mq = new MessageQueue();
+      const mq = createMessageQueue();
       mq.createQueue('a1');
       for (let i = 0; i < 1001; i++) {
         mq.push('a1', makeMessage({ content: `msg-${i}` }));
@@ -224,7 +224,7 @@ describe('MessageQueue', () => {
 
   describe('dequeue', () => {
     it('removes and returns messages in FIFO order', () => {
-      const mq = new MessageQueue();
+      const mq = createMessageQueue();
       mq.createQueue('a1');
       mq.push('a1', makeMessage({ content: 'first' }));
       mq.push('a1', makeMessage({ content: 'second' }));
@@ -241,7 +241,7 @@ describe('MessageQueue', () => {
     });
 
     it('dequeue(agentId, limit) returns at most limit messages', () => {
-      const mq = new MessageQueue();
+      const mq = createMessageQueue();
       mq.createQueue('a1');
       mq.push('a1', makeMessage({ content: 'first' }));
       mq.push('a1', makeMessage({ content: 'second' }));
@@ -259,20 +259,20 @@ describe('MessageQueue', () => {
     });
 
     it('dequeue() on empty queue returns empty array', () => {
-      const mq = new MessageQueue();
+      const mq = createMessageQueue();
       mq.createQueue('a1');
       const dequeued = mq.dequeue('a1');
       expect(dequeued).toEqual([]);
     });
 
     it('dequeue() on non-existent queue returns empty array', () => {
-      const mq = new MessageQueue();
+      const mq = createMessageQueue();
       const dequeued = mq.dequeue('nonexistent');
       expect(dequeued).toEqual([]);
     });
 
     it('dequeue with limit larger than queue size returns all messages', () => {
-      const mq = new MessageQueue();
+      const mq = createMessageQueue();
       mq.createQueue('a1');
       mq.push('a1', makeMessage({ content: 'only' }));
 
@@ -283,7 +283,7 @@ describe('MessageQueue', () => {
     });
 
     it('dequeue with limit 0 returns empty array', () => {
-      const mq = new MessageQueue();
+      const mq = createMessageQueue();
       mq.createQueue('a1');
       mq.push('a1', makeMessage({ content: 'msg' }));
 
@@ -294,7 +294,7 @@ describe('MessageQueue', () => {
     });
 
     it('multiple dequeue calls drain the queue progressively', () => {
-      const mq = new MessageQueue();
+      const mq = createMessageQueue();
       mq.createQueue('a1');
       for (let i = 0; i < 5; i++) {
         mq.push('a1', makeMessage({ content: `msg-${i}` }));
@@ -321,7 +321,7 @@ describe('MessageQueue', () => {
 
   describe('peek', () => {
     it('returns copies without removing messages', () => {
-      const mq = new MessageQueue();
+      const mq = createMessageQueue();
       mq.createQueue('a1');
       mq.push('a1', makeMessage({ content: 'first' }));
       mq.push('a1', makeMessage({ content: 'second' }));
@@ -340,7 +340,7 @@ describe('MessageQueue', () => {
     });
 
     it('peek(agentId, limit) returns at most limit messages', () => {
-      const mq = new MessageQueue();
+      const mq = createMessageQueue();
       mq.createQueue('a1');
       mq.push('a1', makeMessage({ content: 'first' }));
       mq.push('a1', makeMessage({ content: 'second' }));
@@ -356,18 +356,18 @@ describe('MessageQueue', () => {
     });
 
     it('peek on empty queue returns empty array', () => {
-      const mq = new MessageQueue();
+      const mq = createMessageQueue();
       mq.createQueue('a1');
       expect(mq.peek('a1')).toEqual([]);
     });
 
     it('peek on non-existent queue returns empty array', () => {
-      const mq = new MessageQueue();
+      const mq = createMessageQueue();
       expect(mq.peek('nonexistent')).toEqual([]);
     });
 
     it('peek returns a new array (not the internal queue reference)', () => {
-      const mq = new MessageQueue();
+      const mq = createMessageQueue();
       mq.createQueue('a1');
       mq.push('a1', makeMessage({ content: 'msg' }));
 
@@ -380,7 +380,7 @@ describe('MessageQueue', () => {
 
   describe('size', () => {
     it('returns correct count', () => {
-      const mq = new MessageQueue();
+      const mq = createMessageQueue();
       mq.createQueue('a1');
       expect(mq.size('a1')).toBe(0);
 
@@ -392,12 +392,12 @@ describe('MessageQueue', () => {
     });
 
     it('returns 0 for non-existent queue', () => {
-      const mq = new MessageQueue();
+      const mq = createMessageQueue();
       expect(mq.size('nonexistent')).toBe(0);
     });
 
     it('returns 0 after clearing', () => {
-      const mq = new MessageQueue();
+      const mq = createMessageQueue();
       mq.createQueue('a1');
       mq.push('a1', makeMessage());
       mq.push('a1', makeMessage());
@@ -406,7 +406,7 @@ describe('MessageQueue', () => {
     });
 
     it('reflects size after drop-oldest overflow', () => {
-      const mq = new MessageQueue({ maxQueueSize: 3 });
+      const mq = createMessageQueue({ maxQueueSize: 3 });
       mq.createQueue('a1');
       for (let i = 0; i < 10; i++) {
         mq.push('a1', makeMessage({ content: `msg-${i}` }));
@@ -417,7 +417,7 @@ describe('MessageQueue', () => {
 
   describe('dequeue + size consistency', () => {
     it('size decreases after dequeue', () => {
-      const mq = new MessageQueue();
+      const mq = createMessageQueue();
       mq.createQueue('a1');
       mq.push('a1', makeMessage({ content: 'first' }));
       mq.push('a1', makeMessage({ content: 'second' }));
@@ -436,7 +436,7 @@ describe('MessageQueue', () => {
     });
 
     it('peek does not affect size', () => {
-      const mq = new MessageQueue();
+      const mq = createMessageQueue();
       mq.createQueue('a1');
       mq.push('a1', makeMessage());
       mq.push('a1', makeMessage());
@@ -449,7 +449,7 @@ describe('MessageQueue', () => {
     });
 
     it('dequeue + push + size stays consistent', () => {
-      const mq = new MessageQueue();
+      const mq = createMessageQueue();
       mq.createQueue('a1');
 
       for (let i = 0; i < 5; i++) {
@@ -473,7 +473,7 @@ describe('MessageQueue', () => {
   // Fix 26: Backpressure option
   describe('backpressure option (Fix 26)', () => {
     it('throws QUEUE_FULL when backpressure is enabled and queue is full', () => {
-      const mq = new MessageQueue({ maxQueueSize: 2, backpressure: true });
+      const mq = createMessageQueue({ maxQueueSize: 2, backpressure: true });
       mq.createQueue('a1');
       mq.push('a1', makeMessage({ content: 'first' }));
       mq.push('a1', makeMessage({ content: 'second' }));
@@ -491,7 +491,7 @@ describe('MessageQueue', () => {
     });
 
     it('uses drop-oldest by default (backpressure=false)', () => {
-      const mq = new MessageQueue({ maxQueueSize: 2 });
+      const mq = createMessageQueue({ maxQueueSize: 2 });
       mq.createQueue('a1');
       mq.push('a1', makeMessage({ content: 'first' }));
       mq.push('a1', makeMessage({ content: 'second' }));
@@ -503,7 +503,7 @@ describe('MessageQueue', () => {
 
     it('backpressure mode does not call onWarning (rejection is the signal)', () => {
       const warnings: unknown[] = [];
-      const mq = new MessageQueue({
+      const mq = createMessageQueue({
         maxQueueSize: 1,
         backpressure: true,
         onWarning: (w) => warnings.push(w),
@@ -521,7 +521,7 @@ describe('MessageQueue', () => {
     it('P2-10: throws and does NOT call onEvent when backpressure is enabled and queue is full', () => {
       const events: Array<{ type: string; agentId: string; droppedCount: number }> = [];
       const warnings: unknown[] = [];
-      const mq = new MessageQueue({
+      const mq = createMessageQueue({
         maxQueueSize: 1,
         backpressure: true,
         onEvent: (e) => events.push(e),
@@ -546,7 +546,7 @@ describe('MessageQueue', () => {
 
   describe('PERF-031: iterateMessages zero-copy generator', () => {
     it('yields messages in FIFO order without copying the underlying queue', () => {
-      const mq = new MessageQueue();
+      const mq = createMessageQueue();
       mq.createQueue('a1');
       const m1 = makeMessage({ content: 'm1' });
       const m2 = makeMessage({ content: 'm2' });
@@ -562,7 +562,7 @@ describe('MessageQueue', () => {
     });
 
     it('applies the same type/since filters as getMessages', () => {
-      const mq = new MessageQueue();
+      const mq = createMessageQueue();
       mq.createQueue('a1');
       mq.push('a1', makeMessage({ type: 'request', timestamp: 100 }));
       mq.push('a1', makeMessage({ type: 'response', timestamp: 200 }));
@@ -575,13 +575,13 @@ describe('MessageQueue', () => {
     });
 
     it('yields nothing for an unknown agent', () => {
-      const mq = new MessageQueue();
+      const mq = createMessageQueue();
       const collected = [...mq.iterateMessages('nope')];
       expect(collected).toEqual([]);
     });
 
     it('captures queue length at iterator start (concurrent push is skipped)', () => {
-      const mq = new MessageQueue();
+      const mq = createMessageQueue();
       mq.createQueue('a1');
       mq.push('a1', makeMessage({ content: 'a' }));
       mq.push('a1', makeMessage({ content: 'b' }));

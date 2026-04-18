@@ -9,3 +9,60 @@ Once the first release ships (driven by `@changesets/cli`, see
 `.changeset/config.json`), this file will document version-to-version
 migration steps — API renames, removed symbols, behaviour changes.
 Until then, read the source.
+
+## Unreleased — post Wave-19 audit pass
+
+Breaking + observable changes that downstream consumers on a SHA-pinned
+build should know about:
+
+- `MessageQueue` is now a factory: `createMessageQueue(config)` returns
+  a `MessageQueue` interface. `new MessageQueue(...)` no longer works.
+  The implementing class is hidden per `docs/ARCHITECTURE.md`
+  §Construction.
+- `StreamAggregator` drops the Wave-15 `initialize()` / `finalize()`
+  aliases. Use `reset()` / `getMessage(usage)` instead.
+- `AgentLoop.status` adds an `'errored'` state. Normal `end_turn`
+  completions still report `'completed'`; abort / max_iterations /
+  token_budget / guardrail-block / adapter-error terminals now land on
+  `'errored'`. Consumers previously coupling success to
+  `status === 'completed'` keep working; dashboards that want to
+  distinguish success from failure can now do so without reading the
+  last `done.reason` event. `dispose()` takes precedence — a
+  concurrent in-flight terminal cannot overwrite `'disposed'`.
+- Anthropic + OpenAI adapters expose `streamLimits: { maxToolCalls?,
+  maxToolArgBytes? }` on their factory config. Defaults now match the
+  shared `MAX_TOOL_CALLS` / `MAX_TOOL_ARG_BYTES` constants exported
+  from `harness-one/advanced`, so `createAgentLoop({ limits:
+  { maxToolArgBytes } })` and the adapter see the same budget unless
+  you override per-factory. Previously the adapters hard-coded a 1 MB
+  cap regardless of loop config.
+- `StreamAggregator` byte accounting switched from UTF-16 code units to
+  UTF-8 bytes so `maxStreamBytes` / `maxToolArgBytes` match their
+  documented names. CJK / emoji content now counts ~2-4× more bytes.
+  Tighten your budgets if you previously relied on the off-by-constant.
+- `KahanSum` moved from `observe/cost-tracker` to `infra/kahan-sum`.
+  It's still re-exported from `harness-one/observe` for back-compat.
+- `harness-one/observe` now exports `isWarnActive(logger)` — the
+  level-gate probe adapters use before allocating warn metadata.
+  Both `@harness-one/anthropic` and `@harness-one/openai` now import
+  from here instead of each rolling their own.
+- `CostTracker.reset()` also clears the overflow-throttle timestamp
+  and the unpriced-model warn-once set. A post-`reset()` overflow or
+  unpriced model now emits its signal again instead of being silently
+  suppressed for up to 60s / forever.
+- `IterationRunner.config` grew a required `runHook`
+  (`AgentLoopHookDispatcher`) and lost `hooks` / `strictHooks` /
+  `logger`. `AgentLoop` builds the dispatcher once and threads the
+  same instance down. Callers who constructed `createIterationRunner`
+  directly (advanced tests only — the factory is internal) need to
+  inject a dispatcher built via `createHookDispatcher`.
+- `TraceLruList` no longer requires caller-visible `lruPrev` / `lruNext`
+  / `inLru` fields on its value type. It stores node pointers in an
+  internal `WeakMap` keyed on the value. Generic parameter is now
+  `TraceLruList<T extends object>`.
+- Redis memory store: `setEntry` / `transactionalUpdate` now forward
+  `defaultTTL === 0` to SET EX verbatim (Redis treats 0 as "expire
+  immediately") instead of silently treating 0 as no-TTL.
+- Anthropic + OpenAI adapters no longer define `MAX_TOOL_CALLS` /
+  `MAX_TOOL_ARG_BYTES` locally — use the shared constants from
+  `harness-one/advanced` or override via `streamLimits`.

@@ -154,8 +154,9 @@ export class AgentLoop {
       strategyOptions: this._strategyOptions,
       abortController: this.abortController,
       maxTotalTokens: limits.maxTotalTokens,
-      hooks: hooks.registered,
-      strictHooks: hooks.strict,
+      // Share the single dispatcher so both the coordinator and the runner
+      // fire the same hook instances with the same strictness/logger bundle.
+      runHook: this.runHook,
       ...(this.resolved.onToolCall !== undefined && { onToolCall: this.resolved.onToolCall }),
       ...(limits.toolTimeoutMs !== undefined && { toolTimeoutMs: limits.toolTimeoutMs }),
       ...(pipelines.input !== undefined && { inputPipeline: pipelines.input }),
@@ -163,7 +164,6 @@ export class AgentLoop {
       ...(observability.traceManager !== undefined && {
         traceManager: observability.traceManager,
       }),
-      ...(observability.logger !== undefined && { logger: observability.logger }),
     });
   }
 
@@ -227,8 +227,17 @@ export class AgentLoop {
     };
   }
 
-  /** Current lifecycle status of the loop. */
-  get status(): 'idle' | 'running' | 'completed' | 'disposed' {
+  /**
+   * Current lifecycle status of the loop.
+   *
+   * See {@link import('./types.js').AgentLoopStatus} for the full shape.
+   * `'completed'` is reserved for normal `end_turn` terminations; abnormal
+   * exits (abort, max_iterations, token_budget, guardrail block, error)
+   * land on `'errored'`. Once `dispose()` has been called the status is
+   * permanently `'disposed'` — a concurrent in-flight `run()` cannot
+   * overwrite it.
+   */
+  get status(): import('./types.js').AgentLoopStatus {
     return this.state.status;
   }
 
@@ -285,7 +294,13 @@ export class AgentLoop {
         };
 
         if (outcome.kind === 'terminated') {
-          this.state.status = 'completed';
+          // `end_turn` is the only normal terminator; everything else
+          // (aborted / max_iterations / token_budget / error) lands on
+          // `'errored'`. dispose() has precedence — once disposed, the
+          // status cannot be overwritten by a terminal race.
+          if (this.state.status !== 'disposed') {
+            this.state.status = outcome.reason === 'end_turn' ? 'completed' : 'errored';
+          }
           finalEventEmitted = true;
           yield {
             type: 'done',

@@ -59,8 +59,13 @@ export { createCacheMonitor } from './cache-monitor.js';
 export type { DatasetEntry, DatasetExporterConfig } from './dataset-exporter.js';
 export { createDatasetExporter } from './dataset-exporter.js';
 
-// Safe-log primitive (fallback logger + safeWarn/safeError helpers)
-export { createDefaultLogger, safeWarn, safeError } from '../infra/safe-log.js';
+// Safe-log primitive (fallback logger + safeWarn/safeError/isWarnActive helpers)
+export {
+  createDefaultLogger,
+  safeWarn,
+  safeError,
+  isWarnActive,
+} from '../infra/safe-log.js';
 
 // MetricsPort — vendor-neutral counter/gauge/histogram surface. Canonical
 // L2 home is `../core/metrics-port.js`; re-exported here so the observe

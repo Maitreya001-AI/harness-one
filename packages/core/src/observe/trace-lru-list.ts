@@ -1,10 +1,13 @@
 /**
  * Intrusive doubly-linked LRU list used by the trace-manager.
  *
- * Nodes embed the prev/next pointers + a membership flag so every link /
- * unlink / shift-oldest operation is O(1). Extracted from `trace-manager.ts`
- * as a small standalone data structure so the factory body stays focused on
- * trace lifecycle rather than pointer bookkeeping.
+ * The list keeps its prev/next pointers and membership flag in an internal
+ * `WeakMap<T, LruNode>` keyed on the caller's object. Users never see the
+ * pointers — the previous Wave-15 design exposed them on the value type and
+ * relied on convention to prevent callers from mutating them. Moving the
+ * pointers into a private WeakMap makes that a type error instead of a
+ * style rule, while still giving the trace-manager O(1) link / unlink /
+ * shift-oldest on every trace lifecycle event.
  *
  * ## When to use this vs. `infra/lru-cache`
  *
@@ -14,8 +17,6 @@
  *
  *   - the same eviction must drive multiple side-tables (span counters,
  *     per-trace metadata, tag indexes, etc.),
- *   - nodes already exist in a parent structure and embedding pointers on
- *     them is cheaper than a separate `Map<K, V>` wrapper,
  *   - `move-to-tail` is called on every read (hot-path access reordering).
  *
  * For every other "look up a value by key with LRU eviction" use case,
@@ -27,24 +28,26 @@
  */
 
 /**
- * Shape every LRU node must satisfy. The three fields are mutated in place
- * by {@link TraceLruList} — consumers MUST NOT touch them directly.
+ * Internal node state. Declared private so callers can't mutate it from
+ * outside the list.
  */
-export interface LruNode<T> {
-  lruPrev: T | null;
-  lruNext: T | null;
-  inLru: boolean;
+interface LruNode<T> {
+  prev: T | null;
+  next: T | null;
 }
 
 /**
  * Intrusive doubly-linked list ordered oldest → newest. `head` is the
  * oldest entry (the one evicted first); `tail` is the most recently
- * appended.
+ * appended. Generic over the value type — the list tracks membership via
+ * an internal `WeakMap<T, LruNode<T>>` so callers don't need to embed
+ * anything on their value shape.
  */
-export class TraceLruList<T extends LruNode<T>> {
+export class TraceLruList<T extends object> {
   private _head: T | null = null;
   private _tail: T | null = null;
   private _size = 0;
+  private readonly nodes = new WeakMap<T, LruNode<T>>();
 
   get size(): number {
     return this._size;
@@ -52,31 +55,38 @@ export class TraceLruList<T extends LruNode<T>> {
 
   /** Append `node` at the tail (most recent). No-op if already linked. */
   append(node: T): void {
-    if (node.inLru) return;
-    node.lruPrev = this._tail;
-    node.lruNext = null;
+    if (this.nodes.has(node)) return;
+    const entry: LruNode<T> = { prev: this._tail, next: null };
+    this.nodes.set(node, entry);
     if (this._tail) {
-      this._tail.lruNext = node;
+      const tailEntry = this.nodes.get(this._tail);
+      if (tailEntry) tailEntry.next = node;
     } else {
       this._head = node;
     }
     this._tail = node;
-    node.inLru = true;
     this._size++;
   }
 
   /** Unlink `node` regardless of position. No-op if not linked. */
   remove(node: T): void {
-    if (!node.inLru) return;
-    const prev = node.lruPrev;
-    const next = node.lruNext;
-    if (prev) prev.lruNext = next;
-    else this._head = next;
-    if (next) next.lruPrev = prev;
-    else this._tail = prev;
-    node.lruPrev = null;
-    node.lruNext = null;
-    node.inLru = false;
+    const entry = this.nodes.get(node);
+    if (!entry) return;
+    const prev = entry.prev;
+    const next = entry.next;
+    if (prev) {
+      const prevEntry = this.nodes.get(prev);
+      if (prevEntry) prevEntry.next = next;
+    } else {
+      this._head = next;
+    }
+    if (next) {
+      const nextEntry = this.nodes.get(next);
+      if (nextEntry) nextEntry.prev = prev;
+    } else {
+      this._tail = prev;
+    }
+    this.nodes.delete(node);
     this._size--;
   }
 
@@ -90,10 +100,9 @@ export class TraceLruList<T extends LruNode<T>> {
 
   /** Detach every node and reset size to zero. */
   clear(): void {
-    // We deliberately don't walk the list to reset `inLru` on every node —
-    // the owning trace-manager clears its trace map at the same time, so
-    // the nodes become unreachable either way. Holding live references to
-    // zombie nodes is never useful.
+    // The WeakMap drops its references automatically once nodes become
+    // unreachable; the owning trace-manager clears its trace map at the
+    // same time, so walking the list to null prev/next is redundant.
     this._head = null;
     this._tail = null;
     this._size = 0;

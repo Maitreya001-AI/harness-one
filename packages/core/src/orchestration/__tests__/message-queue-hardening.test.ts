@@ -8,7 +8,7 @@
  *  - Backward compatibility: no logger/metrics → zero observability traffic.
  */
 import { describe, it, expect } from 'vitest';
-import { MessageQueue } from '../message-queue.js';
+import { createMessageQueue } from '../message-queue.js';
 import type {
   MetricsPort,
   MetricCounter,
@@ -74,7 +74,7 @@ function makeMetricsSpy(): MetricsSpy {
 describe('MessageQueue — Wave-13 B-5 observability', () => {
   it('Wave-13 B-5: emits queue_depth gauge on every push keyed by agent_id', () => {
     const metricsSpy = makeMetricsSpy();
-    const mq = new MessageQueue({ metrics: metricsSpy.metrics });
+    const mq = createMessageQueue({ metrics: metricsSpy.metrics });
     mq.createQueue('a1');
     mq.push('a1', makeMessage({ to: 'a1' }));
     mq.push('a1', makeMessage({ to: 'a1' }));
@@ -90,7 +90,7 @@ describe('MessageQueue — Wave-13 B-5 observability', () => {
 
   it('Wave-13 B-5: gauge observation uses post-mutation depth', () => {
     const metricsSpy = makeMetricsSpy();
-    const mq = new MessageQueue({ maxQueueSize: 2, metrics: metricsSpy.metrics });
+    const mq = createMessageQueue({ maxQueueSize: 2, metrics: metricsSpy.metrics });
     mq.createQueue('a1');
     mq.push('a1', makeMessage({ to: 'a1' }));
     mq.push('a1', makeMessage({ to: 'a1' }));
@@ -102,7 +102,7 @@ describe('MessageQueue — Wave-13 B-5 observability', () => {
 
   it('Wave-13 B-5: emits drop counter on overflow keyed by agent_id', () => {
     const metricsSpy = makeMetricsSpy();
-    const mq = new MessageQueue({ maxQueueSize: 1, metrics: metricsSpy.metrics });
+    const mq = createMessageQueue({ maxQueueSize: 1, metrics: metricsSpy.metrics });
     mq.createQueue('a1');
     mq.push('a1', makeMessage({ to: 'a1' }));
     mq.push('a1', makeMessage({ to: 'a1' })); // drop 1
@@ -116,7 +116,7 @@ describe('MessageQueue — Wave-13 B-5 observability', () => {
 
   it('Wave-13 B-5: emits structured warn log on drop when logger is injected', () => {
     const logSpy = makeLoggerSpy();
-    const mq = new MessageQueue({ maxQueueSize: 1, logger: logSpy.logger });
+    const mq = createMessageQueue({ maxQueueSize: 1, logger: logSpy.logger });
     mq.createQueue('a1');
     mq.push('a1', makeMessage({ to: 'a1' }));
     mq.push('a1', makeMessage({ to: 'a1' }));
@@ -135,7 +135,7 @@ describe('MessageQueue — Wave-13 B-5 observability', () => {
     const metricsSpy = makeMetricsSpy();
     const onWarning: Array<{ droppedCount: number }> = [];
     const onEvent: Array<{ agentId: string; droppedCount: number }> = [];
-    const mq = new MessageQueue({
+    const mq = createMessageQueue({
       maxQueueSize: 1,
       logger: logSpy.logger,
       metrics: metricsSpy.metrics,
@@ -154,7 +154,7 @@ describe('MessageQueue — Wave-13 B-5 observability', () => {
 
   it('Wave-13 B-5: no observability traffic when logger/metrics absent', () => {
     // Smoke test: the no-op path must not throw even under heavy churn.
-    const mq = new MessageQueue({ maxQueueSize: 1 });
+    const mq = createMessageQueue({ maxQueueSize: 1 });
     mq.createQueue('a1');
     for (let i = 0; i < 10; i++) {
       expect(mq.push('a1', makeMessage({ to: 'a1' }))).toBe(true);
@@ -163,7 +163,7 @@ describe('MessageQueue — Wave-13 B-5 observability', () => {
   });
 
   it('Wave-13 B-5: logger exceptions do not break drop path', () => {
-    const mq = new MessageQueue({
+    const mq = createMessageQueue({
       maxQueueSize: 1,
       logger: {
         debug: () => {},
@@ -189,7 +189,7 @@ describe('MessageQueue — Wave-13 B-5 observability', () => {
 
   it('Wave-13 B-5: depth gauge not emitted when push rejected in backpressure mode', () => {
     const metricsSpy = makeMetricsSpy();
-    const mq = new MessageQueue({ maxQueueSize: 1, backpressure: true, metrics: metricsSpy.metrics });
+    const mq = createMessageQueue({ maxQueueSize: 1, backpressure: true, metrics: metricsSpy.metrics });
     mq.createQueue('a1');
     mq.push('a1', makeMessage({ to: 'a1' }));
     // Backpressure mode: second push throws and depth should NOT receive a
@@ -202,7 +202,7 @@ describe('MessageQueue — Wave-13 B-5 observability', () => {
 
   it('Wave-13 B-5: drop counter not emitted in backpressure mode (throws instead)', () => {
     const metricsSpy = makeMetricsSpy();
-    const mq = new MessageQueue({ maxQueueSize: 1, backpressure: true, metrics: metricsSpy.metrics });
+    const mq = createMessageQueue({ maxQueueSize: 1, backpressure: true, metrics: metricsSpy.metrics });
     mq.createQueue('a1');
     mq.push('a1', makeMessage({ to: 'a1' }));
     expect(() => mq.push('a1', makeMessage({ to: 'a1' }))).toThrow();

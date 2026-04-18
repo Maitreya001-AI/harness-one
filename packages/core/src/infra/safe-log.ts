@@ -36,6 +36,22 @@ export function createDefaultLogger(): Logger {
 }
 
 /**
+ * Level-gate probe used by adapter hot paths before allocating warn-level
+ * metadata. Returns `true` when the logger either exposes no probe
+ * (historical behaviour — always log) or reports that warn is active.
+ *
+ * Centralised here so both `@harness-one/anthropic` and `@harness-one/openai`
+ * share the same definition — earlier waves duplicated the probe inline.
+ */
+export function isWarnActive(
+  logger: Pick<Logger, 'warn' | 'error'> | undefined,
+): boolean {
+  if (!logger) return true;
+  const probe = (logger as { isWarnEnabled?: () => boolean }).isWarnEnabled;
+  return typeof probe === 'function' ? probe.call(logger) : true;
+}
+
+/**
  * Emits a warn-level record using the provided logger, falling back to the
  * redaction-enabled default logger when none is supplied.
  */

@@ -15,24 +15,25 @@ async function main() {
   const trace: Trace = {
     id: 'trace-1',
     name: 'agent-run',
-    startedAt: Date.now() - 10000,
-    endedAt: Date.now(),
+    startTime: Date.now() - 10000,
+    endTime: Date.now(),
     status: 'error',
+    userMetadata: {},
+    systemMetadata: {},
     spans: [
-      { id: 's1', name: 'tool:search', startedAt: Date.now() - 9000, endedAt: Date.now() - 8000, status: 'completed', attributes: {} },
-      { id: 's2', name: 'tool:search', startedAt: Date.now() - 8000, endedAt: Date.now() - 7000, status: 'completed', attributes: {} },
-      { id: 's3', name: 'tool:search', startedAt: Date.now() - 7000, endedAt: Date.now() - 6000, status: 'completed', attributes: {} },
-      { id: 's4', name: 'tool:search', startedAt: Date.now() - 6000, endedAt: Date.now() - 5000, status: 'completed', attributes: {} },
-      { id: 's5', name: 'tool:search', startedAt: Date.now() - 5000, endedAt: Date.now() - 4000, status: 'completed', attributes: {} },
+      { id: 's1', traceId: 'trace-1', name: 'tool:search', startTime: Date.now() - 9000, endTime: Date.now() - 8000, status: 'completed', attributes: {}, events: [] },
+      { id: 's2', traceId: 'trace-1', name: 'tool:search', startTime: Date.now() - 8000, endTime: Date.now() - 7000, status: 'completed', attributes: {}, events: [] },
+      { id: 's3', traceId: 'trace-1', name: 'tool:search', startTime: Date.now() - 7000, endTime: Date.now() - 6000, status: 'completed', attributes: {}, events: [] },
+      { id: 's4', traceId: 'trace-1', name: 'tool:search', startTime: Date.now() - 6000, endTime: Date.now() - 5000, status: 'completed', attributes: {}, events: [] },
+      { id: 's5', traceId: 'trace-1', name: 'tool:search', startTime: Date.now() - 5000, endTime: Date.now() - 4000, status: 'completed', attributes: {}, events: [] },
     ],
-    metadata: {},
   };
 
   // Classify the failure
   const classifications = taxonomy.classify(trace);
 
   for (const classification of classifications) {
-    console.log(`Failure type: ${classification.type}`);
+    console.log(`Failure mode: ${classification.mode}`);
     console.log(`Confidence: ${(classification.confidence * 100).toFixed(0)}%`);
     console.log(`Evidence: ${classification.evidence}`);
     console.log();
@@ -42,13 +43,14 @@ async function main() {
   const earlyStopTrace: Trace = {
     id: 'trace-2',
     name: 'agent-run',
-    startedAt: Date.now() - 2000,
-    endedAt: Date.now(),
+    startTime: Date.now() - 2000,
+    endTime: Date.now(),
     status: 'completed',
+    userMetadata: {},
+    systemMetadata: {},
     spans: [
-      { id: 's1', name: 'llm:call', startedAt: Date.now() - 1500, endedAt: Date.now() - 500, status: 'completed', attributes: { outputTokens: 5 } },
+      { id: 's1', traceId: 'trace-2', name: 'llm:call', startTime: Date.now() - 1500, endTime: Date.now() - 500, status: 'completed', attributes: { outputTokens: 5 }, events: [] },
     ],
-    metadata: {},
   };
 
   const earlyStopResult = taxonomy.classify(earlyStopTrace);

@@ -23,10 +23,11 @@ import {
   runInput,
 } from 'harness-one/guardrails';
 import { createTraceManager, createConsoleExporter, createLogger } from 'harness-one/observe';
-import { HarnessError } from 'harness-one/core';
+import { HarnessError, HarnessErrorCode } from 'harness-one/core';
 import {
   createFallbackAdapter,
   categorizeAdapterError,
+  createCustomErrorCode,
 } from 'harness-one/advanced';
 import type {
   AgentAdapter,
@@ -62,10 +63,16 @@ const divide = defineTool<{ a: number; b: number }>({
     const spanId = traces.startSpan(traceId, 'tool:divide');
     try {
       if (b === 0) {
+        // Custom error codes live on the closed `ADAPTER_CUSTOM` umbrella via
+        // `createCustomErrorCode(namespace, code)` so switch-exhaustiveness on
+        // HarnessErrorCode still compiles in downstream consumers. The tuple
+        // rides on the error's `details` bag.
         throw new HarnessError(
           'Division by zero',
-          'DIVISION_BY_ZERO',
+          HarnessErrorCode.ADAPTER_CUSTOM,
           'Pass a non-zero divisor',
+          undefined,
+          createCustomErrorCode('tool', 'divide/zero'),
         );
       }
       traces.endSpan(spanId);

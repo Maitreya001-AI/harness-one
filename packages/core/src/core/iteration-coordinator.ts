@@ -56,8 +56,14 @@ export interface CoordinatorDeps {
 export interface CoordinatorState {
   /** Whether the "no pipeline" warning has already fired on this instance. */
   noPipelineWarned: boolean;
-  /** Public-facing lifecycle status (idle/running/completed/disposed). */
-  status: 'idle' | 'running' | 'completed' | 'disposed';
+  /**
+   * Public-facing lifecycle status. The coordinator flips it to `'running'`
+   * on `startRun` and to either `'completed'` (normal `end_turn`) or
+   * `'errored'` (abort / max-iterations / token-budget / guardrail block /
+   * adapter or tool error) on terminal. `dispose()` flips it to
+   * `'disposed'` and any later terminal emit must respect that.
+   */
+  status: 'idle' | 'running' | 'completed' | 'errored' | 'disposed';
   /**
    * Observable iteration counter exposed via `AgentLoop.getMetrics()`.
    * Mirrors the local `iteration` variable in `run()` and is bumped by
@@ -140,6 +146,12 @@ export function startRun(
  * Emit a terminal event pair (`error` + `done`) without going through the
  * iteration runner. Used for the three pre-iteration exits (abort,
  * max_iterations, token_budget) where no iteration_start has been yielded.
+ *
+ * Sets `state.status = 'errored'` to distinguish abnormal terminals
+ * (abort, max_iterations, token_budget) from a normal `end_turn` completion,
+ * which goes through `AgentLoop.run` directly and lands on `'completed'`.
+ * If `dispose()` has already flipped the state to `'disposed'`, the
+ * terminal emit does NOT overwrite it — disposed is a sink state.
  */
 function* emitTerminal(
   state: CoordinatorState,
@@ -154,7 +166,7 @@ function* emitTerminal(
     ctx.iterationSpanId = undefined;
   }
   yield errorEvent;
-  state.status = 'completed';
+  if (state.status !== 'disposed') state.status = 'errored';
   yield { type: 'done', reason, totalUsage: usage };
 }
 
@@ -267,10 +279,15 @@ export function releaseExternalSignal(
 ): void {
   const handler = state.externalAbortHandler;
   if (!handler || !deps.externalSignal) return;
+  // Spec says `EventTarget#removeEventListener` never throws, but users do
+  // sometimes pass custom `AbortSignal`-like mocks (tests, shims for legacy
+  // runtimes). Those mocks can throw — and a throw here would propagate out
+  // of `dispose()` / `finalizeRun()` and mask the real disposal path. The
+  // reference is cleared below regardless.
   try {
     deps.externalSignal.removeEventListener('abort', handler);
   } catch {
-    // Non-fatal — reference is dropped below.
+    /* non-spec signal impl; drop the ref anyway */
   }
   state.externalAbortHandler = undefined;
 }

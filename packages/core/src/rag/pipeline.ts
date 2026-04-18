@@ -141,21 +141,25 @@ export function createRAGPipeline(config: RAGPipelineConfig): RAGPipeline {
     /**
      * Deduplicate: filter out chunks whose content is already indexed.
      *
-     * Fix 17 (JSDoc): Deduplication is content-based (exact string match).
-     * Paraphrased or reformatted chunks are treated as unique. For semantic
-     * deduplication, implement a custom dedup function using embedding similarity.
+     * Matches are exact-string after Unicode NFC normalization so that
+     * composed and decomposed forms of the same grapheme (e.g. "café" NFC
+     * vs "café" NFD, or common accent sequences) are recognised as
+     * duplicates. Paraphrased / reformatted chunks still count as unique —
+     * use a custom pipeline wrapper with embedding similarity for semantic
+     * dedup.
      */
     const uniqueChunks: DocumentChunk[] = [];
     const batchSeen = new Set<string>();
     for (const chunk of chunks) {
-      if (contentHashes.has(chunk.content) || batchSeen.has(chunk.content)) {
+      const key = chunk.content.normalize('NFC');
+      if (contentHashes.has(key) || batchSeen.has(key)) {
         config.onWarning?.({
           message: `Duplicate chunk skipped: "${chunk.id}" (content already indexed)`,
           type: 'duplicate',
         });
         continue;
       }
-      batchSeen.add(chunk.content);
+      batchSeen.add(key);
       uniqueChunks.push(chunk);
     }
     chunks = uniqueChunks;
@@ -247,9 +251,10 @@ export function createRAGPipeline(config: RAGPipelineConfig): RAGPipeline {
         // Index for retrieval (checkpoint: this batch is now committed)
         await config.retriever.index(embeddedChunks);
 
-        // Commit content hashes only after successful embedding+indexing
+        // Commit content hashes only after successful embedding+indexing.
+        // Normalize to NFC here so future NFD-encoded callers match.
         for (const chunk of embeddedChunks) {
-          contentHashes.add(chunk.content);
+          contentHashes.add(chunk.content.normalize('NFC'));
         }
         allChunks.push(...embeddedChunks);
         totalIngested += embeddedChunks.length;

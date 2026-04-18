@@ -10,26 +10,5 @@
     "exactOptionalPropertyTypes": false
   },
   "include": ["**/*.ts"],
-  "exclude": [
-    "node_modules",
-    "dist",
-    "adapters/anthropic-adapter.ts",
-    "adapters/openai-adapter.ts",
-    "context/tiktoken-tokenizer.ts",
-    "eval/llm-judge-scorer.ts",
-    "full-stack-demo.ts",
-    "guardrails/llm-injection-detector.ts",
-    "guardrails/self-healing.ts",
-    "memory/redis-store.ts",
-    "memory/vector-store.ts",
-    "observe/cache-monitor.ts",
-    "observe/error-handling.ts",
-    "observe/failure-taxonomy.ts",
-    "observe/langfuse-exporter.ts",
-    "observe/opentelemetry-exporter.ts",
-    "orchestration/multi-agent.ts",
-    "prompt/langfuse-prompt-backend.ts",
-    "resilience/checkpoint-manager.ts",
-    "tools/ajv-validator.ts"
-  ]
+  "exclude": ["node_modules", "dist"]
 }

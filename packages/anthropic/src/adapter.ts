@@ -18,7 +18,12 @@ import type {
   Message,
 } from 'harness-one/core';
 import { HarnessError, HarnessErrorCode } from 'harness-one/core';
-import { createDefaultLogger, type Logger } from 'harness-one/observe';
+import { createDefaultLogger, isWarnActive, type Logger } from 'harness-one/observe';
+import { MAX_TOOL_ARG_BYTES, MAX_TOOL_CALLS } from 'harness-one/advanced';
+
+// Re-export for backward compat — anthropic/convert.ts still imports from the
+// adapter module. The canonical home is now `harness-one/observe`.
+export { isWarnActive };
 
 import {
   filterExtra,
@@ -66,24 +71,13 @@ export type AnthropicMalformedToolUsePolicy =
 /**
  * Shape that some Logger implementations optionally expose so adapters can
  * skip building warn-level metadata payloads when the configured level would
- * drop them anyway. We feature-detect this at runtime (Wave-12 P2-9) and
- * never hard-require it, to keep the Pick<Logger,'warn'|'error'> surface
- * minimal for consumers.
+ * drop them anyway. We feature-detect this at runtime and never hard-require
+ * it, to keep the `Pick<Logger, 'warn' | 'error'>` surface minimal for
+ * consumers. Kept here for documentation purposes; the runtime probe lives in
+ * `harness-one/observe`'s `isWarnActive`.
  */
 export interface MaybeLevelAwareLogger {
   readonly isWarnEnabled?: () => boolean;
-}
-
-/**
- * P2-9: defensive gate for warn-metadata allocation. Returns `true` when the
- * logger either exposes no capability probe (historical behavior: always log)
- * or reports that warn is active. Avoids calling `logger.isWarnEnabled()`
- * when the property is not a function, so downstream loggers never have to
- * implement the method.
- */
-export function isWarnActive(logger: Pick<Logger, 'warn' | 'error'>): boolean {
-  const probe = (logger as MaybeLevelAwareLogger).isWarnEnabled;
-  return typeof probe === 'function' ? probe.call(logger) : true;
 }
 
 /** Configuration for the Anthropic adapter. */
@@ -130,6 +124,21 @@ export interface AnthropicAdapterConfig {
    * tokenizer package.
    */
   readonly countTokens?: (text: string) => number;
+  /**
+   * Per-stream safety caps enforced inside the adapter's stream pump.
+   * Unbounded tool-call count or argument size is a memory-exhaustion vector
+   * for long-running streams, so the adapter keeps a pre-aggregation limit
+   * even when the loop-level {@link StreamAggregator} would catch the same
+   * condition later. Defaults match the `harness-one/advanced` shared
+   * constants (`MAX_TOOL_ARG_BYTES` / `MAX_TOOL_CALLS`) so
+   * `createAgentLoop({ limits: { maxToolArgBytes } })` and the adapter see
+   * the same budget out of the box. Provide your own values to pre-truncate
+   * earlier on constrained deployments.
+   */
+  readonly streamLimits?: {
+    readonly maxToolCalls?: number;
+    readonly maxToolArgBytes?: number;
+  };
 }
 
 /**
@@ -144,6 +153,8 @@ export function createAnthropicAdapter(config: AnthropicAdapterConfig): AgentAda
   const strictExtra = config.strictExtraAllowList ?? false;
   const tokenizer = config.countTokens;
   const malformedPolicy: AnthropicMalformedToolUsePolicy = config.onMalformedToolUse ?? 'warn';
+  const maxToolCalls = config.streamLimits?.maxToolCalls ?? MAX_TOOL_CALLS;
+  const maxToolArgBytes = config.streamLimits?.maxToolArgBytes ?? MAX_TOOL_ARG_BYTES;
 
   return {
     name: `anthropic:${model}`,
@@ -203,9 +214,11 @@ export function createAnthropicAdapter(config: AnthropicAdapterConfig): AgentAda
       let currentToolId: string | undefined;
       let currentToolName: string | undefined;
 
-      // Safety limits to prevent OOM from malformed streams (parity with OpenAI adapter)
-      const MAX_TOOL_CALLS = 128;
-      const MAX_TOOL_ARG_BYTES = 1_048_576; // 1MB
+      // Safety limits to prevent OOM from malformed streams. Defaults to the
+      // shared `MAX_TOOL_CALLS` / `MAX_TOOL_ARG_BYTES` constants (parity with
+      // the OpenAI adapter and with core's StreamAggregator); callers can
+      // tighten per-factory via `streamLimits` when running on constrained
+      // hosts.
       let toolCallCount = 0;
       let currentToolArgBytes = 0;
       let currentToolLimitExceeded = false;
@@ -217,7 +230,7 @@ export function createAnthropicAdapter(config: AnthropicAdapterConfig): AgentAda
             toolCallCount++;
             currentToolArgBytes = 0;
             currentToolLimitExceeded = false;
-            if (toolCallCount > MAX_TOOL_CALLS) {
+            if (toolCallCount > maxToolCalls) {
               currentToolId = undefined;
               currentToolName = undefined;
               currentToolLimitExceeded = true;
@@ -236,7 +249,7 @@ export function createAnthropicAdapter(config: AnthropicAdapterConfig): AgentAda
             yield { type: 'text_delta', text: delta.text };
           } else if (delta.type === 'input_json_delta') {
             if (currentToolLimitExceeded) continue;
-            if (currentToolArgBytes + delta.partial_json.length > MAX_TOOL_ARG_BYTES) {
+            if (currentToolArgBytes + delta.partial_json.length > maxToolArgBytes) {
               currentToolLimitExceeded = true;
               continue;
             }

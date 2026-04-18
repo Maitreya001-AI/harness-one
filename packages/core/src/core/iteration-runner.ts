@@ -19,8 +19,7 @@
 import type { ExecutionStrategy, Message, TokenUsage, ToolCallRequest } from './types.js';
 import type { AgentEvent, DoneReason } from './events.js';
 import { AbortedError, HarnessError, TokenBudgetExceededError, HarnessErrorCode} from './errors.js';
-import type { AgentLoopHook } from './agent-loop-types.js';
-import { createHookDispatcher } from './hook-dispatcher.js';
+import type { AgentLoopHookDispatcher } from './hook-dispatcher.js';
 import type { AdapterCaller } from './adapter-caller.js';
 import type { AgentLoopTraceManager } from './trace-interface.js';
 import type { GuardrailPipeline } from './guardrail-port.js';
@@ -76,7 +75,17 @@ export interface IterationContext {
   readonly cumulativeUsage: { inputTokens: number; outputTokens: number };
   /** Tool-call counter across iterations; runIteration increments per tool_result yielded. */
   readonly toolCallCounter: { value: number };
-  /** Once-fired flag for `onIterationEnd`; reset to `false` by the orchestrator before each runIteration call. */
+  /**
+   * Once-fired flag for `onIterationEnd`.
+   *
+   * **Caller contract**: the orchestrator (`AgentLoop.run()` via
+   * `iteration-coordinator.startIteration`) MUST reset this to `false`
+   * before every `runIteration()` call. IterationRunner NEVER touches the
+   * box outside `fireIterationEnd()` and assumes a fresh `false` on entry.
+   * Violating the contract (re-using a context across iterations without
+   * resetting) silently suppresses the `onIterationEnd` hook on subsequent
+   * iterations.
+   */
   readonly iterationEndFired: { value: boolean };
 }
 
@@ -101,9 +110,12 @@ export interface IterationRunnerConfig {
   readonly inputPipeline?: GuardrailPipeline;
   readonly outputPipeline?: GuardrailPipeline;
   readonly traceManager?: AgentLoopTraceManager;
-  readonly hooks: readonly AgentLoopHook[];
-  readonly strictHooks?: boolean;
-  readonly logger?: { warn: (msg: string, meta?: Record<string, unknown>) => void };
+  /**
+   * Shared hook dispatcher owned by {@link AgentLoop}. Injecting the
+   * pre-built dispatcher means we don't re-allocate a second one here with
+   * potentially-divergent strictHooks / logger config.
+   */
+  readonly runHook: AgentLoopHookDispatcher;
 }
 
 /** Public surface of the iteration runner. */
@@ -136,16 +148,11 @@ function snapshotUsage(u: { inputTokens: number; outputTokens: number }): TokenU
  */
 export function createIterationRunner(config: Readonly<IterationRunnerConfig>): IterationRunner {
   const tm = config.traceManager;
+  const runHook = config.runHook;
 
   function isAborted(): boolean {
     return config.abortController.signal.aborted;
   }
-
-  const runHook = createHookDispatcher({
-    hooks: config.hooks,
-    ...(config.strictHooks !== undefined && { strictHooks: config.strictHooks }),
-    ...(config.logger !== undefined && { logger: config.logger }),
-  });
 
   /** Close the active iteration span and clear the slot on the context. */
   function endSpan(ctx: IterationContext, status?: 'completed' | 'error'): void {
@@ -510,8 +517,17 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
           typeof execResult.result === 'string'
             ? execResult.result
             : safeStringifyToolResult(execResult.result);
-      } catch {
+      } catch (serializeErr) {
         resultContent = '[Object could not be serialized]';
+        // Surface the failure so operators see why the tool message became a
+        // stub. Silent fallback makes it look like the tool returned the
+        // placeholder string, which is confusing at debug time.
+        yield {
+          type: 'warning',
+          message: `Tool result for "${execResult.toolCallId}" failed to serialize (${
+            serializeErr instanceof Error ? serializeErr.message : String(serializeErr)
+          }); sending "[Object could not be serialized]" to the model.`,
+        };
       }
 
       // Tool-output guardrail — block REWRITES the tool result into a stub;

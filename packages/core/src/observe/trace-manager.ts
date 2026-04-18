@@ -14,6 +14,7 @@ import {
   type RedactConfig,
   type Redactor,
 } from '../infra/redact.js';
+import type { Logger } from '../infra/logger.js';
 import type { MetricsPort } from '../core/metrics-port.js';
 import { TraceLruList } from './trace-lru-list.js';
 import { createSpanAttributeKeyWarner } from './span-attribute-keys.js';
@@ -45,13 +46,12 @@ export function createTraceManager(config?: {
    * Optional structured logger for trace-manager internal warnings. When set,
    * export errors without an onExportError callback route through this logger
    * instead of `console.warn`. Lets ops silence or redirect warnings at runtime.
-   * Accepts an optional `debug` method for low-severity signals
-   * (dead-trace attempts, LRU 80% warnings).
+   *
+   * Accepts the canonical `Logger` interface so a single `createLogger()`
+   * can be threaded into every subsystem. Trace-manager only calls `.warn`
+   * and optionally `.debug` on this port — other methods are ignored.
    */
-  logger?: {
-    warn: (msg: string, meta?: Record<string, unknown>) => void;
-    debug?: (msg: string, meta?: Record<string, unknown>) => void;
-  };
+  logger?: Pick<Logger, 'warn'> & Partial<Pick<Logger, 'debug' | 'info' | 'error' | 'child' | 'isWarnEnabled'>>;
   /**
    * Global sampling rate (0-1). When set and no per-exporter `shouldExport`
    * hook is provided, each trace is sampled on `endTrace()`. Runtime-adjustable
@@ -193,13 +193,6 @@ export function createTraceManager(config?: {
      * already-started traces.
      */
     sampled: boolean;
-    /**
-     * Embedded {@link LruNode} pointers. Owned and mutated by
-     * {@link TraceLruList}; consumers must not touch them directly.
-     */
-    lruPrev: MutableTrace | null;
-    lruNext: MutableTrace | null;
-    inLru: boolean;
   }
 
   const traces = new Map<string, MutableTrace>();
@@ -375,9 +368,6 @@ export function createTraceManager(config?: {
         // Snapshot current sampling rate at trace-start.
         samplingRateSnapshot: rateSnapshot,
         sampled,
-        lruPrev: null,
-        lruNext: null,
-        inLru: false,
       };
       traces.set(id, mutable);
       lru.append(mutable);
@@ -406,7 +396,7 @@ export function createTraceManager(config?: {
         }
         deadTraceSpanCounter?.add(1, { reason: 'trace_dead' });
         if (logger) {
-          try { (logger as { debug?: (m: string, meta?: Record<string, unknown>) => void }).debug?.('[harness-one/trace-manager] startSpan on dead trace', { traceId, name }); } catch { /* logger non-fatal */ }
+          try { logger.debug?.('[harness-one/trace-manager] startSpan on dead trace', { traceId, name }); } catch { /* logger non-fatal */ }
         }
         const deadSpanId = asSpanId(`${DEAD_SPAN_PREFIX}${genSpanId()}`);
         deadSpanIds.add(deadSpanId);

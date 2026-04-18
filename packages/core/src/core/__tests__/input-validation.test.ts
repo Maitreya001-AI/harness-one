@@ -12,7 +12,7 @@ import type { AgentAdapter, ChatResponse } from '../types.js';
 import { compress } from '../../context/compress.js';
 import { createSessionManager } from '../../session/manager.js';
 import { createTraceManager } from '../../observe/trace-manager.js';
-import { MessageQueue } from '../../orchestration/message-queue.js';
+import { createMessageQueue } from '../../orchestration/message-queue.js';
 import { withSelfHealing } from '../../guardrails/self-healing.js';
 
 // ---------------------------------------------------------------------------
@@ -269,18 +269,18 @@ describe('TraceManager input validation', () => {
 describe('MessageQueue input validation', () => {
   it('throws INVALID_CONFIG when maxQueueSize is 0', () => {
     expectInvalidConfig(
-      () => new MessageQueue({ maxQueueSize: 0 }),
+      () => createMessageQueue({ maxQueueSize: 0 }),
       'maxQueueSize must be >= 1',
     );
   });
 
   it('accepts positive maxQueueSize', () => {
-    const mq = new MessageQueue({ maxQueueSize: 10 });
+    const mq = createMessageQueue({ maxQueueSize: 10 });
     expect(mq).toBeDefined();
   });
 
   it('accepts default config', () => {
-    const mq = new MessageQueue();
+    const mq = createMessageQueue();
     expect(mq).toBeDefined();
   });
 });

@@ -15,7 +15,8 @@
     "@harness-one/redis": "workspace:*",
     "@harness-one/opentelemetry": "workspace:*",
     "@harness-one/tiktoken": "workspace:*",
-    "@harness-one/ajv": "workspace:*"
+    "@harness-one/ajv": "workspace:*",
+    "@harness-one/devkit": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.5.0"

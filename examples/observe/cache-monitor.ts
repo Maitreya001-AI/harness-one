@@ -8,36 +8,43 @@ import { createCacheMonitor } from 'harness-one/observe';
 
 async function main() {
   const monitor = createCacheMonitor({
-    // Cost per 1k tokens for cache read vs. fresh input
-    cacheReadPricePer1k: 0.0003,
-    inputPricePer1k: 0.003,
+    // Pricing is supplied via the `pricing` sub-bag.
+    pricing: {
+      cacheReadPer1kTokens: 0.0003,
+      inputPer1kTokens: 0.003,
+    },
   });
 
-  // Record cache events from multiple agent iterations
+  // Record cache events from multiple agent iterations. `record` consumes a
+  // TokenUsage shape — outputTokens is required so we include it even when
+  // the adapter returned none.
   monitor.record({
     inputTokens: 1000,
-    cacheReadTokens: 800,   // 800 tokens served from cache
-    cacheWriteTokens: 200,  // 200 tokens written to cache
+    outputTokens: 0,
+    cacheReadTokens: 800, // 800 tokens served from cache
+    cacheWriteTokens: 200, // 200 tokens written to cache
   });
 
   monitor.record({
     inputTokens: 1200,
+    outputTokens: 0,
     cacheReadTokens: 1000,
     cacheWriteTokens: 200,
   });
 
   monitor.record({
     inputTokens: 500,
-    cacheReadTokens: 0,     // Cache miss
+    outputTokens: 0,
+    cacheReadTokens: 0, // Cache miss
     cacheWriteTokens: 500,
   });
 
   // Get cache analytics
-  const stats = monitor.stats();
-  console.log(`Total input tokens: ${stats.totalInputTokens}`);
-  console.log(`Cache hit rate: ${(stats.hitRate * 100).toFixed(1)}%`);
+  const stats = monitor.getMetrics();
+  console.log(`Total calls: ${stats.totalCalls}`);
+  console.log(`Avg hit rate: ${(stats.avgHitRate * 100).toFixed(1)}%`);
   console.log(`Estimated savings: $${stats.estimatedSavings.toFixed(4)}`);
-  console.log(`Total records: ${stats.recordCount}`);
+  console.log(`Cache reads: ${stats.totalCacheReadTokens}`);
 }
 
 main().catch(console.error);
