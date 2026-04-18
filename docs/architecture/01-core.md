@@ -80,7 +80,7 @@ class AgentLoop {
   async *run(messages: Message[]): AsyncGenerator<AgentEvent>
 }
 
-// 0.2.0 新增：与 harness-one 其余 `createX()` 风格对齐的工厂别名。
+// 与 harness-one 其余 `createX()` 风格对齐的工厂别名（一等 API）。
 function createAgentLoop(config: AgentLoopConfig): AgentLoop;
 ```
 
@@ -88,7 +88,7 @@ function createAgentLoop(config: AgentLoopConfig): AgentLoop;
 
 **行为**：在循环中调用 `adapter.chat()`（或 `adapter.stream()`），如果 LLM 返回 toolCalls，则依次调用 `onToolCall` 并将结果回填，继续循环直到 LLM 不再请求工具或触发安全阀（maxIterations / maxTotalTokens / abort）。
 
-**非重入（0.2.0 新增）**：`run()` 在同一实例上并发调用会抛 `HarnessError(HarnessErrorCode.CORE_INVALID_STATE)`。两路并发时 `_iteration` / `cumulativeUsage` / `abortController` 会竞争，过去可能静默损坏状态；现在直接失败暴露误用。模式：**每条并发请求一个 AgentLoop 实例**，或把调用序列化。
+**非重入**：`run()` 在同一实例上并发调用会抛 `HarnessError(HarnessErrorCode.CORE_INVALID_STATE)`。两路并发时 `_iteration` / `cumulativeUsage` / `abortController` 会竞争，过去可能静默损坏状态；现在直接失败暴露误用。模式：**每条并发请求一个 AgentLoop 实例**，或把调用序列化。
 
 **构造时输入验证**：`AgentLoopConfig` 中所有数值参数（`maxIterations`、`maxTotalTokens`、`maxStreamBytes`、`maxToolArgBytes`、`toolTimeoutMs`）在构造时校验，非正数或非有限值会立即抛出错误，防止无效配置静默生效。
 
@@ -168,7 +168,7 @@ AgentLoop 在超出 token 预算时裁剪历史对话。裁剪逻辑始终保留
 
 `finally` 块检测外部 `.return()` / `.throw()` 关闭，确保 `done` 事件至少被标记。
 
-### 迭代 span 富化（0.2.0）
+### 迭代 span 富化
 
 当构造时传入 `traceManager`，AgentLoop 会在每次迭代开始时创建 `iteration-N` span，并附着以下**可查询属性**（此前只有 `inputTokens`/`outputTokens`）：
 
@@ -181,7 +181,7 @@ AgentLoop 在超出 token 预算时裁剪历史对话。裁剪逻辑始终保留
 | `toolCount` | `3` | 一次迭代返回的工具调用数（工具爆炸预警） |
 | `inputTokens` / `outputTokens` | `1234` / `567` | 与 cost tracker 对齐 |
 
-**adapter 重试（0.2.0）**：重试不再隐身——每次可重试错误触发 `adapter_retry` span event，属性含 `attempt`、`errorCategory`、`path`（`'chat'` 或 `'stream'`），错误消息预览前 500 字符。当重试耗尽进入 error 路径时，`errorCategory` / `error` 也写到 span 属性上再调用 `endSpan(..., 'error')`。
+**adapter 重试**：重试不再隐身——每次可重试错误触发 `adapter_retry` span event，属性含 `attempt`、`errorCategory`、`path`（`'chat'` 或 `'stream'`），错误消息预览前 500 字符。当重试耗尽进入 error 路径时，`errorCategory` / `error` 也写到 span 属性上再调用 `endSpan(..., 'error')`。
 
 **工具 span 错误归因**：每个工具调用的子 span 在创建时即设 `toolName` 和 `toolCallId` 属性（不只在 span.name 字符串里），失败时再补 `errorMessage` / `errorName` 后以 `'error'` 状态关闭。trace 后端可按 `toolName` 直接聚合失败率。
 

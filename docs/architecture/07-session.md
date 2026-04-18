@@ -60,7 +60,7 @@ SessionManager 接口：
 
 过期判定：`Date.now() - session.lastAccessedAt > ttlMs`。过期是惰性检测的——在 `get()`、`access()`、`list()` 时检查并标记。`gc()` 则主动扫描全部会话。
 
-### LRU 淘汰（0.2.0 优化）
+### LRU 淘汰
 
 维护**两个**结构而非一个：
 - `unlockedOrder: Map<string, true>` — 仅包含可驱逐（unlocked）会话的 LRU 顺序
@@ -148,4 +148,4 @@ interface ConversationStoreCapabilities {
 - `load()` 返回的数组必须是防御拷贝——调用方的修改不得污染 store。
 - 第三方后端应在 `capabilities` 字段如实声明所支持的契约级别，方便调用方做能力检测。
 
-**harness.run() 会话 id（0.2.0）**：`harness.run(messages, { sessionId })` 可传入 per-request session id。未传时使用 `'default'` 并在首次发出一次性告警——`"default"` 在多并发 `run()` 场景会让消息互相串扰。
+**harness.run() 会话 id**：`harness.run(messages, { sessionId })` 可传入 per-request session id。未传时使用 `'default'` 并在首次发出一次性告警——`"default"` 在多并发 `run()` 场景会让消息互相串扰。

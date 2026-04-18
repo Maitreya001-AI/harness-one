@@ -187,13 +187,6 @@ describe('FIX-5: fail-open still emits events for crashed guardrails', () => {
   });
 });
 
-describe('FIX-6: budget.ts throws HarnessError', () => {
-  it('is covered in budget.test.ts', () => {
-    // Placeholder - actual test is in budget.test.ts
-    expect(true).toBe(true);
-  });
-});
-
 describe('pipeline edge cases', () => {
   it('modify verdict: pipeline returns modified content and propagates to next guardrail', async () => {
     const modifierGuard: Guardrail = (ctx) => {

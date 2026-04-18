@@ -2,7 +2,7 @@
 
 > 可观测性：Trace/Span 管理、成本追踪、预算告警、导出器、默认 redaction、safe-log 原语。
 
-## Wave-5A: Secure-by-default redaction (1.0-rc)
+## Wave-5A: Secure-by-default redaction
 
 **默认启用**（T02/T03/T04）：
 - `createLogger()` 无参默认 `useDefaultPattern: true`——scrub `api_key`/`token`/`password`/`authorization` 等
@@ -43,8 +43,8 @@ observe 模块提供两个核心能力：TraceManager 管理分布式追踪（Tr
 | `Trace` | 追踪：id、name、startTime、endTime、metadata、spans、status |
 | `Span` | 跨度：id、traceId、parentId、name、attributes、events、status |
 | `SpanEvent` | 跨度事件：name、timestamp、attributes |
-| `SpanAttributeValue` | 允许的 attr 值类型（0.2.0）：`string \| number \| boolean \| readonly string[] \| readonly number[] \| readonly boolean[]`，与 OTel 语义兼容 |
-| `SpanAttributes` | `Readonly<Record<string, SpanAttributeValue>>`（0.2.0）；新代码应使用此类型，接口层兼容仍为 `Record<string, unknown>` |
+| `SpanAttributeValue` | 允许的 attr 值类型：`string \| number \| boolean \| readonly string[] \| readonly number[] \| readonly boolean[]`，与 OTel 语义兼容 |
+| `SpanAttributes` | `Readonly<Record<string, SpanAttributeValue>>`；新代码应使用此类型，接口层兼容仍为 `Record<string, unknown>` |
 | `TokenUsageRecord` | token 用量记录：含 estimatedCost 和 timestamp |
 | `CostAlert` | 成本告警：type (warning/critical)、currentCost、budget、percentUsed |
 | `TraceExporter` | 导出器接口：exportTrace、exportSpan、flush + 可选生命周期方法 |
@@ -58,15 +58,15 @@ function createTraceManager(config?: {
   exporters?: TraceExporter[];
   maxTraces?: number;            // 默认 1000，LRU 淘汰；非正数值在构造时被拒绝
   onExportError?: (err: unknown) => void;
-  logger?: { warn: (msg: string, meta?: Record<string, unknown>) => void }; // 0.2.0
-  defaultSamplingRate?: number;  // 0.2.0，[0, 1]，默认 1（全采）
+  logger?: { warn: (msg: string, meta?: Record<string, unknown>) => void };
+  defaultSamplingRate?: number;  // [0, 1]，默认 1（全采）
 }): TraceManager
 ```
-TraceManager 接口：`startTrace()`, `startSpan()`, `addSpanEvent()`, `setSpanAttributes()`, `endSpan()`, `endTrace()`, `getTrace()`, `getActiveSpans()`, `flush()`, `initialize()` (0.2.0)、`setSamplingRate(rate)` (0.2.0)、`dispose()`.
+TraceManager 接口：`startTrace()`, `startSpan()`, `addSpanEvent()`, `setSpanAttributes()`, `endSpan()`, `endTrace()`, `getTrace()`, `getActiveSpans()`, `flush()`, `initialize()`、`setSamplingRate(rate)`、`dispose()`.
 
 - `initialize(): Promise<void>` — 主动调用每个 exporter 的 `initialize?()`。未调用时首个导出触发懒加载。
 - `setSamplingRate(rate)` — 运行时调节全局采样率，接受 [0, 1]。per-exporter `shouldExport()` 优先级更高。
-- `flush() / dispose()` — **都会等待所有 in-flight span/trace 导出落地**（0.2.0 修复：此前 `flush()` 只让 exporter 自身 flush，外层仍有未 settle 的 `.then()` 链）。
+- `flush() / dispose()` — **都会等待所有 in-flight span/trace 导出落地**（此前 `flush()` 只让 exporter 自身 flush，外层仍有未 settle 的 `.then()` 链，已修复）。
 - `getActiveSpans(olderThanMs?)` — 返回仍处于 'running' 状态的 span，用于检测泄漏。
 - `startSpan()` 的 parentId 必须是同一 trace 中已存在的 span，否则抛出 `SPAN_NOT_FOUND`。
 
@@ -85,8 +85,8 @@ function createCostTracker(config?: {
   maxRecords?: number;  // 环形缓冲区容量上限，默认 10,000
   maxModels?: number;   // modelTotals 二级索引上限，默认 1000，FIFO 淘汰
   maxTraces?: number;   // traceTotals 二级索引上限，默认 10,000，FIFO 淘汰
-  strictMode?: boolean;          // 0.2.0，默认 false
-  warnUnpricedModels?: boolean;  // 0.2.0，默认 true
+  strictMode?: boolean;          // 默认 false
+  warnUnpricedModels?: boolean;  // 默认 true
 }): CostTracker
 ```
 
@@ -137,10 +137,10 @@ cost = (inputTokens/1000 * inputPrice) + (outputTokens/1000 * outputPrice)
 
 ## TraceExporter 生命周期方法
 
-`TraceExporter` 接口除必选的 `exportTrace()`、`exportSpan()`、`flush()` 外，有四个可选生命周期方法——**从 0.2.0 起全部由 TraceManager 真正调用**（此前仅 `shutdown?()` 被 `dispose()` 使用，其余三个声明但未实现，构成契约残缺）：
+`TraceExporter` 接口除必选的 `exportTrace()`、`exportSpan()`、`flush()` 外，有四个可选生命周期方法——**全部由 TraceManager 真正调用**（历史上仅 `shutdown?()` 被 `dispose()` 使用，其余三个声明但未实现，曾构成契约残缺）：
 
-| 方法 | 调用时机（0.2.0） |
-|------|-------------------|
+| 方法 | 调用时机 |
+|------|----------|
 | `initialize?()` | 懒调用——首个 `exportTrace`/`exportSpan` 触发；或调用方主动 `tm.initialize()` 一次性预热 |
 | `isHealthy?()` | 每次导出前检查；返回 `false` 时跳过该 exporter 的本次导出 |
 | `shouldExport?(trace)` | `endTrace` 时对该 exporter 询问是否导出此 trace（sampling / attribute 过滤） |
@@ -184,7 +184,7 @@ CacheMonitor 历史上暴露的指标键（`hitRate`、`missRate`、`avgLatency`
 
 新代码在自定义 exporter 中应直接使用 `cache.*` 名称，避免依赖 rename 机制。
 
-## harness.run() 的 trace 布局（0.2.0）
+## harness.run() 的 trace 布局
 
 当使用 `@harness-one/preset` 的 `createHarness()` 时，`harness.run()` 会为每次调用创建一个**顶层 trace** `harness.run`，并把以下内容挂在它下面：
 
@@ -200,7 +200,7 @@ CacheMonitor 历史上暴露的指标键（`hitRate`、`missRate`、`avgLatency`
 1. **Exporter 异步且不阻塞**——exportTrace/exportSpan 的 Promise rejection 通过 `onExportError` 回调报告，不影响业务流程
 2. **LRU 而非 TTL**——按数量而非时间淘汰，更适合长期运行的 agent 进程
 3. **成本与追踪分离**——TraceManager 和 CostTracker 是独立的，可单独使用
-4. **契约与实现对齐（0.2.0）**——TraceExporter 接口声明的生命周期钩子全部由 TraceManager 真正调用；避免"声明即谎言"的契约残缺
+4. **契约与实现对齐**——TraceExporter 接口声明的生命周期钩子全部由 TraceManager 真正调用；避免"声明即谎言"的契约残缺
 
 ## Failure Taxonomy
 

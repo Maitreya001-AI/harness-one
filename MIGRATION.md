@@ -66,3 +66,8 @@ build should know about:
 - Anthropic + OpenAI adapters no longer define `MAX_TOOL_CALLS` /
   `MAX_TOOL_ARG_BYTES` locally — use the shared constants from
   `harness-one/advanced` or override via `streamLimits`.
+- `@harness-one/preset` `validateHarnessRuntimeConfig` signature widened
+  from a detailed structural type to `Record<string, unknown>`. Runtime
+  behaviour unchanged — the function already narrows every field through
+  `require*` guards. Call sites that previously satisfied the strict
+  shape continue to pass; dynamic callers no longer need `as any`.

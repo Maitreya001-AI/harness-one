@@ -23,6 +23,7 @@ import {
   requireFiniteNonNegative,
   validatePricingArray,
 } from 'harness-one/advanced';
+import type { PricingNumericFields } from 'harness-one/advanced';
 import type { HarnessConfigBase } from './build-harness/types.js';
 import type { SecurePresetOptions } from './secure.js';
 
@@ -191,18 +192,12 @@ const KNOWN_KEYS: ReadonlySet<HarnessConfigKnownKey> = new Set<HarnessConfigKnow
  * agree on what counts as a positive integer / finite positive number, and
  * enforces the adapter/client XOR rule that the discriminated union
  * already blocks at compile time (belt-and-suspenders for dynamic callers).
+ *
+ * Input is an already structurally-validated `Record<string, unknown>` from
+ * {@link validateHarnessConfig}; numeric fields are narrowed inline via
+ * {@link readNumber} so we never reach for `as any`.
  */
-export function validateHarnessRuntimeConfig(config: {
-  readonly adapter?: unknown;
-  readonly client?: unknown;
-  readonly maxIterations?: number;
-  readonly maxTotalTokens?: number;
-  readonly budget?: number;
-  readonly maxAdapterRetries?: number;
-  readonly baseRetryDelayMs?: number;
-  readonly pricing?: unknown;
-  readonly guardrails?: { readonly rateLimit?: { readonly max?: number; readonly windowMs?: number } };
-}): void {
+export function validateHarnessRuntimeConfig(config: Record<string, unknown>): void {
   const hasAdapter = !!config.adapter;
   const hasClient = !!config.client;
 
@@ -223,17 +218,35 @@ export function validateHarnessRuntimeConfig(config: {
       + 'to let harness-one build the adapter for you.',
     );
   }
-  requirePositiveInt(config.maxIterations, 'maxIterations');
-  requirePositiveInt(config.maxTotalTokens, 'maxTotalTokens');
-  requireFinitePositive(config.budget, 'budget');
-  if (config.guardrails?.rateLimit) {
-    requirePositiveInt(config.guardrails.rateLimit.max, 'guardrails.rateLimit.max');
-    requirePositiveInt(config.guardrails.rateLimit.windowMs, 'guardrails.rateLimit.windowMs');
+  requirePositiveInt(readNumber(config.maxIterations), 'maxIterations');
+  requirePositiveInt(readNumber(config.maxTotalTokens), 'maxTotalTokens');
+  requireFinitePositive(readNumber(config.budget), 'budget');
+  const rateLimit = readRateLimit(config.guardrails);
+  if (rateLimit) {
+    requirePositiveInt(rateLimit.max, 'guardrails.rateLimit.max');
+    requirePositiveInt(rateLimit.windowMs, 'guardrails.rateLimit.windowMs');
   }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  validatePricingArray(config.pricing as any);
-  requireNonNegativeInt(config.maxAdapterRetries, 'maxAdapterRetries');
-  requireFiniteNonNegative(config.baseRetryDelayMs, 'baseRetryDelayMs');
+  validatePricingArray(config.pricing as readonly PricingNumericFields[] | undefined);
+  requireNonNegativeInt(readNumber(config.maxAdapterRetries), 'maxAdapterRetries');
+  requireFiniteNonNegative(readNumber(config.baseRetryDelayMs), 'baseRetryDelayMs');
+}
+
+/** Narrow `unknown` to `number | undefined`; non-numbers surface as-is so the
+ *  downstream `require*` guard throws a structured error with the field name. */
+function readNumber(v: unknown): number | undefined {
+  if (v === undefined) return undefined;
+  return typeof v === 'number' ? v : (v as number);
+}
+
+/** Pull `{ max, windowMs }` out of a nested `guardrails.rateLimit` if present. */
+function readRateLimit(
+  guardrails: unknown,
+): { max: number | undefined; windowMs: number | undefined } | undefined {
+  if (!guardrails || typeof guardrails !== 'object') return undefined;
+  const rl = (guardrails as { rateLimit?: unknown }).rateLimit;
+  if (!rl || typeof rl !== 'object') return undefined;
+  const { max, windowMs } = rl as { max?: unknown; windowMs?: unknown };
+  return { max: readNumber(max), windowMs: readNumber(windowMs) };
 }
 
 /**
@@ -244,6 +257,5 @@ export function validateHarnessRuntimeConfig(config: {
  */
 export function validateHarnessConfigAll(config: Record<string, unknown>): void {
   validateHarnessConfig(config);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  validateHarnessRuntimeConfig(config as any);
+  validateHarnessRuntimeConfig(config);
 }

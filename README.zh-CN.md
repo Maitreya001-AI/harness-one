@@ -139,7 +139,7 @@ for await (const event of harness.run(messages, { sessionId: userId })) {
 await harness.shutdown();
 ```
 
-> **包改名**：`harness-one-full` 在 0.2.0 重命名为 `@harness-one/preset`，与
+> **包改名**：`harness-one-full` 已重命名为 `@harness-one/preset`，与
 > `@harness-one/anthropic`/`openai`/`redis` 等统一到同一个 npm scope。迁移
 > 只需一行：`npm install @harness-one/preset && s/harness-one-full/@harness-one\\/preset/`。
 > 运行时行为不变。详情见 `.changeset/rename-preset.md`。
@@ -165,11 +165,12 @@ await harness.shutdown();
 
 详细架构说明在 [`docs/architecture/`](./docs/architecture/)。
 
-## 1.0-rc 关键变化（Wave-5C / 5D / 5E / 5F）
+## Wave-5 关键变化（Wave-5C / 5D / 5E / 5F）
 
-> 完整逐项映射见 [CHANGELOG.md](./CHANGELOG.md) 的 Unreleased 段。
+> 项目仍为 pre-release（所有包 `0.1.0`，未发 npm），以下是 Wave-5 系列落地
+> 的关键里程碑。完整逐项映射见 [MIGRATION.md](./MIGRATION.md) 的 Unreleased 段。
 
-### Wave-5C — 包边界与 API 1.0-rc
+### Wave-5C — 包边界与 API 收口
 
 - **根桶收紧到 19 个值导出**（UJ-1..UJ-5 主路径）。其余工厂走子路径（`harness-one/core`、`harness-one/tools`、`harness-one/observe`、`harness-one/infra` 等）或兄弟包。**`createSecurePreset` 不再从根桶导出**——直接从 `@harness-one/preset` 导入。
 - **`HarnessErrorCode` 收口 + 模块前缀**：`UNKNOWN` → `CORE_UNKNOWN`、`MAX_ITERATIONS` → `CORE_MAX_ITERATIONS`、`GUARDRAIL_VIOLATION` → `GUARD_VIOLATION` 等。`HarnessError.code` 不再 `(string & {})` widening；switch 现在可以穷举校验。**必须值导入** `import { HarnessErrorCode }`——`import type` 会静默丢失 `Object.values()`，自定义 lint 规则 `harness-one/no-type-only-harness-error-code` 在 lint 时拦截。
@@ -208,13 +209,13 @@ await admission.withPermit('tenant-123', () => harness.run(messages));
 - 新 `harness-one/infra` 暴露 `unrefTimeout` / `unrefInterval`，长生命周期 timer 默认不持有事件循环。
 - preset pricing 校验拒绝 NaN / Infinity。
 
-## 0.2.0 的主要变化
+## 早期审查批次（Wave 1–4）
 
-以下是 50 条架构审查修复带来的关键能力提升（完整清单见 [CHANGELOG.md](./CHANGELOG.md)）：
+以下是早期 50 条架构审查修复带来的关键能力提升（完整清单见 git log 及 [MIGRATION.md](./MIGRATION.md)）：
 
 ### 契约与实现对齐
 
-- **TraceExporter 生命周期钩子**：`initialize?()` / `isHealthy?()` / `shouldExport?(trace)` 此前声明却未被调用，0.2.0 起由 TraceManager 真正调用。第三方 exporter 写的 lazy-init、采样、健康检查终于生效。
+- **TraceExporter 生命周期钩子**：`initialize?()` / `isHealthy?()` / `shouldExport?(trace)` 此前声明却未被调用，现已由 TraceManager 真正调用。第三方 exporter 写的 lazy-init、采样、健康检查终于生效。
 - **Anthropic tool_use 输入守卫**：LLM 返回非 JSON 对象的工具参数时，不再把字符串强转成 `Record<string, unknown>`——改为替换为空对象并 `console.warn`。静默腐化被消灭。
 - **持久化边界 schema 校验**：`memory/fs-io`、`memory/relay`、`@harness-one/redis` 里每一处 `JSON.parse(...) as T` 都换成了 `validateMemoryEntry` / `validateIndex` / `validateRelayState`，坏数据会立刻抛 `HarnessError('STORE_CORRUPTION')` 而不是被下游当成合法对象继续处理。
 

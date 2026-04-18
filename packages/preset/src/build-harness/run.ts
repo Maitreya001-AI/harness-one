@@ -32,7 +32,7 @@ import { validateHarnessRuntimeConfig } from '../validate-config.js';
  * (`adapter`, `exporters`, `memoryStore`, etc.).
  */
 export function buildHarness(config: HarnessConfig): Harness {
-  validateHarnessRuntimeConfig(config);
+  validateHarnessRuntimeConfig({ ...config });
 
   const wired = wireComponents(config);
   const {

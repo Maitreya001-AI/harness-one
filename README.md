@@ -19,9 +19,10 @@ Harness engineering is the discipline of building robust, production-grade infra
 
 ## Quick Start
 
-> **Production users (1.0-rc+)**: prefer `createSecurePreset` over `createHarness`.
-> It fail-closed defaults redaction, guardrail pipeline, tool capability limits,
-> and `sealProviders()`. See the **Secure preset** section below.
+> **Production users**: prefer `createSecurePreset` over `createHarness`. It
+> fail-closed defaults redaction, guardrail pipeline, tool capability limits,
+> and `sealProviders()`. See the **Secure preset** section below. All packages
+> are pre-release (`0.1.0`, not yet on npm); pin by SHA if you need stability.
 
 Two install paths:
 
@@ -752,10 +753,10 @@ Not all features are at the same maturity level. This table clarifies what's pro
 
 ## @harness-one/preset — Batteries Included
 
-> Previously published as `harness-one-full`. The package was renamed to
-> `@harness-one/preset` in 0.2.0 to match the rest of the `@harness-one/*`
-> integration scope. See `.changeset/rename-preset.md` for the migration
-> diff — runtime behavior is unchanged.
+> Previously scaffolded as `harness-one-full`. Renamed to
+> `@harness-one/preset` to match the rest of the `@harness-one/*`
+> integration scope. See `.changeset/rename-preset.md` for the
+> rename trail — runtime behavior is unchanged.
 
 `@harness-one/preset` wires all modules and integrations together in a single
 `createHarness()` call. Install it when you want a fully-configured harness
@@ -875,11 +876,11 @@ const loop = new AgentLoop({
 });
 ```
 
-**Event bus removal** (Wave-5C): `harness.eventBus` was a deprecated dead stub in 0.4.x and has been **removed** entirely in the 1.0-rc line. Each module exposes its own `onEvent()` subscription (sessions, orchestrator, traces); use those for new code.
+**Event bus removal** (Wave-5C): `harness.eventBus` was a dead stub and has been **removed** entirely. Each module exposes its own `onEvent()` subscription (sessions, orchestrator, traces); use those for new code.
 
-**AgentLoop class deprecation**: the `new AgentLoop(...)` constructor is `@deprecated` as of 0.4.0 — prefer the `createAgentLoop()` factory. The class still works for backward compatibility and will be removed in 0.5.0.
+**AgentLoop class + factory coexist**: both `new AgentLoop(...)` and `createAgentLoop()` are first-class — pick whichever you prefer. The factory form is the style used across the rest of the `createX()` surface.
 
-**Harness.initialize()** (0.4.0) — optional warmup that pre-initialises exporters and tokenizers behind an idempotent latch. `harness.run()` still works without it but may pay a cold-start latency on the first call.
+**Harness.initialize()** — optional warmup that pre-initialises exporters and tokenizers behind an idempotent latch. `harness.run()` still works without it but may pay a cold-start latency on the first call.
 
 **harness-one/essentials removed** (Wave-5C): the curated `harness-one/essentials` subpath has been removed as redundant with the trimmed root barrel. Import the symbols you need directly from `harness-one` or the relevant submodule (`harness-one/core`, `harness-one/observe`, …).
 
@@ -917,7 +918,7 @@ await admission.withPermit('tenant-123', async () => {
 
 The four bigger 5D items — `CostTracker` consolidation, conversation-store reconciler, Redis-backed cross-process token bucket, and demoting `@harness-one/langfuse` to a secondary `TraceExporter` — are deferred to **5D.1** pending PRD + ADR competition.
 
-**AgentLoopHook** (0.4.0) — pass an array of hooks in `AgentLoopConfig.hooks` to receive `onIterationStart` / `onToolCall` / `onTokenUsage` / `onIterationEnd` callbacks without subscribing to `AgentEvent`. Hook errors are swallowed through the injected logger and never break the loop.
+**AgentLoopHook** — pass an array of hooks in `AgentLoopConfig.hooks` to receive `onIterationStart` / `onToolCall` / `onTokenUsage` / `onIterationEnd` callbacks without subscribing to `AgentEvent`. Hook errors are swallowed through the injected logger and never break the loop.
 
 All auto-configured components can be replaced by passing the explicit override field (`adapter`, `exporters`, `memoryStore`, `schemaValidator`).
 
@@ -936,7 +937,7 @@ The `init` command creates working starter files in a `harness/` directory. The 
 
 ## Architecture
 
-### Module Dependency Graph (Wave-5C 1.0-rc)
+### Module Dependency Graph
 
 ```
                     +-----------+

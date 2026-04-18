@@ -142,7 +142,7 @@ Rules:
 
 Returns an accurate provider-side token count. When omitted, the
 harness falls back to the heuristic in
-`packages/core/src/_internal/token-estimator.ts`. Implement this only
+`packages/core/src/infra/token-estimator.ts`. Implement this only
 if the provider has an official tokenizer (e.g., `tiktoken` for OpenAI);
 a wrong answer is worse than the heuristic's deliberate approximation.
 
