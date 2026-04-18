@@ -60,7 +60,6 @@ interface AgentAdapter {
 interface ChatResponse {
   readonly message: Message;       // assistant message, may include toolCalls
   readonly usage: TokenUsage;
-  readonly raw?: unknown;          // provider-native response for debugging
 }
 ```
 
@@ -156,10 +155,13 @@ decisions:
 |---|---|
 | HTTP 401 / invalid key | `ADAPTER_AUTH` |
 | HTTP 429 | `ADAPTER_RATE_LIMIT` |
-| HTTP 5xx / network failure | `ADAPTER_NETWORK` |
-| Timeout / `ECONNRESET` | `ADAPTER_NETWORK` |
-| Invalid request / 4xx | `ADAPTER_BAD_REQUEST` |
-| Server JSON parse failure | `PROVIDER_ERROR` |
+| HTTP 5xx / bad gateway / service unavailable / gateway timeout | `ADAPTER_UNAVAILABLE` |
+| Timeout / `ECONNRESET` / generic network failure | `ADAPTER_NETWORK` |
+| Invalid request / 4xx | `ADAPTER_INVALID_EXTRA` (config-class) or `ADAPTER_PAYLOAD_OVERSIZED` |
+| Server JSON parse failure | `ADAPTER_PARSE` |
+| Circuit breaker tripped | `ADAPTER_CIRCUIT_OPEN` |
+| Unclassified provider error | `ADAPTER_ERROR` |
+| Fully unknown throwable | `ADAPTER_UNKNOWN` |
 
 Wrap errors in `HarnessError(message, code, suggestion?, cause?)` — see
 `packages/core/src/core/errors.ts`. The human-readable `message` is the

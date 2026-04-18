@@ -3,7 +3,10 @@
 `createFallbackAdapter` is a small circuit breaker that wraps an ordered list of `AgentAdapter` instances. It is the single supported mechanism for surviving a primary-provider outage without rewriting your agent loop.
 
 ```ts
-import { createFallbackAdapter } from 'harness-one';
+// createFallbackAdapter / categorizeAdapterError live on the /advanced
+// subpath — they're extension-author primitives, not part of the curated
+// root barrel.
+import { createFallbackAdapter } from 'harness-one/advanced';
 
 const adapter = createFallbackAdapter({
   adapters: [primaryAdapter, backupAdapter],
@@ -13,17 +16,24 @@ const adapter = createFallbackAdapter({
 
 ## What counts as a failure
 
-Any thrown error from the current adapter's `chat()` or `stream()`. harness-one classifies errors via `categorizeAdapterError()` from `harness-one/core`:
+Any thrown error from the current adapter's `chat()` or `stream()`. harness-one classifies errors via `categorizeAdapterError()` from `harness-one/advanced`:
 
 | Category | Trigger (error message contains) | Typical cause |
 |----------|-----------------------------------|---------------|
 | `ADAPTER_RATE_LIMIT` | `rate`, `429`, `too many` | Provider throttling |
 | `ADAPTER_AUTH`       | `auth`, `401`, `api key`, `unauthorized` | Bad / expired key |
+| `ADAPTER_UNAVAILABLE`| `5xx`, `bad gateway`, `service unavailable`, `gateway timeout` | Transient upstream outage |
 | `ADAPTER_NETWORK`    | `timeout`, `econnrefused`, `network`, `fetch` | Transient network |
 | `ADAPTER_PARSE`      | `parse`, `json`, `malformed` | Corrupt stream chunk |
 | `ADAPTER_ERROR`      | (fallback) | Unclassified |
 
 **All** of these count against `maxFailures` equally — the breaker does not treat auth errors as non-retryable. Guard against obviously terminal errors (e.g. invalid API key) yourself before wiring them into the fallback.
+
+Note: AgentLoop's default `retryableErrors` is `['ADAPTER_RATE_LIMIT']` only —
+`ADAPTER_UNAVAILABLE` / `ADAPTER_NETWORK` are categorized but **not** retried
+unless you opt in via `AgentLoopConfig.retryableErrors`. The fallback adapter
+sits **outside** that retry loop and advances on any error regardless of the
+retryable set.
 
 ## Switch behavior
 
@@ -37,7 +47,7 @@ Any thrown error from the current adapter's `chat()` or `stream()`. harness-one 
 There is **no `adapter_switched` event** on `AgentLoop` today. Detect switches explicitly:
 
 ```ts
-import { categorizeAdapterError } from 'harness-one';
+import { categorizeAdapterError } from 'harness-one/advanced';
 
 function loggedAdapter(inner, label, logger) {
   return {
