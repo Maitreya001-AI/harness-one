@@ -59,20 +59,6 @@ export type { ResilientLoopConfig, ResilientLoop } from '../core/resilience.js';
 export { createResilientLoop } from '../core/resilience.js';
 export type { ResiliencePolicy } from '../core/retry-policy.js';
 
-// ─── Iteration coordinator (event-sequencing state machine) ──────────────
-export {
-  startRun,
-  checkPreIteration,
-  startIteration,
-  finalizeRun,
-  releaseExternalSignal,
-} from '../core/iteration-coordinator.js';
-export type {
-  CoordinatorDeps,
-  CoordinatorState,
-  StartRunResult,
-} from '../core/iteration-coordinator.js';
-
 // ─── Shared validators + pricing math ────────────────────────────────────
 export {
   requirePositiveInt,

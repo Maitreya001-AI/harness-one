@@ -3,14 +3,16 @@
  *
  * This barrel exposes the API a typical consumer needs to build an agent
  * loop: message types, errors, events, `createAgentLoop` + its hooks and
- * config shapes, model pricing, and the two tracing ports that get wired
- * into the observability stack.
+ * config shapes, and model pricing.
  *
- * Extension primitives (`StreamAggregator`, `createMiddlewareChain`,
- * `parseWithRetry`, validators, iteration-coordinator helpers, etc.) live
- * in the separate `harness-one/advanced` barrel. Keeping the two surfaces
- * distinct means new consumers see a narrow, stable contract here and opt
- * into the lower-level plumbing only when they actually need it.
+ * Observability ports (`MetricsPort`, `InstrumentationPort`,
+ * `createNoopMetricsPort`) are exposed from `harness-one/observe` — the
+ * canonical home for anything a caller reaches for when wiring a
+ * backend. Extension primitives (`StreamAggregator`,
+ * `createMiddlewareChain`, `parseWithRetry`, validators, etc.) live in
+ * the separate `harness-one/advanced` barrel. Keeping the three surfaces
+ * distinct means new consumers see a narrow, stable contract here and
+ * opt into the lower-level plumbing only when they actually need it.
  *
  * @module
  */
@@ -61,13 +63,6 @@ export type { AgentLoopConfig, AgentLoopHook } from './agent-loop.js';
 // ─── Pricing types (consumers declare model rates against this shape) ────
 export type { ModelPricing, TokenUsageRecord } from './pricing.js';
 
-// ─── Observability ports (consumers wire their backend against these) ───
-export type {
-  MetricsPort,
-  MetricAttributes,
-  MetricCounter,
-  MetricGauge,
-  MetricHistogram,
-} from './metrics-port.js';
-export { createNoopMetricsPort } from './metrics-port.js';
-export type { InstrumentationPort } from './instrumentation-port.js';
+// Note: `MetricsPort`, `InstrumentationPort`, and `createNoopMetricsPort`
+// are exposed from `harness-one/observe` — the canonical home. Extension
+// authors wiring a custom backend import from there, not here.

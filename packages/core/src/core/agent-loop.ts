@@ -130,6 +130,13 @@ export class AgentLoop {
       signal: this.abortController.signal,
       maxStreamBytes: limits.maxStreamBytes,
       maxToolArgBytes: limits.maxToolArgBytes,
+      // Secondary cumulative backstop: one pathological loop that never
+      // trips `maxStreamBytes` on a single iteration could still burn
+      // unbounded memory by streaming ~maxStreamBytes on every iteration.
+      // Capping at `maxIterations × maxStreamBytes` keeps total buffered
+      // bytes bounded by the configured product; the per-iteration cap
+      // is the real knob operators should tune. See `MAX_STREAM_BYTES`
+      // TSDoc for the full semantics.
       maxCumulativeStreamBytes: limits.maxIterations * limits.maxStreamBytes,
       ...(this.resolved.tools !== undefined && { tools: this.resolved.tools }),
     });

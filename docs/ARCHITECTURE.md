@@ -144,17 +144,24 @@ Established seams:
 ## Public-surface split
 
 - **`harness-one/core`** — end-user surface: message types, errors,
-  events, `createAgentLoop` + hooks + config, model pricing, the
-  two observability ports. Anything a typical consumer imports
-  when wiring an agent loop.
+  events, `createAgentLoop` + hooks + config, and model pricing.
+  Anything a typical consumer imports when wiring an agent loop.
+- **`harness-one/observe`** — observability surface **and** canonical
+  home for the two cross-cutting ports: `MetricsPort`,
+  `InstrumentationPort`, `createNoopMetricsPort`, plus trace manager,
+  cost tracker, lifecycle, and logger. Each port is deliberately
+  exposed here and *nowhere else* — exactly one import path per
+  public symbol, so consumers cannot pick up two "different" copies
+  of the same shape.
 - **`harness-one/advanced`** — extension-author surface: middleware
   factory, stream aggregator, output parser, fallback adapter, SSE
   helpers, execution-strategy factories, error classifier, custom
   error-code helper, conversation pruner, resilient-loop factory,
-  iteration-coordinator primitives (including
-  `releaseExternalSignal`), validators, pricing math, backoff
-  primitives, trusted system-message factories, and the mock
-  adapters used by tests.
+  validators, pricing math, backoff primitives, trusted
+  system-message factories, and the mock adapters used by tests.
+  The iteration-coordinator state machine is an internal
+  implementation detail of `AgentLoop` and is intentionally
+  **not** re-exported here.
 - **Root `harness-one`** re-exports the UJ-1 value symbols
   (`createMiddlewareChain`, `createResilientLoop`, …) so top-level
   imports of those primitives don't have to know about `/advanced`.
@@ -232,6 +239,33 @@ single-place change on each side.
 `StreamAggregator` now tracks bytes in **UTF-8**, not UTF-16 code
 units — the documented `maxStreamBytes` / `maxToolArgBytes` names
 finally match what downstream serialisers see on the wire.
+
+`AgentLoop` additionally passes
+`maxCumulativeStreamBytes = maxIterations × maxStreamBytes` to the
+stream handler as a **secondary** backstop against a loop that never
+trips the per-iteration cap but streams ~`maxStreamBytes` every
+iteration. Treat `maxStreamBytes` as the real knob — the cumulative
+product is a derived ceiling, not a token budget.
+
+## Filesystem memory store — crash-safety contract
+
+`createFileSystemStore()` writes each entry file atomically
+(write-temp → rename) and each index write atomically, but multi-file
+operations (`write`, `delete`, `compact`, `clear`) are **not**
+transactional: a process crash between the entry and index writes
+can leave the `_index.json` mapping slightly out of sync with the
+on-disk entry files.
+
+Queries and reads are unaffected — they scan entry files directly
+and never consult the index — so the residual consequence is either
+an orphan entry (`write` crashed before the index update) or a stale
+key row (`delete` crashed before the index update). Both are
+cosmetic from a data-integrity standpoint but leave dead weight on
+disk. `FsMemoryStore.reconcileIndex()` rebuilds the index from the
+actual entry files and is safe to call at boot, on a schedule, or
+after a confirmed crash. Multi-process concurrent access still
+requires an external lock (see the warning in the factory
+docstring).
 
 ## Shared adapter helpers
 

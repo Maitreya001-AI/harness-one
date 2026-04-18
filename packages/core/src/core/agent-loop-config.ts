@@ -17,7 +17,20 @@ import type { GuardrailPipeline } from './guardrail-port.js';
 import { createSequentialStrategy, createParallelStrategy } from './execution-strategies.js';
 import { validateAgentLoopConfig } from './agent-loop-validation.js';
 
-/** Maximum accumulated stream content size (10 MB) to prevent memory exhaustion. */
+/**
+ * Per-iteration cap on the accumulated stream content (10 MB) that
+ * {@link StreamAggregator} can buffer before it truncates and emits
+ * `ADAPTER_STREAM_OVERSIZED`. This is the primary bound — a single
+ * iteration can never balloon past it.
+ *
+ * The loop also enforces a secondary cumulative backstop,
+ * `maxCumulativeStreamBytes = maxIterations × maxStreamBytes`, aimed at a
+ * runaway loop that never exceeds the per-iteration cap but keeps calling
+ * the adapter. With default maxIterations (25) and maxStreamBytes (10 MB)
+ * that lands at 250 MB — a pragmatic ceiling, not a "total budget" the
+ * user should rely on for accounting. Tighten either knob for stricter
+ * containment.
+ */
 export const MAX_STREAM_BYTES = 10 * 1024 * 1024;
 /** Maximum size per tool-call argument (5 MB) to prevent oversized payloads. */
 export const MAX_TOOL_ARG_BYTES = 5 * 1024 * 1024;

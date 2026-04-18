@@ -21,6 +21,7 @@ export { createInMemoryStore } from './store.js';
 
 // File-system store
 export { createFileSystemStore } from './fs-store.js';
+export type { FsMemoryStore } from './fs-store.js';
 
 // File I/O primitives
 export { createFileIO, validateEntryId } from './fs-io.js';

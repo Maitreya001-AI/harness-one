@@ -3,12 +3,12 @@ import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { existsSync } from 'node:fs';
-import { createFileSystemStore } from '../fs-store.js';
-import type { MemoryStore } from '../store.js';
+import { createFileSystemStore, type FsMemoryStore } from '../fs-store.js';
+import type { MemoryEntry } from '../types.js';
 import { HarnessError } from '../../core/errors.js';
 
 describe('createFileSystemStore', () => {
-  let store: MemoryStore;
+  let store: FsMemoryStore;
   let dir: string;
 
   beforeEach(async () => {
@@ -532,6 +532,122 @@ describe('createFileSystemStore', () => {
       const p15 = warns.filter(w => w.msg.includes('fs-store]'));
       expect(p15).toHaveLength(0);
       await rm(loggedDir, { recursive: true, force: true });
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Crash-safety recovery: `reconcileIndex()` must rebuild `_index.json` from
+  // the on-disk entry files after a simulated crash mid-write.
+  // ---------------------------------------------------------------------------
+  describe('crash-safety: reconcileIndex()', () => {
+    it('rebuilds a missing index from on-disk entries', async () => {
+      // Write three entries so the index is populated.
+      const e1 = await store.write({ key: 'a', content: 'alpha', grade: 'useful' });
+      const e2 = await store.write({ key: 'b', content: 'beta',  grade: 'critical' });
+      const e3 = await store.write({ key: 'c', content: 'gamma', grade: 'useful' });
+
+      // Simulate a crash that wiped the index but left the entry files.
+      const { unlink } = await import('node:fs/promises');
+      await unlink(join(dir, '_index.json'));
+      expect(existsSync(join(dir, '_index.json'))).toBe(false);
+
+      const result = await store.reconcileIndex();
+      expect(result.scanned).toBe(3);
+      expect(result.keys).toBe(3);
+
+      const raw = await readFile(join(dir, '_index.json'), 'utf-8');
+      const index = JSON.parse(raw);
+      expect(index.keys.a).toBe(e1.id);
+      expect(index.keys.b).toBe(e2.id);
+      expect(index.keys.c).toBe(e3.id);
+    });
+
+    it('repairs a stale index pointing at a deleted entry', async () => {
+      // Orphan the index: write an entry, then manually re-point the index to
+      // an id whose file has been removed — mimics a crash after `unlink` but
+      // before `writeIndex` in `delete()`.
+      const live = await store.write({ key: 'alive', content: 'ok', grade: 'useful' });
+      await writeFile(
+        join(dir, '_index.json'),
+        JSON.stringify({ keys: { alive: live.id, ghost: 'mem_0_missing' } }),
+        'utf-8',
+      );
+
+      const result = await store.reconcileIndex();
+      expect(result.scanned).toBe(1);
+      expect(result.keys).toBe(1);
+
+      const index = JSON.parse(await readFile(join(dir, '_index.json'), 'utf-8'));
+      expect(index.keys.alive).toBe(live.id);
+      expect(index.keys.ghost).toBeUndefined();
+    });
+
+    it('recovers orphan entries whose index row never landed', async () => {
+      // Simulate a crash that wrote the entry file but never updated the
+      // index. We do it by writing one entry, swapping in a fresh (orphan-
+      // ignoring) index, then verifying reconcile sees both.
+      const first = await store.write({ key: 'k1', content: 'one', grade: 'useful' });
+      // Inject a second entry file out-of-band, the way a crashed `write()`
+      // would leave it behind: atomic file exists, index untouched.
+      const orphanId = 'mem_9999999_orphan-xyz';
+      const orphan: MemoryEntry = {
+        id: orphanId,
+        key: 'k2',
+        content: 'two',
+        grade: 'useful',
+        createdAt: 1,
+        updatedAt: 1,
+      };
+      await writeFile(join(dir, `${orphanId}.json`), JSON.stringify(orphan), 'utf-8');
+
+      // Index still only points at the first entry — stale.
+      const staleIndex = JSON.parse(await readFile(join(dir, '_index.json'), 'utf-8'));
+      expect(staleIndex.keys.k1).toBe(first.id);
+      expect(staleIndex.keys.k2).toBeUndefined();
+
+      const result = await store.reconcileIndex();
+      expect(result.scanned).toBe(2);
+      expect(result.keys).toBe(2);
+
+      const healed = JSON.parse(await readFile(join(dir, '_index.json'), 'utf-8'));
+      expect(healed.keys.k1).toBe(first.id);
+      expect(healed.keys.k2).toBe(orphanId);
+    });
+
+    it('resolves key collisions by picking the most recently updated entry', async () => {
+      // Two files share a key (possible after a crash where write() rotated
+      // the id but never pruned the previous entry). Reconcile must pick the
+      // newer `updatedAt`.
+      const olderId = 'mem_1111_older';
+      const newerId = 'mem_2222_newer';
+      const older: MemoryEntry = {
+        id: olderId, key: 'same', content: 'old', grade: 'useful',
+        createdAt: 10, updatedAt: 10,
+      };
+      const newer: MemoryEntry = {
+        id: newerId, key: 'same', content: 'new', grade: 'useful',
+        createdAt: 20, updatedAt: 20,
+      };
+      await writeFile(join(dir, `${olderId}.json`), JSON.stringify(older), 'utf-8');
+      await writeFile(join(dir, `${newerId}.json`), JSON.stringify(newer), 'utf-8');
+
+      const result = await store.reconcileIndex();
+      expect(result.scanned).toBe(2);
+      expect(result.keys).toBe(1);
+
+      const healed = JSON.parse(await readFile(join(dir, '_index.json'), 'utf-8'));
+      expect(healed.keys.same).toBe(newerId);
+    });
+
+    it('returns zeros on an empty directory', async () => {
+      const emptyDir = await mkdtemp(join(tmpdir(), 'harness-fs-reconcile-empty-'));
+      try {
+        const empty = createFileSystemStore({ directory: emptyDir });
+        const result = await empty.reconcileIndex();
+        expect(result).toEqual({ scanned: 0, keys: 0 });
+      } finally {
+        await rm(emptyDir, { recursive: true, force: true });
+      }
     });
   });
 });

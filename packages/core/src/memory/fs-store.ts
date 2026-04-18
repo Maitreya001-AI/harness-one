@@ -3,6 +3,30 @@
  *
  * Business logic layer that delegates raw I/O to fs-io.ts.
  *
+ * ### Crash-safety model
+ *
+ * Every single file write is atomic (write-temp → rename; see
+ * {@link createFileIO}). Multi-file operations — `write()` / `delete()` /
+ * `compact()` / `clear()` — are **not** transactional across files: a
+ * process crash between the entry-file write and the index-file write
+ * can leave the `_index.json` slightly out of date relative to what is
+ * on disk.
+ *
+ * This does **not** affect `read(id)` or `query(filter)` — both operate
+ * directly on entry files and never consult the index. The residual
+ * consequences of a crash are therefore:
+ *
+ * - `write()` crash after entry, before index → an **orphan entry**
+ *   visible to `query()` but absent from the index's key→id mapping.
+ *   Dead disk weight until `reconcileIndex()` runs.
+ * - `delete()` crash after unlink, before index → a **stale index
+ *   entry** pointing to a now-missing file. Subsequent queries tolerate
+ *   the missing file; the stale key lingers in the index until the next
+ *   write overwrites it or `reconcileIndex()` runs.
+ *
+ * Call {@link FsMemoryStore.reconcileIndex} at boot, on a schedule, or
+ * after a crash to rebuild `_index.json` from the actual entry files.
+ *
  * @module
  */
 
@@ -11,6 +35,25 @@ import { createFileIO } from './fs-io.js';
 import { secureId } from '../infra/ids.js';
 import type { MemoryEntry } from './types.js';
 import type { MemoryStore } from './store.js';
+
+/**
+ * File-system backed {@link MemoryStore}. Extends the base contract with a
+ * recovery hook for rebuilding the on-disk index after a crash.
+ */
+export interface FsMemoryStore extends MemoryStore {
+  /**
+   * Rebuild `_index.json` from the actual entry files on disk.
+   *
+   * Walks every `{id}.json` under the store directory, re-derives the
+   * `key → id` mapping (latest `updatedAt` wins on collisions), and
+   * atomically replaces the index. Safe to call while the store is in
+   * use — executes under the same in-process lock as writes.
+   *
+   * @returns counts of scanned entries and the number of distinct keys
+   *          rebuilt into the index.
+   */
+  reconcileIndex(): Promise<{ scanned: number; keys: number }>;
+}
 
 /**
  * Create a file-system backed MemoryStore.
@@ -32,13 +75,13 @@ export function createFileSystemStore(config: {
   directory: string;
   indexFile?: string;
   /**
-   * Wave-12 P1-5: optional structured logger. When set, partial failures
-   * from batched deletes (compact / clear) emit a `warn` with the failure
-   * count and a small sample of error strings so operators can investigate
-   * stale-entry drift instead of silently corrupting the store.
+   * Optional structured logger. When set, partial failures from batched
+   * deletes (compact / clear) emit a `warn` with the failure count and a
+   * small sample of error strings so operators can investigate stale-entry
+   * drift instead of silently corrupting the store.
    */
   logger?: { warn: (msg: string, meta?: Record<string, unknown>) => void };
-}): MemoryStore {
+}): FsMemoryStore {
   const io = createFileIO(config);
   const logger = config.logger;
 
@@ -328,6 +371,34 @@ export function createFileSystemStore(config: {
       await io.ensureDir();
       const files = await io.listEntryFiles();
       return files.length;
+    },
+
+    async reconcileIndex() {
+      await io.ensureDir();
+      return withIndexLock(async () => {
+        const all = await allEntries();
+        // Latest writer wins on key collisions — the entry with the
+        // highest `updatedAt` represents the survivor. Ties break on
+        // `createdAt` so deterministic ordering keeps tests stable even
+        // when filesystem mtimes round to the millisecond.
+        const latestByKey = new Map<string, MemoryEntry>();
+        for (const entry of all) {
+          const current = latestByKey.get(entry.key);
+          if (
+            !current ||
+            entry.updatedAt > current.updatedAt ||
+            (entry.updatedAt === current.updatedAt && entry.createdAt > current.createdAt)
+          ) {
+            latestByKey.set(entry.key, entry);
+          }
+        }
+        const newIndex: { keys: Record<string, string> } = { keys: {} };
+        for (const [key, entry] of latestByKey) {
+          newIndex.keys[key] = entry.id;
+        }
+        await io.writeIndex(newIndex);
+        return { scanned: all.length, keys: latestByKey.size };
+      });
     },
 
     async clear() {
