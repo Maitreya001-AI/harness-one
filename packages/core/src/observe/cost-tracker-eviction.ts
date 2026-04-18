@@ -25,7 +25,7 @@
  *
  * This module exposes both strategies behind a small interface so the
  * shared test suite (`cost-tracker-conformance.test.ts`) can assert that
- * both trackers honour the public {@link import('./cost-tracker.js').CostTracker}
+ * both trackers honour the public {@link CostTracker}
  * contract regardless of strategy.
  *
  * @module

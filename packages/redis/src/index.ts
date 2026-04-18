@@ -1,5 +1,5 @@
 /**
- * @harness-one/redis — Redis-backed memory store for harness-one.
+ * The `@harness-one/redis` package — Redis-backed memory store for harness-one.
  *
  * Provides persistent memory storage using Redis, with support for
  * filtering, compaction, and key indexing.

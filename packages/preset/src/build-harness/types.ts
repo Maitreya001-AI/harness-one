@@ -177,7 +177,7 @@ export interface OpenAIHarnessConfig extends HarnessConfigBase {
   /**
    * Wave-13 F-4: optional discriminator tag for the {@link HarnessConfig}
    * union. When set to `'openai'`, narrowing works via the `type` field. See
-   * {@link AnthropicHarnessConfig.type}.
+   * the matching `type` field on `AnthropicHarnessConfig`.
    */
   readonly type?: 'openai';
   readonly provider: 'openai';
@@ -270,19 +270,21 @@ export interface Harness {
    *
    * @param messages - The initial conversation. Must include at least one
    *   user message for input guardrails to run.
-   * @param options.sessionId - Session identifier for the conversation store.
-   *   When omitted an auto-generated id of the form `session_<uuid>` is used
-   *   — see `options.onSessionId` to recover it. A warning is logged the
-   *   first time an auto-generated id is used; pass a per-request id
-   *   (e.g., a user id) to isolate conversation histories and enable resume.
-   * @param options.onSessionId - Optional callback invoked synchronously,
-   *   before the first event is yielded, with the effective session id
-   *   (either the caller-provided value or the auto-generated id). P1-20
-   *   (Wave-12): without this hook callers had no way to observe the
-   *   auto-generated id and therefore could not resume the conversation
-   *   on a subsequent call.  The callback is invoked exactly once per
-   *   `run()` invocation; any exception it throws is logged and swallowed
-   *   so the loop is not interrupted.
+   * @param options - Optional run options:
+   *
+   *   - `sessionId` — session identifier for the conversation store. When
+   *     omitted an auto-generated id of the form `session_<uuid>` is used —
+   *     see `onSessionId` to recover it. A warning is logged the first time
+   *     an auto-generated id is used; pass a per-request id (e.g. a user id)
+   *     to isolate conversation histories and enable resume.
+   *   - `onSessionId` — callback invoked synchronously, before the first
+   *     event is yielded, with the effective session id (either the
+   *     caller-provided value or the auto-generated id). P1-20 (Wave-12):
+   *     without this hook callers had no way to observe the auto-generated
+   *     id and therefore could not resume the conversation on a subsequent
+   *     call. The callback is invoked exactly once per `run()` invocation;
+   *     any exception it throws is logged and swallowed so the loop is not
+   *     interrupted.
    */
   run(
     messages: Message[],

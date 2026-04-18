@@ -1,5 +1,5 @@
 /**
- * @harness-one/openai — adapter factory.
+ * The `@harness-one/openai` package — adapter factory.
  *
  * Owns `OpenAIAdapterConfig`, the `createOpenAIAdapter` factory and the
  * per-instance / legacy-global zero-usage warn-once bookkeeping. Composes the

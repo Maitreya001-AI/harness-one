@@ -202,9 +202,14 @@ describe('createRetryPolicy + real CircuitBreaker integration', () => {
 
   it('probe failure during HALF_OPEN re-opens the breaker', async () => {
     const { createCircuitBreaker } = await import('../../infra/circuit-breaker.js');
+    // Use a generous reset timeout (100ms) so the post-probe `state()` read
+    // does not race the lazy "OPEN past reset window → HALF_OPEN" transition
+    // back to half_open. With resetTimeoutMs=1 the assertion below was racy
+    // on slow CI runners; 100ms gives the test deterministic headroom while
+    // still keeping it fast.
     const breaker = createCircuitBreaker({
       failureThreshold: 1,
-      resetTimeoutMs: 1,
+      resetTimeoutMs: 100,
     });
     const policy = createRetryPolicy({
       maxAdapterRetries: 0,
@@ -218,7 +223,7 @@ describe('createRetryPolicy + real CircuitBreaker integration', () => {
     expect(breaker.state()).toBe('open');
 
     // Wait past the reset timeout so the next execute() transitions to half-open.
-    await new Promise((r) => setTimeout(r, 5));
+    await new Promise((r) => setTimeout(r, 150));
 
     // Execute a failing probe through the breaker. After a half-open
     // failure, the breaker must return to OPEN.
@@ -228,6 +233,9 @@ describe('createRetryPolicy + real CircuitBreaker integration', () => {
       }),
     ).rejects.toThrow('probe failed');
 
+    // Read state immediately — the freshly-recorded failure resets
+    // `lastFailureTime`, so the next reset window only opens after another
+    // 100ms; no race with the lazy half-open transition.
     expect(breaker.state()).toBe('open');
     expect(policy.checkCircuitOpen()).toBeDefined();
   });

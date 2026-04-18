@@ -24,6 +24,10 @@ export interface OpenAIAdapterConfig {
     readonly logger?: Pick<Logger, 'warn' | 'error'>;
     readonly maxRetries?: number;
     readonly model?: string;
+    readonly streamLimits?: {
+        readonly maxToolCalls?: number;
+        readonly maxToolArgBytes?: number;
+    };
     readonly strictExtraAllowList?: boolean;
 }
 

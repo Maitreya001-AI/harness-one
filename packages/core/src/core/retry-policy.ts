@@ -106,7 +106,7 @@ export type BufferedStreamError = Extract<AgentEvent, { type: 'error' }>;
 
 /**
  * Build a {@link RetryPolicy} from the retry-related subset of
- * {@link import('./adapter-caller.js').AdapterCallerConfig}.
+ * `AdapterCallerConfig`.
  *
  * Pure construction — no observable side effect until the caller uses a
  * returned helper.

@@ -11,10 +11,8 @@
 import type { Message } from './types.js';
 
 /**
- * Result of pruning a conversation.
- *
- * @property pruned - The pruned conversation array.
- * @property warning - A human-readable warning if pruning occurred.
+ * Result of pruning a conversation. `pruned` is the trimmed conversation
+ * array; `warning` is a human-readable note when truncation occurred.
  */
 export interface PruneResult {
   readonly pruned: Message[];

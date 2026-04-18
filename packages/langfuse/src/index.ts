@@ -1,5 +1,5 @@
 /**
- * @harness-one/langfuse — Langfuse integration for harness-one.
+ * The `@harness-one/langfuse` package — Langfuse integration for harness-one.
  *
  * Provides trace export, prompt management, and cost tracking via Langfuse.
  *

@@ -100,8 +100,7 @@ describe('createSecurePreset (T14)', () => {
       adapter: stubAdapter(),
       guardrailLevel: 'standard',
       guardrails: {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        pii: false as any,
+        pii: false as unknown as boolean,
       },
     });
     // Injection still works
@@ -149,8 +148,7 @@ describe('createSecurePreset (T14)', () => {
     // mergeSecureGuardrails always sets `injection` before checking level.
     const harness = createSecurePreset({
       adapter: stubAdapter(),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      guardrailLevel: 'off' as any,
+      guardrailLevel: 'off' as unknown as 'standard',
     });
     const result = await runInput(harness.guardrails, { content: INJECTION_PROBE });
     expect(result.verdict.action).toBe('block');

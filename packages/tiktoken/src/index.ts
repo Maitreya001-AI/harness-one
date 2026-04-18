@@ -1,5 +1,5 @@
 /**
- * @harness-one/tiktoken — Tiktoken tokenizer integration for harness-one.
+ * The `@harness-one/tiktoken` package — Tiktoken tokenizer integration for harness-one.
  *
  * Provides exact BPE token counting via tiktoken, replacing the built-in
  * heuristic estimator for supported models.

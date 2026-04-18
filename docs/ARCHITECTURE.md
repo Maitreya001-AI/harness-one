@@ -121,6 +121,26 @@ adapter authors and the preset. Every subsystem delegates — do not
 reintroduce a bespoke inline guard. Witness tests in `validate.test.ts`
 lock delegation in place.
 
+## Hot-path extractions
+
+When a single function in a god-object becomes the natural place to
+add new behaviour, extract a sibling module rather than growing it.
+Established seams:
+
+- **`core/streaming-retry.ts`** — pump-and-decide for one streaming
+  adapter attempt. `adapter-caller.ts` keeps retry-loop bookkeeping
+  (counters, cumulative timing, backoff scheduling); the helper owns
+  StreamHandler iteration + buffered-error semantics.
+- **`core/iteration-lifecycle.ts`** — span + hook lifecycle (close
+  span, fire `onIterationEnd`, the five `bail*` terminal generators).
+  `iteration-runner.ts` only owns the input → adapter → tools stage
+  choreography; every terminal exit goes through a `lifecycle.bail*`.
+- **`observe/cost-record-buffer.ts`** — bounded ring buffer with
+  per-trace lookup index and raw/effective bias translation. The
+  cost tracker owns running totals, alert dispatch, and pricing
+  snapshots; the buffer owns index bookkeeping with branded raw and
+  effective index types so callers cannot mix the two spaces.
+
 ## Public-surface split
 
 - **`harness-one/core`** — end-user surface: message types, errors,
@@ -138,6 +158,17 @@ lock delegation in place.
 - **Root `harness-one`** re-exports the UJ-1 value symbols
   (`createMiddlewareChain`, `createResilientLoop`, …) so top-level
   imports of those primitives don't have to know about `/advanced`.
+- **L3 subsystem barrels** — every L3 subsystem also publishes its
+  own subpath barrel for callers who only need that slice:
+  `harness-one/observe`, `harness-one/redact`, `harness-one/prompt`,
+  `harness-one/context`, `harness-one/guardrails`, `harness-one/memory`,
+  `harness-one/session`, `harness-one/tools`, `harness-one/orchestration`,
+  `harness-one/rag`, `harness-one/evolve-check`. These are deliberately
+  thinner than `/core`: they expose the subsystem's own API without
+  pulling in the rest of the harness. Adapter packages prefer
+  `/core` + `/advanced` + `/observe`; specialised tools (e.g. a
+  RAG-only consumer) can reach for the relevant subsystem barrel
+  instead.
 
 ## Construction: factories, not classes
 

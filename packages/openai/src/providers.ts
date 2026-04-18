@@ -1,5 +1,5 @@
 /**
- * @harness-one/openai — provider registry.
+ * The `@harness-one/openai` package — provider registry.
  *
  * Owns the module-scoped registry of OpenAI-compatible provider base URLs
  * together with its controlled-mutation API: `registerProvider`,

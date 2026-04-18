@@ -12,7 +12,7 @@ import type { ModelPricing, TokenUsageRecord } from '../core/pricing.js';
 /**
  * Pricing configuration for a model.
  *
- * Wave-15: the canonical definition lives in {@link ../core/pricing.js};
+ * Wave-15: the canonical definition lives in `core/pricing.ts`;
  * this is a re-export so existing `import { ModelPricing } from
  * 'harness-one/observe'` keeps working. Prefer the `harness-one/core`
  * import for new code — pricing is a cross-cutting primitive, not an
@@ -113,8 +113,8 @@ export interface CostTracker {
    */
   getAlertMessage(): string | null;
   /**
-   * Returns true when total cost >= budget. Returns false if no budget is
-   * set.
+   * Returns true when `total cost` is greater than or equal to the
+   * configured budget. Returns false if no budget is set.
    */
   isBudgetExceeded(): boolean;
   /** Returns fraction of budget used (0-1+). Returns 0 if no budget is set. */

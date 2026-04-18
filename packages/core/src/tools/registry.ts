@@ -193,68 +193,65 @@ export function createRegistry(config?: CreateRegistryConfig): ToolRegistry {
     }));
   }
 
-  async function execute(call: ToolCallRequest): Promise<ToolResult> {
-    // Atomic rate limiting: increment FIRST, then check limits.
-    // This prevents TOCTOU races where concurrent calls both pass the check
-    // before either increments.
-    turnCalls++;
-    sessionCalls++;
+  /**
+   * Refund the turn/session counters claimed at the top of `execute()` for
+   * a call that failed pre-execution checks. Pure bookkeeping helper kept in
+   * one place so every reject path mirrors the same accounting.
+   */
+  function refundClaimedCounters(): void {
+    turnCalls--;
+    sessionCalls--;
+  }
 
-    if (turnCalls > maxPerTurn) {
-      turnCalls--;
-      sessionCalls--;
-      return toolError(
-        `Exceeded max calls per turn (${maxPerTurn})`,
-        'validation',
-        'Wait for the next turn or reduce tool calls',
-      );
-    }
-    if (sessionCalls > maxPerSession) {
-      turnCalls--;
-      sessionCalls--;
-      return toolError(
-        `Exceeded max calls per session (${maxPerSession})`,
-        'validation',
-        'Start a new session or reduce tool calls',
-      );
-    }
-
+  /**
+   * Resolve the tool, parse arguments, run the schema validator, and apply
+   * the permission check. Returns either the admitted call (`tool` + `params`
+   * ready for execution) or a `toolError` to short-circuit. THROWS only for
+   * the cumulative byte-cap violation, which the public contract surfaces as
+   * a HarnessError instead of a tool reply.
+   *
+   * Counter refunds are applied here so every reject path stays in one place.
+   */
+  async function admitCallForExecution(
+    call: ToolCallRequest,
+  ): Promise<
+    | { ok: true; tool: ToolDefinition; params: unknown }
+    | { ok: false; result: ToolResult }
+  > {
     // Lookup
     const tool = tools.get(call.name);
     if (!tool) {
-      turnCalls--;
-      sessionCalls--;
-      return toolError(
-        `Tool "${call.name}" not found`,
-        'not_found',
-        'Check the tool name and ensure it is registered',
-      );
+      refundClaimedCounters();
+      return {
+        ok: false,
+        result: toolError(
+          `Tool "${call.name}" not found`,
+          'not_found',
+          'Check the tool name and ensure it is registered',
+        ),
+      };
     }
 
-    // Parse arguments — enforce a byte-length cap before parsing so a direct
-    // registry.execute() call (bypassing AgentLoop's maxToolArgBytes streaming
-    // guard) cannot DoS the event loop with oversized payloads.
+    // Per-call byte cap — protects direct registry.execute() calls that
+    // bypass AgentLoop's maxToolArgBytes streaming guard.
     const MAX_ARG_BYTES = 5 * 1024 * 1024; // 5 MiB, matching AgentLoop default
-    let params: unknown;
     const argByteLen = Buffer.byteLength(call.arguments, 'utf8');
     if (argByteLen > MAX_ARG_BYTES) {
-      turnCalls--;
-      sessionCalls--;
-      return toolError(
-        `Tool call arguments exceed maximum size (${MAX_ARG_BYTES} bytes)`,
-        'validation',
-        'Reduce the size of tool call arguments',
-      );
+      refundClaimedCounters();
+      return {
+        ok: false,
+        result: toolError(
+          `Tool call arguments exceed maximum size (${MAX_ARG_BYTES} bytes)`,
+          'validation',
+          'Reduce the size of tool call arguments',
+        ),
+      };
     }
-    // Wave-13 E-4: cumulative per-turn argument byte cap. Rate-limiting the
-    // call count alone doesn't stop an attacker from issuing a handful of
-    // calls whose combined payloads DoS a shared pipeline stage (e.g.,
-    // parallel-fanout adapters). Check BEFORE incrementing so the counter
-    // reflects admitted calls only, and throw HarnessError to make the
+
+    // Wave-13 E-4: cumulative per-turn argument byte cap. Throw to make the
     // violation explicit to supervising loops.
     if (turnArgBytes + argByteLen > maxTotalArgBytesPerTurn) {
-      turnCalls--;
-      sessionCalls--;
+      refundClaimedCounters();
       throw new HarnessError(
         `Cumulative tool-argument bytes exceeded per-turn cap (${turnArgBytes + argByteLen} > ${maxTotalArgBytesPerTurn} bytes)`,
         HarnessErrorCode.ADAPTER_PAYLOAD_OVERSIZED,
@@ -262,23 +259,21 @@ export function createRegistry(config?: CreateRegistryConfig): ToolRegistry {
       );
     }
     turnArgBytes += argByteLen;
+
+    // Parse arguments
+    let params: unknown;
     try {
       params = JSON.parse(call.arguments);
     } catch (err) {
-      turnCalls--;
-      sessionCalls--;
-      // Wave-12 P1-2: preserve the SyntaxError on `cause` and include the
-      // position hint from the native parser so a retry loop / log line can
-      // surface the actual failure site instead of a bare "Invalid JSON".
+      refundClaimedCounters();
+      // Preserve the SyntaxError on `cause` so failure-inspection paths can
+      // pick up the position hint without breaking JSON.stringify(result).
       const syntaxMessage = err instanceof SyntaxError ? err.message : String(err);
       const result = toolError(
         `Invalid JSON in tool call arguments (${syntaxMessage})`,
         'validation',
         'Ensure arguments is valid JSON',
       );
-      // Attach the structured cause via a non-enumerable field so
-      // `JSON.stringify(result)` is unchanged, but failure-inspection paths
-      // (debuggers, error wrappers) can pick it up.
       if (err instanceof Error) {
         Object.defineProperty(result, 'cause', {
           value: err,
@@ -287,59 +282,95 @@ export function createRegistry(config?: CreateRegistryConfig): ToolRegistry {
           writable: false,
         });
       }
-      return result;
+      return { ok: false, result };
     }
 
-    // Validate (await in case validator is async, e.g., AjvSchemaValidator)
+    // Schema validate (await — validator may be async, e.g. AjvSchemaValidator)
     const validation = await Promise.resolve(
       customValidator
         ? customValidator.validate(tool.parameters, params)
         : validateToolCall(tool.parameters, params),
     );
     if (!validation.valid) {
-      turnCalls--;
-      sessionCalls--;
+      refundClaimedCounters();
       const messages = validation.errors.map((e) => `${e.path}: ${e.message}`).join('; ');
-      return toolError(
-        `Validation failed: ${messages}`,
-        'validation',
-        'Fix the parameters according to the schema',
-      );
+      return {
+        ok: false,
+        result: toolError(
+          `Validation failed: ${messages}`,
+          'validation',
+          'Fix the parameters according to the schema',
+        ),
+      };
     }
 
-    // Permission check (after parsing and validation so params are available)
+    // Permission (after parsing + validation so params are available)
     if (permissions && !permissions.check(call.name, { toolCallId: call.id, params })) {
-      turnCalls--;
-      sessionCalls--;
+      refundClaimedCounters();
+      return {
+        ok: false,
+        result: toolError(
+          `Permission denied for tool "${call.name}"`,
+          'permission',
+          'Check that the caller has access to this tool',
+        ),
+      };
+    }
+
+    return { ok: true, tool, params };
+  }
+
+  /**
+   * Build a middleware chain terminating in the raw `tool.execute()`. The
+   * middleware array is invoked outermost-first — the first entry wraps the
+   * second, which wraps the third, and so on, with `tool.execute()` at the
+   * tail (Koa/Express onion semantics).
+   */
+  function buildToolMiddlewareChain(
+    tool: ToolDefinition,
+    params: unknown,
+    callName: string,
+    sig?: AbortSignal,
+  ): () => Promise<ToolResult> {
+    const mws = tool.middleware ?? [];
+    let chain: () => Promise<ToolResult> = () => tool.execute(params, sig);
+    for (let i = mws.length - 1; i >= 0; i--) {
+      const mw = mws[i];
+      const downstream = chain;
+      chain = () => mw({ toolName: callName, params, ...(sig !== undefined && { signal: sig }) }, downstream);
+    }
+    return chain;
+  }
+
+  async function execute(call: ToolCallRequest): Promise<ToolResult> {
+    // Atomic rate limiting: increment FIRST, then check limits.
+    // This prevents TOCTOU races where concurrent calls both pass the check
+    // before either increments.
+    turnCalls++;
+    sessionCalls++;
+
+    if (turnCalls > maxPerTurn) {
+      refundClaimedCounters();
       return toolError(
-        `Permission denied for tool "${call.name}"`,
-        'permission',
-        'Check that the caller has access to this tool',
+        `Exceeded max calls per turn (${maxPerTurn})`,
+        'validation',
+        'Wait for the next turn or reduce tool calls',
+      );
+    }
+    if (sessionCalls > maxPerSession) {
+      refundClaimedCounters();
+      return toolError(
+        `Exceeded max calls per session (${maxPerSession})`,
+        'validation',
+        'Start a new session or reduce tool calls',
       );
     }
 
-    /**
-     * Build a middleware chain terminating in the raw tool.execute(). Middleware
-     * array is invoked outermost-first — the first entry wraps the second,
-     * which wraps the third, and so on, with tool.execute() at the tail. This
-     * mirrors Koa/Express style onion semantics.
-     *
-     * `resolvedTool` is passed explicitly because TypeScript's control-flow
-     * narrowing doesn't follow into a nested function body — inside buildChain,
-     * `tool` would be typed as `ToolDefinition | undefined` even though we
-     * guard against undefined above.
-     */
-    const resolvedTool = tool;
-    function buildChain(sig?: AbortSignal): () => Promise<ToolResult> {
-      const mws = resolvedTool.middleware ?? [];
-      let chain: () => Promise<ToolResult> = () => resolvedTool.execute(params, sig);
-      for (let i = mws.length - 1; i >= 0; i--) {
-        const mw = mws[i];
-        const downstream = chain;
-        chain = () => mw({ toolName: call.name, params, ...(sig !== undefined && { signal: sig }) }, downstream);
-      }
-      return chain;
-    }
+    const admission = await admitCallForExecution(call);
+    if (!admission.ok) return admission.result;
+    const { tool, params } = admission;
+    const buildChain = (sig?: AbortSignal): (() => Promise<ToolResult>) =>
+      buildToolMiddlewareChain(tool, params, call.name, sig);
 
     /**
      * Wave-12 P2-24: runtime shape assertion for tool return values.

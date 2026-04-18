@@ -19,7 +19,7 @@ import type { HarnessConfig } from './index.js';
  * - `HARNESS_MAX_TOKENS` — integer (maps to maxTotalTokens)
  * - `HARNESS_BUDGET` — float
  *
- * @param env Optional env map (defaults to `process.env`)
+ * @param env - Optional env map (defaults to `process.env`).
  *
  * @example
  * ```ts

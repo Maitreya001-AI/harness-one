@@ -1,5 +1,6 @@
 /**
- * @harness-one/ajv — Ajv JSON Schema validator for harness-one.
+ * Ajv JSON Schema validator package for harness-one
+ * (published as `harness-one-ajv` under the harness-one scope).
  *
  * Replaces the built-in lightweight validator with full JSON Schema support
  * including $ref, oneOf, anyOf, formats, and custom keywords.

@@ -1,5 +1,5 @@
 /**
- * @harness-one/opentelemetry — OpenTelemetry trace exporter for harness-one.
+ * The `@harness-one/opentelemetry` package — OpenTelemetry trace exporter for harness-one.
  *
  * Maps harness-one traces and spans to OpenTelemetry spans with attributes,
  * events, and status codes.
@@ -58,8 +58,8 @@ export interface OTelExporterConfig {
    * Defaults to 1000.
    *
    * Wave-12 P1-9: Parent mapping is retained until LRU evicts. Increase this
-   * value if deep trees lose hierarchy (symptom: repeated `Parent span '...'
-   * not found` warnings for expected-alive parents).
+   * value if deep trees lose hierarchy (symptom: repeated
+   * `Parent span '...' not found` warnings for expected-alive parents).
    */
   readonly maxEvictedParents?: number;
   /** Maximum number of active spans to retain before LRU eviction. Defaults to 10000. */
@@ -119,7 +119,7 @@ export interface OTelTraceExporter extends TraceExporter {
 /**
  * Create a TraceExporter that maps harness-one spans to OpenTelemetry spans.
  *
- * Requires an OTel SDK to be configured (e.g., @opentelemetry/sdk-trace-node).
+ * Requires an OTel SDK to be configured (e.g. `@opentelemetry/sdk-trace-node`).
  * This adapter bridges harness-one spans into the OTel API.
  */
 export function createOTelExporter(config?: OTelExporterConfig): OTelTraceExporter {

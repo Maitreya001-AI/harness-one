@@ -20,7 +20,7 @@
  *   - `move-to-tail` is called on every read (hot-path access reordering).
  *
  * For every other "look up a value by key with LRU eviction" use case,
- * prefer {@link ../infra/lru-cache.LRUCache}. See that module's header for
+ * prefer the `LRUCache` in `core/infra/lru-cache.ts`. See that module's header for
  * the full decision table.
  *
  * @module

@@ -37,7 +37,9 @@
  *     })();
  *     return this._pending;
  *   }
- *   private async teardown(): Promise<void> { / * close handles * / }
+ *   private async teardown(): Promise<void> {
+ *     // close handles
+ *   }
  * }
  * ```
  */
@@ -87,7 +89,7 @@ export class DisposeAggregateError extends Error {
  *
  * @param disposables - Disposables to tear down, **in the order you want them
  *   torn down**.
- * @throws {DisposeAggregateError} When one or more disposables reject.
+ * @throws `DisposeAggregateError` when one or more disposables reject.
  *
  * @example
  * ```ts

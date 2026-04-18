@@ -5,7 +5,7 @@
  * This interface lives in the `core` module — *not* in `observe` — so that
  * core code can describe its tracing dependency without importing the full
  * `TraceManager` implementation. The full
- * {@link import('../observe/trace-manager.js').TraceManager} is structurally
+ * `TraceManager` (from `harness-one/observe`) is structurally
  * compatible with this interface, so consumers can pass a `TraceManager`
  * instance directly. Keeping the structural-compat boundary here (rather
  * than inline on `AgentLoop`) avoids a circular dependency between `core`
@@ -18,7 +18,7 @@
  * Subset of the `TraceManager` API used by the `AgentLoop`. Implementations
  * are free to ignore any call (every method is invoked optionally guarded by
  * a `if (tm)` check in callers) — most consumers will simply pass a real
- * {@link import('../observe/trace-manager.js').TraceManager}.
+ * `TraceManager` (from `harness-one/observe`).
  */
 export interface AgentLoopTraceManager {
   startTrace(name: string, metadata?: Record<string, unknown>): string;

@@ -675,9 +675,12 @@ describe('createAnthropicAdapter', () => {
       expect(toolChunks).toHaveLength(128);
     });
 
-    it('skips tool call arguments that would exceed MAX_TOOL_ARG_BYTES (F16)', async () => {
-      const largeJson = 'x'.repeat(1_048_500); // just under 1MB
-      const overflowJson = 'y'.repeat(200); // would push over 1MB
+    it('skips tool call arguments that would exceed maxToolArgBytes (F16)', async () => {
+      // Use an explicit 1 MiB cap so the test stays self-contained and is
+      // not coupled to the shared `MAX_TOOL_ARG_BYTES` default value.
+      const cap = 1024 * 1024;
+      const largeJson = 'x'.repeat(cap - 76); // just under cap
+      const overflowJson = 'y'.repeat(200); // would push over cap
 
       const events: unknown[] = [
         {
@@ -700,7 +703,10 @@ describe('createAnthropicAdapter', () => {
       });
       mock.mocks.stream.mockReturnValue(mockStream);
 
-      const adapter = createAnthropicAdapter({ client: mock.client });
+      const adapter = createAnthropicAdapter({
+        client: mock.client,
+        streamLimits: { maxToolArgBytes: cap },
+      });
       const chunks: unknown[] = [];
       for await (const chunk of adapter.stream!({
         messages: [{ role: 'user', content: 'Hi' }],

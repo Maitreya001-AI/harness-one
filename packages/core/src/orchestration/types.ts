@@ -185,7 +185,7 @@ export interface AgentPool {
  * Minimal message transport abstraction used by {@link HandoffManager}.
  *
  * Any object that can send inter-agent messages satisfies this interface.
- * The full {@link import('./orchestrator.js').AgentOrchestrator} implements it
+ * The full `AgentOrchestrator` (see `./orchestrator.ts`) implements it
  * automatically, but lightweight custom transports can be used as well.
  */
 export interface MessageTransport {

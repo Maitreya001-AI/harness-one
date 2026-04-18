@@ -1,5 +1,5 @@
 /**
- * @harness-one/anthropic — Anthropic SDK adapter for harness-one.
+ * The `@harness-one/anthropic` package — Anthropic SDK adapter for harness-one.
  *
  * Provides a full AgentAdapter implementation backed by the Anthropic SDK,
  * with support for chat, streaming, and tool_use handling.

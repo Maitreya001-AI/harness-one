@@ -89,7 +89,11 @@ export function createHarnessLifecycle(): HarnessLifecycle {
     health: async () => {
       const components: Record<string, HarnessComponentHealth> = {};
       const entries = [...checks.entries()];
-      const results = await Promise.all(
+      // Use Promise.allSettled for defense-in-depth: the inner try/catch
+      // makes every promise resolve to a value today, but allSettled
+      // guarantees one failing check cannot abort the aggregate even if a
+      // future refactor removes that wrapper.
+      const settled = await Promise.allSettled(
         entries.map(async ([name, check]) => {
           try {
             return [name, await check()] as const;
@@ -104,7 +108,21 @@ export function createHarnessLifecycle(): HarnessLifecycle {
           }
         }),
       );
-      for (const [name, result] of results) components[name] = result;
+      for (let i = 0; i < settled.length; i++) {
+        const outcome = settled[i];
+        if (outcome.status === 'fulfilled') {
+          const [name, result] = outcome.value;
+          components[name] = result;
+          continue;
+        }
+        const name = entries[i][0];
+        components[name] = {
+          status: 'down',
+          detail: outcome.reason instanceof Error
+            ? outcome.reason.message
+            : String(outcome.reason),
+        };
+      }
       return {
         state,
         ready: state === 'ready',

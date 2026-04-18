@@ -71,7 +71,8 @@ export class AgentLoop {
     };
     static readonly MAX_STREAM_BYTES: number;
     run(messages: Message[]): AsyncGenerator<AgentEvent>;
-    get status(): 'idle' | 'running' | 'completed' | 'disposed';
+    // Warning: (ae-forgotten-export) The symbol "AgentLoopStatus" needs to be exported by the entry point index.d.ts
+    get status(): AgentLoopStatus;
     get usage(): TokenUsage;
 }
 
@@ -134,6 +135,9 @@ export interface AgentLoopHook {
         toolCall: ToolCallRequest;
     }): void;
 }
+
+// @public
+type AgentLoopStatus = 'idle' | 'running' | 'completed' | 'errored' | 'disposed';
 
 // @public
 export interface AgentLoopTraceManager {
@@ -449,10 +453,7 @@ export function createTraceManager(config?: {
     exporters?: TraceExporter[];
     maxTraces?: number;
     onExportError?: (error: unknown) => void;
-    logger?: {
-        warn: (msg: string, meta?: Record<string, unknown>) => void;
-        debug?: (msg: string, meta?: Record<string, unknown>) => void;
-    };
+    logger?: Pick<Logger, 'warn'> & Partial<Pick<Logger, 'debug' | 'info' | 'error' | 'child' | 'isWarnEnabled'>>;
     defaultSamplingRate?: number;
     flushTimeoutMs?: number;
     redact?: RedactConfig | false;
@@ -1676,13 +1677,13 @@ export interface VectorSearchOptions {
 
 // Warnings were encountered during analysis:
 //
-// dist/cost-tracker-DBbl4-3v.d.ts:395:5 - (ae-forgotten-export) The symbol "RedactConfig" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-DBbl4-3v.d.ts:402:5 - (ae-forgotten-export) The symbol "Redactor" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-DBbl4-3v.d.ts:738:5 - (ae-forgotten-export) The symbol "EvictionStrategyName" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-DBbl4-3v.d.ts:738:5 - (ae-forgotten-export) The symbol "EvictionStrategy" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-DBbl4-3v.d.ts:778:5 - (ae-forgotten-export) The symbol "MetricsPort" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-DmyL_l79.d.ts:394:5 - (ae-forgotten-export) The symbol "RedactConfig" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-DmyL_l79.d.ts:401:5 - (ae-forgotten-export) The symbol "Redactor" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-DmyL_l79.d.ts:734:5 - (ae-forgotten-export) The symbol "EvictionStrategyName" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-DmyL_l79.d.ts:734:5 - (ae-forgotten-export) The symbol "EvictionStrategy" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-DmyL_l79.d.ts:774:5 - (ae-forgotten-export) The symbol "MetricsPort" needs to be exported by the entry point index.d.ts
 // dist/pipeline-CCw3TkZG.d.ts:45:5 - (ae-forgotten-export) The symbol "GuardrailEvent" needs to be exported by the entry point index.d.ts
-// dist/resilience-LIkNFUm7.d.ts:64:5 - (ae-forgotten-export) The symbol "MiddlewareContext" needs to be exported by the entry point index.d.ts
+// dist/resilience-I8l_nyxy.d.ts:64:5 - (ae-forgotten-export) The symbol "MiddlewareContext" needs to be exported by the entry point index.d.ts
 // dist/session/index.d.ts:162:5 - (ae-forgotten-export) The symbol "SessionStore" needs to be exported by the entry point index.d.ts
 // dist/session/index.d.ts:163:9 - (ae-forgotten-export) The symbol "SessionId" needs to be exported by the entry point index.d.ts
 

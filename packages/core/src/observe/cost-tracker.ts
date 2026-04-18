@@ -38,6 +38,7 @@ import {
 import { priceUsage, hasNonFiniteTokens } from '../core/pricing.js';
 import type { ModelPricing, CostTracker } from './cost-tracker-types.js';
 import { createCostAlertManager } from './cost-alert-manager.js';
+import { createCostRecordBuffer } from './cost-record-buffer.js';
 export type { EvictionStrategy, EvictionStrategyName } from './cost-tracker-eviction.js';
 export { overflowBucketStrategy, lruStrategy, getEvictionStrategy } from './cost-tracker-eviction.js';
 export type { ModelPricing, CostTracker } from './cost-tracker-types.js';
@@ -126,8 +127,7 @@ export function createCostTracker(config?: {
   metrics?: MetricsPort;
 }): CostTracker {
   const pricing = new Map<string, ModelPricing>();
-  const records: TokenUsageRecord[] = [];
-  const maxRecords = config?.maxRecords ?? 10_000;
+  const buffer = createCostRecordBuffer({ maxRecords: config?.maxRecords ?? 10_000 });
   const maxModels = config?.maxModels ?? 1000;
   const maxTraces = config?.maxTraces ?? 10_000;
   const strictMode = config?.strictMode ?? false;
@@ -219,27 +219,9 @@ export function createCostTracker(config?: {
   // Secondary index for O(1) getCostByTrace lookups.
   const traceTotals = new Map<string, KahanSum>();
 
-  // Secondary index mapping traceId → SORTED array of RAW record indices that
-  // currently belong to that trace.
-  //
-  // Two index spaces live side-by-side:
-  //   - RawIndex — the position a record occupied when it was pushed, offset
-  //     by all historical shifts. Monotone; never revisited.
-  //   - EffectiveIndex — the current slot in `records` (0-indexed). The
-  //     conversion is `effective = raw - evictionBias`.
-  //
-  // We use branded types so the two spaces can't be mixed at a callsite.
-  // `evictionBias` is the cumulative number of `records.shift()` calls and
-  // is compacted back to 0 inside `reset()` and whenever the buffer fully
-  // drains so an unbounded-lifetime tracker doesn't approach 2^53 after
-  // many years of streaming.
-  type RawIndex = number & { readonly __brand: 'RawIndex' };
-  type EffectiveIndex = number & { readonly __brand: 'EffectiveIndex' };
-  const asRaw = (n: number): RawIndex => n as RawIndex;
-  const toEffective = (raw: RawIndex): EffectiveIndex =>
-    (raw - evictionBias) as EffectiveIndex;
-  const traceIdIndex = new Map<string, RawIndex[]>();
-  let evictionBias = 0;
+  // The bounded record buffer (with per-trace lookup index + raw/effective
+  // index translation) lives in `cost-record-buffer.ts` so this file only
+  // owns running totals, alert dispatch, and pricing snapshots.
 
   if (config?.pricing) {
     for (const p of config.pricing) {
@@ -319,20 +301,11 @@ export function createCostTracker(config?: {
         estimatedCost,
         timestamp: Date.now(),
       };
-      records.push(record);
-
-      // Append raw (pre-bias) index to this traceId's sorted list. Raw index
-      // space is monotone; effective slot = raw - evictionBias.
-      if (usage.traceId) {
-        const rawIdx = asRaw(records.length - 1 + evictionBias);
-        const list = traceIdIndex.get(usage.traceId);
-        if (list) list.push(rawIdx);
-        else traceIdIndex.set(usage.traceId, [rawIdx]);
-      }
-
+      // Append to the bounded buffer; the buffer also owns the per-trace
+      // index + raw/effective bias bookkeeping. Returns the evicted record
+      // when the push pushed the buffer over `maxRecords`.
+      const evicted = buffer.push(record);
       runningSum.add(estimatedCost);
-      // Invalidate the per-model snapshot cache; a new model key may have
-      // appeared or an existing one's total shifted.
 
       // Per-key bucket resolution is delegated to the configured
       // EvictionStrategy. The default `'overflow-bucket'` strategy: existing
@@ -357,42 +330,17 @@ export function createCostTracker(config?: {
         if (traceSum) traceSum.add(estimatedCost);
       }
 
-      if (records.length > maxRecords) {
-        const evicted = records.shift() as (typeof records)[number];
+      if (evicted) {
         runningSum.subtract(evicted.estimatedCost);
         // Cumulative-since-start strategies leave per-key totals untouched;
         // sliding-window strategies (`lru`) decrement them here.
         evictionStrategy.onRecordEvicted(evicted, modelTotals, traceTotals);
-
-        // O(1) amortised eviction bookkeeping. The evicted record occupied
-        // effective slot 0 → raw index == evictionBias. Only the affected
-        // traceId's list needs surgery: its head entry (the minimum raw
-        // index) is popped; every other traceId is unchanged in raw space.
-        // `evictionBias` is bumped so getters translate correctly.
-        if (evicted.traceId) {
-          const list = traceIdIndex.get(evicted.traceId);
-          if (list && list.length > 0 && list[0] === (evictionBias as number)) {
-            list.shift();
-            if (list.length === 0) traceIdIndex.delete(evicted.traceId);
-          }
-        }
-        evictionBias++;
       }
 
-      // Buffer drained (every record evicted since the last reset): compact
-      // `evictionBias` back to 0 so long-lived trackers don't approach
-      // 2^53 after many years of streaming. Safe because traceIdIndex is
-      // empty — no live RAW index to translate.
-      if (records.length === 0 && traceIdIndex.size === 0 && evictionBias !== 0) {
-        evictionBias = 0;
-      }
-
-      // Invalidate the per-model snapshot cache; the next getCostByModel()
-      // call will rebuild from the (now-mutated) modelTotals map.
-
-      // Check budget alerts after recording
+      // Check budget alerts after recording. Report utilization on every
+      // update, not only on threshold crossings, so dashboards see a
+      // continuous signal.
       if (alertManager.getBudget() !== undefined) {
-        // Report utilization on every update, not only on threshold crossings.
         reportUtilization();
         const alert = alertManager.checkBudget();
         if (alert) alertManager.emit(alert);
@@ -402,16 +350,12 @@ export function createCostTracker(config?: {
     },
 
     updateUsage(traceId: string, usage: Partial<Omit<TokenUsageRecord, 'estimatedCost' | 'timestamp' | 'traceId' | 'model'>>): TokenUsageRecord | undefined {
-      // The freshest raw index lives at the tail of the list. Translate via
-      // evictionBias to the live buffer slot through the branded
-      // `toEffective` helper — raw/effective mixing is a type error now.
-      const list = traceIdIndex.get(traceId);
-      if (!list || list.length === 0) return undefined;
-      const rawIdx = list[list.length - 1];
-      const existingIndex = toEffective(rawIdx);
-      if (existingIndex < 0 || existingIndex >= records.length) return undefined;
-      const existingRecord = records[existingIndex];
-      if (!existingRecord) return undefined;
+      // The buffer owns the raw/effective index translation; we ask for the
+      // freshest live record via a single lookup that returns a `replace`
+      // closure for in-place mutation.
+      const handle = buffer.getLatestForTrace(traceId);
+      if (!handle) return undefined;
+      const existingRecord = handle.record;
 
       if (usage.inputTokens !== undefined && usage.inputTokens < existingRecord.inputTokens) {
         throw new HarnessError(
@@ -460,8 +404,8 @@ export function createCostTracker(config?: {
         timestamp: existingRecord.timestamp,
       };
 
-      // Mutate in place (same array slot — no eviction impact)
-      records[existingIndex] = updatedRecord;
+      // Mutate in place (same array slot — no eviction impact).
+      handle.replace(updatedRecord);
 
       // Adjust running totals
       runningSum.add(costDelta);
@@ -524,13 +468,10 @@ export function createCostTracker(config?: {
     onAlert: (handler) => alertManager.registerHandler(handler),
 
     reset(): void {
-      records.length = 0;
+      buffer.clear();
       runningSum.reset();
       modelTotals.clear();
       traceTotals.clear();
-      traceIdIndex.clear();
-      // Reset the bias so fresh records start at raw index 0.
-      evictionBias = 0;
       // Reset dedupe state so alerts can re-fire after an explicit reset
       // (tests + operator-driven "checkpoint" workflows).
       alertManager.resetDedupe();

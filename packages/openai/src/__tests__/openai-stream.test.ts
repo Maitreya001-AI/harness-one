@@ -586,10 +586,12 @@ describe('createOpenAIAdapter', () => {
       expect(toolChunks).toHaveLength(128);
     });
 
-    it('skips tool call arguments that would exceed MAX_TOOL_ARG_BYTES', async () => {
-      // Create a tool call with arguments near the 1MB limit, then try to exceed it
-      const largeArgs = 'x'.repeat(1_048_500); // just under 1MB
-      const overflowArgs = 'y'.repeat(200); // would push over 1MB
+    it('skips tool call arguments that would exceed maxToolArgBytes', async () => {
+      // Use an explicit 1 MiB cap so the test stays self-contained and is
+      // not coupled to the shared `MAX_TOOL_ARG_BYTES` default value.
+      const cap = 1024 * 1024;
+      const largeArgs = 'x'.repeat(cap - 100); // just under cap
+      const overflowArgs = 'y'.repeat(200); // would push over cap
 
       const asyncIter = {
         async *[Symbol.asyncIterator]() {
@@ -619,7 +621,10 @@ describe('createOpenAIAdapter', () => {
       };
       mock.mocks.create.mockResolvedValue(asyncIter);
 
-      const adapter = createOpenAIAdapter({ client: mock.client });
+      const adapter = createOpenAIAdapter({
+        client: mock.client,
+        streamLimits: { maxToolArgBytes: cap },
+      });
       const chunks: unknown[] = [];
       for await (const chunk of adapter.stream!({
         messages: [{ role: 'user', content: 'Hi' }],

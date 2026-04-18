@@ -249,6 +249,26 @@ export function createTraceManager(config?: {
     return evictedSpanIds;
   }
 
+  /**
+   * Discard one trace as part of eviction: finalize its spans, drop them
+   * from the span map, forget retry telemetry, emit metrics, and remove the
+   * trace from `traces`. Used by both eviction passes (ended-traces sweep
+   * and LRU sweep) so they share identical cleanup semantics.
+   */
+  function discardTraceForEviction(trace: MutableTrace, reason: 'ended' | 'lru'): string[] {
+    const evictedSpans = finalizeSpansForEviction(trace);
+    for (const spanId of trace.spanIds) {
+      spans.delete(spanId);
+      retryCollector.forget(spanId);
+    }
+    traceEvictionCounter?.add(1, { reason });
+    if (trace.spanIds.length > 0) {
+      spanEvictionCounter?.add(trace.spanIds.length, { reason: 'trace_evicted' });
+    }
+    traces.delete(trace.id);
+    return evictedSpans;
+  }
+
   function evictIfNeeded(): string[] {
     // Re-entrance guard: prevent recursive eviction calls. Callers that
     // arrive while eviction is running will observe the guard and skip. After
@@ -264,38 +284,17 @@ export function createTraceManager(config?: {
       // any traces admitted during the first pass.
       for (let pass = 0; pass < 2 && traces.size > maxTraces; pass++) {
         // First, evict ended traces that are no longer in the LRU list.
-        for (const [id, trace] of traces) {
+        for (const trace of traces.values()) {
           if (traces.size <= maxTraces) break;
           if (trace.status !== 'running') {
-            const evictedSpans = finalizeSpansForEviction(trace);
-            allEvictedSpanIds.push(...evictedSpans);
-            for (const spanId of trace.spanIds) {
-              spans.delete(spanId);
-              retryCollector.forget(spanId);
-            }
-            // Metric per evicted trace + span count.
-            traceEvictionCounter?.add(1, { reason: 'ended' });
-            if (trace.spanIds.length > 0) {
-              spanEvictionCounter?.add(trace.spanIds.length, { reason: 'trace_evicted' });
-            }
-            traces.delete(id);
+            allEvictedSpanIds.push(...discardTraceForEviction(trace, 'ended'));
           }
         }
         // Then, evict oldest running traces from the LRU order.
         while (traces.size > maxTraces && lru.size > 0) {
           const oldest = lru.shiftOldest();
           if (!oldest) break;
-          const evictedSpans = finalizeSpansForEviction(oldest);
-          allEvictedSpanIds.push(...evictedSpans);
-          for (const spanId of oldest.spanIds) {
-            spans.delete(spanId);
-            retryCollector.forget(spanId);
-          }
-          traceEvictionCounter?.add(1, { reason: 'lru' });
-          if (oldest.spanIds.length > 0) {
-            spanEvictionCounter?.add(oldest.spanIds.length, { reason: 'trace_evicted' });
-          }
-          traces.delete(oldest.id);
+          allEvictedSpanIds.push(...discardTraceForEviction(oldest, 'lru'));
         }
       }
     } finally {

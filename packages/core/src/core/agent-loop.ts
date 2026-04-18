@@ -6,7 +6,7 @@
  * triggers. The class owns configuration, lifecycle state, and
  * composition; the event-sequencing state machine (startRun,
  * checkPreIteration, startIteration, finalizeRun) lives in
- * {@link import('./iteration-coordinator.js')}.
+ * `./iteration-coordinator.ts`.
  *
  * @module
  */
@@ -62,7 +62,7 @@ export class AgentLoop {
   private readonly runHook: ReturnType<typeof createHookDispatcher>;
   private readonly abortController: AbortController;
   private readonly state: CoordinatorState;
-  /** Frozen deps bag shared with {@link iteration-coordinator.js}. */
+  /** Frozen deps bag shared with `./iteration-coordinator.ts`. */
   private readonly coordDeps: CoordinatorDeps;
   /**
    * Pre-built options bag handed to `executionStrategy.execute()` for every
@@ -230,7 +230,7 @@ export class AgentLoop {
   /**
    * Current lifecycle status of the loop.
    *
-   * See {@link import('./types.js').AgentLoopStatus} for the full shape.
+   * See {@link AgentLoopStatus} for the full shape.
    * `'completed'` is reserved for normal `end_turn` terminations; abnormal
    * exits (abort, max_iterations, token_budget, guardrail block, error)
    * land on `'errored'`. Once `dispose()` has been called the status is
@@ -244,7 +244,7 @@ export class AgentLoop {
   /**
    * Run the agent loop, yielding events as they occur.
    *
-   * Orchestration only — the ceremony lives in {@link iteration-coordinator.js}.
+   * Orchestration only — the ceremony lives in `./iteration-coordinator.ts`.
    *
    * @example
    * ```ts

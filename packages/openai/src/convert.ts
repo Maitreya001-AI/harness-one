@@ -1,5 +1,5 @@
 /**
- * @harness-one/openai — pure conversion helpers.
+ * The `@harness-one/openai` package — pure conversion helpers.
  *
  * This file owns the (mostly) stateless translation layer between harness-one
  * domain types (`Message`, `ToolSchema`, `TokenUsage`) and the OpenAI SDK wire

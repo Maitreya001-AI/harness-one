@@ -25,6 +25,7 @@ import { type CircuitBreaker, CircuitOpenError } from '../infra/circuit-breaker.
 import type { StreamHandler } from './stream-handler.js';
 import { createRetryPolicy } from './retry-policy.js';
 import { withAdapterTimeout } from './adapter-timeout.js';
+import { runStreamingAttempt } from './streaming-retry.js';
 
 /** Successful single-attempt adapter call result. */
 export interface AdapterCallOnceOk {
@@ -333,119 +334,61 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
         }
 
         if (config.streaming) {
-          // Streaming branch — delegate to StreamHandler. We iterate its
-          // generator manually (rather than `yield*`) so we can SWALLOW the
-          // terminal `{type:'error'}` event when a retry is going to follow.
-          // Invariant: the consumer sees EXACTLY ONE `{type:'error'}` per
-          // failed adapter turn, even across retries. StreamHandler yields
-          // the error per-attempt to preserve observer-visible stream
-          // semantics; AdapterCaller coalesces them.
-          const streamGen = config.streamHandler.handle(
+          // Streaming branch — pump-and-decide lives in `streaming-retry.ts`
+          // so this loop only owns retry policy, attempt counters, and
+          // cumulative timing. The helper guarantees the consumer sees
+          // EXACTLY ONE `{type:'error'}` per failed adapter turn (buffered
+          // on retry, forwarded on terminal) and propagates iterator-close
+          // into StreamHandler so adapters that ignore `signal` don't leak
+          // sockets when consumers `.return()` mid-stream.
+          const outcome = yield* runStreamingAttempt({
+            streamHandler: config.streamHandler,
+            policy,
             conversation,
             cumulativeStreamBytesSoFar,
-          );
-          let pendingError: Extract<AgentEvent, { type: 'error' }> | undefined;
-
-          // Wrap the manual pump in try/finally so consumer `.return()` on
-          // the outer `run()` generator forwards iterator-close into
-          // StreamHandler. Without this, the `for await` inside StreamHandler
-          // stays suspended on the adapter's chunk until the abort signal
-          // fires, leaking file handles/sockets/timers for adapters that
-          // don't cooperate promptly with `config.signal`.
-          try {
-            // Pump: pass through text_delta / tool_call_delta / warning
-            // unchanged; buffer the single terminal error event so we can
-            // decide whether to forward it AFTER we know if retry applies.
-            while (true) {
-              const step = await streamGen.next();
-              if (step.done) {
-                const streamResult = step.value;
-                if (streamResult.ok) {
-                  // Success: drop any buffered error (there shouldn't be
-                  // one — StreamHandler only yields error before ok:false).
-                  policy.recordSuccess();
-                  return {
-                    ok: true,
-                    message: streamResult.message,
-                    usage: streamResult.usage,
-                    bytesRead: streamResult.bytesRead,
-                    path: 'stream',
-                    attempts: attempt,
-                    totalBackoffMs,
-                    totalDurationMs: Date.now() - callStartedAt,
-                  };
-                }
-                // Stream attempt failed — decide retry vs terminal.
-                const errorCategory = streamResult.errorCategory;
-                if (
-                  policy.isRetryableCategory(errorCategory)
-                  && attempt < policy.maxRetries
-                ) {
-                  // Retry. Swallow the buffered error event: the consumer
-                  // should see only the FINAL terminal error, not one per
-                  // failed attempt.
-                  pendingError = undefined;
-                  // Compute backoff BEFORE firing the retry hook so the hook
-                  // receives the actual sleep duration for span attribution.
-                  const bo = policy.scheduleBackoff(attempt);
-                  fireRetry?.({
-                    attempt,
-                    errorCategory,
-                    path: 'stream',
-                    backoffMs: bo.delay,
-                    retryNumber: attempt + 1,
-                  });
-                  try {
-                    await bo.promise;
-                    totalBackoffMs += bo.delay;
-                  } catch {
-                    // Abort fired during backoff — loop to top; attempt>0
-                    // abort check will convert to ABORTED on next iteration.
-                  }
-                  break; // exit pump-while; outer for-loop runs next attempt
-                }
-                // Terminal failure: forward the buffered error event verbatim
-                // so the observer-visible stream preserves "yield then return"
-                // ordering.
-                policy.recordFailure();
-                if (pendingError) yield pendingError;
-                return {
-                  ok: false,
-                  error: streamResult.error,
-                  errorCategory,
-                  path: 'stream',
-                  attempts: attempt,
-                  totalBackoffMs,
-                  totalDurationMs: Date.now() - callStartedAt,
-                };
-              }
-              const evt = step.value;
-              if (evt.type === 'error') {
-                // Buffer: we forward or drop based on the terminal result.
-                pendingError = evt;
-                continue;
-              }
-              // text_delta / tool_call_delta / warning — pass through.
-              yield evt;
-            }
-          } finally {
-            // Forward iterator-close into StreamHandler when the consumer
-            // called `.return()` on run() mid-stream. Calling `.return()`
-            // on an already-finished generator is a no-op or can throw —
-            // either way is fine; we just need close-propagation into the
-            // `for await` inside StreamHandler, which in turn propagates
-            // into `adapter.stream()`. The `StreamResult` we would pass
-            // here is discarded (the `try { while(true) }` either already
-            // returned the real result or we bailed early via consumer
-            // `.return()`, in which case the return value is ignored by
-            // the iterator-close protocol). Typed-view as the loose
-            // AsyncIterator interface so `.return()` accepts `undefined`.
-            const closable: AsyncIterator<AgentEvent> = streamGen;
-            await closable.return?.(undefined)?.catch(() => {
-              /* generator already done — fine */
-            });
+            attempt,
+          });
+          if (outcome.kind === 'success') {
+            return {
+              ok: true,
+              message: outcome.message,
+              usage: outcome.usage,
+              bytesRead: outcome.bytesRead,
+              path: 'stream',
+              attempts: attempt,
+              totalBackoffMs,
+              totalDurationMs: Date.now() - callStartedAt,
+            };
           }
-          // fell out of pump-while via `break` for retry; continue for-loop
+          if (outcome.kind === 'terminal-failure') {
+            return {
+              ok: false,
+              error: outcome.error,
+              errorCategory: outcome.errorCategory,
+              path: 'stream',
+              attempts: attempt,
+              totalBackoffMs,
+              totalDurationMs: Date.now() - callStartedAt,
+            };
+          }
+          // outcome.kind === 'retry' — schedule backoff and loop. Compute
+          // backoff BEFORE firing the retry hook so the hook receives the
+          // actual sleep duration for span attribution.
+          const bo = policy.scheduleBackoff(attempt);
+          fireRetry?.({
+            attempt,
+            errorCategory: outcome.errorCategory,
+            path: 'stream',
+            backoffMs: bo.delay,
+            retryNumber: attempt + 1,
+          });
+          try {
+            await bo.promise;
+            totalBackoffMs += bo.delay;
+          } catch {
+            // Abort fired during backoff — loop to top; attempt>0 abort
+            // check will convert to ABORTED on next iteration.
+          }
           continue;
         }
 

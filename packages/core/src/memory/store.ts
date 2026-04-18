@@ -491,10 +491,31 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
 
     async searchByVector(options: VectorSearchOptions) {
       const { embedding, limit = 10, minScore = 0 } = options;
-      // Use a bounded min-heap approach: maintain only top-K results
-      // to avoid O(N log N) sort when only top-K is needed.
-      const topK: Array<MemoryEntry & { score: number }> = [];
-      let minInTopK = Infinity;
+      // Binary min-heap of size <= limit. Insert/replace is O(log k),
+      // versus the previous O(k) double-scan on every replacement.
+      const heap: Array<MemoryEntry & { score: number }> = [];
+
+      function siftUp(i: number): void {
+        while (i > 0) {
+          const parent = (i - 1) >>> 1;
+          if (heap[parent].score <= heap[i].score) return;
+          [heap[i], heap[parent]] = [heap[parent], heap[i]];
+          i = parent;
+        }
+      }
+      function siftDown(i: number): void {
+        const n = heap.length;
+        for (;;) {
+          const l = 2 * i + 1;
+          const r = 2 * i + 2;
+          let smallest = i;
+          if (l < n && heap[l].score < heap[smallest].score) smallest = l;
+          if (r < n && heap[r].score < heap[smallest].score) smallest = r;
+          if (smallest === i) return;
+          [heap[i], heap[smallest]] = [heap[smallest], heap[i]];
+          i = smallest;
+        }
+      }
 
       for (const entry of entries.values()) {
         const entryEmbedding = entry.metadata?.['embedding'];
@@ -502,26 +523,16 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
         const score = cosineSimilarity(embedding, entryEmbedding as number[]);
         if (score < minScore) continue;
 
-        if (topK.length < limit) {
-          topK.push({ ...entry, score });
-          if (score < minInTopK) minInTopK = score;
-        } else if (score > minInTopK) {
-          // Find and replace the minimum element
-          let minIdx = 0;
-          for (let i = 1; i < topK.length; i++) {
-            if (topK[i].score < topK[minIdx].score) minIdx = i;
-          }
-          topK[minIdx] = { ...entry, score };
-          // Recompute min
-          minInTopK = topK[0].score;
-          for (let i = 1; i < topK.length; i++) {
-            if (topK[i].score < minInTopK) minInTopK = topK[i].score;
-          }
+        if (heap.length < limit) {
+          heap.push({ ...entry, score });
+          siftUp(heap.length - 1);
+        } else if (score > heap[0].score) {
+          heap[0] = { ...entry, score };
+          siftDown(0);
         }
       }
 
-      topK.sort((a, b) => b.score - a.score);
-      return topK;
+      return heap.sort((a, b) => b.score - a.score);
     },
   };
 }

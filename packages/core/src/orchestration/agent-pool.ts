@@ -383,6 +383,117 @@ export function createAgentPool(
     return entry.agent;
   }
 
+  /**
+   * Build and enqueue a {@link PendingAcquire} request that resolves when an
+   * agent becomes available, rejects on timeout or abort, and detaches all
+   * listeners through a single cleanup closure regardless of which path
+   * settles first.
+   */
+  function enqueuePendingAcquire(args: {
+    readonly timeoutMs: number;
+    readonly signal?: AbortSignal;
+    readonly spanId?: string;
+    readonly role?: string;
+  }): Promise<PooledAgent> {
+    const { timeoutMs, signal, spanId, role } = args;
+    return new Promise<PooledAgent>((resolve, reject) => {
+      // Declared first so `cleanup` can safely reference it before assignment.
+      const pending: PendingAcquire = {
+        resolve,
+        reject,
+        timer: null,
+        cleanup: () => { /* overridden below */ },
+        ...(role !== undefined && { role }),
+      };
+
+      const timer = setTimeout(() => {
+        const idx = pendingQueue.indexOf(pending);
+        if (idx < 0) return;
+        pendingQueue.splice(idx, 1);
+        pending.cleanup();
+        // Attach a span event with queue-depth and active-agent counts
+        // BEFORE the rejection so tracing backends can tie the timeout to
+        // the pool saturation state at the moment of failure. Skipped
+        // silently when either the trace manager or span id is absent.
+        if (traceManager && spanId) {
+          try {
+            const snapshotTimeout = getStats();
+            traceManager.addSpanEvent(spanId, {
+              name: 'pool_acquire_timeout',
+              attributes: {
+                pool_id: poolId,
+                timeout_ms: timeoutMs,
+                queue_depth: pendingQueue.length,
+                active_agents: snapshotTimeout.active,
+              },
+            });
+          } catch {
+            // Trace manager threw (e.g. dead span) — timeout path must not
+            // be blocked by observability failures.
+          }
+        }
+        reject(new HarnessError(
+          `Timed out waiting for agent (${timeoutMs}ms)`,
+          HarnessErrorCode.POOL_TIMEOUT,
+          'Release agents or increase pool max',
+        ));
+      }, timeoutMs);
+      if (typeof timer === 'object' && 'unref' in timer) {
+        (timer as NodeJS.Timeout).unref();
+      }
+      pending.timer = timer;
+
+      // Abort listener — remove from queue and reject.
+      const onAbort = (): void => {
+        const idx = pendingQueue.indexOf(pending);
+        if (idx < 0) return;
+        pendingQueue.splice(idx, 1);
+        pending.cleanup();
+        reject(new HarnessError(
+          'Acquire aborted',
+          HarnessErrorCode.POOL_ABORTED,
+          'The AbortSignal fired before an agent became available',
+        ));
+      };
+      if (signal) {
+        signal.addEventListener('abort', onAbort, { once: true });
+      }
+
+      // Single cleanup covers both timer and abort listener — invoked by
+      // resolve/reject/timeout/abort paths, whichever happens first.
+      pending.cleanup = (): void => {
+        if (pending.timer) {
+          clearTimeout(pending.timer);
+          pending.timer = null;
+        }
+        if (signal) {
+          signal.removeEventListener('abort', onAbort);
+        }
+      };
+
+      pendingQueue.push(pending);
+
+      // Surface queue depth + active/idle snapshot for observability. Debug
+      // keeps noise low for healthy pools while still making saturation
+      // traceable in debug builds. Gauge always emits — metrics backends
+      // filter/aggregate themselves.
+      const snapshotQueued = getStats();
+      if (logger) {
+        try {
+          logger.debug('pool acquire queued', {
+            pool_id: poolId,
+            pending_queue_depth: pendingQueue.length,
+            active: snapshotQueued.active,
+            idle: snapshotQueued.idle,
+          });
+        } catch {
+          // Logger threw — observability must not block the resolve/reject path.
+        }
+      }
+      queueDepthGauge?.record(pendingQueue.length, { pool_id: poolId });
+    });
+  }
+
   const pool: AgentPool & { acquireAsync(timeoutMs?: number): Promise<PooledAgent> } = {
     acquire(role?: string): PooledAgent {
       // Synchronous acquire — safe in single-threaded JS when called without
@@ -445,106 +556,13 @@ export function createAgentPool(
               { current: pendingQueue.length, max: maxPendingQueueSize },
             );
           }
-          // Queue the request
-          return new Promise<PooledAgent>((resolve, reject) => {
-            // Declared first so `cleanup` can safely reference it before assignment.
-            const pending: PendingAcquire = {
-              resolve,
-              reject,
-              timer: null,
-              cleanup: () => { /* overridden below */ },
-              ...(opts.role !== undefined && { role: opts.role }),
-            };
-
-            const timer = setTimeout(() => {
-              const idx = pendingQueue.indexOf(pending);
-              if (idx >= 0) {
-                pendingQueue.splice(idx, 1);
-                pending.cleanup();
-                // Attach a span event with queue-depth and active-agent
-                // counts BEFORE the rejection so tracing backends can tie
-                // the timeout to the pool saturation state at the moment of
-                // failure. Skipped silently when either the trace manager or
-                // span id is absent.
-                if (traceManager && opts.spanId) {
-                  try {
-                    const snapshotTimeout = getStats();
-                    traceManager.addSpanEvent(opts.spanId, {
-                      name: 'pool_acquire_timeout',
-                      attributes: {
-                        pool_id: poolId,
-                        timeout_ms: timeoutMs,
-                        queue_depth: pendingQueue.length,
-                        active_agents: snapshotTimeout.active,
-                      },
-                    });
-                  } catch {
-                    // Trace manager threw (e.g. dead span) — timeout path
-                    // must not be blocked by observability failures.
-                  }
-                }
-                reject(new HarnessError(
-                  `Timed out waiting for agent (${timeoutMs}ms)`,
-                  HarnessErrorCode.POOL_TIMEOUT,
-                  'Release agents or increase pool max',
-                ));
-              }
-            }, timeoutMs);
-            if (typeof timer === 'object' && 'unref' in timer) {
-              (timer as NodeJS.Timeout).unref();
-            }
-            pending.timer = timer;
-
-            // Abort listener — remove from queue and reject.
-            const onAbort = (): void => {
-              const idx = pendingQueue.indexOf(pending);
-              if (idx >= 0) {
-                pendingQueue.splice(idx, 1);
-                pending.cleanup();
-                reject(new HarnessError(
-                  'Acquire aborted',
-                  HarnessErrorCode.POOL_ABORTED,
-                  'The AbortSignal fired before an agent became available',
-                ));
-              }
-            };
-            if (signal) {
-              signal.addEventListener('abort', onAbort, { once: true });
-            }
-
-            // Single cleanup covers both timer and abort listener — invoked
-            // by resolve/reject/timeout/abort paths, whichever happens first.
-            pending.cleanup = (): void => {
-              if (pending.timer) {
-                clearTimeout(pending.timer);
-                pending.timer = null;
-              }
-              if (signal) {
-                signal.removeEventListener('abort', onAbort);
-              }
-            };
-
-            pendingQueue.push(pending);
-
-            // Surface queue depth + active/idle snapshot for observability.
-            // Debug level keeps noise low for healthy pools while still
-            // making saturation traceable in debug builds. Gauge is always
-            // emitted because metrics backends filter/aggregate themselves.
-            const snapshotQueued = getStats();
-            if (logger) {
-              try {
-                logger.debug('pool acquire queued', {
-                  pool_id: poolId,
-                  pending_queue_depth: pendingQueue.length,
-                  active: snapshotQueued.active,
-                  idle: snapshotQueued.idle,
-                });
-              } catch {
-                // Logger threw — swallow; the resolve/reject path must not
-                // be blocked by observability failures.
-              }
-            }
-            queueDepthGauge?.record(pendingQueue.length, { pool_id: poolId });
+          // Queue the request via the dedicated builder so the
+          // timer/abort/resolve/cleanup choreography lives in one place.
+          return enqueuePendingAcquire({
+            timeoutMs,
+            ...(signal !== undefined && { signal }),
+            ...(opts.spanId !== undefined && { spanId: opts.spanId }),
+            ...(opts.role !== undefined && { role: opts.role }),
           });
         }
         throw err;

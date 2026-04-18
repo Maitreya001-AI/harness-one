@@ -1,5 +1,5 @@
 /**
- * @harness-one/openai — OpenAI SDK adapter for harness-one.
+ * The `@harness-one/openai` package — OpenAI SDK adapter for harness-one.
  *
  * Provides a full AgentAdapter implementation backed by the OpenAI SDK,
  * with support for chat, streaming, and tool_calls handling.

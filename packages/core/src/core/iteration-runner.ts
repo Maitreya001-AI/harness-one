@@ -29,6 +29,7 @@ import {
   runToolOutputGuardrail,
 } from './guardrail-runner.js';
 import { safeStringifyToolResult } from './tool-serialization.js';
+import { createIterationLifecycle } from './iteration-lifecycle.js';
 
 // ---------------------------------------------------------------------------
 // Public surface
@@ -129,14 +130,6 @@ export interface IterationRunner {
 }
 
 // ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
-function snapshotUsage(u: { inputTokens: number; outputTokens: number }): TokenUsage {
-  return { inputTokens: u.inputTokens, outputTokens: u.outputTokens };
-}
-
-// ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
 
@@ -149,120 +142,18 @@ function snapshotUsage(u: { inputTokens: number; outputTokens: number }): TokenU
 export function createIterationRunner(config: Readonly<IterationRunnerConfig>): IterationRunner {
   const tm = config.traceManager;
   const runHook = config.runHook;
+  // Span + hook lifecycle (close span, fire onIterationEnd, all five
+  // terminal-exit generators) lives in a dedicated component so this file
+  // only owns stage choreography.
+  const lifecycle = createIterationLifecycle({
+    runHook,
+    abortController: config.abortController,
+    ...(tm !== undefined && { traceManager: tm }),
+  });
+  const { fireIterationEnd, bailEndTurn, bailTokenBudget, bailAborted, bailError, bailGuardrail } = lifecycle;
 
   function isAborted(): boolean {
     return config.abortController.signal.aborted;
-  }
-
-  /** Close the active iteration span and clear the slot on the context. */
-  function endSpan(ctx: IterationContext, status?: 'completed' | 'error'): void {
-    if (ctx.iterationSpanId && tm) {
-      try {
-        tm.endSpan(ctx.iterationSpanId, status);
-      } catch {
-        // span may already be ended — non-fatal; outer finally is also defensive.
-      }
-      ctx.iterationSpanId = undefined;
-    }
-  }
-
-  /** Fire `onIterationEnd` hooks once per iteration. Idempotent. */
-  function fireIterationEnd(ctx: IterationContext, done: boolean): void {
-    if (ctx.iterationEndFired.value) return;
-    ctx.iterationEndFired.value = true;
-    runHook('onIterationEnd', { iteration: ctx.iteration, done });
-  }
-
-  // -----------------------------------------------------------------------
-  // Terminal helpers — one per {@link DoneReason} the runner is allowed to
-  // emit. They replace the Wave-5B `bailOut` discriminated-union dispatcher
-  // (round-3 cleanup, commit post-603f526). Each helper owns exactly the
-  // yields/side-effects its reason needs:
-  //
-  //   bailEndTurn    → yield message;              span=completed; fire end(done=true)
-  //   bailTokenBudget→ yield message + error;      span=error;     fire end(done=true)
-  //   bailAborted    → yield error?;               span=error;     fire end(done=true)
-  //   bailError      → yield error (or skip);      span=error;     fire end(done=true)
-  //   bailGuardrail  → abort + yield guardrail+err;span=error;     fire end(done=true)
-  //
-  // Splitting makes each exit path reviewable on its own; adding a new
-  // terminal reason no longer touches a shared switch statement.
-  // -----------------------------------------------------------------------
-
-  function terminated(
-    ctx: IterationContext,
-    reason: DoneReason,
-  ): IterationOutcome {
-    return {
-      kind: 'terminated',
-      reason,
-      totalUsage: snapshotUsage(ctx.cumulativeUsage),
-    };
-  }
-
-  async function* bailEndTurn(
-    ctx: IterationContext,
-    messageEvent: Extract<AgentEvent, { type: 'message' }>,
-  ): AsyncGenerator<AgentEvent, IterationOutcome> {
-    yield messageEvent;
-    endSpan(ctx, 'completed');
-    fireIterationEnd(ctx, true);
-    return terminated(ctx, 'end_turn');
-  }
-
-  async function* bailTokenBudget(
-    ctx: IterationContext,
-    messageEvent: Extract<AgentEvent, { type: 'message' }>,
-    errorEvent: Extract<AgentEvent, { type: 'error' }>,
-  ): AsyncGenerator<AgentEvent, IterationOutcome> {
-    yield messageEvent;
-    yield errorEvent;
-    endSpan(ctx, 'error');
-    fireIterationEnd(ctx, true);
-    return terminated(ctx, 'token_budget');
-  }
-
-  async function* bailAborted(
-    ctx: IterationContext,
-    errorEvent: Extract<AgentEvent, { type: 'error' }>,
-  ): AsyncGenerator<AgentEvent, IterationOutcome> {
-    yield errorEvent;
-    endSpan(ctx, 'error');
-    fireIterationEnd(ctx, true);
-    return terminated(ctx, 'aborted');
-  }
-
-  /**
-   * General error terminal. `errorAlreadyYielded` skips the `error` event when
-   * StreamHandler has already yielded it (streaming path) to preserve the
-   * "exactly one error event per failed turn" contract.
-   */
-  async function* bailError(
-    ctx: IterationContext,
-    errorEvent: Extract<AgentEvent, { type: 'error' }> | undefined,
-    errorAlreadyYielded: boolean,
-  ): AsyncGenerator<AgentEvent, IterationOutcome> {
-    if (!errorAlreadyYielded && errorEvent) yield errorEvent;
-    endSpan(ctx, 'error');
-    fireIterationEnd(ctx, true);
-    return terminated(ctx, 'error');
-  }
-
-  /**
-   * Guardrail block terminal — always aborts upstream work and yields the
-   * guardrail event before the error event so downstream filters see both.
-   */
-  async function* bailGuardrail(
-    ctx: IterationContext,
-    guardrailEvent: Extract<AgentEvent, { type: 'guardrail_blocked' }>,
-    errorEvent: Extract<AgentEvent, { type: 'error' }>,
-  ): AsyncGenerator<AgentEvent, IterationOutcome> {
-    config.abortController.abort();
-    yield guardrailEvent;
-    yield errorEvent;
-    endSpan(ctx, 'error');
-    fireIterationEnd(ctx, true);
-    return terminated(ctx, 'error');
   }
 
   // -----------------------------------------------------------------------

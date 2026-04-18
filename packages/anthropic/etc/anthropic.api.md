@@ -15,6 +15,10 @@ export interface AnthropicAdapterConfig {
     readonly logger?: Pick<Logger, 'warn' | 'error'>;
     readonly model?: string;
     readonly onMalformedToolUse?: AnthropicMalformedToolUsePolicy;
+    readonly streamLimits?: {
+        readonly maxToolCalls?: number;
+        readonly maxToolArgBytes?: number;
+    };
     readonly strictExtraAllowList?: boolean;
 }
 

@@ -63,7 +63,7 @@ function utf8ByteLength(s: string): number {
 
 /**
  * Streaming chunk shape consumed by the aggregator. Mirrors the relevant
- * subset of {@link import('./types.js').StreamChunk} so the aggregator can
+ * subset of {@link StreamChunk} so the aggregator can
  * be unit-tested without an adapter. The `type` widens to `string` so the
  * aggregator can ignore unknown chunk variants without breaking on future
  * additions to the StreamChunk union.
