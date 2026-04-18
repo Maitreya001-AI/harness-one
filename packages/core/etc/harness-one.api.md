@@ -71,7 +71,6 @@ export class AgentLoop {
     };
     static readonly MAX_STREAM_BYTES: number;
     run(messages: Message[]): AsyncGenerator<AgentEvent>;
-    // Warning: (ae-forgotten-export) The symbol "AgentLoopStatus" needs to be exported by the entry point index.d.ts
     get status(): AgentLoopStatus;
     get usage(): TokenUsage;
 }
@@ -81,7 +80,6 @@ export interface AgentLoopConfig {
     // (undocumented)
     readonly adapter: AgentAdapter;
     readonly baseRetryDelayMs?: number;
-    // Warning: (ae-forgotten-export) The symbol "ExecutionStrategy" needs to be exported by the entry point index.d.ts
     readonly executionStrategy?: ExecutionStrategy;
     readonly hooks?: readonly AgentLoopHook[];
     readonly inputPipeline?: GuardrailPipeline;
@@ -137,7 +135,7 @@ export interface AgentLoopHook {
 }
 
 // @public
-type AgentLoopStatus = 'idle' | 'running' | 'completed' | 'errored' | 'disposed';
+export type AgentLoopStatus = 'idle' | 'running' | 'completed' | 'errored' | 'disposed';
 
 // @public
 export interface AgentLoopTraceManager {
@@ -185,8 +183,6 @@ export interface AuthContext {
 interface BaseMessage {
     // (undocumented)
     readonly content: string;
-    // Warning: (ae-forgotten-export) The symbol "MessageMeta" needs to be exported by the entry point index.d.ts
-    //
     // (undocumented)
     readonly meta?: MessageMeta;
     // (undocumented)
@@ -213,7 +209,7 @@ export interface CacheMetrics {
 }
 
 // @public
-interface CacheMetricsBucket {
+export interface CacheMetricsBucket {
     // (undocumented)
     readonly avgHitRate: number;
     // (undocumented)
@@ -229,7 +225,6 @@ interface CacheMetricsBucket {
 // @public
 export interface CacheMonitor {
     getMetrics(): CacheMetrics;
-    // Warning: (ae-forgotten-export) The symbol "CacheMetricsBucket" needs to be exported by the entry point index.d.ts
     getTimeSeries(bucketMs?: number): readonly CacheMetricsBucket[];
     record(usage: TokenUsage, prefixMatchRatio?: number): void;
     reset(): void;
@@ -375,8 +370,6 @@ export function createCostTracker(config?: {
     metrics?: MetricsPort;
 }): CostTracker;
 
-// Warning: (ae-forgotten-export) The symbol "LoggerConfig" needs to be exported by the entry point index.d.ts
-//
 // @public
 export function createLogger(config?: LoggerConfig): Logger;
 
@@ -404,14 +397,11 @@ export function createPipeline(config: {
     maxResults?: number;
 }): GuardrailPipeline;
 
-// Warning: (ae-forgotten-export) The symbol "CreateRegistryConfig" needs to be exported by the entry point index.d.ts
-//
 // @public (undocumented)
 export function createRegistry(config?: CreateRegistryConfig): ToolRegistry;
 
 // @public
-interface CreateRegistryConfig {
-    // Warning: (ae-forgotten-export) The symbol "ToolCapabilityValue" needs to be exported by the entry point index.d.ts
+export interface CreateRegistryConfig {
     allowedCapabilities?: readonly ToolCapabilityValue[];
     logger?: Logger;
     // (undocumented)
@@ -480,7 +470,7 @@ interface Disposable_2 {
 export { Disposable_2 as Disposable }
 
 // @public
-export class DisposeAggregateError extends Error {
+export class DisposeAggregateError extends HarnessError {
     constructor(errors: readonly unknown[], indices: readonly number[]);
     readonly errors: readonly unknown[];
     readonly indices: readonly number[];
@@ -507,8 +497,7 @@ interface EvictionStrategy {
 type EvictionStrategyName = 'overflow-bucket' | 'lru';
 
 // @public
-interface ExecutionStrategy {
-    // Warning: (ae-forgotten-export) The symbol "ToolExecutionResult" needs to be exported by the entry point index.d.ts
+export interface ExecutionStrategy {
     execute(calls: readonly ToolCallRequest[], handler: (call: ToolCallRequest) => Promise<unknown>, options?: Readonly<{
         getToolMeta?: (name: string) => {
             sequential?: boolean;
@@ -549,8 +538,6 @@ export interface GuardrailContext {
     content: string;
     // (undocumented)
     meta?: Record<string, unknown>;
-    // Warning: (ae-forgotten-export) The symbol "PermissionLevel" needs to be exported by the entry point index.d.ts
-    //
     // (undocumented)
     permissionLevel?: PermissionLevel;
 }
@@ -571,8 +558,6 @@ interface GuardrailEvent {
 export interface GuardrailPipeline {
     // (undocumented)
     readonly _brand: unique symbol;
-    // Warning: (ae-forgotten-export) The symbol "PipelineResult" needs to be exported by the entry point index.d.ts
-    //
     // (undocumented)
     runInput(ctx: GuardrailContext): Promise<PipelineResult>;
     // (undocumented)
@@ -603,8 +588,6 @@ export class HarnessError extends Error {
     readonly cause?: Error | undefined;
     // (undocumented)
     readonly code: HarnessErrorCode;
-    // Warning: (ae-forgotten-export) The symbol "HarnessErrorDetails" needs to be exported by the entry point index.d.ts
-    //
     // (undocumented)
     readonly details?: Readonly<HarnessErrorDetails>;
     // (undocumented)
@@ -647,6 +630,8 @@ export enum HarnessErrorCode {
     CONTEXT_UNKNOWN_SEGMENT = "CONTEXT_UNKNOWN_SEGMENT",
     // (undocumented)
     CORE_ABORTED = "CORE_ABORTED",
+    // (undocumented)
+    CORE_DISPOSE_AGGREGATE = "CORE_DISPOSE_AGGREGATE",
     // (undocumented)
     CORE_FALLBACK_EXHAUSTED = "CORE_FALLBACK_EXHAUSTED",
     // (undocumented)
@@ -807,7 +792,7 @@ export enum HarnessErrorCode {
 }
 
 // @public
-interface HarnessErrorDetails {
+export interface HarnessErrorDetails {
     // (undocumented)
     readonly [k: string]: unknown;
     // (undocumented)
@@ -856,14 +841,12 @@ export interface JsonSchema {
     properties?: Record<string, JsonSchema>;
     // (undocumented)
     required?: string[];
-    // Warning: (ae-forgotten-export) The symbol "JsonSchemaType" needs to be exported by the entry point index.d.ts
-    //
     // (undocumented)
     type: JsonSchemaType;
 }
 
 // @public
-type JsonSchemaType = 'string' | 'number' | 'integer' | 'boolean' | 'object' | 'array' | 'null';
+export type JsonSchemaType = 'string' | 'number' | 'integer' | 'boolean' | 'object' | 'array' | 'null';
 
 // @public
 class KahanSum {
@@ -900,7 +883,7 @@ export interface Logger {
 }
 
 // @public
-interface LoggerConfig {
+export interface LoggerConfig {
     readonly correlationId?: string;
     readonly getContext?: () => {
         traceId?: string;
@@ -1005,7 +988,7 @@ export interface MemoryStoreCapabilities {
 export type Message = SystemMessage | UserMessage | AssistantMessage | ToolMessage;
 
 // @public
-interface MessageMeta {
+export interface MessageMeta {
     // (undocumented)
     readonly isFailureTrace?: boolean;
     // (undocumented)
@@ -1017,46 +1000,38 @@ interface MessageMeta {
 }
 
 // @public
-type MetricAttributes = Readonly<Record<string, string | number | boolean | undefined>>;
+export type MetricAttributes = Readonly<Record<string, string | number | boolean | undefined>>;
 
 // @public
-interface MetricCounter {
-    // Warning: (ae-forgotten-export) The symbol "MetricAttributes" needs to be exported by the entry point index.d.ts
-    //
+export interface MetricCounter {
     // (undocumented)
     add(value: number, attrs?: MetricAttributes): void;
 }
 
 // @public
-interface MetricGauge {
+export interface MetricGauge {
     // (undocumented)
     record(value: number, attrs?: MetricAttributes): void;
 }
 
 // @public
-interface MetricHistogram {
+export interface MetricHistogram {
     // (undocumented)
     record(value: number, attrs?: MetricAttributes): void;
 }
 
 // @public
-interface MetricsPort {
-    // Warning: (ae-forgotten-export) The symbol "MetricCounter" needs to be exported by the entry point index.d.ts
-    //
+export interface MetricsPort {
     // (undocumented)
     counter(name: string, options?: {
         description?: string;
         unit?: string;
     }): MetricCounter;
-    // Warning: (ae-forgotten-export) The symbol "MetricGauge" needs to be exported by the entry point index.d.ts
-    //
     // (undocumented)
     gauge(name: string, options?: {
         description?: string;
         unit?: string;
     }): MetricGauge;
-    // Warning: (ae-forgotten-export) The symbol "MetricHistogram" needs to be exported by the entry point index.d.ts
-    //
     // (undocumented)
     histogram(name: string, options?: {
         description?: string;
@@ -1068,7 +1043,6 @@ interface MetricsPort {
 export interface MiddlewareChain<TExtra extends Record<string, unknown> = Record<string, unknown>> {
     clear(): void;
     execute(ctx: MiddlewareContext<TExtra>, handler: () => Promise<unknown>): Promise<unknown>;
-    // Warning: (ae-forgotten-export) The symbol "MiddlewareFn" needs to be exported by the entry point index.d.ts
     use(fn: MiddlewareFn<TExtra>): () => void;
 }
 
@@ -1078,7 +1052,7 @@ type MiddlewareContext<TExtra extends Record<string, unknown> = Record<string, u
 } & TExtra;
 
 // @public
-type MiddlewareFn<TExtra extends Record<string, unknown> = Record<string, unknown>> = (ctx: MiddlewareContext<TExtra>, next: () => Promise<unknown>) => Promise<unknown>;
+export type MiddlewareFn<TExtra extends Record<string, unknown> = Record<string, unknown>> = (ctx: MiddlewareContext<TExtra>, next: () => Promise<unknown>) => Promise<unknown>;
 
 // @public
 export interface ModelPricing {
@@ -1103,10 +1077,10 @@ export interface OutputParser<T = unknown> {
 }
 
 // @public
-type PermissionLevel = 'strict' | 'default' | 'permissive';
+export type PermissionLevel = 'strict' | 'default' | 'permissive';
 
 // @public
-interface PipelineResult {
+export interface PipelineResult {
     modifiedContent?: string;
     // (undocumented)
     passed: boolean;
@@ -1481,7 +1455,7 @@ const ToolCapability: {
 // Warning: (ae-forgotten-export) The symbol "ToolCapability" needs to be exported by the entry point index.d.ts
 //
 // @public
-type ToolCapabilityValue = typeof ToolCapability[keyof typeof ToolCapability];
+export type ToolCapabilityValue = typeof ToolCapability[keyof typeof ToolCapability];
 
 // @public
 export interface ToolDefinition<TParams = unknown> {
@@ -1500,7 +1474,7 @@ export interface ToolDefinition<TParams = unknown> {
 }
 
 // @public
-interface ToolExecutionResult {
+export interface ToolExecutionResult {
     // (undocumented)
     readonly result: unknown;
     // (undocumented)
@@ -1677,13 +1651,12 @@ export interface VectorSearchOptions {
 
 // Warnings were encountered during analysis:
 //
-// dist/cost-tracker-DmyL_l79.d.ts:394:5 - (ae-forgotten-export) The symbol "RedactConfig" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-DmyL_l79.d.ts:401:5 - (ae-forgotten-export) The symbol "Redactor" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-DmyL_l79.d.ts:734:5 - (ae-forgotten-export) The symbol "EvictionStrategyName" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-DmyL_l79.d.ts:734:5 - (ae-forgotten-export) The symbol "EvictionStrategy" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-DmyL_l79.d.ts:774:5 - (ae-forgotten-export) The symbol "MetricsPort" needs to be exported by the entry point index.d.ts
-// dist/pipeline-CCw3TkZG.d.ts:45:5 - (ae-forgotten-export) The symbol "GuardrailEvent" needs to be exported by the entry point index.d.ts
-// dist/resilience-I8l_nyxy.d.ts:64:5 - (ae-forgotten-export) The symbol "MiddlewareContext" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-BAbkx_AP.d.ts:394:5 - (ae-forgotten-export) The symbol "RedactConfig" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-BAbkx_AP.d.ts:401:5 - (ae-forgotten-export) The symbol "Redactor" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-BAbkx_AP.d.ts:734:5 - (ae-forgotten-export) The symbol "EvictionStrategyName" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-BAbkx_AP.d.ts:734:5 - (ae-forgotten-export) The symbol "EvictionStrategy" needs to be exported by the entry point index.d.ts
+// dist/pipeline-CZkrsTUe.d.ts:45:5 - (ae-forgotten-export) The symbol "GuardrailEvent" needs to be exported by the entry point index.d.ts
+// dist/resilience-5c7lu2fZ.d.ts:64:5 - (ae-forgotten-export) The symbol "MiddlewareContext" needs to be exported by the entry point index.d.ts
 // dist/session/index.d.ts:162:5 - (ae-forgotten-export) The symbol "SessionStore" needs to be exported by the entry point index.d.ts
 // dist/session/index.d.ts:163:9 - (ae-forgotten-export) The symbol "SessionId" needs to be exported by the entry point index.d.ts
 

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { DisposeAggregateError, disposeAll, type Disposable } from '../disposable.js';
+import { HarnessError, HarnessErrorCode } from '../errors-base.js';
 
 function makeDisposable(
   opts: {
@@ -156,6 +157,21 @@ describe('disposeAll', () => {
       const agg = e as DisposeAggregateError;
       expect(agg.errors[0]).toBe(err1);
       expect(agg.errors[1]).toBe(err2);
+    }
+  });
+
+  it('aggregate error is a HarnessError with CORE_DISPOSE_AGGREGATE code', async () => {
+    const bad = makeDisposable({ throwOn: true });
+    try {
+      await disposeAll([bad]);
+      throw new Error('expected throw');
+    } catch (err) {
+      expect(err).toBeInstanceOf(HarnessError);
+      expect(err).toBeInstanceOf(DisposeAggregateError);
+      const agg = err as DisposeAggregateError;
+      expect(agg.code).toBe(HarnessErrorCode.CORE_DISPOSE_AGGREGATE);
+      expect(agg.suggestion).toBeDefined();
+      expect(agg.name).toBe('DisposeAggregateError');
     }
   });
 

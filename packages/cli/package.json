@@ -1,6 +1,6 @@
 {
   "name": "@harness-one/cli",
-  "version": "1.0.0-rc.1",
+  "version": "0.1.0",
   "description": "CLI scaffolding + audit tool for harness-one",
   "type": "module",
   "main": "./dist/index.cjs",

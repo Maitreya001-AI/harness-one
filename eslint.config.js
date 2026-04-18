@@ -117,6 +117,73 @@ export default tseslint.config(
       }],
     },
   },
+  // Wave-23 ARCHITECTURE.md: L3 subsystems must not import each other at
+  // runtime OR type-only. Shared abstractions belong in L2 (`core/core/**`).
+  // Previously enforced only by review discipline; now pinned in lint so new
+  // cross-subsystem edges fail CI. Each L3 subsystem gets its own block so
+  // the "you can't import your own subsystem" case is not accidentally
+  // blocked — a file inside `observe/` can still reach for `./foo.js`.
+  ...[
+    'orchestration',
+    'session',
+    'observe',
+    'guardrails',
+    'memory',
+    'tools',
+    'prompt',
+    'context',
+    'rag',
+    'evolve-check',
+    'redact',
+  ].map((subsystem) => ({
+    files: [`packages/core/src/${subsystem}/**/*.{ts,tsx}`],
+    ignores: ['**/__tests__/**', '**/*.test.ts'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        patterns: [
+          {
+            group: [
+              // Block relative imports into sibling L3 subsystems.
+              ...[
+                'orchestration',
+                'session',
+                'observe',
+                'guardrails',
+                'memory',
+                'tools',
+                'prompt',
+                'context',
+                'rag',
+                'evolve-check',
+                'redact',
+              ]
+                .filter((other) => other !== subsystem)
+                .flatMap((other) => [`../${other}`, `../${other}/**`]),
+              // Block the corresponding public subpath exports too —
+              // a subsystem must not import itself as a sibling package.
+              ...[
+                'orchestration',
+                'session',
+                'observe',
+                'guardrails',
+                'memory',
+                'tools',
+                'prompt',
+                'context',
+                'rag',
+                'evolve-check',
+                'redact',
+              ]
+                .filter((other) => other !== subsystem)
+                .map((other) => `harness-one/${other}`),
+            ],
+            message:
+              'L3 subsystems must not import each other. Move shared abstractions to L2 (`core/core/**`). See docs/ARCHITECTURE.md §Allowed-import-edges.',
+          },
+        ],
+      }],
+    },
+  })),
   // Wave-5C PR-3 T-3.3: HarnessErrorCode must be a value import (it is a
   // string enum with runtime introspection — `import type` silently breaks
   // Object.values(). ADR §3.f + §7 PR-3 step 4.

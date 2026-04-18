@@ -78,6 +78,11 @@ Build time: the root `eslint.config.js` enforces it via
 
 - Inside `core/src/infra/**`, importing from any higher layer is
   forbidden.
+- Inside each L3 subsystem under `core/src/<subsystem>/**`, importing
+  from any *sibling* L3 subsystem is forbidden (Wave-23 pin-down) —
+  both via `../<other>/**` relative paths and via `harness-one/<other>`
+  subpath. Tests are exempt (they may cross-wire subsystems for
+  integration coverage).
 - Inside sibling packages, importing from `harness-one/src/**` is
   forbidden.
 
@@ -149,10 +154,16 @@ Established seams:
 - **`harness-one/observe`** — observability surface **and** canonical
   home for the two cross-cutting ports: `MetricsPort`,
   `InstrumentationPort`, `createNoopMetricsPort`, plus trace manager,
-  cost tracker, lifecycle, and logger. Each port is deliberately
-  exposed here and *nowhere else* — exactly one import path per
-  public symbol, so consumers cannot pick up two "different" copies
-  of the same shape.
+  cost tracker, lifecycle, and logger. The **value** `createNoopMetricsPort`
+  lives here and nowhere else — one import path per public value symbol,
+  so consumers cannot pick up two different singletons. Wave-23 relaxed
+  the rule for **type-only** re-exports: `MetricsPort` / `MetricAttributes`
+  / `MetricCounter` / `MetricGauge` / `MetricHistogram` / `InstrumentationPort`
+  are now also re-exported as types from the root barrel, because TS structural
+  typing makes the "two different copies" concern irrelevant for types. The
+  canonical home remains `/observe`; the root re-export is pure UX so that
+  a user passing a `MetricsPort` to `createCostTracker()` does not have to
+  add a second import line.
 - **`harness-one/advanced`** — extension-author surface: middleware
   factory, stream aggregator, output parser, fallback adapter, SSE
   helpers, execution-strategy factories, error classifier, custom

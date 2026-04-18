@@ -56,11 +56,16 @@ core 模块定义了 harness-one 的共享类型契约（Message、TokenUsage、
 | `HarnessError` | 自定义（`HarnessErrorCode` 成员） | 所有编程错误的基类 |
 | `MaxIterationsError` | `CORE_MAX_ITERATIONS` | 循环超过 maxIterations |
 | `AbortedError` | `CORE_ABORTED` | 循环被外部中止 |
-| `GuardrailBlockedError` | `GUARD_BLOCKED` | 护栏拦截执行 |
 | `ToolValidationError` | `TOOL_VALIDATION` | 工具参数校验失败 |
 | `TokenBudgetExceededError` | `CORE_TOKEN_BUDGET_EXCEEDED` | 累计 token 超出预算 |
+| `DisposeAggregateError` | `CORE_DISPOSE_AGGREGATE` | `disposeAll()` 聚合失败（Wave-23：从继承 `Error` 统一到 `HarnessError`） |
 
-**Wave-5C：`HarnessErrorCode` 已闭合**（不再 `(string & {})` widening）。成员改为模块前缀形式；适配器自定义代码走 `ADAPTER_CUSTOM` + `details.adapterCode` escape hatch。完整枚举见 `packages/core/src/core/errors.ts`；迁移映射见根 `CHANGELOG.md`。
+> **历史注**：Wave-17 移除了 `GuardrailBlockedError` 子类——护栏拦截现在直接
+> emit `guardrail_blocked` 事件，错误路径用 `HarnessErrorCode.GUARD_BLOCKED`
+> + `GUARD_VIOLATION` 就够了。老代码靠 `err instanceof GuardrailBlockedError`
+> 匹配的地方全部改成 `err.code === HarnessErrorCode.GUARD_BLOCKED`。
+
+`HarnessErrorCode` 是闭合字符串枚举（不再 `(string & {})` widening）。成员用模块前缀（`CORE_*` / `TOOL_*` / `GUARD_*` / `SESSION_*` / `MEMORY_*` / `TRACE_*` / `ADAPTER_*` / `POOL_*` / `ORCH_*` / `LOCK_*` / `PROMPT_*` / `CONTEXT_*` / `RAG_*` / `EVAL_*` / `EVOLVE_*` / `CLI_*` / `PROVIDER_*`）；适配器或子系统的自定义代码走 `ADAPTER_CUSTOM` + `createCustomErrorCode(namespace, code)` escape hatch。完整枚举见 `packages/core/src/infra/errors-base.ts`。
 
 ### AgentLoop 类 + createAgentLoop 工厂
 
@@ -68,7 +73,7 @@ core 模块定义了 harness-one 的共享类型契约（Message、TokenUsage、
 class AgentLoop {
   constructor(config: AgentLoopConfig)
   get usage(): TokenUsage
-  get status(): 'idle' | 'running' | 'completed' | 'disposed'
+  get status(): 'idle' | 'running' | 'completed' | 'errored' | 'disposed'
   getMetrics(): { iteration: number; totalToolCalls: number; usage: TokenUsage }
   abort(): void
   dispose(): void
@@ -93,11 +98,12 @@ function createAgentLoop(config: AgentLoopConfig): AgentLoop;
 
 流字节计数器在流错误时**不重置**——累计字节数跨失败尝试保留，防止通过重复触发短流错误绕过 `maxStreamBytes` 预算。
 
-**生命周期状态**（`status` getter）：
+**生命周期状态**（`status` getter，Wave-19 起新增 `'errored'`）：
 - `idle` — 构造后未运行
 - `running` — `run()` 正在执行中
-- `completed` — `run()` 正常结束（end_turn / max_iterations / token_budget）
-- `disposed` — 调用 `dispose()` 后
+- `completed` — `run()` 以 `end_turn` 正常结束
+- `errored` — `run()` 因 abort / max_iterations / token_budget / guardrail block / adapter/tool error 结束
+- `disposed` — 调用 `dispose()` 后，**优先级最高**——并发 terminal 不能把 `disposed` 覆盖回 `completed` / `errored`
 
 **指标**（`getMetrics()`）：返回当前迭代次数、累计工具调用数和 token 用量的快照。
 

@@ -59,6 +59,7 @@ export { assertNever } from './events.js';
 // ─── AgentLoop + config + hooks (the idiomatic entry point) ──────────────
 export { AgentLoop, createAgentLoop } from './agent-loop.js';
 export type { AgentLoopConfig, AgentLoopHook } from './agent-loop.js';
+export type { AgentLoopStatus } from './types.js';
 
 // ─── Pricing types (consumers declare model rates against this shape) ────
 export type { ModelPricing, TokenUsageRecord } from './pricing.js';

@@ -3,10 +3,26 @@ import { assertNever } from '../events.js';
 import { HarnessError, HarnessErrorCode} from '../errors.js';
 
 describe('assertNever', () => {
-  it('throws HarnessError with the unexpected value in the message', () => {
+  it('throws HarnessError with a static (non-interpolated) message', () => {
     const value = 'unexpected_value' as never;
     expect(() => assertNever(value)).toThrow(HarnessError);
-    expect(() => assertNever(value)).toThrow('Unexpected value: unexpected_value');
+    // The message MUST NOT carry the value itself — if the discriminant ever
+    // contains user-derived content, interpolating it would leak PII into
+    // logs/traces. Only a static diagnostic should reach the error message;
+    // the caller's stack identifies the bug location.
+    expect(() => assertNever(value)).toThrow('Unexpected discriminant in exhaustive switch');
+  });
+
+  it('does not leak the runtime value into the error message', () => {
+    const secret = 'sensitive-user-token-abc123' as never;
+    try {
+      assertNever(secret);
+      expect.unreachable('assertNever should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(HarnessError);
+      expect((err as HarnessError).message).not.toContain('sensitive');
+      expect((err as HarnessError).message).not.toContain('abc123');
+    }
   });
 
   it('throws with UNEXPECTED_VALUE error code', () => {
@@ -27,7 +43,7 @@ describe('assertNever', () => {
       expect.unreachable('assertNever should have thrown');
     } catch (err) {
       expect(err).toBeInstanceOf(HarnessError);
-      expect((err as HarnessError).suggestion).toBe('This is a bug in harness-one');
+      expect((err as HarnessError).suggestion).toContain('bug in harness-one');
     }
   });
 

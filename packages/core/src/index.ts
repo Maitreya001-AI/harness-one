@@ -59,6 +59,7 @@ export { disposeAll } from './infra/disposable.js'; // 19 ARCH-005: public lifec
 export type {
   Role,
   Message,
+  MessageMeta,
   SystemMessage,
   TrustedSystemBrand,
   UserMessage,
@@ -67,6 +68,7 @@ export type {
   AgentAdapter,
   AgentLoopConfig,
   AgentLoopHook,
+  AgentLoopStatus,
   ChatParams,
   ChatResponse,
   StreamChunk,
@@ -74,8 +76,11 @@ export type {
   ToolSchema,
   TokenUsage,
   JsonSchema,
+  JsonSchemaType,
   LLMConfig,
   ResponseFormat,
+  ToolExecutionResult,
+  ExecutionStrategy,
   AgentEvent,
   DoneReason,
 } from './core/index.js';
@@ -83,18 +88,23 @@ export type {
 // Extension-point types from `harness-one/advanced` — re-exported at the
 // root so top-level imports of the UJ-1 primitives keep their public-type
 // references (MiddlewareChain, ResilientLoop, ...) without a second import.
+// Type-only re-exports are safe even when the VALUE lives elsewhere: TS
+// structural typing means there is no risk of two "different" copies of the
+// same shape (the concern ARCHITECTURE.md raises for value symbols).
 export type {
   AgentLoopTraceManager,
   FallbackAdapterConfig,
   ResilientLoopConfig,
   ResilientLoop,
   MiddlewareChain,
+  MiddlewareFn,
   OutputParser,
   PruneResult,
   StreamAggregatorEvent,
   StreamAggregatorChunk,
   StreamAggregatorMessage,
   StreamAggregatorOptions,
+  HarnessErrorDetails,
 } from './advanced/index.js';
 
 export type {
@@ -106,6 +116,8 @@ export type {
   ToolRegistry,
   SchemaValidator,
   ValidationError,
+  CreateRegistryConfig,
+  ToolCapabilityValue,
 } from './tools/index.js';
 
 export type {
@@ -113,6 +125,8 @@ export type {
   GuardrailContext,
   GuardrailVerdict,
   GuardrailPipeline,
+  PipelineResult,
+  PermissionLevel,
 } from './guardrails/index.js';
 
 export type {
@@ -124,15 +138,22 @@ export type {
   TraceExporter,
   TraceManager,
   InstrumentationPort,
+  MetricsPort,
+  MetricAttributes,
+  MetricCounter,
+  MetricGauge,
+  MetricHistogram,
   CostTracker,
   ModelPricing,
   TokenUsageRecord,
   CostAlert,
   Logger,
   LogLevel,
+  LoggerConfig,
   FailureMode,
   FailureClassification,
   CacheMetrics,
+  CacheMetricsBucket,
   CacheMonitor,
 } from './observe/index.js';
 

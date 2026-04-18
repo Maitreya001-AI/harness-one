@@ -15,6 +15,8 @@
  * @module
  */
 
+import { HarnessError, HarnessErrorCode } from './errors-base.js';
+
 /**
  * A resource whose lifecycle can be explicitly terminated.
  *
@@ -55,12 +57,14 @@ export interface Disposable {
 }
 
 /**
- * Aggregate error type thrown by {@link disposeAll} when one or more
- * disposables reject. Unlike the platform `AggregateError`, this class also
- * exposes the 0-based indices of the failing disposables so callers can
- * correlate failures back to the original array.
+ * Aggregate error thrown by {@link disposeAll} when one or more disposables
+ * reject. Extends {@link HarnessError} so downstream `switch (err.code)` /
+ * `instanceof HarnessError` paths work uniformly with the rest of the error
+ * catalogue. Unlike the platform `AggregateError`, this class also exposes the
+ * 0-based indices of the failing disposables so callers can correlate failures
+ * back to the original array.
  */
-export class DisposeAggregateError extends Error {
+export class DisposeAggregateError extends HarnessError {
   /** The individual errors collected during sequential disposal. */
   readonly errors: readonly unknown[];
   /** Indices (into the original array) of the failing disposables. */
@@ -71,7 +75,11 @@ export class DisposeAggregateError extends Error {
       const message = err instanceof Error ? err.message : String(err);
       return `[${indices[i]}] ${message}`;
     });
-    super(`disposeAll: ${errors.length} disposable(s) failed: ${parts.join('; ')}`);
+    super(
+      `disposeAll: ${errors.length} disposable(s) failed: ${parts.join('; ')}`,
+      HarnessErrorCode.CORE_DISPOSE_AGGREGATE,
+      'Inspect .errors / .indices to identify the failing disposables; fix their dispose() implementations.',
+    );
     this.name = 'DisposeAggregateError';
     this.errors = errors;
     this.indices = indices;

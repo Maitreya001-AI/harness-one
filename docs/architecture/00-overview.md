@@ -2,32 +2,37 @@
 
 > **Agent = Model + Harness.** harness-one 提供 Harness 层的通用基础设施。
 
-> **Production entry (Wave-5A, 1.0-rc)**: 生产部署请直接用 `createSecurePreset` 而非 `createHarness`。
-> 它 fail-closed 默认启用 guardrail pipeline、redaction（logger + trace + Langfuse）、tool
-> capability 限制（`['readonly']`）、tool registry 配额（20/turn, 100/session, 30s timeout）、
-> `sealProviders()`。`createHarness` 仍保留作为逃生门。
+> **Production entry**: 生产部署用 `createSecurePreset`（fail-closed 默认启用
+> guardrail pipeline、redaction、tool capability 限制、quota、`sealProviders()`）。
+> `createHarness` 仍保留作为逃生门，默认仍然装配所有子系统但不强制安全策略。
 >
 > ```ts
 > import { createSecurePreset } from '@harness-one/preset';
 > const harness = createSecurePreset({ provider: 'anthropic', client, model: 'claude-sonnet-4-20250514' });
 > ```
+>
+> 当前版本仍为 pre-release（所有包都是 `0.1.0`，未发 npm），
+> 所有 break change 直接落 `main`，git log 是真正的发布记录——详见 `MIGRATION.md`。
 
 ## 定位
 
-harness-one 是一个 TypeScript 工具库，为 AI Agent 产品提供 Harness Engineering 的通用原语。覆盖参考架构的 9 个层次，以 12+ 个独立模块 + 1 个 CLI 工具的形式交付。自 2026-04 起，新增多 Agent 编排基础设施（Agent Pool、Handoff Protocol、Context Boundary）和 RAG 流水线，将单 Agent 架构扩展至多 Agent 协作与检索增强场景。
+harness-one 是一个 TypeScript 工具库，为 AI Agent 产品提供 Harness Engineering 的通用原语。覆盖参考架构的 9 个层次，以核心包 `harness-one` 中的 12 个子系统 + 7 个独立适配器包 + 1 个 preset 包 + 1 个 CLI + 1 个 devkit 的形式交付。包含多 Agent 编排基础设施（Agent Pool、Handoff Protocol、Context Boundary）和 RAG 流水线，覆盖单 Agent 与多 Agent 协作场景。
 
 **不是框架**——不强制 pipeline 流程，不绑定 LLM 提供商，不管理部署。用户自由组合所需模块。
 
 ## 核心数据
 
+> 这些数字反映 Wave-23 时的 main 分支状态；git 随时变。若看文档时发现落差，
+> 以 `wc -l` + `pnpm -r test` 为准。
+
 | 指标 | 值 |
 |------|---|
-| 源码文件 | ~108 个 .ts 文件 |
-| 测试文件 | ~132 个 .test.ts 文件 |
-| 测试用例 | 3,160+ |
-| 源码行数 | ~18,000 行 |
-| 运行时依赖 | 0 |
-| 模块数 | 12+ 核心模块 + 7 集成包 + 1 preset 包 |
+| 源码文件（全仓库 src，不含 __tests__） | ~213 个 .ts 文件 |
+| 测试文件 | ~143 个 .test.ts 文件 |
+| 测试用例 | 4,400+（Wave-22 baseline 4453） |
+| 源码行数（全仓库 src，不含测试） | ~35,000 行（其中 core 包约 26k） |
+| 运行时依赖（core 包） | 0 |
+| 模块数 | 12 核心子系统 + 7 适配器包 + preset + cli + devkit |
 | 包结构 | pnpm monorepo with 12 packages |
 | 构建目标 | Node.js >= 18, ESM + CJS |
 
@@ -35,8 +40,8 @@ harness-one 是一个 TypeScript 工具库，为 AI Agent 产品提供 Harness E
 
 | 包 | 作用 |
 |---|---|
-| `harness-one` | 核心库，通过 `harness-one/<submodule>` 子路径或新的根入口使用 |
-| `@harness-one/preset` | 批处理式预设（原名 `harness-one-full`，于 0.2.0 改名），提供 `createHarness()` 一站式装配 |
+| `harness-one` | 核心库，通过 `harness-one/<submodule>` 子路径或根入口使用 |
+| `@harness-one/preset` | 预设装配，提供 `createHarness()` / `createSecurePreset()` 一站式装配 |
 | `@harness-one/anthropic` | Anthropic 适配器 |
 | `@harness-one/openai` | OpenAI 兼容适配器（同时覆盖 OpenAI/Groq/Together 等） |
 | `@harness-one/ajv` | Ajv 驱动的 JSON Schema 校验器 |
@@ -44,31 +49,34 @@ harness-one 是一个 TypeScript 工具库，为 AI Agent 产品提供 Harness E
 | `@harness-one/langfuse` | Langfuse exporter + CostTracker |
 | `@harness-one/opentelemetry` | OpenTelemetry exporter |
 | `@harness-one/tiktoken` | tiktoken 驱动的精确 tokenizer |
+| `@harness-one/cli` | `npx harness-one init/audit` 脚手架与审计工具 |
+| `@harness-one/devkit` | 开发时工具——eval runner、evolve checker、component registry、drift detection |
 
-## 导入路径（1.0-rc / Wave-5C）
+## 导入路径
 
-用户从**三种位置**获取同一套 API。Wave-5C 将根桶从 ~40 收紧到 **19 个精选值导出**（UJ-1..UJ-5 主路径），其余工厂必须走子路径或兄弟包。
+用户从**三种位置**获取同一套 API。根桶只导出最常用的 19 个值符号（UJ-1..UJ-5 主路径），其余工厂必须走子路径或兄弟包——这让 tree-shaking 友好，也让根桶的 API 契约保持稳定。
 
 ```ts
-// 1) 根入口（19 精选值）—— createAgentLoop / AgentLoop / createResilientLoop /
-//    createMiddlewareChain / HarnessError / HarnessErrorCode / MaxIterationsError /
-//    AbortedError / GuardrailBlockedError / ToolValidationError /
-//    TokenBudgetExceededError / defineTool / createRegistry / createPipeline /
-//    createTraceManager / createLogger / createCostTracker /
-//    createSessionManager / disposeAll
+// 1) 根入口（19 精选值 + 未设上限的 type-only 重导出）——
+//    createAgentLoop / AgentLoop / createResilientLoop /
+//    createMiddlewareChain / HarnessError / HarnessErrorCode /
+//    MaxIterationsError / AbortedError / ToolValidationError /
+//    TokenBudgetExceededError / defineTool / createRegistry /
+//    createPipeline / createTraceManager / createLogger /
+//    createCostTracker / createSessionManager / disposeAll
 import { createAgentLoop, HarnessErrorCode } from 'harness-one';
 
 // 2) 子路径（tree-shake 更友好；非根桶内的其余工厂从这里拿）
-import { createEventBus } from 'harness-one/core';
-import { toSSEStream } from 'harness-one/core';
 import { createFsMemoryStore } from 'harness-one/memory';
+import { toSSEStream } from 'harness-one/advanced';
+import { createFailureTaxonomy } from 'harness-one/observe';
 
-// 3) 兄弟包（preset / cli / devkit）—— 工具性surface从 @harness-one/* 拿
-import { createSecurePreset } from '@harness-one/preset';   // Wave-5C 不再经由 harness-one 根桶
-import { createEvalRunner } from '@harness-one/devkit';      // 取代旧的 harness-one/eval
+// 3) 兄弟包（preset / cli / devkit）——工具 surface 从 @harness-one/* 拿
+import { createSecurePreset } from '@harness-one/preset';
+import { createEvalRunner } from '@harness-one/devkit';
 ```
 
-**重要（Wave-5C）**：`HarnessErrorCode` 是字符串枚举，必须**值导入**（`import { HarnessErrorCode }`）。`import type` 会静默丢失运行时 `Object.values()` 记录；自定义 lint 规则 `harness-one/no-type-only-harness-error-code` 会在 lint 时拦截。
+**重要**：`HarnessErrorCode` 是字符串枚举，必须**值导入**（`import { HarnessErrorCode }`）。`import type` 会静默丢失运行时 `Object.values()` 记录；自定义 lint 规则 `harness-one/no-type-only-harness-error-code` 会在 lint 时拦截。
 
 ## 9 层参考架构映射
 
@@ -80,10 +88,10 @@ import { createEvalRunner } from '@harness-one/devkit';      // 取代旧的 har
 | ③ | 工具系统 | **tools** | `harness-one/tools` |
 | ④ | 安全与护栏 | **guardrails** | `harness-one/guardrails` |
 | ⑤ | 记忆与持久化 | **memory** | `harness-one/memory` |
-| ⑥ | 评估与验证 | **eval** | `harness-one/eval` |
-| ⑦ | 可观测性 | **observe** | `harness-one/observe`（含 Wave-5D 新增 `MetricsPort`、`HarnessLifecycle`） |
-| ⑧ | 持续演进 | **evolve** | `harness-one/evolve` |
-| ⑨ | 熵回收 | **evolve** (合并) | `harness-one/evolve` |
+| ⑥ | 评估与验证 | **devkit/eval** | `@harness-one/devkit` |
+| ⑦ | 可观测性 | **observe** | `harness-one/observe`（含 `MetricsPort`、`HarnessLifecycle`） |
+| ⑧ | 持续演进 | **devkit/evolve** | `@harness-one/devkit` |
+| ⑨ | 熵回收 | **devkit/evolve**（合并） | `@harness-one/devkit` |
 | — | 会话管理 | **session** | `harness-one/session` |
 | ⑩ | 多 Agent 编排 | **orchestration** | `harness-one/orchestration` |
 | — | RAG 流水线 | **rag** | `harness-one/rag` |
@@ -93,30 +101,31 @@ import { createEvalRunner } from '@harness-one/devkit';      // 取代旧的 har
 
 ```
                     ┌──────────┐
-                    │   infra  │  ← JSON Schema 验证器 + Token 估算器 + ids / redact / backoff 等
-                    └────┬─────┘
+                    │   infra  │  ← L1：JSON Schema 验证器 + Token 估算器 + ids / redact / backoff
+                    └────┬─────┘    + 错误原语（errors-base、brands、disposable）
                          │
                     ┌────┴─────┐
-                    │   core   │  ← 共享类型 + AgentLoop + HarnessError + 内建 guardrail port
-                    └────┬─────┘
+                    │   core   │  ← L2：共享类型 + AgentLoop + HarnessError + 两个跨切 port
+                    └────┬─────┘    （MetricsPort、InstrumentationPort）+ pricing
                          │
-    ┌────────┬───────┬───┴───┬────────┬────────┬────────┬────────┐
-    │        │       │       │        │        │        │        │
-    ▼        ▼       ▼       ▼        ▼        ▼        ▼        ▼
- context  prompt   tools  guardrails observe session  memory   eval   evolve  rag  orchestration
-    │                │       │          │                │
-    ▼                ▼       ▼          ▼                ▼
-   infra           infra   infra      infra           fs-io (extracted)
+    ┌────────┬───────┬───┴───┬────────┬────────┬────────┬────────┬──────┐
+    │        │       │       │        │        │        │        │      │
+    ▼        ▼       ▼       ▼        ▼        ▼        ▼        ▼      ▼
+ context  prompt   tools  guardrails observe session  memory  rag  orchestration  evolve-check
+    └──────────────────────────┬──────────────────────────────────────────┘
+                               ▼
+                 以上全是 L3，互相之间绝不导入
 ```
 
-**依赖规则（严格执行）：**
+**依赖规则（严格执行 + ESLint 保障）：**
 1. `infra/` → 无依赖（叶子模块；源码目录名即 `packages/core/src/infra/`）
-2. `core/` → 仅 `infra/`（包括 `core/` 内部引用的 `GuardrailPort` 运行时契约）
-3. 所有功能模块 → 仅 `core/` + `infra/`（类型导入为主；`observe/` 额外被允许作为日志/指标 port 的提供方，但仅通过类型引用）
-4. **功能模块之间绝不互相导入**（context、tools、guardrails、prompt 等互不依赖）
-5. `cli/` → 仅 Node.js 内置模块（fs、path、readline）
+2. `core/` → 仅 `infra/`
+3. 所有 L3 功能模块 → 仅 `core/` + `infra/`
+4. **L3 功能模块之间绝不互相导入（runtime 或 type-only）**——ESLint `no-restricted-imports` 现在锁了这条边（Wave-23）
+5. L4 适配器包（anthropic/openai/ajv/redis/langfuse/opentelemetry/tiktoken）→ 只能走 `harness-one/<subpath>` 公共导出，不得 `harness-one/src/**`
+6. L5 preset/cli/devkit → 和 L4 同级规则
 
-> 历史版本的文档把 `infra/` 称作 `_internal/`，源码目录从来没有过 `_internal/`；已于此次重构统一到 `infra/`。
+> 历史版本的文档把 `infra/` 称作 `_internal/`，源码目录从来没有过 `_internal/`。
 
 ## 设计原则
 

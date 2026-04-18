@@ -21,6 +21,7 @@ import { createSpanAttributeKeyWarner } from './span-attribute-keys.js';
 import { createTraceSampler } from './trace-sampler.js';
 import { createTraceRetryCollector } from './trace-retry-collector.js';
 import { createTraceExporterCoordinator } from './trace-exporter-coordinator.js';
+import { createTraceEvictionPolicy } from './trace-eviction.js';
 import { toReadonlyTrace as buildReadonlyTrace } from './trace-view.js';
 import type { Trace, Span, SpanEvent, SpanEventSeverity, TraceExporter } from './types.js';
 import type { RetryMetrics, TraceManager } from './trace-manager-types.js';
@@ -201,13 +202,11 @@ export function createTraceManager(config?: {
   // the oldest entry (evict first); tail is the most recently added.
   //
   // List mutations run synchronously — there is no `await` between read and
-  // write, so they are already atomic on the JS event loop. `isEvicting`
-  // below guards eviction re-entrance. Any future change that introduces
-  // `await` inside the list operations MUST add an async-lock.
+  // write, so they are already atomic on the JS event loop. The eviction
+  // policy's `isEvicting` flag guards eviction re-entrance. Any future
+  // change that introduces `await` inside the list operations MUST add an
+  // async-lock.
   const lru = new TraceLruList<MutableTrace>();
-  let isEvicting = false; // Re-entrance guard for eviction
-  // One-shot warning state for the 80%-capacity signal.
-  let spanHighWaterWarned = false;
   /**
    * Dead trace IDs — returned by `startTrace()` when every configured
    * exporter reports `isHealthy() === false`. The trace is NEVER admitted to
@@ -230,97 +229,23 @@ export function createTraceManager(config?: {
     return asSpanId(prefixedSecureId('sp'));
   }
 
-  /**
-   * Finalize any still-running spans for a trace before eviction.
-   * Ends each running span with 'error' status and an eviction attribute.
-   * Returns the list of evicted span IDs.
-   */
-  function finalizeSpansForEviction(trace: MutableTrace): string[] {
-    const evictedSpanIds: string[] = [];
-    for (const spanId of trace.spanIds) {
-      const span = spans.get(spanId);
-      if (span && span.status === 'running') {
-        span.endTime = Date.now();
-        span.status = 'error';
-        span.attributes['eviction.reason'] = 'trace_evicted';
-        evictedSpanIds.push(spanId);
-      }
-    }
-    return evictedSpanIds;
-  }
+  // Trace eviction policy — owns the ended-trace sweep + LRU sweep + span
+  // finalisation cleanup. Extracted to `./trace-eviction.ts` so this module
+  // keeps lifecycle + ingest concerns only. The policy reads/mutates the
+  // shared `traces` / `spans` / `lru` state via injected deps; it holds its
+  // own re-entrance guard and 80%-capacity warning latch.
+  const evictionPolicy = createTraceEvictionPolicy<MutableTrace>({
+    traces,
+    spans,
+    lru,
+    retryCollector,
+    maxTraces,
+    ...(traceEvictionCounter !== undefined && { traceEvictionCounter }),
+    ...(spanEvictionCounter !== undefined && { spanEvictionCounter }),
+    ...(logger !== undefined && { logger }),
+  });
 
-  /**
-   * Discard one trace as part of eviction: finalize its spans, drop them
-   * from the span map, forget retry telemetry, emit metrics, and remove the
-   * trace from `traces`. Used by both eviction passes (ended-traces sweep
-   * and LRU sweep) so they share identical cleanup semantics.
-   */
-  function discardTraceForEviction(trace: MutableTrace, reason: 'ended' | 'lru'): string[] {
-    const evictedSpans = finalizeSpansForEviction(trace);
-    for (const spanId of trace.spanIds) {
-      spans.delete(spanId);
-      retryCollector.forget(spanId);
-    }
-    traceEvictionCounter?.add(1, { reason });
-    if (trace.spanIds.length > 0) {
-      spanEvictionCounter?.add(trace.spanIds.length, { reason: 'trace_evicted' });
-    }
-    traces.delete(trace.id);
-    return evictedSpans;
-  }
-
-  function evictIfNeeded(): string[] {
-    // Re-entrance guard: prevent recursive eviction calls. Callers that
-    // arrive while eviction is running will observe the guard and skip. After
-    // the primary eviction completes, the loop below re-checks once — catching
-    // any traces added during the run.
-    if (isEvicting) return [];
-    isEvicting = true;
-
-    const allEvictedSpanIds: string[] = [];
-
-    try {
-      // Loop at most twice: once for the primary eviction and once for
-      // any traces admitted during the first pass.
-      for (let pass = 0; pass < 2 && traces.size > maxTraces; pass++) {
-        // First, evict ended traces that are no longer in the LRU list.
-        for (const trace of traces.values()) {
-          if (traces.size <= maxTraces) break;
-          if (trace.status !== 'running') {
-            allEvictedSpanIds.push(...discardTraceForEviction(trace, 'ended'));
-          }
-        }
-        // Then, evict oldest running traces from the LRU order.
-        while (traces.size > maxTraces && lru.size > 0) {
-          const oldest = lru.shiftOldest();
-          if (!oldest) break;
-          allEvictedSpanIds.push(...discardTraceForEviction(oldest, 'lru'));
-        }
-      }
-    } finally {
-      isEvicting = false;
-    }
-
-    // Warn at 80% capacity so operators see pressure before eviction kicks
-    // in. One-shot per crossing (not re-triggered until the size drops below
-    // threshold).
-    if (traces.size >= Math.floor(maxTraces * 0.8) && !spanHighWaterWarned) {
-      spanHighWaterWarned = true;
-      if (logger) {
-        try {
-          logger.warn('[harness-one/trace-manager] trace map above 80% capacity', {
-            traces: traces.size,
-            spans: spans.size,
-            maxTraces,
-          });
-        } catch { /* non-fatal */ }
-      }
-    } else if (traces.size < Math.floor(maxTraces * 0.8) && spanHighWaterWarned) {
-      spanHighWaterWarned = false;
-    }
-
-    return allEvictedSpanIds;
-  }
+  const evictIfNeeded = (): string[] => evictionPolicy.evictIfNeeded();
 
 
   function toReadonlyTrace(mt: MutableTrace): Trace {

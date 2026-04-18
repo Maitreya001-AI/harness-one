@@ -55,6 +55,14 @@ export type AgentEvent =
  * }
  * ```
  */
-export function assertNever(x: never): never {
-  throw new HarnessError(`Unexpected value: ${x}`, HarnessErrorCode.CORE_UNEXPECTED_VALUE, 'This is a bug in harness-one');
+export function assertNever(_x: never): never {
+  // Do NOT interpolate the value into the message — if the discriminant ever
+  // carries user-derived content, the unreachable-branch error would leak it
+  // into logs/traces. `CORE_UNEXPECTED_VALUE` + the caller's stack is enough
+  // to pinpoint the bug.
+  throw new HarnessError(
+    'Unexpected discriminant in exhaustive switch',
+    HarnessErrorCode.CORE_UNEXPECTED_VALUE,
+    'This is a bug in harness-one — a new union variant was added without updating the switch.',
+  );
 }
