@@ -1,12 +1,12 @@
 /**
- * Wave-13 E-5: MemoryStore.query() AbortSignal support.
+ * MemoryStore.query() AbortSignal support.
  */
 
 import { describe, it, expect } from 'vitest';
 import { createInMemoryStore } from '../store.js';
 import { HarnessError, HarnessErrorCode } from '../../core/errors.js';
 
-describe('InMemoryStore Wave-13 E-5: AbortSignal', () => {
+describe('InMemoryStore E-5: AbortSignal', () => {
   it('throws CORE_ABORTED when signal is already aborted before query()', async () => {
     const store = createInMemoryStore();
     await store.write({ key: 'k1', content: 'hello', grade: 'useful' });

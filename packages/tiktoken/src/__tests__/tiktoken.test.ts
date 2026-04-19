@@ -80,7 +80,7 @@ describe('createTiktokenTokenizer', () => {
     expect(result.length).toBe(0);
   });
 
-  it('CQ-044: falls back to a heuristic encoder when encoding_for_model fails and warns once', async () => {
+  it('falls back to a heuristic encoder when encoding_for_model fails and warns once', async () => {
     const warn = vi.fn();
     // Re-import the currently-loaded module (reset in beforeEach) to grab the
     // fallback-warner setter without triggering a second reset.
@@ -96,7 +96,7 @@ describe('createTiktokenTokenizer', () => {
     expect(warn).toHaveBeenCalledWith('Tokenizer fallback for unknown model', 'totally-fake-model');
   });
 
-  it('CQ-044: warns at most once per fallback model even across repeated calls', async () => {
+  it('warns at most once per fallback model even across repeated calls', async () => {
     const warn = vi.fn();
     const mod = await import('../index.js');
     mod.setTiktokenFallbackWarner(warn);
@@ -168,7 +168,7 @@ describe('registerTiktokenModels', () => {
   });
 });
 
-describe('F19: LRU cache eviction with WASM memory management', () => {
+describe('LRU cache eviction with WASM memory management', () => {
   it('evicts the least-recently-used encoder when cache exceeds max size (10)', () => {
     // Create 11 tokenizers for distinct models — the first should be evicted
     for (let i = 0; i < 11; i++) {
@@ -288,13 +288,13 @@ describe('disposeTiktoken', () => {
   });
 });
 
-// P2-23: Token-count monotonicity — for any prefix `p` of `s`,
+// Token-count monotonicity — for any prefix `p` of `s`,
 // `encode(p).length <= encode(s).length`. The heuristic fallback encoder
 // uses `max(1, ceil(len/4))`, which is non-decreasing in input length;
 // any real BPE tokenizer is also expected to satisfy this invariant.
 // We exercise the heuristic fallback path (by making encoding_for_model
 // throw) so this test does not depend on the WASM-backed encoder.
-describe('P2-23: token-count monotonicity (heuristic fallback)', () => {
+describe('token-count monotonicity (heuristic fallback)', () => {
   // Tiny, seedable PRNG (mulberry32) — deterministic regardless of platform.
   function mulberry32(seed: number): () => number {
     let t = seed >>> 0;

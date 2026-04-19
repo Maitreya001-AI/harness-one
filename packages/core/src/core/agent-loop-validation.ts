@@ -29,12 +29,12 @@ export interface ResolvedAgentLoopLimits {
  * returns a value, never mutates the input. The class constructor calls this
  * after assigning every property to `this`.
  *
- * Wave-16 m3: error messages for `maxIterations` / `maxTotalTokens` /
- * `maxStreamBytes` / `maxToolArgBytes` / `toolTimeoutMs` are kept verbatim
- * because external tests and docs reference them; delegating to
- * `requirePositiveInt` would change the wording. The remaining numeric
- * guards now route through `core/infra/validate.ts` helpers so they stay in
- * lockstep with `preset/validate-config.ts`.
+ * Error messages for `maxIterations` / `maxTotalTokens` / `maxStreamBytes`
+ * / `maxToolArgBytes` / `toolTimeoutMs` are kept verbatim because external
+ * tests and docs reference them; delegating to `requirePositiveInt`
+ * would change the wording. The remaining numeric guards route through
+ * `core/infra/validate.ts` helpers so they stay in lockstep with
+ * `preset/validate-config.ts`.
  */
 export function validateAgentLoopConfig(limits: ResolvedAgentLoopLimits): void {
   if (limits.maxIterations < 1) {

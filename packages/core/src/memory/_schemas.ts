@@ -21,7 +21,7 @@ const GRADES: readonly MemoryGrade[] = ['critical', 'useful', 'ephemeral'];
 
 /**
  * Default maximum byte-length of a MemoryEntry `content` field (1 MiB).
- * Wave-5E (SEC-A08). Stores enforce this on the WRITE path — callers
+ * . Stores enforce this on the WRITE path — callers
  * that legitimately need to persist larger payloads should chunk or use
  * a separate blob store.
  */
@@ -92,7 +92,7 @@ function isObject(v: unknown): v is Record<string, unknown> {
 }
 
 /**
- * CQ-045: Type-guard for {@link MemoryEntry}. Returns `true` iff the value
+ * Type-guard for {@link MemoryEntry}. Returns `true` iff the value
  * matches the full shape of a memory entry, so TypeScript can narrow the
  * callsite without an `as unknown as` escape hatch.
  *
@@ -118,7 +118,7 @@ export function isMemoryEntry(v: unknown): v is MemoryEntry {
 }
 
 /**
- * CQ-045: Type-guard for versioned {@link RelayState} blobs. See
+ * Type-guard for versioned {@link RelayState} blobs. See
  * {@link isMemoryEntry} — same rationale.
  */
 export function isRelayState(v: unknown): v is RelayState & { _version?: number } {
@@ -137,7 +137,7 @@ export function isRelayState(v: unknown): v is RelayState & { _version?: number 
 }
 
 function fail(path: string, reason: string, source: string): never {
-  // CQ-045: Tag these throws with `MEMORY_CORRUPT` so harness wrappers can
+  // Tag these throws with `MEMORY_CORRUPT` so harness wrappers can
   // distinguish memory-persistence corruption from other
   // `STORE_CORRUPTION` sources via `.code`. The legacy `STORE_CORRUPTION`
   // code is still recognised by consumer error handlers — see errors.ts —
@@ -175,7 +175,7 @@ export function validateMemoryEntry(v: unknown, source = 'memory entry'): Memory
       if (typeof v.tags[i] !== 'string') fail(`$.tags[${i}]`, 'expected string', source);
     }
   }
-  // CQ-045: `isMemoryEntry` narrows `v` to `MemoryEntry` via the TS type
+  // `isMemoryEntry` narrows `v` to `MemoryEntry` via the TS type
   // guard, replacing the old `as unknown as MemoryEntry` escape hatch. The
   // per-field checks above fail early with a precise JSON-path for
   // diagnostics; this final call is a belt-and-braces narrowing that also
@@ -212,7 +212,7 @@ export function validateRelayState(v: unknown): RelayState & { _version?: number
   if (v._version !== undefined && (typeof v._version !== 'number' || !Number.isFinite(v._version))) {
     fail('$._version', 'expected finite number or undefined', 'relay state');
   }
-  // CQ-045: `isRelayState` narrows via the TS type guard, replacing the
+  // `isRelayState` narrows via the TS type guard, replacing the
   // previous `as unknown as RelayState` cast.
   if (!isRelayState(v)) fail('$', 'failed full-shape guard', 'relay state');
   return v;

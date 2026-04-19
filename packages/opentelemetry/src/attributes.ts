@@ -1,11 +1,11 @@
 /**
  * Attribute / event-attribute translation for the OTel exporter.
  *
- * Wave-16 M2 extraction. Owns:
+ * Owns:
  *
- *   - the OBS-011 legacy-name → semconv rename table for cache metrics,
- *   - the Wave-12 P2-12 JSON-stringify fallback for object attributes,
- *   - the OBS-004 "dropped attribute" counters + caller-notification hook.
+ *   - the legacy-name → semconv rename table for cache metrics,
+ *   - the opt-in JSON-stringify fallback for object attributes,
+ *   - the "dropped attribute" counters + caller-notification hook.
  *
  * @module
  * @internal
@@ -14,8 +14,8 @@
 import type { Span as OTelSpan } from '@opentelemetry/api';
 
 /**
- * OBS-011: Mapping from harness-one cache-monitor metric names to
- * OpenTelemetry semantic-convention-friendly names. Applied in
+ * Mapping from harness-one cache-monitor metric names to OpenTelemetry
+ * semantic-convention-friendly names. Applied in
  * `setSpanAttributes` when the span attribute name matches one of the
  * legacy keys. Primitive-valued only.
  */
@@ -75,7 +75,7 @@ export function createAttributeSink(config: AttributeSinkConfig): AttributeSink 
       if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
         otelSpan.setAttribute(key, value);
       } else if (value !== undefined && value !== null) {
-        // Wave-12 P2-12: optional JSON-stringify fallback. Only attempted for
+        // Optional JSON-stringify fallback. Only attempted for
         // object-shaped values — functions/symbols still cannot be represented
         // as string attributes without silently producing "[object Object]"
         // or similar, so we continue to drop them. A failing JSON.stringify

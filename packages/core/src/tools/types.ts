@@ -7,7 +7,7 @@
 import type { JsonSchema } from '../core/types.js';
 
 /**
- * Wave-5A: tool capabilities declare the *side-effect classes* a tool may
+ * tool capabilities declare the *side-effect classes* a tool may
  * exercise, letting registries fail-closed against unexpected capability
  * escalation.
  *
@@ -119,7 +119,7 @@ export interface ToolDefinition<TParams = unknown> {
   /**
    * Executes the tool.
    *
-   * **AbortSignal contract (Wave-12 P1-18):** when the registry enforces a
+   * **AbortSignal contract:** when the registry enforces a
    * timeout, it fires `signal` via an internal `AbortController` *before*
    * rejecting with a timeout error. Implementations **MUST** respect the
    * signal — propagate it to `fetch`, subprocess spawn, or any socket-owning
@@ -145,8 +145,8 @@ export interface ToolDefinition<TParams = unknown> {
    * Declared side-effect classes this tool may exercise. Registries refuse
    * to register a tool whose capabilities are not in their allow-list.
    *
-   * Optional today (Wave-5A, transitional): a `safeWarn` fires when a tool
-   * omits the field. Wave-5C will upgrade that warning to a hard throw of
+   * Optional today (transitional) a `safeWarn` fires when a tool
+   * omits the field. will upgrade that warning to a hard throw of
    * `TOOL_CAPABILITY_DENIED` and make the field required at the TS level.
    */
   readonly capabilities?: readonly ToolCapabilityValue[];
@@ -159,7 +159,7 @@ export interface ToolCall {
   /**
    * Parsed JSON object representing the tool's arguments.
    *
-   * **Wave-12 P1-22 contract:** adapters guarantee this is a plain object
+   * ** P1-22 contract:** adapters guarantee this is a plain object
    * even when the model emits malformed JSON — on parse failure the adapter
    * logs a warning and substitutes `{}` (empty object) so downstream code
    * never has to defend against `undefined` or a raw string here. Consumers

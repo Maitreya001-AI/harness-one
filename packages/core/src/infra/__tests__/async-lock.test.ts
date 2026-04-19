@@ -178,11 +178,11 @@ describe('createAsyncLock', () => {
     }
   });
 
-  // Wave-13 A-4: Prevent double-reject race between dispose() and a waiter's
+  // Prevent double-reject race between dispose() and a waiter's
   // own AbortSignal handler, and ensure abort listeners are detached so they
   // cannot accumulate on long-lived signals.
-  describe('Wave-13 A-4: dispose + abort race', () => {
-    it('Wave-13 A-4: concurrent dispose + signal abort does not double-settle', async () => {
+  describe('dispose + abort race', () => {
+    it('concurrent dispose + signal abort does not double-settle', async () => {
       const lock = createAsyncLock();
       // Hold the lock so subsequent acquires queue up.
       const release = await lock.acquire();
@@ -242,7 +242,7 @@ describe('createAsyncLock', () => {
       }
     });
 
-    it('Wave-13 A-4: abort after dispose() is a no-op (no second reject, listener detached)', async () => {
+    it('abort after dispose() is a no-op (no second reject, listener detached)', async () => {
       const lock = createAsyncLock();
       const release = await lock.acquire();
       const ac = new AbortController();
@@ -266,7 +266,7 @@ describe('createAsyncLock', () => {
       release();
     });
 
-    it('Wave-13 A-4: dispose() after abort() is a no-op for already-aborted waiter', async () => {
+    it('dispose() after abort() is a no-op for already-aborted waiter', async () => {
       const lock = createAsyncLock();
       const release = await lock.acquire();
       const ac = new AbortController();
@@ -287,7 +287,7 @@ describe('createAsyncLock', () => {
       release();
     });
 
-    it('Wave-13 A-4: abort listener is removed on both resolution paths (dispose + handoff)', async () => {
+    it('abort listener is removed on both resolution paths (dispose + handoff)', async () => {
       // Track add/remove of abort listeners on a single controller across
       // its full lifecycle. If the lock leaks listeners, the count will
       // stay > 0 after resolution.
@@ -322,7 +322,7 @@ describe('createAsyncLock', () => {
       release();
     });
 
-    it('Wave-13 A-4: mixed queue — some waiters aborted, some disposed', async () => {
+    it('mixed queue — some waiters aborted, some disposed', async () => {
       const lock = createAsyncLock();
       const release = await lock.acquire();
 

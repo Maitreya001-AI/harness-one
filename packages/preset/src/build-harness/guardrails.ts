@@ -41,9 +41,9 @@ export function createGuardrails(config: HarnessConfig): GuardrailPipeline {
   }
 
   if (config.guardrails?.rateLimit) {
-    // P1-14: config shape is deep-readonly; factory accepts mutable shape.
-    // Spread to a fresh mutable object so readonly→mutable conversion is
-    // explicit and contained to this boundary.
+    // Config shape is deep-readonly; factory accepts mutable shape. Spread to
+    // a fresh mutable object so readonly→mutable conversion is explicit and
+    // contained to this boundary.
     const { max, windowMs } = config.guardrails.rateLimit;
     const limiter = createRateLimiter({ max, windowMs });
     entries.push({
@@ -54,9 +54,9 @@ export function createGuardrails(config: HarnessConfig): GuardrailPipeline {
   }
 
   if (config.guardrails?.contentFilter) {
-    // P1-14: clone the `blocked` array so the deep-readonly config-level
-    // array cannot alias the internal mutable representation used by the
-    // filter factory.
+    // Clone the `blocked` array so the deep-readonly config-level array
+    // cannot alias the internal mutable representation used by the filter
+    // factory.
     const cf = config.guardrails.contentFilter;
     const filter = createContentFilter({
       ...(cf.blocked !== undefined && { blocked: [...cf.blocked] }),

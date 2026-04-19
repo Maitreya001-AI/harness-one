@@ -13,8 +13,8 @@
  *   - circuit-breaker probing,
  *   - building the {@link AdapterCallResult} envelope.
  *
- * Extracted in Wave-21 so the streaming branch stops sharing a 192-LOC body
- * with the chat-path retry — the two only share retry policy and timing.
+ * Extracted so the streaming branch does not share a 192-LOC body with
+ * the chat-path retry — the two only share retry policy and timing.
  *
  * @module
  */

@@ -133,7 +133,7 @@ describe('createBudget', () => {
     });
   });
 
-  describe('FIX-6: throws HarnessError instead of plain Error', () => {
+  describe('throws HarnessError instead of plain Error', () => {
     it('throws HarnessError for unknown segment in remaining()', () => {
       const budget = createBudget(config);
       try {
@@ -404,9 +404,9 @@ describe('createBudget', () => {
   });
 
   // -----------------------------------------------------------------------
-  // P2-26 (Wave-12): negative-remaining edge / aggregate-overflow behavior
+  // negative-remaining edge / aggregate-overflow behavior
   // -----------------------------------------------------------------------
-  describe('P2-26: negative-remaining pin-down + hasOverflowed()', () => {
+  describe('negative-remaining pin-down + hasOverflowed()', () => {
     it('remaining() clamps at 0 and never returns a negative number', () => {
       const budget = createBudget({
         totalTokens: 1000,

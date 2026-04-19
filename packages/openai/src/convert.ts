@@ -6,11 +6,10 @@
  * shapes, plus the `LLMConfig.extra` allow-list filter.
  *
  * Two small caches live here: the WeakMap-keyed `toOpenAIParameters` memo
- * (Wave-12 P1-21) and the bounded unknown-schema-key warn-once dedupe set
- * (Wave-12 P2-19). Both are deliberately kept module-scoped: they're pure
- * deduplication structures and are reset by `_resetOpenAIWarnState()` in the
- * adapter file via the internal `_resetConvertWarnState()` helper exposed
- * below.
+ * and the bounded unknown-schema-key warn-once dedupe set. Both are
+ * deliberately kept module-scoped: they're pure deduplication structures and
+ * are reset by `_resetOpenAIWarnState()` in the adapter file via the internal
+ * `_resetConvertWarnState()` helper exposed below.
  *
  * @module
  */
@@ -35,8 +34,8 @@ import { safeWarn } from 'harness-one/observe';
  * `ADAPTER_INVALID_EXTRA` failure — useful for prod builds that want any
  * provider-drift to surface as a test/CI failure.
  *
- * This list mirrors the symmetry with the Anthropic adapter's filter (T05) and
- * is intentionally narrower than the OpenAI SDK surface: callers needing
+ * This list mirrors the symmetry with the Anthropic adapter's filter and is
+ * intentionally narrower than the OpenAI SDK surface: callers needing
  * provider-specific knobs beyond this list should open a PR to expand it
  * (preferred) or supply a pre-configured `client` that embeds the knob.
  */
@@ -148,9 +147,9 @@ export function toOpenAIMessage(
 
 /**
  * Known keys on the harness-one JsonSchema subset that we forward to OpenAI.
- * Keys outside this set are silently dropped by `toOpenAIParameters`; Wave-12
- * P2-19 adds a one-shot warn per unknown key so schema drift is observable
- * without spamming per call-site.
+ * Keys outside this set are dropped by `toOpenAIParameters` with a one-shot
+ * warn per unknown key so schema drift is observable without spamming per
+ * call-site.
  */
 const _OPENAI_KNOWN_SCHEMA_KEYS: ReadonlySet<string> = new Set([
   'type',
@@ -174,15 +173,14 @@ const _OPENAI_KNOWN_SCHEMA_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Module-scoped dedupe for unknown-schema-key warnings (Wave-12 P2-19).
- * Bounded FIFO at 256 entries so long-running servers with drifting schemas
- * don't grow unbounded.
+ * Module-scoped dedupe for unknown-schema-key warnings. Bounded FIFO at 256
+ * entries so long-running servers with drifting schemas don't grow unbounded.
  */
 const _unknownSchemaKeyWarned: Set<string> = new Set();
 const _UNKNOWN_SCHEMA_KEY_WARN_CAP = 256;
 
 /**
- * Module-scoped memoization for `toOpenAIParameters` (Wave-12 P1-21).
+ * Module-scoped memoization for `toOpenAIParameters`.
  *
  * Consumers typically pass the same schema object through every adapter
  * invocation; WeakMap-keyed memoization makes subsequent calls O(1) and avoids
@@ -199,11 +197,9 @@ const _parametersMemo: WeakMap<object, Record<string, unknown>> = new WeakMap();
  * using a double assertion (`as unknown as Record<string, unknown>`) we
  * explicitly map the known JsonSchema fields to produce a clean record.
  *
- * Wave-12:
- *  - P1-21: memoized via a WeakMap keyed on the schema object; identical
- *    schema references resolve to the same output reference.
- *  - P2-19: warn-once per unknown key so silently-dropped schema drift becomes
- *    observable.
+ * Memoized via a WeakMap keyed on the schema object; identical schema
+ * references resolve to the same output reference. Warn-once per unknown key
+ * so silently-dropped schema drift becomes observable.
  *
  * @internal
  */
@@ -234,7 +230,7 @@ export function toOpenAIParameters(
   if (schema.const !== undefined) result.const = schema.const;
   if (schema.format !== undefined) result.format = schema.format;
 
-  // P2-19: warn once per distinct unknown key. The cast to `Record<string, unknown>`
+  // Warn once per distinct unknown key. The cast to `Record<string, unknown>`
   // is safe — JsonSchema is a plain object; we only iterate its own keys.
   const dropped: string[] = [];
   for (const key of Object.keys(schema as unknown as Record<string, unknown>)) {

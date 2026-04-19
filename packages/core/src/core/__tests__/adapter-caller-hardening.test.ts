@@ -1,16 +1,16 @@
 /**
- * Wave-13 Track D — adapter caller fixes
+ * Adapter caller hardening tests:
  *
- *   D-3: orphan-rejection after timeout is logged at debug-level with
- *        bounded metadata (not silent, not noisy).
- *   D-4: AdapterRetryInfo now carries `backoffMs` and `retryNumber` so
- *        iteration-runner can emit them as span-event attributes AND any
- *        metrics port can consume them as histogram labels.
- *   D-5: timeout error path carries `timeoutMs` + `adapterName` on the
- *        failure result so the calling span can attribute without parsing
- *        error messages.
- *   D-6: cumulative `totalBackoffMs` + `totalDurationMs` attached to both
- *        success and failure results.
+ *   - orphan-rejection after timeout is logged at debug-level with
+ *     bounded metadata (not silent, not noisy).
+ *   - AdapterRetryInfo carries `backoffMs` and `retryNumber` so
+ *     iteration-runner can emit them as span-event attributes AND any
+ *     metrics port can consume them as histogram labels.
+ *   - timeout error path carries `timeoutMs` + `adapterName` on the
+ *     failure result so the calling span can attribute without parsing
+ *     error messages.
+ *   - cumulative `totalBackoffMs` + `totalDurationMs` attached to both
+ *     success and failure results.
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -49,7 +49,7 @@ function baseConfig(adapter: AgentAdapter, signal: AbortSignal) {
   };
 }
 
-describe('AdapterCaller — Wave-13 D-3 orphan rejection after timeout logged', () => {
+describe('AdapterCaller — orphan rejection after timeout logged', () => {
   it('invokes logger.debug when the adapter rejects after the timeout', async () => {
     const controller = new AbortController();
     // Adapter whose chat() rejects AFTER we've already timed out —
@@ -113,7 +113,7 @@ describe('AdapterCaller — Wave-13 D-3 orphan rejection after timeout logged', 
   });
 });
 
-describe('AdapterCaller — Wave-13 D-4 retry info carries backoffMs + retryNumber', () => {
+describe('AdapterCaller — retry info carries backoffMs + retryNumber', () => {
   it('fireRetry on chat path receives backoffMs and retryNumber', async () => {
     const controller = new AbortController();
     let attempts = 0;
@@ -150,7 +150,7 @@ describe('AdapterCaller — Wave-13 D-4 retry info carries backoffMs + retryNumb
   });
 });
 
-describe('AdapterCaller — Wave-13 D-5 timeout carries timeoutMs + adapterName', () => {
+describe('AdapterCaller — timeout carries timeoutMs + adapterName', () => {
   it('callOnce failure on timeout carries timeoutMs + adapterName', async () => {
     const controller = new AbortController();
     const adapter = makeAdapter({
@@ -197,7 +197,7 @@ describe('AdapterCaller — Wave-13 D-5 timeout carries timeoutMs + adapterName'
   });
 });
 
-describe('AdapterCaller — Wave-13 D-6 cumulative totalBackoffMs + totalDurationMs', () => {
+describe('AdapterCaller — cumulative totalBackoffMs + totalDurationMs', () => {
   it('successful result after retries carries totalBackoffMs > 0 and totalDurationMs > 0', async () => {
     const controller = new AbortController();
     let attempts = 0;

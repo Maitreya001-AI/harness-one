@@ -1,14 +1,12 @@
 /**
- * Unit tests for the Wave-21 `iteration-lifecycle.ts` extraction.
+ * Unit tests for `iteration-lifecycle.ts`.
  *
  * The module owns span+hook lifecycle and the five terminal generators
  * (`bailEndTurn`, `bailTokenBudget`, `bailAborted`, `bailError`,
  * `bailGuardrail`) that `IterationRunner` dispatches to. These tests
  * fence the event-sequencing invariant for every bail path + the
  * idempotency of `fireIterationEnd` + the defensive behaviour of
- * `endSpan` when the trace manager throws. Wave-23 backfill: before
- * this file the module was covered only indirectly via
- * `agent-loop.test.ts`.
+ * `endSpan` when the trace manager throws.
  */
 
 import { describe, it, expect, vi } from 'vitest';

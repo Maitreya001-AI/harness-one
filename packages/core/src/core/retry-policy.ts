@@ -19,10 +19,10 @@
  * adapter caller code read as "ask the policy, then dispatch" instead of
  * 40 LOC of backoff timer housekeeping inline.
  *
- * Wave-15 clarified that {@link RetryPolicy} IS the composed
- * "circuit-breaker + retry" primitive; {@link ResiliencePolicy} is an
- * alias documenting that intent so future extensions (bulkhead, fallback,
- * rate-limiter) have a clear landing spot.
+ * {@link RetryPolicy} IS the composed "circuit-breaker + retry"
+ * primitive; {@link ResiliencePolicy} is an alias documenting that
+ * intent so future extensions (bulkhead, fallback, rate-limiter) have a
+ * clear landing spot.
  *
  * Composition contract:
  *   1. `checkCircuitOpen()` gates the retry decision. When OPEN the caller
@@ -85,7 +85,7 @@ export interface RetryPolicy {
 }
 
 /**
- * Wave-15 alias for {@link RetryPolicy}. The shape is identical — the alias
+ * Alias for {@link RetryPolicy}. The shape is identical — the alias
  * documents that the policy composes "circuit-breaker gate + retry loop"
  * rather than purely "retry the call", so future additions (bulkhead,
  * rate-limit, fallback) can land here without renaming the main interface.

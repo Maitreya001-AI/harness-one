@@ -86,7 +86,7 @@ describe('safeStringifyToolResult', () => {
   });
 
   it('does not mistake siblings for depth descent', () => {
-    // Wave-5 regression: a wide-but-shallow object shouldn't be considered
+    // Regression: a wide-but-shallow object shouldn't be considered
     // "deep" just because of sibling count.
     const o: Record<string, { v: number }> = {};
     for (let i = 0; i < 50; i++) o[`k${i}`] = { v: i };

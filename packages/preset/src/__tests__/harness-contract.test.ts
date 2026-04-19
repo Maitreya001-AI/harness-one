@@ -1,5 +1,5 @@
 /**
- * Wave 1 verifications for createHarness:
+ * Contract integrity verifications for createHarness:
  *  - logger.warn emitted when no budget is set
  *  - harness.run({ sessionId }) persists to the given session
  *  - guardrail checks emit trace events on a "harness.run" trace
@@ -27,7 +27,7 @@ async function drain<T>(gen: AsyncGenerator<T>): Promise<T[]> {
   return out;
 }
 
-describe('Wave 1 — contract integrity for createHarness', () => {
+describe('contract integrity for createHarness', () => {
   it('warns once when no budget is configured', async () => {
     const warnings: string[] = [];
     const logger = {
@@ -104,7 +104,7 @@ describe('Wave 1 — contract integrity for createHarness', () => {
   });
 });
 
-describe('Wave 1 — harness.run trace capture', () => {
+describe('harness.run trace capture', () => {
   it('exporter sees guardrail spans: input, output', async () => {
     const exportedSpans: Array<{ name: string; attrs: Record<string, unknown>; status: string }> = [];
     const exporter = {

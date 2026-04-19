@@ -3,8 +3,8 @@
  * span-finalisation logic out of `trace-manager.ts` so the manager file
  * owns trace lifecycle and the eviction file owns eviction decisions.
  *
- * Wave-23 extraction. The policy is a thin object built via
- * {@link createTraceEvictionPolicy}; it holds no state of its own beyond the
+ * The policy is a thin object built via {@link createTraceEvictionPolicy};
+ * it holds no state of its own beyond the
  * re-entrance guard (so concurrent `evictIfNeeded()` calls while one is
  * already running short-circuit) and the one-shot 80%-capacity warning
  * latch. All other state (the `traces` map, the `spans` map, the LRU list,

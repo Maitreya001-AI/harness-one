@@ -1,5 +1,5 @@
 /**
- * Wave-13 Track E tests for session manager.
+ * Track E tests for session manager.
  *
  * Covers:
  * - E-1: handler-throw logging + getLastHandlerError()
@@ -11,7 +11,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createSessionManager } from '../manager.js';
 import { HarnessError, HarnessErrorCode } from '../../core/errors.js';
 
-describe('SessionManager Wave-13 E-1: handler error logging', () => {
+describe('SessionManager E-1: handler error logging', () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -81,7 +81,7 @@ describe('SessionManager Wave-13 E-1: handler error logging', () => {
   });
 });
 
-describe('SessionManager Wave-13 E-2: drop counter + rate-limited warnings', () => {
+describe('SessionManager E-2: drop counter + rate-limited warnings', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.useRealTimers();
@@ -172,7 +172,7 @@ describe('SessionManager Wave-13 E-2: drop counter + rate-limited warnings', () 
   });
 });
 
-describe('SessionManager Wave-13 E-3: maxMetadataBytes', () => {
+describe('SessionManager E-3: maxMetadataBytes', () => {
   it('rejects metadata larger than maxMetadataBytes at create()', () => {
     const sm = createSessionManager({
       gcIntervalMs: 0,

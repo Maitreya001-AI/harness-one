@@ -1,6 +1,5 @@
 /**
- * Wave-13 Track I — Langfuse exporter hardening tests. Split out of the
- * monolith by Wave-16 M3.
+ * Langfuse exporter — hardening tests.
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -10,8 +9,8 @@ import {
 import type { LangfuseExporterConfig } from '../index.js';
 import type { Trace, Span } from 'harness-one/observe';
 
-describe('Wave-13 Track I — Langfuse exporter', () => {
-  it('Wave-13 I-1: flush() awaits client.flushAsync() (no fire-and-forget)', async () => {
+describe('Langfuse exporter — hardening', () => {
+  it('flush() awaits client.flushAsync() (no fire-and-forget)', async () => {
     // Build a client whose flushAsync resolves only when we release a deferred.
     // If `flush()` were still fire-and-forget, it would return before the
     // client actually drained, and our observed ordering would be inverted.
@@ -34,14 +33,14 @@ describe('Wave-13 Track I — Langfuse exporter', () => {
     expect(flushAsyncFn).toHaveBeenCalledTimes(1);
   });
 
-  it('Wave-13 I-1: flush() surfaces rejection so callers cannot miss failures', async () => {
+  it('flush() surfaces rejection so callers cannot miss failures', async () => {
     const flushAsyncFn = vi.fn().mockRejectedValue(new Error('upstream 500'));
     const client = { trace: vi.fn(), flushAsync: flushAsyncFn } as unknown as LangfuseExporterConfig['client'];
     const exporter = createLangfuseExporter({ client });
     await expect(exporter.flush()).rejects.toThrow('upstream 500');
   });
 
-  it('Wave-13 I-2: tags offending span with exporter_error before re-throwing', async () => {
+  it('tags offending span with exporter_error before re-throwing', async () => {
     // Use a client whose span() throws on invocation.
     const throwingSpan = vi.fn(() => { throw new Error('serialization fail'); });
     const mockTraceObj = {
@@ -83,7 +82,7 @@ describe('Wave-13 Track I — Langfuse exporter', () => {
     expect(events[0].attributes).toEqual({ exporter: 'langfuse', error_code: 'unknown' });
   });
 
-  it('Wave-13 I-2: preserves HarnessError.code when available on exporter_error', async () => {
+  it('preserves HarnessError.code when available on exporter_error', async () => {
     const { HarnessError, HarnessErrorCode } = await import('harness-one/core');
     const throwingUpdate = vi.fn(() => {
       throw new HarnessError('forced', HarnessErrorCode.ADAPTER_ERROR);
@@ -121,7 +120,7 @@ describe('Wave-13 Track I — Langfuse exporter', () => {
     });
   });
 
-  it('Wave-13 I-2: falls back cleanly when instrumentation.addSpanEvent throws', async () => {
+  it('falls back cleanly when instrumentation.addSpanEvent throws', async () => {
     const throwingSpan = vi.fn(() => { throw new Error('x'); });
     const mockTraceObj = {
       generation: vi.fn(), span: throwingSpan, update: vi.fn(), event: vi.fn(),
@@ -145,7 +144,7 @@ describe('Wave-13 Track I — Langfuse exporter', () => {
     await expect(exporter.exportSpan(span)).rejects.toThrow('x');
   });
 
-  it('Wave-13 I-3: flush() rejection increments metrics counter and logs warn', async () => {
+  it('flush() rejection increments metrics counter and logs warn', async () => {
     const flushAsyncFn = vi.fn().mockRejectedValue(new Error('batch down'));
     const client = { trace: vi.fn(), flushAsync: flushAsyncFn } as unknown as LangfuseExporterConfig['client'];
 
@@ -171,7 +170,7 @@ describe('Wave-13 Track I — Langfuse exporter', () => {
     );
   });
 
-  it('Wave-13 I-3: does not emit counter on successful flush', async () => {
+  it('does not emit counter on successful flush', async () => {
     const flushAsyncFn = vi.fn().mockResolvedValue(undefined);
     const client = { trace: vi.fn(), flushAsync: flushAsyncFn } as unknown as LangfuseExporterConfig['client'];
     const counterAdd = vi.fn();

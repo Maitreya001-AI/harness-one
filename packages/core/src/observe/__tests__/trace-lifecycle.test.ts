@@ -84,7 +84,7 @@ describe('TraceExporter lifecycle hooks', () => {
   });
 
   it('applies defaultSamplingRate when no per-exporter shouldExport is provided', async () => {
-    // Wave-5F SEC-A15: sampling now uses `crypto.randomInt` which is not
+    // sampling now uses `crypto.randomInt` which is not
     // spyable via vi.spyOn(Math, 'random'). Exercise boundary rates
     // (0 = always drop, 1 = always keep) instead of a mid-rate with a
     // mocked RNG — the mid-rate path is now a statistical property.
@@ -200,7 +200,7 @@ describe('TraceExporter lifecycle hooks', () => {
     tm.endTrace(traceId);
     await tm.dispose();
 
-    // LM-003: the first init rejects and is reported once. `createLazyAsync`
+    // the first init rejects and is reported once. `createLazyAsync`
     // then clears the cached promise so the next export retries — initialize
     // is invoked again and (per the mock) resolves. Subsequent exports join
     // the cached success.
@@ -217,7 +217,7 @@ describe('TraceExporter lifecycle hooks', () => {
   });
 });
 
-describe('Wave 4a — LM-003 / A1-3: concurrent lazy init', () => {
+describe('LM-003 / A1-3: concurrent lazy init', () => {
   it('shares the same init promise across concurrent first exports', async () => {
     let initCalls = 0;
     let resolveInit: () => void = () => {};
@@ -259,7 +259,7 @@ describe('Wave 4a — LM-003 / A1-3: concurrent lazy init', () => {
   });
 });
 
-describe('Wave 4a — LM-016: dead trace evict-at-birth', () => {
+describe('dead trace evict-at-birth', () => {
   it('returns a dead trace id when every exporter is unhealthy', () => {
     const exporter: TraceExporter = {
       name: 'unhealthy',

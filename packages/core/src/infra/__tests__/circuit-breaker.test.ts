@@ -170,8 +170,8 @@ describe('createCircuitBreaker', () => {
     expect(cb.state()).toBe('open');
   });
 
-  // P0-5 (Wave-12): Half-open probe mutex is atomic.
-  describe('P0-5 (Wave-12): half-open probe atomicity', () => {
+  // Half-open probe mutex is atomic.
+  describe('half-open probe atomicity', () => {
     it('serializes the probe slot so concurrent probes do not both win', async () => {
       vi.useFakeTimers();
       try {

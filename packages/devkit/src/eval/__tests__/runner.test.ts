@@ -507,8 +507,8 @@ describe('createEvalRunner', () => {
     });
   });
 
-  // CQ-021: remove probe that doubles first-case cost
-  describe('CQ-021: scoreBatch probe is removed — no per-run probe call', () => {
+  // remove probe that doubles first-case cost
+  describe('scoreBatch probe is removed — no per-run probe call', () => {
     it('invokes scoreBatch exactly once per run (no probe + full batch)', async () => {
       const batchInputSizes: number[] = [];
       const scorer: Scorer = {
@@ -529,8 +529,9 @@ describe('createEvalRunner', () => {
       ];
       await runner.run(cases, async (i) => i);
 
-      // Before CQ-021: [1, 3]  (probe + full batch → first case cost twice)
-      // After  CQ-021: [3]     (full batch only)
+      // Without the probe removal, batchInputSizes would be [1, 3] (probe +
+      // full batch → first case cost twice). With it, the full batch runs
+      // once: [3].
       expect(batchInputSizes).toEqual([3]);
     });
 

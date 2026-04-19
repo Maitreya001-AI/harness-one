@@ -1,7 +1,7 @@
 /**
  * Export-health plumbing for the Langfuse cost tracker.
  *
- * Wave-16 M2 extraction. Owns:
+ * Owns:
  *
  *   - the `handleExportError` fan-out (onExportError → logger.error →
  *     safeWarn fallback),
@@ -73,7 +73,7 @@ export function createExportHealth(config: ExportHealthConfig): ExportHealth {
       });
       return;
     }
-    // Wave-5F T13: route final fallback through safeWarn (redaction-enabled).
+    // Route final fallback through safeWarn (redaction-enabled).
     safeWarn(undefined, `[harness-one/langfuse] ${op} error`, {
       error: err instanceof Error ? err.message : String(err),
     });

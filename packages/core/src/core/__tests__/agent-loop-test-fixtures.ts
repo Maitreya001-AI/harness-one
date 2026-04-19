@@ -1,12 +1,10 @@
 /**
  * Shared fixtures for the AgentLoop integration tests.
  *
- * Wave-16 M1 extraction — the monolithic `agent-loop.test.ts` is being
- * split into thematic sibling files; this module owns the mock adapters
- * + event helpers they all rely on, so the split adds no duplicated
- * boilerplate (the concern that kept Wave-15 from splitting). Every
- * helper here has `test` in its path so it is dropped from the published
- * build.
+ * This module owns the mock adapters + event helpers that the thematic
+ * sibling test files all rely on, so the split adds no duplicated
+ * boilerplate. Every helper here has `test` in its path so it is dropped
+ * from the published build.
  *
  * @module
  * @internal

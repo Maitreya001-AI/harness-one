@@ -368,7 +368,7 @@ describe('createLogger', () => {
     });
 
     it('does not redact when redact config is explicitly disabled', () => {
-      // T02 (Wave-5A): the default flipped from opt-in to opt-out. To keep
+      // the default flipped from opt-in to opt-out. To keep
       // the original intent of this test — "caller gets raw values" — the
       // caller must now pass `redact: false` explicitly. Omitting `redact`
       // activates the default redactor.
@@ -414,8 +414,8 @@ describe('createLogger', () => {
     });
   });
 
-  // OBS-001: Correlation ID support
-  describe('correlationId (OBS-001)', () => {
+  // Correlation ID support
+  describe('correlationId', () => {
     it('injects correlationId into every log record', () => {
       const { lines, output } = captureOutput();
       const logger = createLogger({ json: true, output, correlationId: 'req-abc' });
@@ -458,7 +458,7 @@ describe('createLogger', () => {
     });
   });
 
-  // P1-7: Async-context hook for auto-injecting trace_id / span_id.
+  // Async-context hook for auto-injecting trace_id / span_id.
   describe('P1-7 getContext trace/span auto-injection', () => {
     it('merges trace_id and span_id from getContext into every log record', () => {
       const { lines, output } = captureOutput();
@@ -556,7 +556,7 @@ describe('createLogger', () => {
     });
   });
 
-  // P2-14: Absolute-path stack trace sanitization.
+  // Absolute-path stack trace sanitization.
   describe('P2-14 sanitizeStackTrace', () => {
     it('strips process.cwd() prefix from absolute paths', () => {
       const cwd = '/Users/alice/repo';
@@ -616,7 +616,7 @@ describe('createLogger', () => {
     });
   });
 
-  describe('PERF-030: below-level log calls skip stringify work', () => {
+  describe('below-level log calls skip stringify work', () => {
     it('debug() under info-level logger does not invoke output', () => {
       const { lines, output } = captureOutput();
       const logger = createLogger({ level: 'info', output });

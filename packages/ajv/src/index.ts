@@ -68,7 +68,7 @@ function formatSuggestion(err: {
  * Cached result of the lazy ajv-formats ESM dynamic import.
  * null means the import was attempted and ajv-formats was not found.
  *
- * Wave-13 A-5: a rejected load must NOT poison the cache. The chain clears
+ * A rejected load must NOT poison the cache. The chain clears
  * `formatsLoader` from both a `.catch` handler (async rejection path) and an
  * outer try/catch (synchronous throw from the `import()` expression itself,
  * e.g. in test harnesses that monkey-patch the ESM loader). A transient
@@ -92,7 +92,7 @@ function loadFormats(): Promise<((ajv: InstanceType<typeof Ajv>) => void) | null
           return null;
         });
     } catch (err) {
-      // Wave-13 A-5: Defensive — some bundlers / test harnesses throw
+      // Defensive — some bundlers / test harnesses throw
       // synchronously from the `import()` expression (not just reject the
       // returned promise). Clear the slot and surface a resolved-null so
       // callers proceed without formats instead of hanging on a rejected
@@ -173,19 +173,19 @@ function stableSchemaKey(schema: JsonSchema): string {
  * method is async so callers MUST `await` it to guarantee formats are applied before
  * validation runs. Remove any `setTimeout` workarounds from calling code.
  *
- * Bounded schema cache (CQ-020): compiled validators are cached in an LRU map
+ * Bounded schema cache: compiled validators are cached in an LRU map
  * keyed on a stable hash of the schema JSON. When the cache exceeds
  * `maxCacheSize` (default 256), the least-recently-used entry is evicted and
  * removed from the underlying Ajv instance to release the associated memory.
  */
 export function createAjvValidator(options?: AjvValidatorOptions): AjvSchemaValidator {
-  // Wave-13 A-6: Validate `maxCacheSize` at factory entry. The previous
+  // Validate `maxCacheSize` at factory entry. The previous
   // `Math.max(1, …)` silently coerced invalid inputs (0, negatives, NaN),
   // which hid configuration bugs: a caller passing `maxCacheSize: 0`
   // expected no caching, got 1, and saw surprising memory growth. We now
   // fail-fast with a typed error so misconfiguration surfaces early.
   // Routes through core's shared helper so preset/core/ajv agree on what
-  // counts as a positive integer (Wave-16 m3).
+  // counts as a positive integer.
   requirePositiveInt(options?.maxCacheSize, 'maxCacheSize');
 
   const ajv = new Ajv({
@@ -194,7 +194,7 @@ export function createAjvValidator(options?: AjvValidatorOptions): AjvSchemaVali
   });
 
   const maxCacheSize = options?.maxCacheSize ?? 256;
-  // Wave-5F T13: delegate default logger to core's redaction-enabled singleton.
+  // Delegate default logger to core's redaction-enabled singleton.
   const logger: Pick<Logger, 'warn' | 'error'> = options?.logger ?? createDefaultLogger();
 
   /**
@@ -229,7 +229,7 @@ export function createAjvValidator(options?: AjvValidatorOptions): AjvSchemaVali
     }
 
     // Cache miss — compile and attach an $id so we can ajv.removeSchema on evict.
-    // Wave-13 L-1: Previously used object spread ({ ...schema, $id: key }) which
+    // Previously used object spread ({ ...schema, $id: key }) which
     // the v8 benchmark suite shows as ~2x slower than `Object.assign` for schemas
     // with 10+ top-level keys, because spread materialises a new property
     // descriptor table even for inherited enumerable props. `Object.assign`

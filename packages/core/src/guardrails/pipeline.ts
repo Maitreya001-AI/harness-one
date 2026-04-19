@@ -127,7 +127,7 @@ export function createPipeline(config: {
 }
 
 /**
- * PERF-005: bounded event buffer with O(1) amortized eviction of the oldest
+ * bounded event buffer with O(1) amortized eviction of the oldest
  * non-block event. Block events are never evicted (they are part of the audit
  * trail of reasons a pipeline rejected content).
  *
@@ -226,7 +226,7 @@ async function runGuardrails(
 
     try {
       if (entry.timeoutMs !== undefined) {
-        // Wave-13 E-6: per-guard fairness. If the pipeline has a total-timeout
+        // per-guard fairness. If the pipeline has a total-timeout
         // budget, clamp the guard-level timeout to the remaining budget so a
         // greedy guard cannot burn the whole wall-clock and starve later
         // guards. Emit a `guard_timeout` span event on every guard-level
@@ -261,7 +261,7 @@ async function runGuardrails(
         verdict = await entry.guard(guardCtx);
       }
     } catch (err) {
-      // Wave-13 E-6: emit a `guard_timeout` span-event when the failure was a
+      // emit a `guard_timeout` span-event when the failure was a
       // guard-level timeout. The span event is delivered via the same
       // `onEvent` callback that receives verdict events; we piggy-back on
       // the verdict-event shape by using a reserved `reason` prefix so

@@ -14,18 +14,14 @@ import type { AgentAdapter, ExecutionStrategy, ToolCallRequest, ToolSchema, Toke
 import type { AgentLoopTraceManager } from './trace-interface.js';
 import type { GuardrailPipeline } from './guardrail-port.js';
 
-// Wave-18 note: an earlier wave (Wave-14) added a nested `AgentLoopConfigV2`
-// alongside the flat `AgentLoopConfig` below. Carrying two shapes meant every
-// test, example, and downstream caller had to pick one and the flatten bridge
-// (+isNested + overload) sat in the hot path forever. Wave-18 collapsed the
-// surface to the single flat shape defined below. There is no V2.
+// `AgentLoopConfig` is a single flat shape. There is no nested V2.
 
 /**
  * ARCH-006: Iteration-level instrumentation hook. Every method is optional;
  * a hook only needs to declare the events it cares about. Hooks are invoked
  * synchronously from the `AgentLoop`.
  *
- * **Exception contract (Wave-13 D-11):** All hooks MUST NOT throw. If a hook
+ * **Exception contract:** All hooks MUST NOT throw. If a hook
  * throws, the exception is logged (when a `logger` is configured — at
  * `warn` level with the event name and error message) and swallowed; the
  * loop continues as if the hook had returned normally. A throwing hook will
@@ -200,8 +196,8 @@ export interface AgentLoopConfig {
    */
   readonly logger?: { warn: (msg: string, meta?: Record<string, unknown>) => void };
   /**
-   * T10 (Wave-5A): optional guardrail pipeline applied to the latest user
-   * message before every adapter call. A hard-block (`action: 'block'`)
+   * Optional guardrail pipeline applied to the latest user message
+   * before every adapter call. A hard-block (`action: 'block'`)
    * terminates the loop with a `guardrail_blocked` AgentEvent followed by an
    * `error` carrying `HarnessErrorCode.GUARD_VIOLATION` (non-retryable),
    * and aborts the internal AbortController so any in-flight adapter call is
@@ -211,7 +207,7 @@ export interface AgentLoopConfig {
    */
   readonly inputPipeline?: GuardrailPipeline;
   /**
-   * T10 (Wave-5A): optional guardrail pipeline applied to
+   * Optional guardrail pipeline applied to
    * (a) each tool execution result — a block rewrites the tool result into a
    *     `GUARDRAIL_VIOLATION: <guardName>` stub so the LLM's tool-use / -result
    *     pairing stays valid and the loop continues, AND

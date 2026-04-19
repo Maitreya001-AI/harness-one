@@ -79,10 +79,10 @@ Build time: the root `eslint.config.js` enforces it via
 - Inside `core/src/infra/**`, importing from any higher layer is
   forbidden.
 - Inside each L3 subsystem under `core/src/<subsystem>/**`, importing
-  from any *sibling* L3 subsystem is forbidden (Wave-23 pin-down) —
-  both via `../<other>/**` relative paths and via `harness-one/<other>`
-  subpath. Tests are exempt (they may cross-wire subsystems for
-  integration coverage).
+  from any *sibling* L3 subsystem is forbidden — both via
+  `../<other>/**` relative paths and via `harness-one/<other>` subpath.
+  Tests are exempt (they may cross-wire subsystems for integration
+  coverage).
 - Inside sibling packages, importing from `harness-one/src/**` is
   forbidden.
 
@@ -156,10 +156,10 @@ Established seams:
   `InstrumentationPort`, `createNoopMetricsPort`, plus trace manager,
   cost tracker, lifecycle, and logger. The **value** `createNoopMetricsPort`
   lives here and nowhere else — one import path per public value symbol,
-  so consumers cannot pick up two different singletons. Wave-23 relaxed
-  the rule for **type-only** re-exports: `MetricsPort` / `MetricAttributes`
+  so consumers cannot pick up two different singletons. The rule is
+  relaxed for **type-only** re-exports: `MetricsPort` / `MetricAttributes`
   / `MetricCounter` / `MetricGauge` / `MetricHistogram` / `InstrumentationPort`
-  are now also re-exported as types from the root barrel, because TS structural
+  are also re-exported as types from the root barrel, because TS structural
   typing makes the "two different copies" concern irrelevant for types. The
   canonical home remains `/observe`; the root re-export is pure UX so that
   a user passing a `MetricsPort` to `createCostTracker()` does not have to
@@ -187,14 +187,13 @@ Established seams:
   `/core` + `/advanced` + `/observe`; specialised tools (e.g. a
   RAG-only consumer) can reach for the relevant subsystem barrel
   instead.
-- **`harness-one/testing`** (Wave-27 split from `/advanced`) — mock
-  `AgentAdapter` factories for test code. Keeps the `/advanced` surface
-  focused on composable **production** primitives: the four mock
-  factories (`createMockAdapter`, `createFailingAdapter`,
-  `createStreamingMockAdapter`, `createErrorStreamingMockAdapter`)
-  previously re-exported there are test doubles and should not appear
-  on a production import graph. Never import from production code.
-  Detail: `docs/architecture/17-testing.md`.
+- **`harness-one/testing`** — mock `AgentAdapter` factories for test code.
+  Keeps the `/advanced` surface focused on composable **production**
+  primitives: the four mock factories (`createMockAdapter`,
+  `createFailingAdapter`, `createStreamingMockAdapter`,
+  `createErrorStreamingMockAdapter`) are test doubles and should not
+  appear on a production import graph. Never import from production
+  code. Detail: `docs/architecture/17-testing.md`.
 
 ## Construction: factories, not classes
 

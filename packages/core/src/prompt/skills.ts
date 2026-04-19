@@ -277,7 +277,7 @@ export function createSkillEngine(config?: SkillEngineConfig): SkillEngine {
       reason?: string;
     } {
       const stage = requireActiveStage();
-      // activeSkill is guaranteed non-null after requireActiveStage() (which throws if null)
+      // ActiveSkill is guaranteed non-null after requireActiveStage() (which throws if null)
       const currentSkill = activeSkill as SkillDefinition;
       turnCount++;
 

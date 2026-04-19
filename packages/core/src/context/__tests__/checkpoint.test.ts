@@ -145,7 +145,7 @@ describe('createCheckpointManager', () => {
     }
   });
 
-  it('generates crypto-backed unique IDs (Wave-5F SEC-A14)', () => {
+  it('generates crypto-backed unique IDs', () => {
     const mgr = createCheckpointManager();
     const cp1 = mgr.save(messages, 'a');
     const cp2 = mgr.save(messages, 'b');

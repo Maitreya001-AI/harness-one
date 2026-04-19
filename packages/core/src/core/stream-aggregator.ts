@@ -194,9 +194,8 @@ export interface StreamAggregatorOptions {
  * reuse the instance for another iteration.
  */
 /**
- * Internal tool-call accumulator entry. Wave-12 P0-3 swaps the single
- * `arguments: string` (concatenated per chunk) for a `string[]` buffer that
- * is `join('')`-ed lazily inside `getMessage()`, avoiding the O(n²) cost of
+ * Internal tool-call accumulator entry. Uses a `string[]` buffer that is
+ * `join('')`-ed lazily inside `getMessage()`, avoiding the O(n²) cost of
  * repeated string concatenation on the streaming hot path.
  */
 interface ToolCallEntry {
@@ -206,9 +205,9 @@ interface ToolCallEntry {
   /** Running total of `argsParts` byte length — kept in sync on each push. */
   argsBytes: number;
   /**
-   * Wave-27: per-tool pending high surrogate so two successive deltas on
-   * the same tool-call id that happen to split a supplementary codepoint
-   * are accounted as 4 bytes end-to-end rather than 7.
+   * Per-tool pending high surrogate so two successive deltas on the same
+   * tool-call id that happen to split a supplementary codepoint are accounted
+   * as 4 bytes end-to-end rather than 7.
    */
   pendingHighSurrogate: boolean;
 }
@@ -216,15 +215,15 @@ interface ToolCallEntry {
 export class StreamAggregator {
   private readonly options: StreamAggregatorOptions;
   /**
-   * Wave-12 P0-3: text deltas accumulate into a `string[]` buffer joined
-   * lazily inside `getMessage()`. Replaces the O(n²) `accumulatedText +=`.
+   * Text deltas accumulate into a `string[]` buffer joined lazily inside
+   * `getMessage()`. Avoids the O(n²) cost of `accumulatedText +=`.
    */
   private readonly textParts: string[] = [];
   private accumulatedBytes = 0;
   /**
-   * Wave-27: carries an unpaired high surrogate from the previous
-   * `text_delta` chunk so a supplementary codepoint split across a chunk
-   * boundary is counted as 4 bytes (not 7). See {@link measureUtf8}.
+   * Carries an unpaired high surrogate from the previous `text_delta` chunk so
+   * a supplementary codepoint split across a chunk boundary is counted as
+   * 4 bytes (not 7). See {@link measureUtf8}.
    *
    * Scoped to the text_delta stream — tool-call deltas are accounted
    * separately via per-tool pending flags so a high surrogate trailing one
@@ -240,10 +239,9 @@ export class StreamAggregator {
    */
   private readonly toolCallList: ToolCallEntry[] = [];
   /**
-   * Wave-27: pending high surrogate for the "append-to-last-tool" path
-   * where deltas arrive without an id. Kept separate from the per-tool
-   * pending flag on `ToolCallEntry` so both routes stay correct without
-   * cross-contamination.
+   * Pending high surrogate for the "append-to-last-tool" path where deltas
+   * arrive without an id. Kept separate from the per-tool pending flag on
+   * `ToolCallEntry` so both routes stay correct without cross-contamination.
    */
   private lastToolPendingHighSurrogate = false;
 
@@ -276,8 +274,8 @@ export class StreamAggregator {
    */
   *handleChunk(chunk: StreamAggregatorChunk): Generator<StreamAggregatorEvent> {
     if (chunk.type === 'text_delta' && chunk.text) {
-      // Wave-27: thread pending-high-surrogate across text_delta chunks so
-      // a supplementary codepoint split mid-pair counts 4 bytes (not 7).
+      // Thread pending-high-surrogate across text_delta chunks so a
+      // supplementary codepoint split mid-pair counts 4 bytes (not 7).
       const measure = measureUtf8(chunk.text, this.textPendingHighSurrogate);
       this.accumulatedBytes += measure.bytes;
       this.textPendingHighSurrogate = measure.pendingHigh;
@@ -286,7 +284,7 @@ export class StreamAggregator {
         yield { type: 'error', error: sizeErr };
         return;
       }
-      // Wave-12 P0-3: buffer; joined lazily in `getMessage()`.
+      // Buffer; joined lazily in `getMessage()`.
       this.textParts.push(chunk.text);
       yield { type: 'text_delta', text: chunk.text };
       return;
@@ -336,7 +334,7 @@ export class StreamAggregator {
           if (existing.argsBytes > this.options.maxToolArgBytes) {
             yield {
               type: 'error',
-              // Wave-13 P0-1: per-call wire-size limits use the dedicated
+              // Per-call wire-size limits use the dedicated
               // ADAPTER_PAYLOAD_OVERSIZED code rather than the cumulative
               // CORE_TOKEN_BUDGET_EXCEEDED — they are operationally distinct
               // (one is configuration-bound, the other is request-state-bound)
@@ -351,17 +349,17 @@ export class StreamAggregator {
             return;
           }
         } else {
-          // Wave-12 P1-12: Check tool-call count limit BEFORE allocating the
-          // new entry — a rogue stream could otherwise allocate thousands of
-          // partial entries before the cap fires on the next iteration.
+          // Check tool-call count limit BEFORE allocating the new entry — a
+          // rogue stream could otherwise allocate thousands of partial
+          // entries before the cap fires on the next iteration.
           const maxToolCalls = this.options.maxToolCalls ?? 128;
           if (this.accumulatedToolCalls.size >= maxToolCalls) {
             yield {
               type: 'error',
-              // Wave-13 P0-2: a per-iteration configuration cap on tool-call
-              // count is an invalid-state condition, NOT a token budget
-              // exhaustion. Use CORE_INVALID_STATE so ops dashboards don't
-              // lump this into cumulative-budget alerts.
+              // A per-iteration configuration cap on tool-call count is an
+              // invalid-state condition, NOT a token budget exhaustion. Use
+              // CORE_INVALID_STATE so ops dashboards don't lump this into
+              // cumulative-budget alerts.
               error: new HarnessError(
                 `Exceeded maximum number of tool calls (${maxToolCalls})`,
                 HarnessErrorCode.CORE_INVALID_STATE,
@@ -429,7 +427,7 @@ export class StreamAggregator {
    * than `[]`, which downstream observers depend on).
    */
   getMessage(usage: TokenUsage): StreamAggregatorMessage {
-    // Wave-12 P0-3: flatten the per-entry `argsParts` buffer into the final
+    // Flatten the per-entry `argsParts` buffer into the final
     // `arguments: string` the public `ToolCallRequest` shape mandates. This
     // is the single join per tool call across the whole stream, replacing
     // the O(n²) per-chunk concatenation loop.
@@ -455,7 +453,7 @@ export class StreamAggregator {
     this.accumulatedBytes = 0;
     this.accumulatedToolCalls.clear();
     this.toolCallList.length = 0;
-    // Wave-27: cross-chunk surrogate state is per-stream; clear on reuse.
+    // Cross-chunk surrogate state is per-stream; clear on reuse.
     this.textPendingHighSurrogate = false;
     this.lastToolPendingHighSurrogate = false;
   }

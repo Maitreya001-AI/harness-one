@@ -1,5 +1,5 @@
 /**
- * Example: `createPIIDetector` — the 5th built-in guardrail (Wave-25).
+ * Example: `createPIIDetector` — the 5th built-in guardrail.
  *
  * Detects common PII classes with opt-in precision:
  *

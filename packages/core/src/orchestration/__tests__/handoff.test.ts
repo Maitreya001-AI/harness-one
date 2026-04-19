@@ -278,8 +278,8 @@ describe('createHandoff', () => {
     });
   });
 
-  // PERF-003: Binary-search insertion correctness & smoke perf
-  describe('PERF-003: priority insertion', () => {
+  // Binary-search insertion correctness & smoke perf
+  describe('priority insertion', () => {
     it('preserves FIFO within the same priority tier', () => {
       const orch = createOrchestrator();
       orch.register('s', 'Sender');
@@ -321,7 +321,7 @@ describe('createHandoff', () => {
     });
   });
 
-  // A1-4 (Wave 4b): the send() body is "push into queue, then while
+  // the send() body is "push into queue, then while
   // queue.length > max pop()". The invariant is that no sequence of send()
   // calls — concurrent from the caller's perspective — can leave the queue
   // longer than maxInboxPerAgent. send() is synchronous and contains no
@@ -329,7 +329,7 @@ describe('createHandoff', () => {
   // event loop. This test stresses the bound by firing 200 sends "in
   // parallel" (all scheduled in the same microtask via Promise.all) at
   // maxInboxPerAgent=50 and asserts the final queue length is exactly 50.
-  describe('A1-4: inbox bound holds under concurrent send() storm', () => {
+  describe('inbox bound holds under concurrent send() storm', () => {
     it('200 concurrent sends at maxInboxPerAgent=50 leave queue at 50', async () => {
       const orch = createOrchestrator();
       orch.register('sender', 'Sender');

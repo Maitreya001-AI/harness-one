@@ -47,7 +47,7 @@ export function createFallbackAdapter(config: FallbackAdapterConfig): AgentAdapt
   const maxFailures = config.maxFailures ?? 3;
   let currentIndex = 0;
   let failureCount = 0;
-  // CQ-037 (Wave 4b): AsyncLock-backed mutex around the failure/switch flow.
+  // AsyncLock-backed mutex around the failure/switch flow.
   // The previous `pendingSwitch: Promise<void> | null` flag was racy: two
   // concurrent failures could both see `pendingSwitch === null`, both
   // increment `failureCount`, and both trigger a switch. Serialising the
@@ -58,7 +58,7 @@ export function createFallbackAdapter(config: FallbackAdapterConfig): AgentAdapt
 
   async function handleFailure(adapterBefore: number): Promise<void> {
     await switchLock.withLock(async () => {
-      // CQ-037 (Wave 4b): "stale failure" check. If another concurrent failure
+      // "Stale failure" check. If another concurrent failure
       // already advanced the current index while we were waiting on the lock,
       // our failure applies to a past adapter and must not count against the
       // new one. This preserves the "N concurrent failures trigger one switch"

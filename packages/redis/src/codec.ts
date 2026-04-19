@@ -3,10 +3,9 @@
  * JSON parse/validate/stringify round-trip and the small "write this
  * entry + add id to the tenant index" primitive.
  *
- * Wave-16 M2 extraction from `index.ts` so the store factory can stay
- * focused on orchestration. The codec is a pure function of its inputs;
- * it reaches into the client only via the pipeline + get APIs that ioredis
- * already exposes.
+ * Split out of `index.ts` so the store factory can stay focused on
+ * orchestration. The codec is a pure function of its inputs; it reaches
+ * into the client only via the pipeline + get APIs that ioredis exposes.
  *
  * @module
  * @internal

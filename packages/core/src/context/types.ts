@@ -44,7 +44,7 @@ export interface TokenBudget {
   needsTrimming(): boolean;
   trimOrder(): Array<{ segment: string; trimBy: number; priority: number }>;
   /**
-   * P2-26 (Wave-12): true once the cumulative usage across all segments
+   * true once the cumulative usage across all segments
    * (plus {@link TokenBudget.responseReserve}) has been observed to
    * exceed `totalTokens`. The flag is sticky — it remains set even after
    * later {@link TokenBudget.reset} calls bring usage back down, so

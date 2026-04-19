@@ -20,7 +20,7 @@ const textEncoder = new TextEncoder();
  * Measure the UTF-8 byte length of a string without allocating a Buffer
  * (runtime-agnostic: works in Node, Deno, browsers, and Workers).
  *
- * **Wave-13 E-7 fast path:** when `maxJsonBytes` is provided, we can avoid
+ * ** E-7 fast path:** when `maxJsonBytes` is provided, we can avoid
  * running `TextEncoder.encode` in the common large-string case. UTF-16 code
  * units encode to at most 4 UTF-8 bytes each, so `s.length * 4` is an upper
  * bound. If that upper bound already exceeds the cap, we can safely return
@@ -83,7 +83,7 @@ export function createSchemaValidator(
     // We check UTF-8 byte length (not string .length) because one JS code unit
     // can encode up to 4 bytes — counting code units would under-estimate size.
     if (maxJsonBytes > 0) {
-      // Wave-13 E-7: pass the cap so `utf8ByteLength` can short-circuit
+      // pass the cap so `utf8ByteLength` can short-circuit
       // when the upper bound already exceeds it.
       const byteLen = utf8ByteLength(ctx.content, maxJsonBytes);
       if (byteLen > maxJsonBytes) {

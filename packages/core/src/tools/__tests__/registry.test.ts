@@ -48,13 +48,13 @@ describe('createRegistry', () => {
       expect(registry.get('fs.readFile')).toBeDefined();
     });
 
-    it('F21: accepts underscored names', () => {
+    it('accepts underscored names', () => {
       const registry = createRegistry();
       registry.register(makeEchoTool('my_tool'));
       expect(registry.get('my_tool')).toBeDefined();
     });
 
-    it('F21: accepts names with dots and underscores combined', () => {
+    it('accepts names with dots and underscores combined', () => {
       const registry = createRegistry();
       registry.register(makeEchoTool('ns.my_tool'));
       expect(registry.get('ns.my_tool')).toBeDefined();
@@ -165,7 +165,7 @@ describe('createRegistry', () => {
       }
     });
 
-    it('Wave-12 P1-2: JSON parse error preserves SyntaxError on cause and includes native hint', async () => {
+    it('JSON parse error preserves SyntaxError on cause and includes native hint', async () => {
       const registry = createRegistry();
       registry.register(makeEchoTool());
       const result = await registry.execute({
@@ -693,7 +693,7 @@ describe('createRegistry', () => {
     });
   });
 
-  describe('Wave-12 P1-18: signal contract and non-responsive-tool warn', () => {
+  describe('signal contract and non-responsive-tool warn', () => {
     it('Symbol.toStringTag marks the registry', () => {
       const registry = createRegistry();
       expect(Object.prototype.toString.call(registry)).toBe('[object HarnessToolRegistry]');
@@ -761,7 +761,7 @@ describe('createRegistry', () => {
     });
   });
 
-  describe('Wave-12 P1-22: ParsedToolArgumentsMeta type compiles', () => {
+  describe('ParsedToolArgumentsMeta type compiles', () => {
     it('accepts both success and parse_error shapes', () => {
       const ok: ParsedToolArgumentsMeta = { kind: 'success' };
       const bad: ParsedToolArgumentsMeta = { kind: 'parse_error', raw: '{"', error: 'Unexpected end' };
@@ -774,7 +774,7 @@ describe('createRegistry', () => {
     });
   });
 
-  describe('Wave-12 P2-24: runtime shape assertion for tool return values', () => {
+  describe('runtime shape assertion for tool return values', () => {
     it('wraps a non-ToolResult return value into an error ToolResult', async () => {
       // Deliberately subvert the type system to simulate a broken tool impl.
       const badTool = {
@@ -982,9 +982,9 @@ describe('createRegistry', () => {
     });
   });
 
-  // CQ-008: timeout branch must convert a throwing tool.execute() into a
+  // timeout branch must convert a throwing tool.execute() into a
   // toolError reply (same as the non-timeout path), not propagate.
-  describe('CQ-008: timeout branch error conversion', () => {
+  describe('timeout branch error conversion', () => {
     it('converts a thrown Error into a toolError with internal category', async () => {
       const registry = createRegistry({ timeoutMs: 5000 });
       registry.register({

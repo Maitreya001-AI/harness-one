@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { createNoopMetricsPort } from '../metrics-port.js';
 
-describe('createNoopMetricsPort (Wave-5D ARCH-5)', () => {
+describe('createNoopMetricsPort', () => {
   it('hands out instruments that silently discard observations', () => {
     const m = createNoopMetricsPort();
     const c = m.counter('harness.iterations.total', { description: 'iters' });

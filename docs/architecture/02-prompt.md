@@ -118,7 +118,7 @@ stablePrefixHash 使用 SHA-256 截断，输出 16 位十六进制字符串（64
 2. **cacheable 层优先排序**——对齐 Anthropic/OpenAI 的 prompt caching 策略
 3. **变量替换不抛错（Builder）vs 强制抛错（Registry）**——Builder 面向动态组装场景容忍缺失，Registry 面向模板精确解析
 
-## Wave-8 Production Hardening
+## 生产强化
 
 1. **Layer 名称验证**：`addLayer()` 现在验证 layer 名称必须为非空字符串，传入空字符串或非字符串值将被拒绝。
 2. **变量注入防泄漏**：注入值中的 `{{...}}` 模式现在被替换为空字符串（而非变量名），防止通过精心构造的输入值泄漏模板变量名称。

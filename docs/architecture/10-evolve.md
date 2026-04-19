@@ -10,7 +10,7 @@
 
 ## 概述
 
-Wave-5C 起，evolve surface 分成两部分：
+evolve surface 分成两部分：
 
 - **运行时安全保障**（`harness-one/evolve-check`，核心包内）：架构规则
   接口 + 两条内置规则（循环依赖 + 层级边界）。boot 时 / CI 都可用。

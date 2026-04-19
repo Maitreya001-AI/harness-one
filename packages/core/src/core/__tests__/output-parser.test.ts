@@ -91,7 +91,7 @@ describe('createJsonOutputParser', () => {
       expect(() => parser.parse(input)).toThrow('Empty code block contains no JSON');
     });
 
-    describe('Wave-12 P2-21: CRLF + nested-whitespace edge cases', () => {
+    describe('CRLF + nested-whitespace edge cases', () => {
       it('throws "Empty code block" for CRLF-only empty code block', () => {
         const parser = createJsonOutputParser();
         const input = '```json\r\n\r\n```';
@@ -244,10 +244,10 @@ describe('parseWithRetry', () => {
 });
 
 // ---------------------------------------------------------------------------
-// PERF-18: schema stringify cache
+// Schema stringify cache
 // ---------------------------------------------------------------------------
 
-describe('PERF-18 schema stringify cache', () => {
+describe('schema stringify cache', () => {
   afterEach(() => {
     __resetSchemaStringCache();
     vi.restoreAllMocks();

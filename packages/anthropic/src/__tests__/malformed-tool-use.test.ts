@@ -1,10 +1,10 @@
 /**
- * Wave-13 Track H — Anthropic adapter fixes.
+ * Anthropic adapter — malformed tool_use handling.
  *
  * Covers:
- *  - H-1: 'throw' policy preview uses head+tail for payloads over 400 chars.
- *  - H-2: onMalformedToolUse callback semantics: null → empty object,
- *         undefined → defer to default 'throw' policy.
+ *  - 'throw' policy preview uses head+tail for payloads over 400 chars.
+ *  - onMalformedToolUse callback semantics: null → empty object,
+ *    undefined → defer to default 'throw' policy.
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -24,10 +24,10 @@ function okResponse(): Anthropic.Message {
 }
 
 // ---------------------------------------------------------------------------
-// H-1: throw preview uses head+tail for long raw strings
+// throw preview uses head+tail for long raw strings
 // ---------------------------------------------------------------------------
 
-describe('Wave-13 H-1: onMalformedToolUse throw preview shows head + tail', () => {
+describe('onMalformedToolUse throw preview shows head + tail', () => {
   it('short raw (<400 chars) preview is the raw string verbatim', async () => {
     const client = makeClient();
     vi.mocked(client.messages.create).mockResolvedValue(okResponse());
@@ -84,7 +84,7 @@ describe('Wave-13 H-1: onMalformedToolUse throw preview shows head + tail', () =
       expect(he.message).toContain(tail.slice(-200));
       expect(he.message).toContain(' ... ');
       // Tail of the raw is now observable — regression sentinel for the
-      // head-only truncation that Wave-13 H-1 replaced.
+      // head-only truncation (regression sentinel).
       expect(he.message).toContain('TTT');
       // Middle is not shown.
       expect(he.message).not.toContain(middle);
@@ -120,10 +120,10 @@ describe('Wave-13 H-1: onMalformedToolUse throw preview shows head + tail', () =
 });
 
 // ---------------------------------------------------------------------------
-// H-2: onMalformedToolUse null vs undefined semantics
+// onMalformedToolUse null vs undefined semantics
 // ---------------------------------------------------------------------------
 
-describe('Wave-13 H-2: onMalformedToolUse callback null vs undefined', () => {
+describe('onMalformedToolUse callback null vs undefined', () => {
   it('returning null produces the empty-object fallback (no throw)', async () => {
     const client = makeClient();
     const create = vi.mocked(client.messages.create);
@@ -177,7 +177,7 @@ describe('Wave-13 H-2: onMalformedToolUse callback null vs undefined', () => {
   it('returning undefined defers to the default throw policy', async () => {
     const client = makeClient();
     vi.mocked(client.messages.create).mockResolvedValue(okResponse());
-    // Callback explicitly returns undefined — per Wave-13 H-2 this means
+    // Callback explicitly returns undefined — this means
     // "I couldn't decide; throw as if the policy were 'throw'".
     const callback = vi.fn((_raw: string, _err: Error): Record<string, unknown> | null | undefined => undefined);
     const adapter = createAnthropicAdapter({ client, onMalformedToolUse: callback });

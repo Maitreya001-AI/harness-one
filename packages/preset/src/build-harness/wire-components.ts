@@ -134,12 +134,13 @@ export function wireComponents(config: HarnessConfig): WiredComponents {
           : customTokenizer;
       registerTokenizer(config.model, tok);
     } else {
-      // CQ-038: Previously a silent no-op when a function/object tokenizer was
-      // supplied without a model — the tokenizer would be stored on the harness
-      // but never wired to `countTokens()`. Warn loudly so misconfiguration
-      // surfaces instead of hiding behind "why isn't my tokenizer being
-      // called?". Logger is resolved here because `logger` isn't yet
-      // constructed at this point; fall back to the lazy default logger.
+      // Previously a silent no-op when a function/object tokenizer was
+      // supplied without a model — the tokenizer would be stored on the
+      // harness but never wired to `countTokens()`. Warn loudly so
+      // misconfiguration surfaces instead of hiding behind "why isn't my
+      // tokenizer being called?". Logger is resolved here because `logger`
+      // isn't yet constructed at this point; fall back to the lazy default
+      // logger.
       (config.logger ?? createLogger()).warn(
         'harness-one: custom tokenizer supplied but config.model is not set; '
         + 'tokenizer will not be auto-registered. Pass config.model or call '
@@ -192,9 +193,9 @@ export function wireComponents(config: HarnessConfig): WiredComponents {
 
   // 16. Agent loop — wire the shared traceManager so iteration/tool spans
   // appear alongside harness-level spans in a unified trace backend.
-  // Wave-13 F-2: supply a default adapterTimeoutMs so provider hangs cannot
-  // stall requests indefinitely. Caller-supplied value takes precedence;
-  // passing `0` is forwarded verbatim (treated as "disabled").
+  // Supply a default adapterTimeoutMs so provider hangs cannot stall requests
+  // indefinitely. Caller-supplied value takes precedence; passing `0` is
+  // forwarded verbatim (treated as "disabled").
   const effectiveAdapterTimeoutMs =
     config.adapterTimeoutMs !== undefined ? config.adapterTimeoutMs : DEFAULT_ADAPTER_TIMEOUT_MS;
   const loop = createAgentLoop({

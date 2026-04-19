@@ -1,16 +1,11 @@
 /**
  * Streaming-path integration tests for {@link AgentLoop}.
  *
- * Wave-16 M1 extraction from `agent-loop.test.ts`. Covers the full
- * streaming surface — `text_delta` / `tool_call_delta` forwarding,
- * fallback to `chat()` when `stream()` is absent, stream-error handling,
- * tool dispatch through the stream path, and tool-schema propagation.
- *
- * The monolith kept these scenarios inline alongside ~2800 other lines.
- * Splitting them out lets contributors modify the streaming state
- * machine without reading 3k LOC of unrelated coverage; the shared
- * fixtures live in `agent-loop-test-fixtures.ts` so setup is not
- * duplicated.
+ * Covers the full streaming surface — `text_delta` / `tool_call_delta`
+ * forwarding, fallback to `chat()` when `stream()` is absent,
+ * stream-error handling, tool dispatch through the stream path, and
+ * tool-schema propagation. Shared fixtures live in
+ * `agent-loop-test-fixtures.ts` so setup is not duplicated.
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -254,10 +249,8 @@ describe('AgentLoop streaming', () => {
   });
 });
 
-// ─── Wave-23 move from agent-loop.test.ts ───────────────────────────────
-// Streaming edge-case scenarios that used to live in the 2547-LOC
-// agent-loop.test.ts monolith. Topic fit naturally: every block below
-// exercises `adapter.stream()` semantics, not general loop lifecycle.
+// Streaming edge-case scenarios. Every block below exercises
+// `adapter.stream()` semantics, not general loop lifecycle.
 
 describe('Streaming: stream returns null result (empty stream)', () => {
   it('yields error + done when stream produces no chunks at all', async () => {

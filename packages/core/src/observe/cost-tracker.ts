@@ -3,8 +3,8 @@
  *
  * ## Neighbour files
  *
- * Wave-16 m6 dedup'd math into `../core/pricing.ts` and retained three
- * sibling files that together make up the cost subsystem:
+ * Cost math lives in `../core/pricing.ts` and this subsystem retains three
+ * sibling files that together make up the cost surface:
  *
  *   - `cost-tracker-types.ts` — the public `ModelPricing` / `CostTracker`
  *     types and the `OVERFLOW_BUCKET_KEY` sentinel.
@@ -34,7 +34,7 @@ import {
   getEvictionStrategy,
 } from './cost-tracker-eviction.js';
 // priceUsage / hasNonFiniteTokens live in the canonical pricing home
-// (`core/pricing.ts`); Wave-16 m6 deleted the duplicate in `cost-math.ts`.
+// (`core/pricing.ts`).
 import { priceUsage, hasNonFiniteTokens } from '../core/pricing.js';
 import type { ModelPricing, CostTracker } from './cost-tracker-types.js';
 import { createCostAlertManager } from './cost-alert-manager.js';

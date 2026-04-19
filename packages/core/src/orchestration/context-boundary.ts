@@ -71,7 +71,7 @@ export function createContextBoundary(
   }
 
   /**
-   * SEC-011 + Wave-5E SEC-A09: compare keys and policy prefixes after
+   * SEC-011 + SEC-A09: compare keys and policy prefixes after
    * normalizing both with NFKC + casefold, AND require the prefix to end
    * on a segment boundary (`.` or `/`). Previously `allowRead: ['admin']`
    * would also match `'administrator'`; the constructor now rejects
@@ -111,7 +111,7 @@ export function createContextBoundary(
   }
 
   /**
-   * Wave-5E SEC-A09: reject policy prefixes that do not end with a
+   * reject policy prefixes that do not end with a
    * segment separator (`.` or `/`). Without this, `allowRead: ['admin']`
    * would leak to `'administrator'`. The constructor throws
    * {@link HarnessErrorCode.CORE_INVALID_CONFIG} so the misconfiguration
@@ -183,7 +183,7 @@ export function createContextBoundary(
         context.set(key, value);
       },
       /**
-       * Wave-13 P0-5: delete respects write policy — same check as set,
+       * delete respects write policy — same check as set,
        * since deletion is a mutation.
        */
       delete(key: string): boolean {

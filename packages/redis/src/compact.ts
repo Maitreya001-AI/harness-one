@@ -1,7 +1,7 @@
 /**
  * Compaction + repair routines for the Redis memory store.
  *
- * Wave-16 M2 extraction. `compact()` implements policy-driven eviction;
+ * `compact()` implements policy-driven eviction;
  * `repair()` is the explicit corruption sweep that replaced the old
  * auto-delete-on-read behaviour (SEC-014).
  *

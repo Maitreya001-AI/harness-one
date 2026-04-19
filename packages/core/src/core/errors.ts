@@ -1,10 +1,10 @@
 /**
  * Error hierarchy for harness-one.
  *
- * Wave-15: `HarnessError` + `HarnessErrorCode` were moved down to L1
- * (`infra/errors-base.ts`) so infra modules can throw without importing
- * upward. This module re-exports the base primitives and layers L2
- * subclasses (`MaxIterationsError`, `AbortedError`, …) on top.
+ * `HarnessError` + `HarnessErrorCode` live in L1 (`infra/errors-base.ts`)
+ * so infra modules can throw without importing upward. This module
+ * re-exports the base primitives and layers L2 subclasses
+ * (`MaxIterationsError`, `AbortedError`, …) on top.
  *
  * @module
  */

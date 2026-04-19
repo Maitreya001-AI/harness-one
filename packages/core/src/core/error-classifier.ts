@@ -9,7 +9,7 @@
 import { HarnessError, HarnessErrorCode} from './errors.js';
 
 /**
- * Wave-12 P1-1: pattern for HTTP 5xx / upstream-unavailable signals.
+ * Pattern for HTTP 5xx / upstream-unavailable signals.
  *
  * Matches:
  * - Stand-alone 5xx status codes (bounded by whitespace / start-of-string / end-
@@ -20,11 +20,11 @@ import { HarnessError, HarnessErrorCode} from './errors.js';
 const UNAVAILABLE_RE = /(^|[\s:])5\d\d(\s|$|:)|bad[\s_-]?gateway|service[\s_-]?unavailable|gateway[\s_-]?timeout/i;
 
 /**
- * Wave-13 D-7: pre-compiled regex unions for the remaining classifier
- * categories. Replaces 5–7 sequential `String.prototype.includes()` scans
- * with a single regex test per category. Classification ORDER semantics
- * are preserved by branching in the same order as the historical
- * `.includes()` chain (rate-limit → auth → unavailable → network → parse).
+ * Pre-compiled regex unions for the remaining classifier categories.
+ * A single regex test per category replaces sequential `.includes()`
+ * scans. Classification ORDER is load-bearing: the first match wins,
+ * so branching order (rate-limit → auth → unavailable → network →
+ * parse) matches the documented priority.
  */
 const RATE_LIMIT_RE = /rate|429|too many/i;
 const AUTH_RE = /auth|401|api key|unauthorized/i;
@@ -32,7 +32,7 @@ const NETWORK_RE = /timeout|econnrefused|network|fetch/i;
 const PARSE_RE = /parse|json|malformed/i;
 
 /**
- * Optional logger shape consumed by Wave-13 D-8 (silent-fallback visibility).
+ * Optional logger shape consumed for silent-fallback visibility.
  * Debug-level only — not every unclassified error is actionable.
  */
 interface ClassifierLogger {
@@ -57,34 +57,32 @@ interface ClassifierLogger {
  * - `'ADAPTER_ERROR'` — fallback for unrecognized errors
  *
  * @param err - The error to classify (may be any value)
- * @param logger - Optional structured logger; Wave-13 D-8 emits a
+ * @param logger - Optional structured logger; emits a
  *   `debug('adapter error not classified', {...})` on the fallback path so
  *   operators can surface previously-silent unknown errors without noise.
  */
 export function categorizeAdapterError(err: unknown, logger?: ClassifierLogger): HarnessErrorCode {
-  // T10 (Wave-5A): guardrail hard-block takes priority over message-based
-  // heuristics — the structured error code is the authoritative signal.
+  // Guardrail hard-block takes priority over message-based heuristics —
+  // the structured error code is the authoritative signal.
   // GUARDRAIL_VIOLATION is NEVER retryable; callers should not add this
   // category to their `retryableErrors` allow-list.
   if (err instanceof HarnessError && err.code === HarnessErrorCode.GUARD_VIOLATION) {
     return HarnessErrorCode.GUARD_VIOLATION;
   }
   const msg = err instanceof Error ? err.message.toLowerCase() : '';
-  // Wave-13 D-7: single pre-compiled regex per category replaces the
-  // historical .includes() chains. Order of the branches is load-bearing:
-  // the first match wins, matching the pre-D-7 semantics exactly.
+  // First match wins; order of branches is load-bearing.
   if (RATE_LIMIT_RE.test(msg)) return HarnessErrorCode.ADAPTER_RATE_LIMIT;
   if (AUTH_RE.test(msg)) return HarnessErrorCode.ADAPTER_AUTH;
-  // Wave-12 P1-1: 5xx upstream-unavailable takes priority over the generic
+  // 5xx upstream-unavailable takes priority over the generic
   // `timeout`/`fetch` network bucket because "gateway timeout" would otherwise
   // fall through to ADAPTER_NETWORK (which is NOT in the default retry list).
   if (UNAVAILABLE_RE.test(msg)) return HarnessErrorCode.ADAPTER_UNAVAILABLE;
   if (NETWORK_RE.test(msg)) return HarnessErrorCode.ADAPTER_NETWORK;
   if (PARSE_RE.test(msg)) return HarnessErrorCode.ADAPTER_PARSE;
-  // Wave-13 D-8: surface the silent-fallback case at debug-level so ops
-  // can tell "classifier didn't recognise this message" apart from
-  // "adapter explicitly returned ADAPTER_ERROR". Slice to 200 chars to
-  // keep log lines bounded on pathological stack traces.
+  // Surface the silent-fallback case at debug-level so ops can tell
+  // "classifier didn't recognise this message" apart from "adapter
+  // explicitly returned ADAPTER_ERROR". Slice to 200 chars to keep log
+  // lines bounded on pathological stack traces.
   logger?.debug?.('adapter error not classified', {
     error_message: msg.slice(0, 200),
   });

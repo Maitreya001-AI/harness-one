@@ -1,7 +1,7 @@
 /**
  * Contract tests for the `harness-one/infra` barrel. Pins the exact
  * public surface that docs (README.md, README.zh-CN.md,
- * packages/core/README.md §Wave-5D) have been promising. The barrel is
+ * packages/core/README.md) have been promising. The barrel is
  * deliberately minimal: anything under `src/infra/` that is *not*
  * re-exported here stays private.
  */

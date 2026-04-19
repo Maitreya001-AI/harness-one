@@ -1,9 +1,9 @@
 /**
- * Wave-13 Track D — SSE stream fix
+ * SSE stream fallback hardening:
  *
- *   D-9: fallback path now defensively clamps `String(err).slice(0, 200)`
- *        so a maliciously large / exotic error reason cannot blow up
- *        the SSE envelope.
+ *   - fallback path defensively clamps `String(err).slice(0, 200)`
+ *     so a maliciously large / exotic error reason cannot blow up
+ *     the SSE envelope.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -14,7 +14,7 @@ async function* fromArray(events: unknown[]): AsyncGenerator<AgentEvent> {
   for (const e of events) yield e as AgentEvent;
 }
 
-describe('toSSEStream — Wave-13 D-9 fallback reason clamped to 200 chars', () => {
+describe('toSSEStream — fallback reason clamped to 200 chars', () => {
   it('clamps a giant throwing-getter error reason to ≤200 chars inside the fallback envelope', async () => {
     // Craft an event whose primary JSON.stringify throws — a throwing
     // getter on a property reached by the stringifier. The fallback then

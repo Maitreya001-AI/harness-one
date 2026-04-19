@@ -1,7 +1,7 @@
 /**
- * Tests for OpenAI adapter `LLMConfig.extra` allow-list filtering (T06).
+ * Tests for OpenAI adapter `LLMConfig.extra` allow-list filtering.
  *
- * Contract (symmetric to T05 anthropic):
+ * Contract (symmetric to anthropic):
  *  - Keys within the OpenAI allow-list transparently flow through.
  *  - Keys outside the allow-list are filtered out by default, with a single
  *    warn-level log entry enumerating the rejected keys.
@@ -77,7 +77,7 @@ function okResponse(): unknown {
   };
 }
 
-describe('OpenAI adapter — LLMConfig.extra allow-list (T06)', () => {
+describe('OpenAI adapter — LLMConfig.extra allow-list', () => {
   let mock: ReturnType<typeof createMockOpenAIClient>;
 
   beforeEach(() => {

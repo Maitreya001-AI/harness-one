@@ -12,7 +12,7 @@ import type { ChunkingStrategy, Document, DocumentChunk } from './types.js';
  * Returns the adjusted position that does not split a word.
  * If no whitespace is found, returns the original position.
  *
- * Wave-8: Also recognizes CJK character boundaries. CJK characters can be
+ * Also recognizes CJK character boundaries. CJK characters can be
  * split at any character boundary since each character is a word.
  */
 const CJK_RANGE = /[\u2E80-\u9FFF\uF900-\uFAFF\uFE30-\uFE4F\u{20000}-\u{2FA1F}]/u;

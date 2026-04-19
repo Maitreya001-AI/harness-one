@@ -85,7 +85,7 @@ describe('createTraceManager', () => {
       const trace = tm.getTrace(traceId);
       const span = trace!.spans[0];
       expect(span.status).toBe('completed');
-      // Wave-27: assert endTime is a real timestamp >= startTime, not just
+      // assert endTime is a real timestamp >= startTime, not just
       // "defined" — the prior `toBeDefined()` would have passed even if
       // the implementation stored a placeholder like 0 or NaN.
       expect(typeof span.endTime).toBe('number');
@@ -114,7 +114,7 @@ describe('createTraceManager', () => {
       tm.endTrace(traceId);
       const trace = tm.getTrace(traceId);
       expect(trace!.status).toBe('completed');
-      // Wave-27: endTime must be a real timestamp >= startTime, not just
+      // endTime must be a real timestamp >= startTime, not just
       // "defined". Previously `toBeDefined()` would have passed on NaN/0.
       expect(typeof trace!.endTime).toBe('number');
       expect(trace!.endTime).toBeGreaterThanOrEqual(trace!.startTime);
@@ -140,7 +140,7 @@ describe('createTraceManager', () => {
       const id2 = tm.startTrace('second');
       const id3 = tm.startTrace('third');
       expect(tm.getTrace(id1)).toBeUndefined();
-      // Wave-27: verify the retained traces are the ACTUAL ones we started,
+      // verify the retained traces are the ACTUAL ones we started,
       // not just some placeholder. `toBeDefined()` alone would pass even if
       // eviction corrupted the payload and replaced it with a stub.
       expect(tm.getTrace(id2)?.name).toBe('second');
@@ -546,7 +546,7 @@ describe('edge cases', () => {
     // Evict by adding a new trace
     const traceId2 = tm.startTrace('replacement');
     expect(tm.getTrace(traceId)).toBeUndefined();
-    // Wave-27: verify the replacement trace is intact (name matches what we
+    // verify the replacement trace is intact (name matches what we
     // started; status is 'running'), not a stub-shaped placeholder.
     const replacementTrace = tm.getTrace(traceId2);
     expect(replacementTrace?.name).toBe('replacement');
@@ -753,7 +753,7 @@ describe('traceOrder memory leak fix', () => {
     }
 
     // All active traces should be retrievable AND carry the name we
-    // originally started them with. Wave-27: prior assertion used
+    // originally started them with. prior assertion used
     // `toBeDefined()` alone, which would pass on any non-nullish stub.
     activeIds.forEach((id, i) => {
       const trace = tm.getTrace(id);
@@ -769,7 +769,7 @@ describe('traceOrder memory leak fix', () => {
     tm.endTrace(id);
 
     // Trace should still be in the Map (queryable) — no eviction has run.
-    // Wave-27: also verify name is preserved (evicted traces would return
+    // also verify name is preserved (evicted traces would return
     // undefined; a corrupted trace payload would have the wrong name).
     const trace = tm.getTrace(id);
     expect(trace?.name).toBe('my-trace');
@@ -792,7 +792,7 @@ describe('traceOrder memory leak fix', () => {
     // t1 was ended and evicted first (it's completed, not running)
     expect(tm.getTrace(t1)).toBeUndefined();
     // t2 and t3 should both exist AND still be in their expected states.
-    // Wave-27: `toBeDefined()` alone would pass even if eviction corrupted
+    // `toBeDefined()` alone would pass even if eviction corrupted
     // the preserved traces' name or status.
     expect(tm.getTrace(t2)?.name).toBe('second');
     expect(tm.getTrace(t2)?.status).toBe('running');
@@ -821,7 +821,7 @@ describe('traceOrder memory leak fix', () => {
     }
 
     // All 5 new traces should exist (no spurious eviction from stale
-    // traceOrder entries). Wave-27: also verify names survived so we're
+    // traceOrder entries). also verify names survived so we're
     // actually checking that eviction didn't swap them with stubs.
     newIds.forEach((id, i) => {
       const trace = tm.getTrace(id);
@@ -935,7 +935,7 @@ describe('getActiveSpans olderThanMs filter', () => {
 describe('eviction re-entrance guard', () => {
   it('eviction does not fail under normal sequential usage', () => {
     // This tests that the isEvicting guard does not break normal operation.
-    // Wave-27: verify surviving traces retain their original payload so we
+    // verify surviving traces retain their original payload so we
     // don't merely confirm "something got returned" — we confirm the right
     // trace was kept.
     const tm = createTraceManager({ maxTraces: 2 });
@@ -1129,7 +1129,7 @@ describe('SEC-007 secret redaction', () => {
   });
 
   it('redacts by default when no redact config is provided (T03 secure-by-default)', async () => {
-    // T03: `redact` omitted => DEFAULT_SECRET_PATTERN active (secure-by-default).
+    // `redact` omitted => DEFAULT_SECRET_PATTERN active (secure-by-default).
     // To opt out explicitly, pass `redact: false` — covered by
     // `trace-manager-redact-default.test.ts`.
     const tm = createTraceManager();
@@ -1192,7 +1192,7 @@ describe('SEC-016 metadata namespace split', () => {
   });
 });
 
-// OBS-002: Span event severity
+// Span event severity
 describe('OBS-002 span event severity', () => {
   it('stores severity when provided on an event', () => {
     const tm = createTraceManager();
@@ -1213,7 +1213,7 @@ describe('OBS-002 span event severity', () => {
   });
 });
 
-// OBS-005: Adapter retry telemetry
+// Adapter retry telemetry
 describe('OBS-005 retry metrics', () => {
   it('starts with zero metrics', () => {
     const tm = createTraceManager();
@@ -1263,7 +1263,7 @@ describe('OBS-005 retry metrics', () => {
   });
 });
 
-// PERF-006: O(1) endTrace for large workloads
+// O(1) endTrace for large workloads
 describe('PERF-006 endTrace O(1) behavior', () => {
   it('endTrace is fast for many concurrently-running traces', () => {
     // Functional test only: we don't benchmark; we verify correctness at scale.
@@ -1302,7 +1302,7 @@ describe('PERF-006 endTrace O(1) behavior', () => {
   });
 });
 
-// PERF-016: pendingExports leak on rejection
+// pendingExports leak on rejection
 describe('PERF-016 pendingExports leak fix', () => {
   it('flush does not hang when an exporter span rejects', async () => {
     const failingExporter: TraceExporter = {
@@ -1341,12 +1341,12 @@ describe('PERF-016 pendingExports leak fix', () => {
     await expect(tm.flush()).resolves.toBeUndefined();
   });
 
-  // LM-011 (Wave 4b): `setSamplingRate` used to mutate a closure-scoped
+  // `setSamplingRate` used to mutate a closure-scoped
   // variable read directly by `exportTraceTo()`. Traces that started under a
   // high sampling rate could be silently dropped if the rate was lowered
   // before they ended. The fix captures the rate at trace-start and the
   // export path reads that snapshot.
-  describe('LM-011: sampling rate snapshot at trace-start', () => {
+  describe('sampling rate snapshot at trace-start', () => {
     it('uses the rate captured at startTrace, not the live rate at endTrace', async () => {
       // Make sampling non-random by pinning Math.random. When rate is 1.0,
       // the export must always fire regardless of random output.
@@ -1396,12 +1396,12 @@ describe('PERF-016 pendingExports leak fix', () => {
     });
   });
 
-  // CQ-036 (Wave 4b): pendingExports cleanup used `.catch(() => {})` which
+  // pendingExports cleanup used `.catch(() => {})` which
   // silently swallowed rejections. With an injected logger, those rejections
   // are now routed to `logger.warn`. The rejection typically reaches
   // `trackExport`'s catch only when the upstream `reportExportError` itself
   // throws — this models a misconfigured `onExportError` callback.
-  describe('CQ-036: pendingExports cleanup routes to logger', () => {
+  describe('pendingExports cleanup routes to logger', () => {
     it('logger.warn captures the rejection when onExportError itself throws', async () => {
       const loggerWarn = vi.fn();
       const failingExporter: TraceExporter = {
@@ -1505,7 +1505,7 @@ describe('PERF-016 pendingExports leak fix', () => {
     });
   });
 
-  describe('LM-007: active eviction when N concurrent running traces exceed maxTraces', () => {
+  describe('active eviction when N concurrent running traces exceed maxTraces', () => {
     it('caps memory at maxTraces even when no traces end', () => {
       const tm = createTraceManager({ maxTraces: 3 });
       const ids = [] as string[];
@@ -1519,7 +1519,7 @@ describe('PERF-016 pendingExports leak fix', () => {
       expect(alive).toEqual(ids.slice(-3));
     });
 
-    it('PERF-029: LRU eviction remains correct after many evictions', () => {
+    it('LRU eviction remains correct after many evictions', () => {
       const tm = createTraceManager({ maxTraces: 5 });
       const ids = [] as string[];
       for (let i = 0; i < 1_000; i++) {
@@ -1533,7 +1533,7 @@ describe('PERF-016 pendingExports leak fix', () => {
   });
 });
 
-// P1-6: tail-based shouldSampleTrace hook gates export at endTrace time.
+// tail-based shouldSampleTrace hook gates export at endTrace time.
 describe('P1-6 shouldSampleTrace tail sampling hook', () => {
   it('skips export when shouldSampleTrace returns false', async () => {
     const exported: string[] = [];
@@ -1640,7 +1640,7 @@ describe('P1-6 shouldSampleTrace tail sampling hook', () => {
   });
 });
 
-// P1-19: bounded flush() / dispose() via flushTimeoutMs.
+// bounded flush() / dispose() via flushTimeoutMs.
 describe('P1-19 bounded flush / dispose timeout', () => {
   it('flush() returns within the configured timeout when an export never resolves', async () => {
     const exporter: TraceExporter = {
@@ -1716,7 +1716,7 @@ describe('P1-19 bounded flush / dispose timeout', () => {
   });
 });
 
-// P2-15: sampling rate snapshot getter + documentation tests.
+// sampling rate snapshot getter + documentation tests.
 describe('P2-15 getSamplingRate + in-flight determinism', () => {
   it('getSamplingRate returns the currently configured rate', () => {
     const tm = createTraceManager({ defaultSamplingRate: 0.25 });

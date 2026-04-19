@@ -2,7 +2,7 @@
  * Evolve-check module — architecture-rule checker that stays in `harness-one`
  * proper (runtime safety concern, not a dev-time tool).
  *
- * **Scope (re-confirmed in Wave-15):**
+ * **Scope (re-confirmed):**
  *
  * - This module ships the rule-checker primitives (`ArchitectureChecker`,
  *   `noCircularDepsRule`, `layerDependencyRule`) so a live harness can

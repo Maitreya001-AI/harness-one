@@ -35,7 +35,7 @@ export function createBudget(config: BudgetConfig): TokenBudget {
 
   const responseReserve = config.responseReserve ?? 0;
 
-  // P2-26 (Wave-12): sticky overflow latch. Set the first time cumulative
+  // sticky overflow latch. Set the first time cumulative
   // segment usage (+ responseReserve) exceeds `totalTokens`. Per-segment
   // overflow is rejected earlier via `allocate()` / `tryAllocate()`, so
   // this flag tracks aggregate-budget pressure only.
@@ -123,7 +123,7 @@ export function createBudget(config: BudgetConfig): TokenBudget {
       // H3: responseReserve is already accounted for here
       const aggregateOverflow = totalUsed + responseReserve > config.totalTokens;
       if (aggregateOverflow) {
-        // P2-26: latch the overflow once observed; flag persists after
+        // latch the overflow once observed; flag persists after
         // reset() so downstream packers can detect that trimming occurred.
         overflowed = true;
       }
@@ -131,7 +131,7 @@ export function createBudget(config: BudgetConfig): TokenBudget {
     },
 
     hasOverflowed(): boolean {
-      // P2-26: cheap-but-correct — recompute the aggregate so callers who
+      // cheap-but-correct — recompute the aggregate so callers who
       // never invoked `needsTrimming()` still see an accurate answer.
       if (!overflowed) {
         let totalUsed = 0;

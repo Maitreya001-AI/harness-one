@@ -1,5 +1,5 @@
 /**
- * T05 (Wave-5A): Anthropic adapter `LLMConfig.extra` allow-list + warn + strict mode.
+ * Anthropic adapter `LLMConfig.extra` allow-list + warn + strict mode.
  *
  * Validates that:
  *   - Keys in the Anthropic allow-list are forwarded to the provider verbatim.
@@ -28,7 +28,7 @@ function createMockAnthropicClient() {
   };
 }
 
-describe('Anthropic adapter: extra allow-list (T05)', () => {
+describe('Anthropic adapter: extra allow-list', () => {
   let mock: ReturnType<typeof createMockAnthropicClient>;
 
   beforeEach(() => {

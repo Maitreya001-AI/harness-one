@@ -4,9 +4,8 @@
  * Provides persistent memory storage using Redis, with support for
  * filtering, compaction, and key indexing.
  *
- * Wave-16 M2 split — the 569-LOC monolith that used to live here has been
- * decomposed into cohesive sub-modules. This file now only holds the
- * public types + the `createRedisStore` factory that wires them together.
+ * Structure: this file holds the public types + the `createRedisStore`
+ * factory that wires together the cohesive sub-modules.
  *
  *   - `keys.ts`       tenant-aware key construction + tenantId guard
  *   - `codec.ts`      JSON parse/validate + SADD-tracked writes
@@ -60,9 +59,9 @@ export interface RedisStoreConfig {
    */
   tenantId?: string;
   /**
-   * Wave-13 K-1: opt-in to the legacy "warn + skip chunk" behaviour when a
-   * batched MGET sub-request fails during `query()`. Default is strict:
-   * the failure is re-thrown so partial result sets never leak.
+   * Opt-in to "warn + skip chunk" behaviour when a batched MGET
+   * sub-request fails during `query()`. Default is strict: the failure
+   * is re-thrown so partial result sets never leak.
    */
   partialOk?: boolean;
 }
@@ -84,7 +83,7 @@ export function createRedisStore(config: RedisStoreConfig): RedisMemoryStore {
   const { client } = config;
   const prefix = config.prefix ?? 'harness:memory';
   const defaultTTL = config.defaultTTL;
-  // Wave-5F T13: delegate default logger to core's redaction-enabled singleton.
+  // Delegate default logger to core's redaction-enabled singleton.
   // `RedisStoreLogger` only needs `.warn`, which the core Logger satisfies.
   const logger: RedisStoreLogger = config.logger ?? createDefaultLogger();
   const partialOk = config.partialOk === true;

@@ -463,7 +463,7 @@ describe('createFileSystemStore', () => {
     });
   });
 
-  describe('Wave-12 P1-5: batchUnlink partial-failure logger', () => {
+  describe('batchUnlink partial-failure logger', () => {
     it('emits logger.warn when compact.maxAge cannot delete some entries', async () => {
       // Simulate a partial-failure by making the storage directory read-only
       // AFTER seeding an entry. The readEntry step (reads the file) still
@@ -655,7 +655,7 @@ describe('createFileSystemStore', () => {
 // ---------------------------------------------------------------------------
 // MemoryStore conformance suite — dogfood the testkit against the fs-store
 // so tag/pagination/delete semantics cannot silently drift from the in-memory
-// implementation (CQ-006). Each conformance case spins up a fresh temp dir.
+// implementation. Each conformance case spins up a fresh temp dir.
 // ---------------------------------------------------------------------------
 import { runMemoryStoreConformance } from '../testkit.js';
 

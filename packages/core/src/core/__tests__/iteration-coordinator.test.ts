@@ -1,6 +1,6 @@
 /**
- * iteration-coordinator.ts — Wave-15 extracted the event-sequencing state
- * machine from AgentLoop; this suite pins down the observable contract
+ * iteration-coordinator.ts — the event-sequencing state machine extracted
+ * from AgentLoop. This suite pins down the observable contract
  * (yield ordering, pre-iteration exit codes, external-signal teardown)
  * directly against the coordinator, without having to wire a full loop.
  */

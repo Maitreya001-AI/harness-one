@@ -16,10 +16,10 @@ export interface SSEChunk {
 }
 
 /**
- * Wave-12 P1-24: last-resort hardcoded SSE chunk returned when both the
- * primary `JSON.stringify(event)` and the fallback error-envelope
- * `JSON.stringify` throw. Kept as a module-level constant so the hot path
- * doesn't allocate a new object on each double-failure.
+ * Last-resort hardcoded SSE chunk returned when both the primary
+ * `JSON.stringify(event)` and the fallback error-envelope
+ * `JSON.stringify` throw. Kept as a module-level constant so the hot
+ * path doesn't allocate a new object on each double-failure.
  */
 const SSE_SERIALIZATION_FAILURE_FALLBACK: SSEChunk = Object.freeze({
   event: 'error',
@@ -29,11 +29,11 @@ const SSE_SERIALIZATION_FAILURE_FALLBACK: SSEChunk = Object.freeze({
 /**
  * Convert an async iterable of AgentEvents into SSE chunks.
  *
- * Wave-12 P1-24 / P2-6: `JSON.stringify(event)` is wrapped in try/catch
- * so a single poisoned event (circular reference, throwing getter) cannot
- * crash the whole stream. On first-level failure we emit an SSE `error`
- * chunk carrying the failure reason; on double-failure (the fallback
- * JSON also throws) we yield a pre-frozen minimal byte constant.
+ * `JSON.stringify(event)` is wrapped in try/catch so a single poisoned
+ * event (circular reference, throwing getter) cannot crash the whole
+ * stream. On first-level failure we emit an SSE `error` chunk carrying
+ * the failure reason; on double-failure (the fallback JSON also throws)
+ * we yield a pre-frozen minimal byte constant.
  *
  * @example
  * ```ts
@@ -60,9 +60,9 @@ export async function* toSSEStream(events: AsyncIterable<AgentEvent>): AsyncGene
       // getters. Fall back to an `error` envelope. If the fallback also
       // throws (exotic), yield the pre-computed hardcoded byte constant.
       //
-      // Wave-13 D-9: clamp the reason string defensively. `String(err)` can
-      // throw (exotic `.toString()` throwers) — we pre-coerce inside a try
-      // and slice to 200 chars so a maliciously large error message cannot
+      // Clamp the reason string defensively. `String(err)` can throw
+      // (exotic `.toString()` throwers) — we pre-coerce inside a try and
+      // slice to 200 chars so a maliciously large error message cannot
       // blow up the SSE envelope. The outer try/catch still covers the
       // pathological `String()` throw case by falling through to the
       // hardcoded fallback chunk.

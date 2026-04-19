@@ -2,9 +2,9 @@
  * Set-algebra helpers for the in-memory {@link createInMemoryStore} query
  * path.
  *
- * Wave-16 m7 extraction. Lives in its own module so `store.ts` can focus on
- * CRUD + index maintenance + eviction, while this file owns the "combine
- * indexed filters into a candidate-id set" concern.
+ * Lives in its own module so `store.ts` can focus on CRUD + index
+ * maintenance + eviction, while this file owns the "combine indexed
+ * filters into a candidate-id set" concern.
  *
  * Semantics (documented invariants — do not weaken silently):
  *

@@ -167,7 +167,7 @@ describe('H2: per-guardrail timeout', () => {
   });
 });
 
-describe('FIX-5: fail-open still emits events for crashed guardrails', () => {
+describe('fail-open still emits events for crashed guardrails', () => {
   it('emits an event via onEvent when failClosed=false and guardrail throws', async () => {
     const events: GuardrailEvent[] = [];
     const pipeline = createPipeline({
@@ -282,7 +282,7 @@ describe('pipeline edge cases', () => {
     });
     const resultOpen = await runInput(pipelineOpen, { content: 'hello' });
     expect(resultOpen.passed).toBe(true);
-    // Wave-13 E-6: a `guard_timeout` span event is now emitted alongside the
+    // a `guard_timeout` span event is now emitted alongside the
     // existing fail-open verdict event for the timed-out guard, so the total
     // event count is 3 (span + fail-open + allow) instead of 2.
     const verdictEvents = eventsOpen.filter(
@@ -815,7 +815,7 @@ describe('Issue 2: maxResults cap — results array stays bounded', () => {
 
   // ---- PERF-005: O(1) amortized eviction via maintained pointer ----
 
-  describe('PERF-005: bounded event buffer with tracked non-block pointer', () => {
+  describe('bounded event buffer with tracked non-block pointer', () => {
     it('evicts oldest non-block first, preserving block events in FIFO order', async () => {
       // Interleave allow + block guards. When maxResults is reached, allow
       // events should be evicted while block events remain. A block terminates

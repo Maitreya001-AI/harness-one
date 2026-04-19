@@ -1,5 +1,5 @@
 /**
- * Wave-13 E-4 tests: per-turn cumulative argument byte cap in tool registry.
+ * E-4 tests: per-turn cumulative argument byte cap in tool registry.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -22,7 +22,7 @@ function makePassthroughTool() {
   });
 }
 
-describe('createRegistry Wave-13 E-4: maxTotalArgBytesPerTurn', () => {
+describe('createRegistry E-4: maxTotalArgBytesPerTurn', () => {
   it('exposes maxTotalArgBytesPerTurn in getConfig() with default 10 MiB', () => {
     const reg = createRegistry();
     expect(reg.getConfig().maxTotalArgBytesPerTurn).toBe(10 * 1024 * 1024);

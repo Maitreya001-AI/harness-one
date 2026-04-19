@@ -134,7 +134,7 @@ describe('createHarness', () => {
 
   it('creates a harness with new infrastructure fields', () => {
     const harness = createHarness(baseConfig);
-    // Wave-5C T-1.6: `eventBus` field removed (ARCH-010 deprecation fully landed).
+    // `eventBus` field removed (ARCH-010 deprecation fully landed).
     expect(harness.logger).toBeDefined();
     expect(harness.conversations).toBeDefined();
     expect(harness.middleware).toBeDefined();
@@ -157,9 +157,9 @@ describe('createHarness', () => {
 
     it('uses custom adapter when provided (AdapterHarnessConfig shape)', () => {
       const customAdapter = { chat: vi.fn() };
-      // Wave-14: adapter and client are mutually exclusive in HarnessConfig,
-      // so the adapter-override path uses the AdapterHarnessConfig variant
-      // (no provider / client). Non-provider HarnessConfigBase fields from
+      // adapter and client are mutually exclusive in HarnessConfig, so the
+      // adapter-override path uses the AdapterHarnessConfig variant (no
+      // provider / client). Non-provider HarnessConfigBase fields from
       // `baseConfig` (model, pricing, budget, ...) are still valid.
       const { provider: _p, client: _c, ...rest } = baseConfig as unknown as {
         provider?: unknown;
@@ -490,7 +490,7 @@ describe('createHarness', () => {
   describe('partial overrides', () => {
     it('allows overriding adapter while using default everything else', () => {
       const customAdapter = { chat: vi.fn() };
-      // Wave-14: adapter+client are mutually exclusive, so this uses the
+      // adapter+client are mutually exclusive, so this uses the
       // AdapterHarnessConfig shape (no provider/client).
       const { provider: _p, client: _c, ...rest } = baseConfig as unknown as {
         provider?: unknown;

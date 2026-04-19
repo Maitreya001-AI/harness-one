@@ -1,5 +1,5 @@
 /**
- * Wave-13 E-5: fs-store query() AbortSignal support.
+ * fs-store query() AbortSignal support.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -10,12 +10,12 @@ import { createFileSystemStore } from '../fs-store.js';
 import type { MemoryStore } from '../store.js';
 import { HarnessError, HarnessErrorCode } from '../../core/errors.js';
 
-describe('FsStore Wave-13 E-5: AbortSignal', () => {
+describe('FsStore E-5: AbortSignal', () => {
   let store: MemoryStore;
   let dir: string;
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'harness-mem-wave13-'));
+    dir = await mkdtemp(join(tmpdir(), 'harness-mem--'));
     store = createFileSystemStore({ directory: dir });
   });
 

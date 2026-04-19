@@ -147,7 +147,7 @@ describe('createPromptRegistry', () => {
       const pastMs = Date.now() - 60_000;
       reg.register({ id: 'stale', version: '1.0', content: 'I am stale', variables: [], expiresAt: pastMs });
       expect(reg.isExpired('stale')).toBe(true);
-      // get() still returns the template — caller uses isExpired() to decide
+      // Get() still returns the template — caller uses isExpired() to decide
       expect(reg.get('stale')).toBeDefined();
     });
 
@@ -194,13 +194,13 @@ describe('createPromptRegistry', () => {
       reg.register({ id: 'z', version: '1.0', content: 'Z', variables: [] });
       const removed = reg.removeExpired();
       expect(removed).toBe(2);
-      // expired templates are gone
+      // Expired templates are gone
       expect(reg.get('x', '1.0')).toBeUndefined();
       expect(reg.get('x', '2.0')).toBeUndefined();
-      // non-expired templates remain
+      // Non-expired templates remain
       expect(reg.get('y')).toBeDefined();
       expect(reg.get('z')).toBeDefined();
-      // list should reflect removal
+      // List should reflect removal
       expect(reg.list()).toHaveLength(2);
     });
 
@@ -222,7 +222,7 @@ describe('createPromptRegistry', () => {
       const reg = createPromptRegistry();
       const now = Date.now();
       reg.register({ id: 'boundary', version: '1.0', content: 'Boundary', variables: [], expiresAt: now });
-      // isExpired uses Date.now() > expiresAt, so at exact boundary it should NOT be expired
+      // IsExpired uses Date.now() > expiresAt, so at exact boundary it should NOT be expired
       // (because the time the check runs may equal expiresAt)
       // We mock Date.now via vi.spyOn so it is automatically restorable and doesn't
       // leak into other tests even if the assertion throws.
@@ -260,7 +260,7 @@ describe('createPromptRegistry', () => {
       reg.register({ id: 'seq', version: '1.0', content: 'First', variables: [] });
       reg.register({ id: 'seq', version: '2.0', content: 'Second', variables: [] });
       reg.register({ id: 'seq', version: '3.0', content: 'Third', variables: [] });
-      // get() without version should return the last registered
+      // Get() without version should return the last registered
       const latest = reg.get('seq');
       expect(latest).toBeDefined();
       expect(latest!.version).toBe('3.0');
@@ -297,7 +297,7 @@ describe('createPromptRegistry', () => {
 
     it('remove non-existent template — no error', () => {
       const reg = createPromptRegistry();
-      // removeExpired on empty registry should not throw
+      // RemoveExpired on empty registry should not throw
       expect(reg.removeExpired()).toBe(0);
       // Register one non-expired template, removeExpired should still return 0
       reg.register({ id: 'safe', version: '1.0', content: 'Safe', variables: [] });
@@ -638,7 +638,7 @@ describe('createAsyncPromptRegistry', () => {
       reg.register(templateA); // local 'a@1.0'
 
       const result = await reg.list();
-      // local a@1.0 + remote a@2.0 should both be present
+      // Local a@1.0 + remote a@2.0 should both be present
       expect(result).toHaveLength(2);
       expect(result.find((t) => t.version === '1.0')).toBeDefined();
       expect(result.find((t) => t.version === '2.0')).toBeDefined();

@@ -42,7 +42,7 @@ describe('Cross-package integration', () => {
     expect(harness.memory).toBeDefined();
     expect(harness.prompts).toBeDefined();
     expect(harness.eval).toBeDefined();
-    // Wave-5C T-1.6: `eventBus` field removed (ARCH-010 deprecation fully landed).
+    // `eventBus` field removed (ARCH-010 deprecation fully landed).
     expect(harness.logger).toBeDefined();
     expect(harness.conversations).toBeDefined();
     expect(harness.middleware).toBeDefined();

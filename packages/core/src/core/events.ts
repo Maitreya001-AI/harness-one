@@ -29,7 +29,7 @@ export type AgentEvent =
   | { type: 'message'; message: Message; usage: TokenUsage }
   | { type: 'warning'; message: string }
   | { type: 'error'; error: HarnessError | Error }
-  // T10 (Wave-5A): emitted when a GuardrailPipeline returns a `block` verdict
+  // Emitted when a GuardrailPipeline returns a `block` verdict
   // during one of AgentLoop's three fixed hook points. Consumers can observe
   // this before the follow-up `error`/`done` pair (for input/output blocks)
   // or in isolation (for tool_output blocks, which rewrite the tool result

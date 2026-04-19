@@ -32,7 +32,7 @@ export interface CircuitBreakerConfig {
    * Optional callback invoked on state transitions. Useful for logging
    * or metrics without coupling to a specific logger.
    *
-   * Wave-13 Obs-P0-3: callback now receives a `context` object carrying
+   * callback now receives a `context` object carrying
    * the failure count and (when available) the failing error so operators
    * can correlate trips to upstream incidents without instrumenting the
    * caller. The context is `undefined` for transitions not driven by a
@@ -47,7 +47,7 @@ export interface CircuitBreakerConfig {
 
 /**
  * Context attached to {@link CircuitBreakerConfig.onStateChange} when the
- * transition is failure-driven. Wave-13 Obs-P0-3.
+ * transition is failure-driven. Obs-P0-3.
  */
 export interface CircuitStateChangeContext {
   readonly consecutiveFailures: number;
@@ -112,10 +112,10 @@ export function createCircuitBreaker(config?: CircuitBreakerConfig): CircuitBrea
   let state: CircuitState = 'closed';
   let consecutiveFailures = 0;
   let lastFailureTime = 0;
-  /** Wave-13 Obs-P0-3: captured so onStateChange can surface the root cause. */
+  /** captured so onStateChange can surface the root cause. */
   let lastFailureError: Error | undefined;
   /**
-   * P0-5 (Wave-12): Promise-based single-slot mutex guarding the half-open
+   * Promise-based single-slot mutex guarding the half-open
    * probe slot. Prior flag-based guard had a check/set interleaving window
    * where two probes could both observe `false`, both flip it to `true`, and
    * their success/failure paths could clobber `consecutiveFailures`.
@@ -175,7 +175,7 @@ export function createCircuitBreaker(config?: CircuitBreakerConfig): CircuitBrea
         throw new CircuitOpenError();
       }
 
-      // P0-5: Atomic claim of the half-open probe slot. Reading + writing
+      // Atomic claim of the half-open probe slot. Reading + writing
       // `halfOpenProbe` happens within a single synchronous tick so no two
       // callers can both observe a null slot and both claim it.
       let releaseProbe: (() => void) | null = null;

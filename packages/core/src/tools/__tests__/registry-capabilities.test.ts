@@ -1,10 +1,10 @@
 /**
- * T09: ToolCapability system — registry capability allow-list.
+ * ToolCapability system — registry capability allow-list.
  *
- * Wave-5A strategy: fail-closed defaults + *warning* (not throw) for tools
- * that do not yet declare capabilities. Wave-5C will upgrade unknown/missing
+ * strategy: fail-closed defaults + *warning* (not throw) for tools
+ * that do not yet declare capabilities. will upgrade unknown/missing
  * capability declarations to hard throws; this test suite locks the
- * Wave-5A contract (warn-only for missing, throw for disallowed).
+ * contract (warn-only for missing, throw for disallowed).
  */
 import { describe, it, expect } from 'vitest';
 import { createRegistry, createPermissiveRegistry } from '../registry.js';
@@ -47,7 +47,7 @@ function makeRecordingLogger(): { logger: Logger; warnings: Array<{ msg: string;
   return { logger, warnings };
 }
 
-describe('T09: ToolCapability enumeration', () => {
+describe('ToolCapability enumeration', () => {
   it('exposes exactly the 5 documented capability values', () => {
     // Enum shape: `readonly`, `filesystem`, `network`, `shell`, `destructive`.
     const vals = new Set<string>(ALL_TOOL_CAPABILITIES);
@@ -66,7 +66,7 @@ describe('T09: ToolCapability enumeration', () => {
   });
 });
 
-describe('T09: defineTool accepts capabilities', () => {
+describe('defineTool accepts capabilities', () => {
   it('accepts a tool declaring capabilities: ["readonly"] without throwing', () => {
     expect(() =>
       makeTool({ capabilities: ['readonly'] }),
@@ -79,7 +79,7 @@ describe('T09: defineTool accepts capabilities', () => {
   });
 });
 
-describe('T09: createRegistry default allow-list = ["readonly"]', () => {
+describe('createRegistry default allow-list = ["readonly"]', () => {
   it('rejects registration of a tool declaring "shell" capability', () => {
     const registry = createRegistry();
     const tool = makeTool({ name: 'sh', capabilities: ['shell'] });
@@ -104,7 +104,7 @@ describe('T09: createRegistry default allow-list = ["readonly"]', () => {
   });
 });
 
-describe('T09: explicit allowedCapabilities', () => {
+describe('explicit allowedCapabilities', () => {
   it('allows ["shell"] when registry opts in', () => {
     const registry = createRegistry({
       allowedCapabilities: ['shell', 'readonly'],
@@ -122,7 +122,7 @@ describe('T09: explicit allowedCapabilities', () => {
   });
 });
 
-describe('T09: tools missing capabilities field — warn, not throw', () => {
+describe('tools missing capabilities field — warn, not throw', () => {
   it('registers a tool with no declared capabilities and emits a single safeWarn', () => {
     const { logger, warnings } = makeRecordingLogger();
     const registry = createRegistry({ logger });
@@ -131,7 +131,7 @@ describe('T09: tools missing capabilities field — warn, not throw', () => {
     expect(() => registry.register(tool)).not.toThrow();
     expect(warnings.length).toBe(1);
     expect(warnings[0]!.msg).toMatch(/missing capabilities declaration/i);
-    expect(warnings[0]!.msg).toMatch(/1\.0|Wave-5C/i);
+    expect(warnings[0]!.msg).toMatch(/1\.0/i);
     // Meta should identify the offending tool for observability.
     expect(warnings[0]!.meta).toMatchObject({ tool: 'legacy' });
   });
@@ -144,7 +144,7 @@ describe('T09: tools missing capabilities field — warn, not throw', () => {
   });
 });
 
-describe('T09: createPermissiveRegistry', () => {
+describe('createPermissiveRegistry', () => {
   it('allows tools declaring any capability', () => {
     const registry = createPermissiveRegistry();
     const t1 = makeTool({ name: 'fs', capabilities: ['filesystem', 'destructive'] });
@@ -168,7 +168,7 @@ describe('T09: createPermissiveRegistry', () => {
   });
 });
 
-describe('T09: capability check ordered before permission check (INT-09-01)', () => {
+describe('capability check ordered before permission check (INT-09-01)', () => {
   it('a tool that fails both capability and permission reports TOOL_CAPABILITY_DENIED', () => {
     // Permission check never gets a chance: capability check lives at register()
     // time, whereas permission check lives at execute() time. This test asserts
@@ -195,10 +195,10 @@ describe('T09: capability check ordered before permission check (INT-09-01)', ()
   });
 });
 
-describe('T09: TOOL_CAPABILITY_DENIED is a non-retryable config error', () => {
+describe('TOOL_CAPABILITY_DENIED is a non-retryable config error', () => {
   it('surfaces via HarnessError.code so the classifier can treat it as non-retryable', () => {
     // HarnessError has no `.retryable` field by design — config-time errors
-    // are inherently non-retryable. The classifier contract (T07) is that a
+    // are inherently non-retryable. The classifier contract is that a
     // consumer inspecting `err.code === HarnessErrorCode.TOOL_CAPABILITY_DENIED` must be able
     // to decide "do not retry". We encode that contract here: the error code
     // is stable, and the error does NOT expose a truthy `.retryable`.

@@ -79,7 +79,7 @@ export interface SharedContext {
   /** Set a value by key. */
   set(key: string, value: unknown): void;
   /**
-   * Wave-13 P0-5: explicitly evict a key. Useful to reclaim space against
+   * explicitly evict a key. Useful to reclaim space against
    * the `maxSharedContextEntries` cap in long-running orchestrators.
    * Returns true when the key existed.
    */
@@ -128,7 +128,7 @@ export interface PoolConfig {
   /** Milliseconds before an agent is force-recycled regardless of state. */
   readonly maxAge?: number;
   /**
-   * P0-1 (Wave-12): Maximum number of pending async acquire requests that
+   * Maximum number of pending async acquire requests that
    * may be queued while the pool is exhausted. When the queue is full,
    * further {@link AgentPool.acquireAsync} calls reject synchronously with
    * {@link HarnessErrorCode.POOL_QUEUE_FULL}. Prevents unbounded memory
@@ -144,7 +144,7 @@ export interface PoolStats {
   readonly total: number;
   readonly created: number;
   readonly recycled: number;
-  /** OBS-010: Cumulative count of agent dispose errors silently dropped. */
+  /** Cumulative count of agent dispose errors silently dropped. */
   readonly disposeErrors: number;
 }
 
@@ -169,7 +169,7 @@ export interface AgentPool {
   /** Current pool statistics. */
   readonly stats: PoolStats;
   /**
-   * Dispose all agents and clear timers. Idempotent (LM-014): concurrent
+   * Dispose all agents and clear timers. Idempotent: concurrent
    * callers observe the same completion promise and teardown runs once.
    * Now awaits each underlying `loop.dispose()` so file/socket handles
    * close before the pool is considered fully torn down.
@@ -236,13 +236,13 @@ export interface HandoffManager {
   /**
    * Send a structured handoff from one agent to another.
    *
-   * Wave-5E SEC-A10 recommends {@link createSendHandle} for multi-agent
+   * SEC-A10 recommends {@link createSendHandle} for multi-agent
    * deployments so the `from` identity cannot be forged by an untrusted
    * sender; the 3-arg form remains for single-agent setups and tests.
    */
   send(from: string, to: string, payload: HandoffPayload): HandoffReceipt;
   /**
-   * Wave-5E SEC-A10: mint a sealed sender handle bound to `from`. Hand
+   * mint a sealed sender handle bound to `from`. Hand
    * this to the originating agent instead of its raw identity string.
    */
   createSendHandle(from: string): import('./handoff.js').SendHandle;

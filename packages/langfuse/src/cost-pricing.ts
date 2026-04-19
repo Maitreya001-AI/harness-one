@@ -1,10 +1,10 @@
 /**
  * Pricing table + cost computation for the Langfuse cost tracker.
  *
- * Wave-16 M2 extraction — mirrors the split done in
- * `harness-one/core/pricing.ts` for the in-process tracker: the math is
- * pure, the pricing table is a small stateful map, and the "warn once per
- * unknown model" behaviour has a home away from the factory body.
+ * Mirrors the split in `harness-one/core/pricing.ts` for the in-process
+ * tracker: the math is pure, the pricing table is a small stateful map,
+ * and the "warn once per unknown model" behaviour has a home away from
+ * the factory body.
  *
  * @module
  * @internal

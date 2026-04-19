@@ -10,10 +10,10 @@ import type { Message } from './types.js';
 import type { PipelineResult } from './guardrail-port.js';
 
 /**
- * T10 (Wave-5A): walk the conversation from the tail until we find a
- * user-role message. Returns its `content` string, or `undefined` when no
- * user message exists (e.g., a pure system-only seed — callers should skip
- * the input pipeline rather than running it on empty content).
+ * Walk the conversation from the tail until we find a user-role message.
+ * Returns its `content` string, or `undefined` when no user message
+ * exists (e.g., a pure system-only seed — callers should skip the input
+ * pipeline rather than running it on empty content).
  *
  * @param messages - The conversation (read-only).
  * @returns The latest user message content, or `undefined` if none exists.
@@ -27,10 +27,10 @@ export function findLatestUserMessage(messages: readonly Message[]): string | un
 }
 
 /**
- * T10 (Wave-5A): derive a human-readable guard name from a blocking
- * `PipelineResult`. Prefer the last event (the guard that actually blocked);
- * fall back to a direction-qualified sentinel so logs and events always
- * carry something renderable.
+ * Derive a human-readable guard name from a blocking `PipelineResult`.
+ * Prefer the last event (the guard that actually blocked); fall back to
+ * a direction-qualified sentinel so logs and events always carry
+ * something renderable.
  *
  * @param result - The pipeline result whose blocking guard we want to name.
  * @param direction - Direction sentinel used in the fallback name.

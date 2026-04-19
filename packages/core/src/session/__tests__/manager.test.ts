@@ -164,7 +164,7 @@ describe('createSessionManager', () => {
 
   describe('LRU eviction', () => {
     it('evicts least recently accessed when maxSessions+threshold exceeded', () => {
-      // PERF-019: eviction is amortized by a small threshold (max(1, 5% of maxSessions)).
+      // eviction is amortized by a small threshold (max(1, 5% of maxSessions)).
       // At maxSessions=2 the threshold is 1, so we must exceed 3 before evicting.
       const sm = createSessionManager({ maxSessions: 2, gcIntervalMs: 0 });
       const s1 = sm.create();
@@ -231,7 +231,7 @@ describe('createSessionManager', () => {
       // Lock s1 (LRU candidate) so eviction skips it, evicts s2 instead
       const { unlock } = sm.lock(s1.id);
 
-      // Need to grow past maxSessions+threshold before eviction (PERF-019).
+      // Need to grow past maxSessions+threshold before eviction.
       sm.create();
       sm.create();
 
@@ -423,7 +423,7 @@ describe('createSessionManager', () => {
 
   describe('H6: LRU access order tracking complexity comment', () => {
     it('touchAccessOrder works correctly for typical session counts', () => {
-      // PERF-019: eviction threshold = max(1, 5% of maxSessions) = 1 for maxSessions=5
+      // eviction threshold = max(1, 5% of maxSessions) = 1 for maxSessions=5
       const sm = createSessionManager({ maxSessions: 5, gcIntervalMs: 0 });
       const s1 = sm.create();
       const s2 = sm.create();
@@ -448,7 +448,7 @@ describe('createSessionManager', () => {
 
   describe('Map-based LRU eviction order', () => {
     it('evicts sessions in correct LRU order using Map', () => {
-      // PERF-019: eviction threshold = 1 for maxSessions=3 (5% floor → min 1)
+      // eviction threshold = 1 for maxSessions=3 (5% floor → min 1)
       const sm = createSessionManager({ maxSessions: 3, gcIntervalMs: 0 });
       const s1 = sm.create();
       const s2 = sm.create();
@@ -467,7 +467,7 @@ describe('createSessionManager', () => {
     });
 
     it('evicts multiple sessions in correct LRU order', () => {
-      // PERF-019: threshold=1, so creates accumulate up to maxSessions+1 before eviction.
+      // threshold=1, so creates accumulate up to maxSessions+1 before eviction.
       // When size > maxSessions+threshold, evict all the way down to maxSessions.
       const sm = createSessionManager({ maxSessions: 2, gcIntervalMs: 0 });
       const s1 = sm.create();
@@ -785,8 +785,8 @@ describe('createSessionManager', () => {
     });
   });
 
-  // PERF-019: eviction should be amortized, not run on every create().
-  describe('PERF-019: amortized eviction threshold', () => {
+  // eviction should be amortized, not run on every create().
+  describe('amortized eviction threshold', () => {
     it('does not evict when within threshold above maxSessions', () => {
       const sm = createSessionManager({ maxSessions: 2, gcIntervalMs: 0 });
       const s1 = sm.create();
@@ -821,8 +821,8 @@ describe('createSessionManager', () => {
     });
   });
 
-  // PERF-001: dispose() must always clear the GC interval, even if other cleanup throws.
-  describe('PERF-001: dispose always releases GC timer', () => {
+  // dispose() must always clear the GC interval, even if other cleanup throws.
+  describe('dispose always releases GC timer', () => {
     it('clearInterval is called even if a cleanup step throws', () => {
       const clearSpy = vi.spyOn(globalThis, 'clearInterval');
       const sm = createSessionManager({ gcIntervalMs: 60000 });
@@ -847,7 +847,7 @@ describe('createSessionManager', () => {
     });
   });
 
-  describe('LM-012: Set-backed event handlers', () => {
+  describe('Set-backed event handlers', () => {
     it('dedupes the same handler reference registered twice', () => {
       const sm = createSessionManager();
       const calls: string[] = [];
@@ -941,7 +941,7 @@ describe('createSessionManager', () => {
     });
   });
 
-  describe('Wave-12 P1-16: deep-clone metadata in toReadonly', () => {
+  describe('deep-clone metadata in toReadonly', () => {
     it('mutating nested metadata on the returned view does not affect internal state', () => {
       const sm = createSessionManager({ gcIntervalMs: 0 });
       const created = sm.create({ profile: { name: 'alice', prefs: { theme: 'dark' } }, tags: ['a', 'b'] });
@@ -972,7 +972,7 @@ describe('createSessionManager', () => {
     });
   });
 
-  describe('Wave-12 P1-10: priority-aware event drop', () => {
+  describe('priority-aware event drop', () => {
     it('evicts queued low-priority events to admit high-priority events when full', () => {
       const warns: Array<{ msg: string; meta?: Record<string, unknown> }> = [];
       const logger = {

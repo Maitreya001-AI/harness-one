@@ -89,7 +89,7 @@ export {
   sanitizeRestoredMessage,
 } from '../core/trusted-system-message.js';
 
-// Test utilities moved to `harness-one/testing` in Wave-27.
+// Test utilities moved to `harness-one/testing`.
 // Rationale: `createMockAdapter` / `createFailingAdapter` /
 // `createStreamingMockAdapter` / `createErrorStreamingMockAdapter` are mock
 // AgentAdapter factories for tests only. Sharing the /advanced surface with

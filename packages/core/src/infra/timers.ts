@@ -9,7 +9,7 @@
  * Callers that need the timer to block process exit must re-`.ref()` the
  * returned handle explicitly.
  *
- * Wave-5F m-2 consolidates the 22-site `setTimeout()/setInterval()` + ad-hoc
+ * m-2 consolidates the 22-site `setTimeout()/setInterval()` + ad-hoc
  * `.unref?.()` pattern into two entry points.
  *
  * @module

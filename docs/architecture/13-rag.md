@@ -139,7 +139,7 @@ const injected = results.filter((r) => {
 ## 去重与容量管理
 
 - **去重**：`createRAGPipeline` 在内部维护已索引内容的哈希集合。同批次内和跨批次的重复 chunk 均会跳过，并触发 `onWarning({ type: 'duplicate' })`。
-- **容量上限**：`maxChunks` 限制流水线的总 chunk 数。达到上限后新 chunk 不被添加，触发 `onWarning({ type: 'capacity' })`。未设置 `maxChunks` 时，默认上限为 100,000 chunks 以防止无限内存增长（Wave-7）。
+- **容量上限**：`maxChunks` 限制流水线的总 chunk 数。达到上限后新 chunk 不被添加，触发 `onWarning({ type: 'capacity' })`。未设置 `maxChunks` 时，默认上限为 100,000 chunks 以防止无限内存增长。
 - **清空**：`pipeline.clear()` 清除所有已索引 chunk 和内容哈希，但不重置检索器的内部状态（需重新创建流水线以彻底重置）。
 
 ## 依赖关系
@@ -164,14 +164,14 @@ const injected = results.filter((r) => {
 4. **去重在嵌入之前** —— 重复 chunk 在 embedding API 调用之前过滤，避免浪费嵌入配额
 5. **查询缓存** —— 对相同查询文本复用嵌入向量，减少重复的嵌入 API 调用
 
-## Wave-8 Production Hardening
+## 生产强化
 
-1. **AbortSignal 支持**：`RAGPipelineConfig.signal` 新增可选的 `AbortSignal` 字段，允许调用方取消进行中的 ingest 操作。
-2. **CJK 词边界检测**：分块策略现在识别 CJK（中日韩）字符边界，并正确保留 surrogate pair（emoji），避免在 CJK 文本或 emoji 中间截断。
-3. **Retriever clear()**：内存检索器 `createInMemoryRetriever` 新增 `clear()` 方法，可重置所有已索引的 chunk 和缓存。
+1. **AbortSignal 支持**：`RAGPipelineConfig.signal` 可选 `AbortSignal` 字段，允许调用方取消进行中的 ingest 操作。
+2. **CJK 词边界检测**：分块策略识别 CJK（中日韩）字符边界，并正确保留 surrogate pair（emoji），避免在 CJK 文本或 emoji 中间截断。
+3. **Retriever clear()**：内存检索器 `createInMemoryRetriever` 提供 `clear()` 方法，可重置所有已索引的 chunk 和缓存。
 
 ## 已知限制
 
 - `createInMemoryRetriever` 不支持持久化——进程重启后需重新索引
 - 余弦相似度为精确搜索，数据量大时性能随 chunk 数线性下降（无近似向量搜索）
-- `clear()` 仅清除流水线状态；内存检索器可通过 `retriever.clear()` 单独重置索引和缓存（Wave-8 新增）
+- `clear()` 仅清除流水线状态；内存检索器可通过 `retriever.clear()` 单独重置索引和缓存

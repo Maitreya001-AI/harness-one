@@ -10,8 +10,8 @@ import Anthropic from '@anthropic-ai/sdk';
 import { createAnthropicAdapter } from '../index.js';
 
 describe('Anthropic adapter tool_use input narrowing', () => {
-  // Wave-5F T12: default logger writes redacted JSON lines to console.log
-  // (via core's createDefaultLogger singleton), not console.warn.
+  // Default logger writes redacted JSON lines to console.log (via
+  // core's createDefaultLogger singleton), not console.warn.
   let warn: ReturnType<typeof vi.spyOn>;
   beforeEach(() => {
     warn = vi.spyOn(console, 'log').mockImplementation(() => {});

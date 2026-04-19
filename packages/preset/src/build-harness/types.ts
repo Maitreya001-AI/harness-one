@@ -27,21 +27,19 @@ import type { RedisStoreConfig } from '@harness-one/redis';
 
 /**
  * Default timeout (ms) applied to adapter calls when `HarnessConfigBase.adapterTimeoutMs`
- * is not provided. Wave-13 F-2: previously `createAgentLoop` received no
- * `adapterTimeoutMs`, so a hanging provider would stall requests until the
- * caller's AbortSignal fired (or forever). 60s is a conservative default that
- * errs on the side of letting slow-but-legitimate provider responses through
- * while still bounding the blast radius of a silent upstream hang.
+ * is not provided. Without a default, a hanging provider would stall requests
+ * until the caller's AbortSignal fired (or forever). 60s is a conservative
+ * default that errs on the side of letting slow-but-legitimate provider
+ * responses through while still bounding the blast radius of a silent
+ * upstream hang.
  */
 export const DEFAULT_ADAPTER_TIMEOUT_MS = 60_000;
 
 /**
  * Default timeout (ms) for {@link Harness.drain}.
  *
- * Wave-13 F-6: the `drain()` signature previously hid its default in the
- * implementation; callers who wanted to log or compare the value had to know
- * the magic number. Exporting it removes that footgun and keeps the signature
- * honest.
+ * Exported alongside the `drain()` signature so callers who want to log or
+ * compare the value don't need to duplicate the magic number.
  */
 export const DRAIN_DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -93,21 +91,21 @@ export interface HarnessConfigBase {
   readonly retryableErrors?: readonly string[];
   /**
    * Maximum time in milliseconds any single adapter call is allowed to run
-   * before being aborted with `CORE_TIMEOUT`. Wave-13 F-2: defaults to
-   * {@link DEFAULT_ADAPTER_TIMEOUT_MS} (60_000 ms) when omitted — the prior
-   * behavior of "unlimited" silently cascaded provider hangs into caller
+   * before being aborted with `CORE_TIMEOUT`. Defaults to
+   * {@link DEFAULT_ADAPTER_TIMEOUT_MS} (60_000 ms) when omitted — an
+   * "unlimited" default would silently cascade provider hangs into caller
    * latency budgets. Set explicitly (including to a very large value) to
    * override; do not pass `0` — that disables the timeout in the underlying
-   * AgentLoop and restores the pre-Wave-13 unbounded behavior.
+   * AgentLoop and restores unbounded behavior.
    */
   readonly adapterTimeoutMs?: number;
 
   /**
    * Guardrail config.
    *
-   * P1-14 (Wave-12): all nested option bags and arrays are deeply `readonly` so
-   * the shape matches the runtime contract (config is consumed immutably).
-   * Attempting `config.guardrails.rateLimit.max = 0` or
+   * All nested option bags and arrays are deeply `readonly` so the shape
+   * matches the runtime contract (config is consumed immutably). Attempting
+   * `config.guardrails.rateLimit.max = 0` or
    * `config.guardrails.contentFilter.blocked.push(...)` is a TypeScript
    * error, preventing accidental post-construction mutation that would
    * otherwise bypass the integer / shape validation performed by
@@ -147,17 +145,16 @@ export interface HarnessConfigBase {
 /**
  * Configuration for creating a full Harness instance with Anthropic.
  *
- * Wave-14: `adapter` is explicitly `undefined` so the discriminated union
- * enforces XOR with {@link AdapterHarnessConfig} at compile time — passing
- * both `adapter` and `client` is a type error, not a runtime warning.
+ * `adapter` is explicitly `undefined` so the discriminated union enforces XOR
+ * with {@link AdapterHarnessConfig} at compile time — passing both `adapter`
+ * and `client` is a type error, not a runtime warning.
  */
 export interface AnthropicHarnessConfig extends HarnessConfigBase {
   /**
-   * Wave-13 F-4: optional discriminator tag for the {@link HarnessConfig}
-   * union. When set to `'anthropic'`, a TypeScript `switch` over `type`
-   * narrows the config cleanly instead of relying on the `provider` field
-   * alone. Kept optional to preserve backwards compatibility with callers
-   * who only set `provider`.
+   * Optional discriminator tag for the {@link HarnessConfig} union. When set
+   * to `'anthropic'`, a TypeScript `switch` over `type` narrows the config
+   * cleanly instead of relying on the `provider` field alone. Kept optional
+   * to preserve backwards compatibility with callers who only set `provider`.
    */
   readonly type?: 'anthropic';
   readonly provider: 'anthropic';
@@ -170,14 +167,14 @@ export interface AnthropicHarnessConfig extends HarnessConfigBase {
 /**
  * Configuration for creating a full Harness instance with OpenAI.
  *
- * Wave-14: `adapter` is explicitly `undefined` so the discriminated union
- * enforces XOR with {@link AdapterHarnessConfig} at compile time.
+ * `adapter` is explicitly `undefined` so the discriminated union enforces XOR
+ * with {@link AdapterHarnessConfig} at compile time.
  */
 export interface OpenAIHarnessConfig extends HarnessConfigBase {
   /**
-   * Wave-13 F-4: optional discriminator tag for the {@link HarnessConfig}
-   * union. When set to `'openai'`, narrowing works via the `type` field. See
-   * the matching `type` field on `AnthropicHarnessConfig`.
+   * Optional discriminator tag for the {@link HarnessConfig} union. When set
+   * to `'openai'`, narrowing works via the `type` field. See the matching
+   * `type` field on `AnthropicHarnessConfig`.
    */
   readonly type?: 'openai';
   readonly provider: 'openai';
@@ -203,7 +200,7 @@ export interface OpenAIHarnessConfig extends HarnessConfigBase {
  *
  * @internal
  *
- * P2-17 (Wave-12): `AdapterHarnessConfig` ships in the public barrel so the
+ * `AdapterHarnessConfig` ships in the public barrel so the
  * {@link HarnessConfig} union resolves cleanly, but the interface itself is
  * considered internal — it exposes the {@link AgentAdapter} type directly and
  * couples callers to a type that is subject to change. Prefer the
@@ -212,8 +209,8 @@ export interface OpenAIHarnessConfig extends HarnessConfigBase {
  */
 export interface AdapterHarnessConfig extends HarnessConfigBase {
   /**
-   * Wave-13 F-4: optional discriminator tag for the {@link HarnessConfig}
-   * union. When set to `'adapter'`, narrowing works via the `type` field.
+   * Optional discriminator tag for the {@link HarnessConfig} union. When set
+   * to `'adapter'`, narrowing works via the `type` field.
    */
   readonly type?: 'adapter';
   readonly adapter: AgentAdapter;
@@ -279,12 +276,11 @@ export interface Harness {
    *     to isolate conversation histories and enable resume.
    *   - `onSessionId` — callback invoked synchronously, before the first
    *     event is yielded, with the effective session id (either the
-   *     caller-provided value or the auto-generated id). P1-20 (Wave-12):
-   *     without this hook callers had no way to observe the auto-generated
-   *     id and therefore could not resume the conversation on a subsequent
-   *     call. The callback is invoked exactly once per `run()` invocation;
-   *     any exception it throws is logged and swallowed so the loop is not
-   *     interrupted.
+   *     caller-provided value or the auto-generated id). Without this hook
+   *     callers had no way to observe the auto-generated id and therefore
+   *     could not resume the conversation on a subsequent call. The callback
+   *     is invoked exactly once per `run()` invocation; any exception it
+   *     throws is logged and swallowed so the loop is not interrupted.
    */
   run(
     messages: Message[],
@@ -322,19 +318,20 @@ export interface Harness {
   /**
    * Shut down all services.
    *
-   * Wave-13 F-1: explicitly required on the public interface (not duck-typed
-   * on the factory return). Every implementation of {@link Harness} MUST
-   * provide a resource-releasing `shutdown()` so callers can write defensive
-   * signal handlers that work across Harness variants.
+   * Explicitly required on the public interface (not duck-typed on the
+   * factory return). Every implementation of {@link Harness} MUST provide a
+   * resource-releasing `shutdown()` so callers can write defensive signal
+   * handlers that work across Harness variants.
    */
   shutdown(): Promise<void>;
 
   /**
    * Abort the running loop and shut down all services gracefully.
    *
-   * Wave-13 F-6: when omitted, falls back to {@link DRAIN_DEFAULT_TIMEOUT_MS}
-   * (30_000 ms). The default is exported alongside this interface so callers
-   * can reference it without repeating the literal.
+   * When `timeoutMs` is omitted, falls back to
+   * {@link DRAIN_DEFAULT_TIMEOUT_MS} (30_000 ms). The default is exported
+   * alongside this interface so callers can reference it without repeating
+   * the literal.
    */
   drain(timeoutMs?: number): Promise<void>;
 }

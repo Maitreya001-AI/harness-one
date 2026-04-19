@@ -2,9 +2,9 @@
 
 > 可观测性：Trace/Span 管理、成本追踪、预算告警、导出器、默认 redaction、safe-log 原语。
 
-## Wave-5A: Secure-by-default redaction
+## Secure-by-default redaction
 
-**默认启用**（T02/T03/T04）：
+**默认启用**：
 - `createLogger()` 无参默认 `useDefaultPattern: true`——scrub `api_key`/`token`/`password`/`authorization` 等
 - `createTraceManager()` 同上——span attributes、trace metadata、span events 默认 redacted
 - `langfuseExporter.exportSpan` 默认 `sanitize = sanitizeAttributes(attrs, defaultRedactor())`
@@ -13,7 +13,7 @@
 - Logger / TraceManager 接受 `redact: false`
 - Langfuse exporter 不接受 `sanitize: false`——必须提供**替代函数**（强制显式）
 
-**`infra/safe-log.ts`（T01）**：新增 `createDefaultLogger()`（redaction-on console 包装）+
+**`infra/safe-log.ts`**：提供 `createDefaultLogger()`（redaction-on console 包装）+
 `safeWarn(logger?, msg, meta)` / `safeError(logger?, msg, meta)` 消除 `logger ?? console.warn`
 boilerplate。
 
@@ -185,7 +185,7 @@ cost = (inputTokens/1000 * inputPrice) + (outputTokens/1000 * outputPrice)
 | `shouldExport?(trace)` | `endTrace` 时对该 exporter 询问是否导出此 trace（sampling / attribute 过滤） |
 | `shutdown?()` | `tm.dispose()` 时调用 |
 
-**全局 sampling（Wave-10 F12 更新）**：采样决策在 `startTrace()` 时刻做出（`Math.random() < rate`），结果存储在 trace context 的 `sampled: boolean` 字段上。`endTrace()` 尊重已存决策，不再重新掷骰。运行时通过 `setSamplingRate()` 调整仅影响新启动的 trace，已启动的 trace 不受影响。per-exporter `shouldExport?()` 优先级仍高于全局 sampling。
+**全局 sampling**：采样决策在 `startTrace()` 时刻做出（`Math.random() < rate`），结果存储在 trace context 的 `sampled: boolean` 字段上。`endTrace()` 尊重已存决策，不再重新掷骰。运行时通过 `setSamplingRate()` 调整仅影响新启动的 trace，已启动的 trace 不受影响。per-exporter `shouldExport?()` 优先级仍高于全局 sampling。
 
 **懒初始化容错**：`initialize()` 失败时错误通过 `onExportError` / logger 报告，但不会永久阻塞后续 exportSpan/exportTrace 调用——每次导出仍会尝试 awaitting 缓存的 `initialize()` promise（已 settled），避免 exporter 因初次连接失败从此下线。
 
@@ -325,10 +325,10 @@ function createCacheMonitor(config?: CacheMonitorConfig): CacheMonitor
 - **成本节约估算** —— `estimatedSavings = cacheReadTokens × (inputPrice - cacheReadPrice) / 1000`，下限为 0
 - **数据淘汰** —— 原始数据点超过 `maxBuckets × 10` 时，从最旧端淘汰
 
-## Wave-8 Production Hardening
+## Production Hardening
 
-1. **Lifecycle markReadyAfterHealthCheck()**：新增异步方法 `markReadyAfterHealthCheck()`，在状态转换为 ready 之前先运行所有已注册的健康检查，若任一组件状态为 `'down'` 则拒绝转换（reject），确保系统不会在组件异常时进入就绪状态。
-2. **成本追踪器防篡改**：`updateUsage()` 现在拒绝降低 token 计数的尝试（即 inputTokens 或 outputTokens 不允许减少），防止通过回溯性缩减用量来操控成本数据。
+1. **Lifecycle markReadyAfterHealthCheck()**：异步方法 `markReadyAfterHealthCheck()` 在状态转换为 ready 之前先运行所有已注册的健康检查，若任一组件状态为 `'down'` 则拒绝转换（reject），确保系统不会在组件异常时进入就绪状态。
+2. **成本追踪器防篡改**：`updateUsage()` 拒绝降低 token 计数的尝试（即 inputTokens 或 outputTokens 不允许减少），防止通过回溯性缩减用量来操控成本数据。
 
 ## 已知限制
 

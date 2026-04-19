@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { createHarnessLifecycle } from '../lifecycle.js';
 
-describe('createHarnessLifecycle (Wave-5D ARCH-6)', () => {
+describe('createHarnessLifecycle', () => {
   it('starts in init and tolerates health() before any component is registered', async () => {
     const lc = createHarnessLifecycle();
     expect(lc.status()).toBe('init');

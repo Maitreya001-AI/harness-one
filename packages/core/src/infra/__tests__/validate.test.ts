@@ -84,8 +84,8 @@ describe('requireUnitInterval', () => {
   });
 });
 
-describe('Wave-16 m3: consolidated callers route through infra/validate', () => {
-  // These witness-tests ensure that the subsystems that Wave-16 consolidated
+describe('consolidated callers route through infra/validate', () => {
+  // These witness-tests ensure that the subsystems that consolidated
   // keep delegating to the shared helpers. A regression that reintroduces a
   // bespoke inline guard will surface here via a divergent error message.
   it('admission-controller rejects non-integer maxInflight via the helper', async () => {

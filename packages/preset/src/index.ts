@@ -59,7 +59,7 @@ export function createHarness(config: HarnessConfig): Harness {
 export { createConfigFromEnv } from './env.js';
 
 // ---------------------------------------------------------------------------
-// T14 (Wave-5A): Fail-closed production entry
+// Fail-closed production entry
 // ---------------------------------------------------------------------------
 
 export { createSecurePreset } from './secure.js';

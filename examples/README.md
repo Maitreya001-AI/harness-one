@@ -1,6 +1,9 @@
 # harness-one Integration Examples
 
-These examples fall into two buckets:
+**Start here:** [`quickstart.ts`](quickstart.ts) — 20 LOC, single SDK, first
+streaming reply. Read this before anything else.
+
+Then pick a path:
 
 1. **External-dep integrations** — plug in a popular SDK through a harness-one
    interface. External deps never leak past the integration file.
@@ -53,7 +56,7 @@ Each file stands alone — no external SDK needed.
 | [`advanced/resilient-loop.ts`](advanced/resilient-loop.ts) | `createResilientLoop` — outer retry + summarize-on-fail |
 | [`resilience/fallback-adapter.ts`](resilience/fallback-adapter.ts) | `createFallbackAdapter` — cross-provider circuit breaker |
 | [`resilience/checkpoint-manager.ts`](resilience/checkpoint-manager.ts) | `createCheckpointManager` — snapshot / restore conversation state |
-| [`guardrails/pii-detector.ts`](guardrails/pii-detector.ts) | `createPIIDetector` (5th built-in, Wave-25) |
+| [`guardrails/pii-detector.ts`](guardrails/pii-detector.ts) | `createPIIDetector` — built-in PII detection |
 | [`guardrails/self-healing.ts`](guardrails/self-healing.ts) | `withSelfHealing` — block → retry-with-feedback |
 | [`observe/cache-monitor.ts`](observe/cache-monitor.ts) | `createCacheMonitor` — KV-cache hit rate tracking |
 | [`observe/cache-monitor-integration.ts`](observe/cache-monitor-integration.ts) | Cache monitor wired around a RAG query cache |

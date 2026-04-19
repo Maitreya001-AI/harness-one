@@ -642,7 +642,7 @@ describe('createAnthropicAdapter', () => {
       expect((toolChunks[1] as StreamChunk).toolCall!.arguments).toBe('"test"}');
     });
 
-    it('skips new tool calls beyond MAX_TOOL_CALLS limit (F16)', async () => {
+    it('skips new tool calls beyond MAX_TOOL_CALLS limit', async () => {
       // Generate 129 tool_use blocks — only the first 128 should produce tool_call_delta
       const events: unknown[] = [];
       for (let i = 0; i < 129; i++) {
@@ -675,7 +675,7 @@ describe('createAnthropicAdapter', () => {
       expect(toolChunks).toHaveLength(128);
     });
 
-    it('skips tool call arguments that would exceed maxToolArgBytes (F16)', async () => {
+    it('skips tool call arguments that would exceed maxToolArgBytes', async () => {
       // Use an explicit 1 MiB cap so the test stays self-contained and is
       // not coupled to the shared `MAX_TOOL_ARG_BYTES` default value.
       const cap = 1024 * 1024;
@@ -758,7 +758,7 @@ describe('createAnthropicAdapter', () => {
       );
     });
 
-    it('rethrows finalMessage() error as HarnessError with cause when no abort signal aborted (CQ-003)', async () => {
+    it('rethrows finalMessage() error as HarnessError with cause when no abort signal aborted', async () => {
       const mockStream = createMockStream([
         { type: 'content_block_start', content_block: { type: 'text' } },
         { type: 'content_block_delta', delta: { type: 'text_delta', text: 'Hello' } },
@@ -790,7 +790,7 @@ describe('createAnthropicAdapter', () => {
       }
     });
 
-    it('yields terminal zero-usage done chunk when signal was aborted (CQ-003)', async () => {
+    it('yields terminal zero-usage done chunk when signal was aborted', async () => {
       const mockStream = createMockStream([
         { type: 'content_block_start', content_block: { type: 'text' } },
         { type: 'content_block_delta', delta: { type: 'text_delta', text: 'Partial' } },
@@ -822,8 +822,8 @@ describe('createAnthropicAdapter', () => {
       });
     });
 
-    it('throws HarnessError when stream fails with non-abort error even if signal is aborted (H4)', async () => {
-      // H4: When finalMessage() rejects with a non-abort error (e.g. network
+    it('throws HarnessError when stream fails with non-abort error even if signal is aborted', async () => {
+      // When finalMessage() rejects with a non-abort error (e.g. network
       // error), the adapter must NOT silently return a zero-usage done chunk
       // just because the signal happens to be aborted. The error type, not the
       // signal state, determines whether the failure is recoverable.
@@ -969,7 +969,7 @@ describe('createAnthropicAdapter', () => {
   });
 
   // -------------------------------------------------------------------------
-  // F15: countTokens()
+  // countTokens()
   // -------------------------------------------------------------------------
   describe('countTokens()', () => {
     it('returns a reasonable heuristic count without custom tokenizer', async () => {
@@ -1012,11 +1012,11 @@ describe('createAnthropicAdapter', () => {
   // -------------------------------------------------------------------------
   // SPEC-005 / SPEC-014: LLMConfig.extra must be forwarded to provider
   //
-  // T05 (Wave-5A): As of T05, only keys in the Anthropic allow-list
+  // Only keys in the Anthropic allow-list
   // (`temperature`, `top_k`, `top_p`, `stop_sequences`, `thinking`, `metadata`,
   // `system`) are forwarded by default; unknown keys are filtered with a warn.
   // These tests therefore assert forwarding semantics using allow-listed keys.
-  // See `extra-allow-list.test.ts` for the full T05 contract (filter + strict).
+  // See `extra-allow-list.test.ts` for the full contract (filter + strict).
   // -------------------------------------------------------------------------
   describe('LLMConfig.extra forwarding (SPEC-005)', () => {
     it('forwards allow-listed config.extra keys into chat() request body', async () => {
@@ -1083,9 +1083,9 @@ describe('createAnthropicAdapter', () => {
   });
 
   // -------------------------------------------------------------------------
-  // CQ-027: logger injection routes warnings away from console.warn
+  // logger injection routes warnings away from console.warn
   // -------------------------------------------------------------------------
-  describe('logger config (CQ-027)', () => {
+  describe('logger config', () => {
     it('routes tool_use malformed JSON warning through custom logger', async () => {
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
       const fakeLogger = { warn: vi.fn(), error: vi.fn() };

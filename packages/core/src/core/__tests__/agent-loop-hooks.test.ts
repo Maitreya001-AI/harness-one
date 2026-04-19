@@ -1,5 +1,5 @@
 /**
- * Tests for ARCH-006: AgentLoopHook iteration-level instrumentation.
+ * Tests for AgentLoopHook iteration-level instrumentation.
  *
  * Pin the hook contract so subsequent refactors keep the four lifecycle
  * callbacks paired and ordered against the public AgentEvent stream.
@@ -31,7 +31,7 @@ async function drain(gen: AsyncGenerator<AgentEvent>): Promise<AgentEvent[]> {
   return out;
 }
 
-describe('AgentLoopHook (ARCH-006)', () => {
+describe('AgentLoopHook', () => {
   it('fires onIterationStart, onTokenUsage, onIterationEnd for a no-tool iteration', async () => {
     const hook: AgentLoopHook = {
       onIterationStart: vi.fn(),
@@ -101,7 +101,7 @@ describe('AgentLoopHook (ARCH-006)', () => {
     // The loop completed normally even though every hook threw.
     expect(events.some((e) => e.type === 'done')).toBe(true);
     expect(warn).toHaveBeenCalled();
-    // T10 (Wave-5A): the logger may additionally receive a one-time
+    // The logger may additionally receive a one-time
     // "no guardrail pipeline — security risk" warning. Filter that out so this
     // assertion stays focused on hook-failure routing (its original intent).
     const messages = warn.mock.calls

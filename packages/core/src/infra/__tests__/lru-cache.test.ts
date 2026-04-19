@@ -14,7 +14,7 @@ describe('LRUCache', () => {
       expect(() => new LRUCache<string, number>(-1)).toThrow('maxSize must be >= 1');
     });
 
-    it('CQ-032: throws HarnessError with INVALID_CONFIG code when maxSize < 1', () => {
+    it('throws HarnessError with INVALID_CONFIG code when maxSize < 1', () => {
       try {
         new LRUCache<string, number>(0);
         throw new Error('expected throw');
@@ -274,10 +274,10 @@ describe('LRUCache', () => {
     });
   });
 
-  // P2-23 (Wave-12): Property-style invariants for the LRU cache. Uses a
+  // Property-style invariants for the LRU cache. Uses a
   // deterministic seeded PRNG (mulberry32) rather than fast-check because
   // fast-check is not a project dependency.
-  describe('P2-23 (Wave-12): LRU cache invariants (property tests)', () => {
+  describe('LRU cache invariants (property tests)', () => {
     function mulberry32(seed: number): () => number {
       let a = seed >>> 0;
       return () => {
@@ -372,7 +372,7 @@ describe('LRUCache', () => {
     });
   });
 
-  describe('onEvict callback (Wave-18: unified across set/delete/clear)', () => {
+  describe('onEvict callback (unified across set/delete/clear)', () => {
     it('fires onEvict exactly once for each capacity-driven eviction', () => {
       const evicted: Array<[string, number]> = [];
       const cache = new LRUCache<string, number>(2, {

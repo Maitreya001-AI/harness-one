@@ -1,13 +1,13 @@
 /**
- * Tests for the OpenAI adapter provider-registry seal (T11).
+ * Tests for the OpenAI adapter provider-registry seal.
  *
  * Contract:
  *  - `sealProviders()` freezes the registry; subsequent `registerProvider`
  *    calls throw `HarnessError { code: HarnessErrorCode.PROVIDER_REGISTRY_SEALED }`.
  *  - `isProvidersSealed()` reports the current state.
  *  - Sealing is idempotent — calling it twice is a no-op.
- *  - `createOpenAIAdapter()` does NOT auto-seal (risk-assessor TECH-11-03
- *    decision — only explicit seal is supported in Wave 5A).
+ *  - `createOpenAIAdapter()` does NOT auto-seal — only explicit seal is
+ *    supported.
  *  - `createOpenAIAdapter()` continues to work after seal for already-
  *    registered providers (seal blocks new *registrations* only, not reads).
  *
@@ -46,7 +46,7 @@ async function loadFreshModule(): Promise<OpenAIModule> {
   return (await import('../index.js')) as OpenAIModule;
 }
 
-describe('OpenAI adapter — provider registry seal (T11)', () => {
+describe('OpenAI adapter — provider registry seal', () => {
   beforeEach(() => {
     // Every test starts from a clean module graph to avoid cross-test
     // contamination of the `_providersSealed` module singleton.
@@ -122,7 +122,7 @@ describe('OpenAI adapter — provider registry seal (T11)', () => {
     }
   });
 
-  it('createOpenAIAdapter() does NOT auto-seal the registry (explicit-only API per TECH-11-03)', async () => {
+  it('createOpenAIAdapter() does NOT auto-seal the registry (explicit-only API)', async () => {
     const mod = await loadFreshModule();
 
     // Build an adapter — this exercises `createOpenAIAdapter`'s init path.

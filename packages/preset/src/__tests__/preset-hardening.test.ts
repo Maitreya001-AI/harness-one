@@ -1,16 +1,15 @@
 /**
- * Wave-13 Track F — preset fixes.
+ * Preset hardening fixes.
  *
  * Covers:
- *  - F-1: Harness.shutdown is a required method on the Harness interface.
- *  - F-2: createHarness supplies a default adapterTimeoutMs to createAgentLoop
- *         and honors caller override (including explicit 0).
- *  - F-3: onSessionId callback throw is logged and swallowed (already wired;
- *         regressed-regression test).
- *  - F-4: HarnessConfig discriminator `type` compiles and narrows cleanly.
- *  - F-5: HarnessConfigBase is exported.
- *  - F-6: drain() default is driven by DRAIN_DEFAULT_TIMEOUT_MS (exported).
- *  - F-7: pricing validator error quotes the model name with backticks.
+ *  - Harness.shutdown is a required method on the Harness interface.
+ *  - createHarness supplies a default adapterTimeoutMs to createAgentLoop
+ *    and honors caller override (including explicit 0).
+ *  - onSessionId callback throw is logged and swallowed.
+ *  - HarnessConfig discriminator `type` compiles and narrows cleanly.
+ *  - HarnessConfigBase is exported.
+ *  - drain() default is driven by DRAIN_DEFAULT_TIMEOUT_MS (exported).
+ *  - pricing validator error quotes the model name with backticks.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -108,7 +107,7 @@ const baseConfig = {
   model: 'claude-sonnet-4-20250514',
 } as unknown as AnthropicHarnessConfig;
 
-describe('Wave-13 F: preset fixes', () => {
+describe('preset fixes', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.resetCapturedLoopConfig();
@@ -117,7 +116,7 @@ describe('Wave-13 F: preset fixes', () => {
   // -------------------------------------------------------------------------
   // F-1: shutdown on the Harness interface
   // -------------------------------------------------------------------------
-  describe('Wave-13 F-1: Harness.shutdown is a required interface method', () => {
+  describe('Harness.shutdown is a required interface method', () => {
     it('every Harness returned by createHarness exposes shutdown() as a function', () => {
       const h = createHarness(baseConfig);
       expect(typeof h.shutdown).toBe('function');
@@ -136,7 +135,7 @@ describe('Wave-13 F: preset fixes', () => {
   // -------------------------------------------------------------------------
   // F-2: adapterTimeoutMs default
   // -------------------------------------------------------------------------
-  describe('Wave-13 F-2: createHarness supplies default adapterTimeoutMs', () => {
+  describe('createHarness supplies default adapterTimeoutMs', () => {
     it('forwards DEFAULT_ADAPTER_TIMEOUT_MS when config.adapterTimeoutMs is unset', () => {
       createHarness(baseConfig);
       const captured = mocks.getCapturedLoopConfig();
@@ -159,7 +158,7 @@ describe('Wave-13 F: preset fixes', () => {
   // -------------------------------------------------------------------------
   // F-3: onSessionId swallow
   // -------------------------------------------------------------------------
-  describe('Wave-13 F-3: onSessionId callback throws are logged and swallowed', () => {
+  describe('onSessionId callback throws are logged and swallowed', () => {
     it('does not propagate a throwing onSessionId callback', async () => {
       const logged: unknown[] = [];
       const logger = {
@@ -185,7 +184,7 @@ describe('Wave-13 F: preset fixes', () => {
   // -------------------------------------------------------------------------
   // F-4: discriminator
   // -------------------------------------------------------------------------
-  describe('Wave-13 F-4: HarnessConfig discriminator narrows cleanly', () => {
+  describe('HarnessConfig discriminator narrows cleanly', () => {
     it('accepts optional `type` field on each variant without breaking existing callers', () => {
       // Compile-time check: each variant allows `type: 'adapter' | 'openai' | 'anthropic'`.
       const anthro: AnthropicHarnessConfig = {
@@ -225,7 +224,7 @@ describe('Wave-13 F: preset fixes', () => {
   // -------------------------------------------------------------------------
   // F-5: HarnessConfigBase export
   // -------------------------------------------------------------------------
-  describe('Wave-13 F-5: HarnessConfigBase is exported', () => {
+  describe('HarnessConfigBase is exported', () => {
     it('can be used as a reusable type alias in consumer code', () => {
       // Consumer code pattern — extending HarnessConfigBase requires it to be
       // exported from the preset. TypeScript resolves this at compile time;
@@ -240,7 +239,7 @@ describe('Wave-13 F: preset fixes', () => {
   // -------------------------------------------------------------------------
   // F-6: drain default via exported constant
   // -------------------------------------------------------------------------
-  describe('Wave-13 F-6: drain() default timeout', () => {
+  describe('drain() default timeout', () => {
     it('exports DRAIN_DEFAULT_TIMEOUT_MS = 30_000', () => {
       expect(DRAIN_DEFAULT_TIMEOUT_MS).toBe(30_000);
     });
@@ -255,7 +254,7 @@ describe('Wave-13 F: preset fixes', () => {
   // -------------------------------------------------------------------------
   // F-7: pricing error message quoting
   // -------------------------------------------------------------------------
-  describe('Wave-13 F-7: pricing validator error quotes model with backticks', () => {
+  describe('pricing validator error quotes model with backticks', () => {
     it('throws HarnessError with backtick-quoted model name', () => {
       expect(() =>
         createHarness({

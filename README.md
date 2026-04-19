@@ -19,10 +19,26 @@ Harness engineering is the discipline of building robust, production-grade infra
 
 ## Quick Start
 
-> **Production users**: prefer `createSecurePreset` over `createHarness`. It
-> fail-closed defaults redaction, guardrail pipeline, tool capability limits,
-> and `sealProviders()`. See the **Secure preset** section below. All packages
-> are pre-release (`0.1.0`, not yet on npm); pin by SHA if you need stability.
+> **Shortest path:** see [`examples/quickstart.ts`](./examples/quickstart.ts)
+> — 20 LOC, one SDK, first streaming reply. Everything below is the long
+> form of the same pattern.
+
+### `createSecurePreset` vs `createHarness` vs `createAgentLoop`
+
+Three entry points, graduated by how much wiring they do for you. Pick the
+one that matches how much control you need:
+
+| Entry point | Package | What it gives you | Pick when |
+|---|---|---|---|
+| **`createSecurePreset`** | `@harness-one/preset` | Everything in `createHarness` **plus** fail-closed guardrail pipeline, default redaction, tool capability allow-list (`['readonly']`), sealed provider registry | Production. You want secure defaults without thinking about each knob. |
+| **`createHarness`** | `@harness-one/preset` | Core + all subsystems pre-wired (adapter, logger, traceManager, sessionManager, memory, cost tracker, lifecycle). No mandatory security posture. | Development / prototypes where you want everything connected but will flip security flags explicitly. |
+| **`createAgentLoop`** | `harness-one` | Just the loop + whatever ports you pass in. Nothing else is wired. | À la carte. You only want the loop; you'll compose other primitives yourself. |
+
+**Not sure? Start with `createSecurePreset`.** Swap down a level only when a
+concrete need forces you to.
+
+All packages are pre-release (`0.1.0`, not yet on npm); pin by SHA if you
+need stability.
 
 Two install paths:
 
@@ -100,6 +116,46 @@ import {
 import { AgentLoop } from 'harness-one/core';
 import { defineTool, createRegistry, toolSuccess } from 'harness-one/tools';
 import { createPipeline, createInjectionDetector, runInput } from 'harness-one/guardrails';
+```
+
+### Import-path cheatsheet
+
+Not sure which subpath owns a symbol? This table covers the 95% cases.
+The **root barrel** (`'harness-one'`) re-exports 18 curated value symbols;
+everything else is on a submodule path only. Types are re-exported
+liberally from the root (zero runtime cost).
+
+| Subpath | Key exports (factories in bold) |
+|---|---|
+| `'harness-one'` (root) | **`createAgentLoop`**, **`AgentLoop`**, **`createResilientLoop`**, **`createMiddlewareChain`**, **`createPipeline`**, **`createTraceManager`**, **`createCostTracker`**, **`createLogger`**, **`createSessionManager`**, **`defineTool`**, **`createRegistry`**, **`disposeAll`**, `HarnessError`, `HarnessErrorCode`, `MaxIterationsError`, `AbortedError`, `ToolValidationError`, `TokenBudgetExceededError` |
+| `harness-one/core` | `AgentLoop`, `AgentAdapter`, `Message`, `ChatParams`, `ChatResponse`, `AgentEvent`, `createTrustedSystemMessage` |
+| `harness-one/advanced` | **`createMiddlewareChain`**, **`createResilientLoop`**, **`createFallbackAdapter`**, **`toSSEStream`**, **`categorizeAdapterError`**, **`StreamAggregator`**, `createJsonOutputParser`, `createSequentialStrategy`, `createParallelStrategy`, `pruneConversation`, `computeBackoffMs` |
+| `harness-one/tools` | **`defineTool`**, **`createRegistry`**, **`toolSuccess`**, **`toolError`**, `ToolMiddleware` |
+| `harness-one/guardrails` | **`createPipeline`**, **`createInjectionDetector`**, **`createContentFilter`**, **`createRateLimiter`**, **`createSchemaValidator`**, **`createPIIDetector`**, **`withSelfHealing`**, **`runRagContext`**, `runInput`, `runOutput` |
+| `harness-one/observe` | **`createTraceManager`**, **`createCostTracker`**, **`createLogger`**, **`createFailureTaxonomy`**, **`createCacheMonitor`**, **`createHarnessLifecycle`**, **`createNoopMetricsPort`**, `MetricsPort`, `InstrumentationPort`, `TraceExporter` |
+| `harness-one/session` | **`createSessionManager`**, **`createInMemoryConversationStore`**, `AuthContext` |
+| `harness-one/memory` | **`createInMemoryStore`**, **`createFsMemoryStore`**, **`createRelay`**, **`runMemoryStoreConformance`** |
+| `harness-one/context` | **`createBudget`**, **`packContext`**, **`compress`**, **`compactIfNeeded`**, **`registerTokenizer`**, **`countTokens`** |
+| `harness-one/prompt` | **`createPromptBuilder`**, **`createPromptRegistry`**, **`createSkillEngine`**, **`createDisclosureManager`** |
+| `harness-one/orchestration` | **`createOrchestrator`**, **`createAgentPool`**, **`createHandoff`**, **`createContextBoundary`**, **`createMessageQueue`** |
+| `harness-one/rag` | **`createRAGPipeline`**, **`createInMemoryRetriever`** |
+| `harness-one/redact` | **`createRedactor`**, **`redactValue`**, **`sanitizeAttributes`**, `REDACTED_VALUE`, `DEFAULT_SECRET_PATTERN` |
+| `harness-one/infra` | **`createAdmissionController`**, **`unrefTimeout`**, **`unrefInterval`** |
+| `harness-one/evolve-check` | **`createArchitectureChecker`**, `noCircularDepsRule`, `layerDependencyRule` |
+| `harness-one/testing` | **`createMockAdapter`**, **`createFailingAdapter`**, **`createStreamingMockAdapter`**, **`createErrorStreamingMockAdapter`** — **test-only**, never import from production code |
+| `@harness-one/preset` | **`createSecurePreset`**, **`createHarness`**, **`createShutdownHandler`** |
+| `@harness-one/devkit` | **`createEvalRunner`**, **`createRelevanceScorer`**, **`createComponentRegistry`**, **`createDriftDetector`** |
+| `@harness-one/cli` | **`parseInitArgs`**, **`renderTemplates`** (library form of the `harness-one` binary) |
+| `@harness-one/anthropic` / `@harness-one/openai` | Provider `AgentAdapter` factories |
+| `@harness-one/ajv` / `@harness-one/tiktoken` | `SchemaValidator` / `Tokenizer` providers |
+| `@harness-one/redis` / `@harness-one/langfuse` / `@harness-one/opentelemetry` | `MemoryStore` / `TraceExporter` providers |
+
+When in doubt, import from the root — types and the 18 curated factories
+resolve cleanly. Drop to a subpath only for tree-shaking or when the root
+doesn't carry the value (e.g. `toSSEStream` lives on `/advanced`).
+
+```typescript
+// Continuing the example:
 
 // Define a tool
 const calculator = defineTool<{ a: number; b: number }>({
@@ -876,27 +932,27 @@ const loop = new AgentLoop({
 });
 ```
 
-**Event bus removal** (Wave-5C): `harness.eventBus` was a dead stub and has been **removed** entirely. Each module exposes its own `onEvent()` subscription (sessions, orchestrator, traces); use those for new code.
+**No central event bus**: `harness.eventBus` does not exist — each module exposes its own `onEvent()` subscription (sessions, orchestrator, traces); use those for new code.
 
 **AgentLoop class + factory coexist**: both `new AgentLoop(...)` and `createAgentLoop()` are first-class — pick whichever you prefer. The factory form is the style used across the rest of the `createX()` surface.
 
 **Harness.initialize()** — optional warmup that pre-initialises exporters and tokenizers behind an idempotent latch. `harness.run()` still works without it but may pay a cold-start latency on the first call.
 
-**harness-one/essentials removed** (Wave-5C): the curated `harness-one/essentials` subpath has been removed as redundant with the trimmed root barrel. Import the symbols you need directly from `harness-one` or the relevant submodule (`harness-one/core`, `harness-one/observe`, …).
+**No `/essentials` subpath**: there is no `harness-one/essentials`. Import the symbols you need directly from `harness-one` (root barrel) or the relevant submodule (`harness-one/core`, `harness-one/observe`, …).
 
-**`harness-one/testing` added** (Wave-27): mock `AgentAdapter` factories (`createMockAdapter`, `createFailingAdapter`, `createStreamingMockAdapter`, `createErrorStreamingMockAdapter`) moved off `harness-one/advanced` onto their own subpath. `/advanced` now carries only composable production primitives (middleware, resilient-loop, fallback-adapter, SSE, validators, backoff, output parsers, trusted system-message, execution strategies). See [`docs/architecture/17-testing.md`](./docs/architecture/17-testing.md) for the rationale.
+**`harness-one/testing` subpath**: mock `AgentAdapter` factories (`createMockAdapter`, `createFailingAdapter`, `createStreamingMockAdapter`, `createErrorStreamingMockAdapter`) live here. `harness-one/advanced` carries only composable production primitives (middleware, resilient-loop, fallback-adapter, SSE, validators, backoff, output parsers, trusted system-message, execution strategies). See [`docs/architecture/17-testing.md`](./docs/architecture/17-testing.md) for the rationale.
 
-**Root barrel trimmed to 18 symbols** (Wave-5C): the unscoped `harness-one` root re-exports only the 18 curated user-journey value symbols (the original ADR mapped 19 slots; slot 11 `createSecurePreset` was dropped per R-01 to break the `harness-one` ↔ `@harness-one/preset` cycle). Other factories (`toSSEStream`, `categorizeAdapterError`, …) live on subpaths only. See [`MIGRATION.md`](./MIGRATION.md) + `git log` for the full inventory (`CHANGELOG.md` is intentionally empty pre-release).
+**Root barrel is 18 symbols**: the unscoped `harness-one` root re-exports only 18 curated user-journey value symbols. `createSecurePreset` intentionally lives on `@harness-one/preset` (not the root barrel) to avoid a `harness-one` ↔ `@harness-one/preset` dependency cycle. Other factories (`toSSEStream`, `categorizeAdapterError`, …) live on subpaths only. See [`MIGRATION.md`](./MIGRATION.md) + `git log` for the authoritative changelog (`CHANGELOG.md` is intentionally empty pre-release).
 
-**`HarnessErrorCode` is closed and module-prefixed** (Wave-5C): `HarnessError.code` is no longer widened with `(string & {})` and members renamed (`UNKNOWN` → `CORE_UNKNOWN`, `MAX_ITERATIONS` → `CORE_MAX_ITERATIONS`, `GUARDRAIL_VIOLATION` → `GUARD_VIOLATION`, etc.). Adapter-specific codes use `HarnessErrorCode.ADAPTER_CUSTOM` + `details.adapterCode`. Always **value-import** (`import { HarnessErrorCode }`) — `import type` silently breaks `Object.values()`; the lint rule `harness-one/no-type-only-harness-error-code` catches this. Full rename mapping in [`CHANGELOG.md`](./CHANGELOG.md).
+**`HarnessErrorCode` is closed and module-prefixed**: `HarnessError.code` is not widened with `(string & {})`; every member is prefixed by module (`CORE_UNKNOWN`, `CORE_MAX_ITERATIONS`, `GUARD_VIOLATION`, etc.). Adapter-specific codes use `HarnessErrorCode.ADAPTER_CUSTOM` + `details.adapterCode`. Always **value-import** (`import { HarnessErrorCode }`) — `import type` silently breaks `Object.values()`; the lint rule `harness-one/no-type-only-harness-error-code` catches this.
 
-**`@harness-one/cli` and `@harness-one/devkit` extracted** (Wave-5C): the `harness-one/cli` subpath moved to [`@harness-one/cli`](./packages/cli) (use `pnpm dlx @harness-one/cli init` or install locally). `harness-one/eval` and `harness-one/evolve` moved to [`@harness-one/devkit`](./packages/devkit); the runtime architecture-rule engine remains in core under `harness-one/evolve-check`.
+**CLI + devkit live in sibling packages**: the CLI ships as [`@harness-one/cli`](./packages/cli) (use `pnpm dlx @harness-one/cli init` or install locally); eval + evolve dev-tooling ships as [`@harness-one/devkit`](./packages/devkit). The runtime architecture-rule engine remains in core under `harness-one/evolve-check`.
 
-**Trust-boundary typing + multi-tenant Redis** (Wave-5E): `SystemMessage` carries an optional `_trust` brand minted by `createTrustedSystemMessage()` from `harness-one/core`; restored messages without the brand are downgraded to `user` so a session-store write cannot elevate authority. `RedisStoreConfig.tenantId` is required for multi-tenant deployments (one-shot warn if defaulted) — keys flip to `prefix:{tenantId}:id`. Memory entries enforce a 1 MiB content / 16 KiB metadata cap and reserve `_version`/`_trust` keys. `createContextBoundary` rejects policy prefixes without a trailing `.`/`/`. `HandoffManager.createSendHandle(from)` mints sealed sender handles; payloads cap at 64 KiB / depth 16. Tool schemas declaring `additionalProperties: false` are now actually enforced. Per-chunk RAG context scanning ships as `runRagContext` from `harness-one/guardrails`.
+**Trust-boundary typing + multi-tenant Redis**: `SystemMessage` carries an optional `_trust` brand minted by `createTrustedSystemMessage()` from `harness-one/core`; restored messages without the brand are downgraded to `user` so a session-store write cannot elevate authority. `RedisStoreConfig.tenantId` is required for multi-tenant deployments (one-shot warn if defaulted) — keys flip to `prefix:{tenantId}:id`. Memory entries enforce a 1 MiB content / 16 KiB metadata cap and reserve `_version`/`_trust` keys. `createContextBoundary` rejects policy prefixes without a trailing `.`/`/`. `HandoffManager.createSendHandle(from)` mints sealed sender handles; payloads cap at 64 KiB / depth 16. Tool schemas declaring `additionalProperties: false` are enforced at runtime. Per-chunk RAG context scanning ships as `runRagContext` from `harness-one/guardrails`.
 
-**Adapter logger + crypto IDs + unref timers** (Wave-5F): `@harness-one/anthropic` / `@harness-one/openai` / `@harness-one/ajv` / `@harness-one/redis` now route their default logger through core's redaction-enabled `createDefaultLogger()` (no more bare `console.warn`). `@harness-one/langfuse` inline warnings flow through `safeWarn`. `harness-one/context` checkpoint IDs use `prefixedSecureId('cp')` (crypto.randomBytes); trace sampling uses `crypto.randomInt`. The new `harness-one/infra` `unrefTimeout` / `unrefInterval` helpers replace the ad-hoc `.unref?.()` pattern. `@harness-one/preset` pricing validation rejects NaN/Infinity alongside negatives.
+**Adapter logger + crypto IDs + unref timers**: `@harness-one/anthropic` / `@harness-one/openai` / `@harness-one/ajv` / `@harness-one/redis` route their default logger through core's redaction-enabled `createDefaultLogger()` (never bare `console.warn`). `@harness-one/langfuse` inline warnings flow through `safeWarn`. `harness-one/context` checkpoint IDs use `prefixedSecureId('cp')` (crypto.randomBytes); trace sampling uses `crypto.randomInt`. The `harness-one/infra` `unrefTimeout` / `unrefInterval` helpers replace the ad-hoc `.unref?.()` pattern. `@harness-one/preset` pricing validation rejects NaN/Infinity alongside negatives.
 
-**MetricsPort + lifecycle state machine + AdmissionController** (Wave-5D first pass): three vendor-neutral primitives shipping on subpaths.
+**MetricsPort + lifecycle state machine + AdmissionController**: three vendor-neutral primitives shipping on subpaths.
 
 ```ts
 import {
@@ -918,7 +974,6 @@ await admission.withPermit('tenant-123', async () => {
 });
 ```
 
-The four bigger 5D items — `CostTracker` consolidation, conversation-store reconciler, Redis-backed cross-process token bucket, and demoting `@harness-one/langfuse` to a secondary `TraceExporter` — are deferred to **5D.1** pending PRD + ADR competition.
 
 **AgentLoopHook** — pass an array of hooks in `AgentLoopConfig.hooks` to receive `onIterationStart` / `onToolCall` / `onTokenUsage` / `onIterationEnd` callbacks without subscribing to `AgentEvent`. Hook errors are swallowed through the injected logger and never break the loop.
 
@@ -944,11 +999,11 @@ The `init` command creates working starter files in a `harness/` directory. The 
 ```
                     +-----------+
                     |   infra   |  <- JSON Schema, IDs, LRU, async-lock, timers, safe-log,
-                    +-----+-----+      AdmissionController (Wave-5D)
+                    +-----+-----+      AdmissionController
                           |
                     +-----+-----+
                     |   core    |  <- shared types + AgentLoop + HarnessError(Code)
-                    +-----+-----+      + TrustedSystemMessage helpers (Wave-5E)
+                    +-----+-----+      + TrustedSystemMessage helpers
                           |
   +--------+--------+-----+-----+--------+--------+--------+--------+----------------+---------------+
   |        |        |     |     |        |        |        |        |                |               |
@@ -958,14 +1013,13 @@ context  prompt   tools   guardrails  observe  session  memory    rag    evolve-
                                        v                  v
                               MetricsPort +            fs-io
                               HarnessLifecycle
-                              (Wave-5D)
 ```
 
-Sibling packages (extracted from core in Wave-5C):
+Sibling packages:
 
 ```
-@harness-one/cli      <- harness-one CLI binary (was `harness-one/cli`)
-@harness-one/devkit   <- eval + evolve dev-tools (was `harness-one/eval` + `/evolve`)
+@harness-one/cli      <- harness-one CLI binary
+@harness-one/devkit   <- eval + evolve dev-tools
 @harness-one/preset   <- batteries-included `createSecurePreset` / `createHarness`
 ```
 
@@ -998,12 +1052,15 @@ Dependency rules (enforced by `harness-one/evolve-check`):
 | 6. Observability | `observe` | Tracing, spans, cost tracking, budget alerts |
 | 7. Session Management | `session` | TTL, LRU eviction, locking, garbage collection |
 | 8. Memory & Persistence | `memory` | Graded storage, sessionId filter, atomic fs writes, cross-context relay |
-| 9. Evaluation | `@harness-one/devkit` (since Wave-5C) | Scorers, quality gates, generator-evaluator, flywheel |
-| 10. Evolution | `@harness-one/devkit` + `harness-one/evolve-check` (split in Wave-5C) | Component registry, drift detection (devkit) + architecture rules (core) |
-| 11. Multi-Agent Orchestration | `orchestration` | AgentPool, Handoff (sealed `SendHandle` + 64 KiB cap, Wave-5E), MessageTransport, ContextBoundary (segment-aware, Wave-5E), MessageQueue |
-| 12. RAG Pipeline | `rag` + `runRagContext` (Wave-5E) | Document loading, chunking, embedding, retrieval, token estimates, per-chunk guardrail scanning |
+| 9. Evaluation | `@harness-one/devkit` | Scorers, quality gates, generator-evaluator, flywheel |
+| 10. Evolution | `@harness-one/devkit` + `harness-one/evolve-check` | Component registry, drift detection (devkit) + architecture rules (core) |
+| 11. Multi-Agent Orchestration | `orchestration` | AgentPool, Handoff (sealed `SendHandle` + 64 KiB cap), MessageTransport, ContextBoundary (segment-aware), MessageQueue |
+| 12. RAG Pipeline | `rag` + `runRagContext` | Document loading, chunking, embedding, retrieval, token estimates, per-chunk guardrail scanning |
 
 ## Troubleshooting
+
+See [`docs/guides/troubleshooting.md`](./docs/guides/troubleshooting.md)
+for the full error-code table and common foot-guns. Highlights:
 
 - **Fallback adapter never recovers to primary** — by design. The breaker advances one-way. See [`docs/guides/fallback.md`](./docs/guides/fallback.md) for periodic-reset and active-health-check patterns.
 - **Fallback switched but I have no logs** — there is no `adapter_switched` event on `AgentLoop`. Wrap each inner adapter to log via `categorizeAdapterError()`; see `examples/observe/error-handling.ts`.

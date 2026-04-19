@@ -1,5 +1,5 @@
 /**
- * Wave-13 Track B: agent-pool observability tests (B-1..B-4).
+ * agent-pool observability tests (B-1..B-4).
  *
  * Covers:
  *  - B-1: queue-depth debug log + gauge on `acquireAsync()` queueing, plus
@@ -121,7 +121,7 @@ function makeOkFactory(): () => AgentLoop {
     });
 }
 
-describe('AgentPool — Wave-13 Track B observability', () => {
+describe('AgentPool — Track B observability', () => {
   let pool: ReturnType<typeof createAgentPool> | undefined;
 
   afterEach(async () => {
@@ -131,8 +131,8 @@ describe('AgentPool — Wave-13 Track B observability', () => {
     }
   });
 
-  describe('Wave-13 B-1: acquireAsync queue-depth observability', () => {
-    it('Wave-13 B-1: emits debug log + gauge when a request is queued', async () => {
+  describe('acquireAsync queue-depth observability', () => {
+    it('emits debug log + gauge when a request is queued', async () => {
       const logSpy = makeLoggerSpy();
       const metricsSpy = makeMetricsSpy();
       pool = createAgentPool({
@@ -170,7 +170,7 @@ describe('AgentPool — Wave-13 Track B observability', () => {
       await pendingP;
     });
 
-    it('Wave-13 B-1: emits warn + counter before throwing POOL_QUEUE_FULL', async () => {
+    it('emits warn + counter before throwing POOL_QUEUE_FULL', async () => {
       const logSpy = makeLoggerSpy();
       const metricsSpy = makeMetricsSpy();
       pool = createAgentPool({
@@ -202,7 +202,7 @@ describe('AgentPool — Wave-13 Track B observability', () => {
       ]);
     });
 
-    it('Wave-13 B-1: no observability traffic when logger/metrics absent (no throw)', async () => {
+    it('no observability traffic when logger/metrics absent (no throw)', async () => {
       pool = createAgentPool({ factory: makeOkFactory(), max: 1 });
       const held = pool.acquire();
       const pendingP = pool.acquireAsync(60_000);
@@ -213,8 +213,8 @@ describe('AgentPool — Wave-13 Track B observability', () => {
     });
   });
 
-  describe('Wave-13 B-2: resize observability', () => {
-    it('Wave-13 B-2: emits info log + size gauge on resize()', () => {
+  describe('resize observability', () => {
+    it('emits info log + size gauge on resize()', () => {
       const logSpy = makeLoggerSpy();
       const metricsSpy = makeMetricsSpy();
       pool = createAgentPool({
@@ -244,7 +244,7 @@ describe('AgentPool — Wave-13 Track B observability', () => {
       });
     });
 
-    it('Wave-13 B-2: trim path also logs + emits gauge', () => {
+    it('trim path also logs + emits gauge', () => {
       const logSpy = makeLoggerSpy();
       const metricsSpy = makeMetricsSpy();
       pool = createAgentPool({
@@ -266,8 +266,8 @@ describe('AgentPool — Wave-13 Track B observability', () => {
     });
   });
 
-  describe('Wave-13 B-3: dispose-error observability', () => {
-    it('Wave-13 B-3: emits warn + counter when an agent.dispose() rejects', async () => {
+  describe('dispose-error observability', () => {
+    it('emits warn + counter when an agent.dispose() rejects', async () => {
       const logSpy = makeLoggerSpy();
       const metricsSpy = makeMetricsSpy();
       const factory = makeFailingDisposeFactory();
@@ -309,7 +309,7 @@ describe('AgentPool — Wave-13 Track B observability', () => {
       pool = undefined;
     });
 
-    it('Wave-13 B-3: dispose error still increments stats.disposeErrors for back-compat', async () => {
+    it('dispose error still increments stats.disposeErrors for back-compat', async () => {
       const factory = makeFailingDisposeFactory();
       const wrappedFactory = (): AgentLoop => {
         const loop = factory();
@@ -327,8 +327,8 @@ describe('AgentPool — Wave-13 Track B observability', () => {
     });
   });
 
-  describe('Wave-13 B-4: acquireAsync POOL_TIMEOUT span event', () => {
-    it('Wave-13 B-4: attaches pool_acquire_timeout span event before POOL_TIMEOUT rejection', async () => {
+  describe('acquireAsync POOL_TIMEOUT span event', () => {
+    it('attaches pool_acquire_timeout span event before POOL_TIMEOUT rejection', async () => {
       const addSpanEvent = vi.fn();
       const traceManager = {
         addSpanEvent,
@@ -363,7 +363,7 @@ describe('AgentPool — Wave-13 Track B observability', () => {
       expect((event as { attributes: Record<string, unknown> }).attributes).toHaveProperty('queue_depth');
     });
 
-    it('Wave-13 B-4: no span event when traceManager is absent', async () => {
+    it('no span event when traceManager is absent', async () => {
       pool = createAgentPool({ factory: makeOkFactory(), max: 1, poolId: 'test-pool-b4-notrace' });
       pool.acquire();
       await expect(
@@ -372,7 +372,7 @@ describe('AgentPool — Wave-13 Track B observability', () => {
       // No assertion beyond "didn't throw a different error": absence is the test.
     });
 
-    it('Wave-13 B-4: no span event when spanId is absent (even with traceManager)', async () => {
+    it('no span event when spanId is absent (even with traceManager)', async () => {
       const addSpanEvent = vi.fn();
       const traceManager = { addSpanEvent } as unknown as TraceManager;
       pool = createAgentPool({
@@ -387,7 +387,7 @@ describe('AgentPool — Wave-13 Track B observability', () => {
       expect(addSpanEvent).not.toHaveBeenCalled();
     });
 
-    it('Wave-13 B-4: span event failure does not block POOL_TIMEOUT rejection', async () => {
+    it('span event failure does not block POOL_TIMEOUT rejection', async () => {
       const traceManager = {
         addSpanEvent: () => {
           throw new Error('trace boom');

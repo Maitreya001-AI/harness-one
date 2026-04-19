@@ -1,7 +1,6 @@
 # Testing（`harness-one/testing`）
 
-> Wave-27 从 `/advanced` 拆出的独立子路径。给**测试代码**用的 mock
-> `AgentAdapter` 工厂集合。
+> 独立子路径。给**测试代码**用的 mock `AgentAdapter` 工厂集合。
 
 ## 定位
 
@@ -59,13 +58,8 @@ import {
   resilient-loop / sse-stream / multi-agent）通过 `harness-one/testing`
   消费。
 
-## 迁移
+## Import
 
-从 `harness-one/advanced` 迁过来只需要改 import：
-
-```diff
--import { createMockAdapter } from 'harness-one/advanced';
-+import { createMockAdapter } from 'harness-one/testing';
+```ts
+import { createMockAdapter } from 'harness-one/testing';
 ```
-
-API 形状与 Wave-26 完全一致，无行为变更。

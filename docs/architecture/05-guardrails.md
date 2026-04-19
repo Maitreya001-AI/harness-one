@@ -2,7 +2,7 @@
 
 > 安全护栏：Pipeline 编排、自愈重试、5 个内置护栏，AgentLoop 强制 hook。
 
-## Wave-5A: AgentLoop 强制 hook 点（T10）
+## AgentLoop 强制 hook 点
 
 `AgentLoopConfig.inputPipeline?: GuardrailPipeline` 和 `outputPipeline?: GuardrailPipeline`。
 每轮迭代固定顺序：
@@ -64,7 +64,7 @@ function createPipeline(config: {
   failClosed?: boolean;  // 默认 true
   onEvent?: (event: GuardrailEvent) => void;
   maxResults?: number;   // 限制 PipelineResult.results 数组长度，默认不限制
-  totalTimeoutMs?: number; // Wave-8: 所有护栏的总挂钟超时，默认 30s
+  totalTimeoutMs?: number; // 所有护栏的总挂钟超时，默认 30s
 }): GuardrailPipeline
 ```
 
@@ -92,7 +92,7 @@ function withSelfHealing(config: {
 ```ts
 function createRateLimiter(config: {
   max: number; windowMs: number; keyFn?: (ctx) => string; maxKeys?: number;
-  distributed?: boolean;  // Wave-6: throws CORE_INVALID_CONFIG (use @harness-one/redis)
+  distributed?: boolean;  // throws CORE_INVALID_CONFIG (use @harness-one/redis)
   bucketMs?: number;      // PERF-012: time-bucketed counting for high-volume keys
   onEviction?: (evicted: { key: string; lastSeen: number }) => void;  // SEC-013: LRU flood detection
 }): { name: string; guard: Guardrail }
@@ -135,12 +135,12 @@ createInjectionDetector 的标准化流程：
 1. 移除零宽字符（U+200B 等）
 2. NFKC Unicode 归一化
 3. 西里尔字母同形字映射（a/e/o/c/p/y/x/i）
-4. 阿拉伯语同形字映射（ا→a、ھ→h、ە→e）（Wave-8 新增）
+4. 阿拉伯语同形字映射（ا→a、ھ→h、ە→e）
 5. 空白归一化
 6. 移除 Markdown 格式字符
 7. 按灵敏度级别匹配模式：low（9 个精确模式）→ medium（+4 个模糊模式 + base64 检测 + 数学字母数字 Unicode 块检测）→ high（+5 个激进模式）
 
-内容长度超过 100KB 时，注入检测采样前缀 + 中段 + 后缀三段进行扫描（Wave-8 改进，此前仅前缀+后缀），避免对超大输入进行全量正则匹配，同时关闭中段载荷绕过漏洞。
+内容长度超过 100KB 时，注入检测采样前缀 + 中段 + 后缀三段进行扫描，避免对超大输入进行全量正则匹配，同时关闭中段载荷绕过漏洞。
 
 ### 速率限制
 
@@ -185,17 +185,17 @@ key 检测要求键值前有 `=` / `:` / `"` / 空白等语法锚点，避免讨
 
 ## 设计决策
 
-1. **Fail-Closed 默认**——安全优先：护栏出错时拦截请求而非放行。Fail-open 模式下，错误产生的 allow verdict 附带 `reason` 字段以区分真正的 allow（Wave-7）
+1. **Fail-Closed 默认**——安全优先：护栏出错时拦截请求而非放行。Fail-open 模式下，错误产生的 allow verdict 附带 `reason` 字段以区分真正的 allow
 2. **Verdict 三态**——allow（可选 reason）/block/modify 覆盖所有场景，modify 允许护栏自行修改内容
-3. **Unicode-aware 词边界**——内容过滤器使用 `\p{L}\p{N}` Unicode 属性替代 ASCII `\w`，正确处理非 ASCII 关键词（如"café"）的词边界检测（Wave-7）
+3. **Unicode-aware 词边界**——内容过滤器使用 `\p{L}\p{N}` Unicode 属性替代 ASCII `\w`，正确处理非 ASCII 关键词（如"café"）的词边界检测
 3. **Pipeline 与护栏分离**——护栏是纯函数，Pipeline 负责编排，关注点分离
 4. **branded GuardrailPipeline**——防止用户直接构造内部结构
 
-## Wave-8 Production Hardening
+## 生产强化
 
-1. **中段载荷注入采样**：注入检测器对超大内容（>100k 字符）现在采样前缀 + 中段 + 后缀三段进行扫描，而非仅前缀+后缀。此前攻击者可将注入载荷嵌入大内容的中段来绕过检测，该漏洞已关闭。
-2. **阿拉伯语同形字覆盖**：注入标准化流程新增阿拉伯语同形字映射（ا→a、ھ→h、ە→e），扩展了原有的西里尔字母同形字防御范围。
-3. **Pipeline 总超时**：`createPipeline()` 新增 `totalTimeoutMs` 配置项（默认 30s），对所有护栏的总挂钟时间设置上限，防止单个或多个护栏组合导致的无界管线延迟。
+1. **中段载荷注入采样**：注入检测器对超大内容（>100k 字符）采样前缀 + 中段 + 后缀三段进行扫描，而非仅前缀+后缀，防止攻击者将注入载荷嵌入大内容中段绕过检测。
+2. **阿拉伯语同形字覆盖**：注入标准化流程含阿拉伯语同形字映射（ا→a、ھ→h、ە→e），补充西里尔字母同形字防御。
+3. **Pipeline 总超时**：`createPipeline()` 支持 `totalTimeoutMs` 配置项（默认 30s），对所有护栏的总挂钟时间设置上限，防止单个或多个护栏组合导致的无界管线延迟。
 
 ## 已知限制
 

@@ -40,14 +40,9 @@ function primitiveKey(schema: unknown): string {
 }
 
 /**
- * Wave-13 D-12: hoist the JSON-parser regex literals to module-level
- * constants so they compile exactly once per process instead of on every
- * `parse()` call. The parser is on the hot path for structured-output
- * workflows; the previous inline literals forced the JS engine to allocate
- * a fresh `RegExp` per parse (or, at best, rely on engine-level caching
- * which is not guaranteed across V8 versions).
- *
- * Patterns are PRE-D-12 identical; only their lifetime changed.
+ * Module-scoped JSON-parser regex literals. The parser is on the hot
+ * path for structured-output workflows; hoisting the literals compiles
+ * each regex exactly once per process instead of per `parse()` call.
  */
 const CRLF_RE = /\r\n/g;
 const CODE_BLOCK_RE = /```(?:json)?\s*([\s\S]*?)```/;
@@ -132,16 +127,14 @@ export function createJsonOutputParser<T = unknown>(schema?: JsonSchema): Output
         );
       }
 
-      // Wave-12 P2-21: normalize CRLF → LF so code-block detection is stable
-      // across clients that preserve Windows line endings (Anthropic SSE
-      // proxies on some runtimes, clipboard-pasted markdown, etc.). Without
+      // Normalize CRLF → LF so code-block detection is stable across
+      // clients that preserve Windows line endings (Anthropic SSE proxies
+      // on some runtimes, clipboard-pasted markdown, etc.). Without
       // normalization, `"```json\r\n\r\n```"` would leave only `\r` inside
       // the capture group and evade the "empty code block" check.
-      // Wave-13 D-12: `CRLF_RE` is now module-scoped to avoid re-compilation.
       const normalized = text.replace(CRLF_RE, '\n');
 
-      // Try to extract JSON from markdown code blocks first
-      // Wave-13 D-12: `CODE_BLOCK_RE` is now module-scoped.
+      // Try to extract JSON from markdown code blocks first.
       const jsonMatch = normalized.match(CODE_BLOCK_RE);
       if (jsonMatch) {
         const inner = jsonMatch[1].trim();
@@ -156,7 +149,6 @@ export function createJsonOutputParser<T = unknown>(schema?: JsonSchema): Output
       }
 
       // Check for unclosed code block (``` without closing ```).
-      // Wave-13 D-12: both regexes are now module-scoped.
       if (UNCLOSED_BLOCK_OPEN_RE.test(normalized) && !UNCLOSED_BLOCK_PAIR_RE.test(normalized)) {
         throw new HarnessError(
           'Unclosed markdown code block',

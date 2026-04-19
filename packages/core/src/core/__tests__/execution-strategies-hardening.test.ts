@@ -1,9 +1,9 @@
 /**
- * Wave-13 Track D — execution strategy + agent-loop dispose forwarding
+ * Execution strategy + agent-loop dispose forwarding:
  *
- *   D-10: `ExecutionStrategy` now accepts an optional `dispose(): Promise<void>`
- *         method (declaration-merged in execution-strategies.ts). AgentLoop.dispose()
- *         forwards into it when present.
+ *   - `ExecutionStrategy` accepts an optional `dispose(): Promise<void>`
+ *     method (declaration-merged in execution-strategies.ts).
+ *     AgentLoop.dispose() forwards into it when present.
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -22,7 +22,7 @@ function makeAdapter(): AgentAdapter {
   };
 }
 
-describe('ExecutionStrategy dispose forwarding — Wave-13 D-10', () => {
+describe('ExecutionStrategy dispose forwarding', () => {
   it('AgentLoop.dispose() invokes strategy.dispose() when present', async () => {
     const dispose = vi.fn().mockResolvedValue(undefined);
     const strategy: ExecutionStrategy = {

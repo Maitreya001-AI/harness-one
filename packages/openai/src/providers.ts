@@ -27,8 +27,7 @@ const _providers: Record<string, { baseURL: string }> = {
 };
 
 /**
- * Wave-12 P2-11: reentrancy guard for {@link registerProvider} /
- * {@link sealProviders}.
+ * Reentrancy guard for {@link registerProvider} / {@link sealProviders}.
  *
  * These mutators must be called serially from a single init path. A simple
  * boolean flag is enough because both paths are synchronous — if we observe
@@ -60,15 +59,13 @@ const BUILT_IN_PROVIDER_NAMES: ReadonlySet<string> = new Set(['openai', 'anthrop
  * Usage:
  *   createOpenAIAdapter({ ...providers.groq, apiKey: '...', model: 'llama-3.3-70b-versatile' })
  *
- * Wave-13 G-3: `providers` is a `Proxy` over the underlying `_providers`
- * record that (a) returns a frozen `{ baseURL }` view for every read so
- * callers cannot do `providers.groq.baseURL = 'https://evil.test'`, (b)
- * refuses any direct mutation (set / delete / defineProperty / setPrototypeOf
- * / preventExtensions changes) and (c) surfaces providers registered after
+ * `providers` is a `Proxy` over the underlying `_providers` record that
+ * (a) returns a frozen `{ baseURL }` view for every read so callers cannot do
+ * `providers.groq.baseURL = 'https://evil.test'`, (b) refuses any direct
+ * mutation (set / delete / defineProperty / setPrototypeOf /
+ * preventExtensions changes) and (c) surfaces providers registered after
  * module-init through `registerProvider()` so the registration API keeps
- * working. This is a strictly tighter invariant than pre-Wave-13 where
- * `providers` was a plain `Readonly<Record<...>>` view — TypeScript accepted
- * the read-only marker but runtime mutation was silently allowed.
+ * working.
  */
 function _deepFrozenEntry(entry: { baseURL: string } | undefined): Readonly<{ baseURL: string }> | undefined {
   if (entry === undefined) return undefined;
@@ -120,8 +117,8 @@ export const providers: Readonly<Record<string, { readonly baseURL: string }>> =
  * requests, config files fetched at runtime, etc.) — doing so would allow an
  * attacker to redirect API traffic (and bearer tokens) to an arbitrary host.
  *
- * CONCURRENCY CONTRACT (Wave-12 P2-11): `registerProvider()` and
- * `sealProviders()` MUST be called serially from a single initialization path.
+ * CONCURRENCY CONTRACT: `registerProvider()` and `sealProviders()` MUST be
+ * called serially from a single initialization path.
  * Calling them concurrently — from multiple async tasks, worker threads, or
  * through reentrant code — throws a distinct `CORE_INVALID_CONFIG` error. The
  * implementation uses a simple module-scoped reentrancy flag; it is not a
@@ -136,8 +133,8 @@ export const providers: Readonly<Record<string, { readonly baseURL: string }>> =
  *  - Built-in adapter names (`openai`, `anthropic`) are reserved. To
  *    deliberately override them, pass `{ force: true }` as the third argument.
  *  - Re-registering an existing non-built-in name with a DIFFERENT baseURL
- *    requires `{ allowOverride: true }` (Wave-12 P1-13). Idempotent
- *    re-registration (same baseURL) is a no-op with or without the flag.
+ *    requires `{ allowOverride: true }`. Idempotent re-registration (same
+ *    baseURL) is a no-op with or without the flag.
  *
  * @throws {HarnessError} with code `INVALID_CONFIG` on any validation failure,
  *   `PROVIDER_REGISTRY_SEALED` if called after `sealProviders()`.
@@ -145,17 +142,16 @@ export const providers: Readonly<Record<string, { readonly baseURL: string }>> =
 /**
  * Options accepted by {@link registerProvider}.
  *
- * Wave-13 G-2: adds `trustedOrigins` so deployment bootstraps can pin the set
- * of hosts that are acceptable targets for custom provider registration. An
- * attacker who lands a second `registerProvider()` call with a hostile but
- * syntactically valid URL still fails fast because the origin is not on the
- * whitelist.
+ * `trustedOrigins` lets deployment bootstraps pin the set of hosts that are
+ * acceptable targets for custom provider registration. An attacker who lands
+ * a second `registerProvider()` call with a hostile but syntactically valid
+ * URL still fails fast because the origin is not on the whitelist.
  */
 export interface RegisterProviderOptions {
   readonly force?: boolean;
   readonly allowOverride?: boolean;
   /**
-   * Wave-13 G-2: optional whitelist of acceptable `URL.origin` values
+   * Optional whitelist of acceptable `URL.origin` values
    * (scheme + host + port). When set and the parsed `baseURL.origin` is not
    * in the list, `registerProvider()` throws
    * `HarnessError(PROVIDER_REGISTRY_SEALED)` before mutating the registry.
@@ -179,8 +175,8 @@ export function registerProvider(
   config?: { baseURL: string },
   options?: RegisterProviderOptions,
 ): void {
-  // Wave-13 G-4: shorthand overload — `registerProvider('groq')` uses the
-  // bundled `providers` const. Fails loudly if the name isn't bundled.
+  // Shorthand overload — `registerProvider('groq')` uses the bundled
+  // `providers` const. Fails loudly if the name isn't bundled.
   if (config === undefined) {
     const bundled = _providers[name];
     if (bundled === undefined) {
@@ -192,9 +188,9 @@ export function registerProvider(
     }
     config = { baseURL: bundled.baseURL };
   }
-  // Wave-12 P2-11: reentrancy guard. `registerProvider` / `sealProviders`
-  // MUST be called serially from a single init path. If another caller is
-  // mid-mutation when we enter, throw distinctly so the race surfaces.
+  // Reentrancy guard. `registerProvider` / `sealProviders` MUST be called
+  // serially from a single init path. If another caller is mid-mutation when
+  // we enter, throw distinctly so the race surfaces.
   if (_registryMutationInFlight) {
     throw new HarnessError(
       'registerProvider: concurrent registry mutation detected — registerProvider()/sealProviders() must be called serially from a single init path',
@@ -248,11 +244,11 @@ export function registerProvider(
       );
     }
 
-    // Wave-13 G-2: enforce trusted-origins whitelist when the caller supplied
-    // one. Rejected registrations use `PROVIDER_REGISTRY_SEALED` so ops can
-    // alert on a single error code regardless of whether the origin was
-    // rejected because the registry was sealed or because the whitelist
-    // didn't include the parsed origin.
+    // Enforce trusted-origins whitelist when the caller supplied one.
+    // Rejected registrations use `PROVIDER_REGISTRY_SEALED` so ops can alert
+    // on a single error code regardless of whether the origin was rejected
+    // because the registry was sealed or because the whitelist didn't
+    // include the parsed origin.
     if (options?.trustedOrigins !== undefined && options.trustedOrigins.length > 0) {
       if (!options.trustedOrigins.includes(parsed.origin)) {
         throw new HarnessError(
@@ -263,9 +259,9 @@ export function registerProvider(
       }
     }
 
-    // L4: Warn on private network URLs that may indicate misconfiguration.
-    // Not blocked because internal networks legitimately use private IPs,
-    // but surfacing it helps catch copy-paste errors from dev configs.
+    // Warn on private network URLs that may indicate misconfiguration. Not
+    // blocked because internal networks legitimately use private IPs, but
+    // surfacing it helps catch copy-paste errors from dev configs.
     if (!isLocalDev) {
       const host = parsed.hostname;
       const isPrivate = /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/.test(host);
@@ -282,12 +278,12 @@ export function registerProvider(
       );
     }
 
-    // Wave-12 P1-13: silent overwrite is a security footgun (an attacker who
-    // lands a second registerProvider() call could repoint a well-known
-    // provider name to a hostile baseURL). Require callers to opt-in via
-    // `allowOverride: true` (or `force: true`, which subsumes it for
-    // built-ins) whenever the baseURL would change. Idempotent re-registration
-    // with the same baseURL is still a no-op to keep bootstrap code simple.
+    // Silent overwrite is a security footgun (an attacker who lands a second
+    // registerProvider() call could repoint a well-known provider name to a
+    // hostile baseURL). Require callers to opt-in via `allowOverride: true`
+    // (or `force: true`, which subsumes it for built-ins) whenever the
+    // baseURL would change. Idempotent re-registration with the same baseURL
+    // is still a no-op to keep bootstrap code simple.
     const existing = _providers[name];
     if (
       existing !== undefined &&
@@ -331,16 +327,16 @@ export function registerProvider(
  * across `worker_threads`, forked child processes, or test runners that call
  * `vi.resetModules()`. Each fresh module instance starts unsealed.
  *
- * Concurrency (Wave-12 P2-11): like `registerProvider`, `sealProviders` must
- * be called serially from a single initialization path — racing it with
+ * Concurrency: like `registerProvider`, `sealProviders` must be called
+ * serially from a single initialization path — racing it with
  * registerProvider throws `CORE_INVALID_CONFIG`.
  *
  * @see isProvidersSealed
  * @see registerProvider
  */
 export function sealProviders(): void {
-  // Wave-12 P2-11: reentrancy guard. sealProviders() must never race with
-  // a concurrent registerProvider() call.
+  // Reentrancy guard. sealProviders() must never race with a concurrent
+  // registerProvider() call.
   if (_registryMutationInFlight) {
     throw new HarnessError(
       'sealProviders: concurrent registry mutation detected — registerProvider()/sealProviders() must be called serially from a single init path',

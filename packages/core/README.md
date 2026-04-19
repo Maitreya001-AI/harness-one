@@ -59,16 +59,18 @@ import { createTraceManager, createCostTracker } from 'harness-one/observe';
 
 Available submodules: `core`, `advanced`, `prompt`, `context`, `tools`, `guardrails`, `observe`, `session`, `memory`, `evolve-check`, `rag`, `orchestration`, `redact`, `infra`, `testing`.
 
-> **Wave-27** — `harness-one/testing` subpath added. Mock `AgentAdapter` factories (`createMockAdapter`, `createFailingAdapter`, `createStreamingMockAdapter`, `createErrorStreamingMockAdapter`) moved out of `harness-one/advanced` so the `/advanced` surface carries only production extension primitives. See [`docs/architecture/17-testing.md`](../../docs/architecture/17-testing.md).
+> **`harness-one/testing` subpath** — mock `AgentAdapter` factories (`createMockAdapter`, `createFailingAdapter`, `createStreamingMockAdapter`, `createErrorStreamingMockAdapter`) ship from this path so the `/advanced` surface carries only production extension primitives. See [`docs/architecture/17-testing.md`](../../docs/architecture/17-testing.md).
 
-> **Wave-5C** — `harness-one/eval` and `harness-one/evolve` were extracted to **[`@harness-one/devkit`](../devkit)**. The `harness-one/cli` subpath was extracted to **[`@harness-one/cli`](../cli)**. `harness-one/evolve-check` (architecture rules only) stays in core.
+> **eval + evolve live in `@harness-one/devkit`** — the [`@harness-one/devkit`](../devkit) package owns eval + evolve dev-tooling; the runtime architecture-rule engine stays in core under `harness-one/evolve-check`. The CLI ships as [`@harness-one/cli`](../cli).
 >
-> The root barrel is now curated to **18 value symbols** (UJ-1..UJ-5 user-journey set; the original ADR slot 11 `createSecurePreset` was dropped per R-01 to break the `harness-one` ↔ `@harness-one/preset` cycle). Other factories like `toSSEStream`, `categorizeAdapterError` etc. live on subpaths only.
+> The root barrel is curated to **18 value symbols** (core user-journey set). `createSecurePreset` is not in the root barrel — import it from `@harness-one/preset` to avoid a `harness-one` ↔ `@harness-one/preset` dependency cycle. Other factories like `toSSEStream`, `categorizeAdapterError` etc. live on subpaths only.
 
-> **Wave-5D additions** (subpath-only): `harness-one/observe` exports `MetricsPort` + `createNoopMetricsPort` (vendor-neutral metric instruments), `HarnessLifecycle` + `createHarnessLifecycle` (init→ready→draining→shutdown state machine + aggregated `health()`); `harness-one/infra` exports `createAdmissionController` (per-tenant in-process token bucket with abort/timeout fail-closed).
+> **Subpath-only extensions**:
+> - `harness-one/observe` — `MetricsPort` + `createNoopMetricsPort` (vendor-neutral metric instruments), `HarnessLifecycle` + `createHarnessLifecycle` (init→ready→draining→shutdown state machine + aggregated `health()`)
+> - `harness-one/infra` — `createAdmissionController` (per-tenant in-process token bucket with abort/timeout fail-closed)
+> - `harness-one/core` — `createTrustedSystemMessage`, `isTrustedSystemMessage`, `sanitizeRestoredMessage` for the system-message brand pattern
+> - `harness-one/guardrails` — `runRagContext` for per-chunk input scanning of retrieved context
 
-> **Wave-5E additions** (subpath-only): `harness-one/core` exports `createTrustedSystemMessage`, `isTrustedSystemMessage`, `sanitizeRestoredMessage` for the system-message brand pattern (SEC-A07); `harness-one/guardrails` exports `runRagContext` for per-chunk input scanning of retrieved context (SEC-A16).
-
-> **Wave-5C `HarnessErrorCode` is closed and prefixed.** Switch on `HarnessError.code` exhaustively. Always **value-import** (`import { HarnessErrorCode }`) — type-only import drops the runtime `Object.values()` record (lint rule `harness-one/no-type-only-harness-error-code` enforces). See root [`MIGRATION.md`](../../MIGRATION.md) and the git log for the full rename mapping (`CHANGELOG.md` is intentionally empty pre-release).
+> **`HarnessErrorCode` is closed and module-prefixed.** Switch on `HarnessError.code` exhaustively. Always **value-import** (`import { HarnessErrorCode }`) — type-only import drops the runtime `Object.values()` record (lint rule `harness-one/no-type-only-harness-error-code` enforces). See root [`MIGRATION.md`](../../MIGRATION.md) and the git log for change history (`CHANGELOG.md` is intentionally empty pre-release).
 
 See the main [repository README](../../README.md) and [architecture docs](../../docs/architecture/) for the full API surface.

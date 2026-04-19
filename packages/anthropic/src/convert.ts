@@ -22,16 +22,16 @@ import type { AnthropicMalformedToolUsePolicy } from './adapter.js';
 import { isWarnActive } from './adapter.js';
 
 /**
- * T05 (Wave-5A): Allow-list of `LLMConfig.extra` keys that are safe to forward
- * verbatim to the Anthropic Messages API. Any key outside this set is filtered
- * out (with a single `safeWarn` emission) in non-strict mode, or rejected with
- * a `HarnessError(HarnessErrorCode.ADAPTER_INVALID_EXTRA)` when `strictExtraAllowList: true`.
+ * Allow-list of `LLMConfig.extra` keys that are safe to forward verbatim
+ * to the Anthropic Messages API. Any key outside this set is filtered
+ * out (with a single `safeWarn` emission) in non-strict mode, or
+ * rejected with `HarnessError(HarnessErrorCode.ADAPTER_INVALID_EXTRA)`
+ * when `strictExtraAllowList: true`.
  *
- * Rationale: prior to T05, `extra` was spread into the request body unchecked,
- * which made it trivial for callers (or upstream preset chains) to leak vendor
- * keys, arbitrary fields, or typos to the provider. The allow-list is the
- * minimum viable surface to keep SPEC-005 forwarding useful without the
- * shotgun risk.
+ * Rationale: without the allow-list, `extra` would spread into the
+ * request body unchecked, which makes it trivial for callers (or
+ * upstream preset chains) to leak vendor keys, arbitrary fields, or
+ * typos to the provider.
  */
 export const ANTHROPIC_EXTRA_ALLOW_LIST = new Set<string>([
   'temperature',
@@ -44,7 +44,7 @@ export const ANTHROPIC_EXTRA_ALLOW_LIST = new Set<string>([
 ]);
 
 /**
- * T05 (Wave-5A): Filter `extra` against the Anthropic allow-list.
+ * Filter `extra` against the Anthropic allow-list.
  *
  * - Returns `undefined` when the input is `undefined` (pure pass-through,
  *   zero side effects).
@@ -89,13 +89,13 @@ export function filterExtra(
 }
 
 /**
- * P1-3 (Wave-12): resolve a raw `tc.arguments` string into the Record that
- * Anthropic expects as `tool_use.input`. Applies `onMalformedToolUse` policy:
- * - `'warn'` (default) mirrors the pre-Wave-12 behavior: warn + substitute `{}`.
- * - `'throw'` raises a typed `HarnessError(ADAPTER_ERROR)` with the raw
+ * Resolve a raw `tc.arguments` string into the Record that Anthropic
+ * expects as `tool_use.input`. Applies `onMalformedToolUse` policy:
+ * - `'warn'` (default): warn + substitute `{}`.
+ * - `'throw'`: raise a typed `HarnessError(ADAPTER_ERROR)` with the raw
  *   argument string preserved for operators.
- * - custom callback receives `(raw, err)` and can return a replacement object
- *   or `null` to fall back to `{}`.
+ * - custom callback: receives `(raw, err)` and can return a replacement
+ *   object or `null` to fall back to `{}`.
  *
  * The returned object carries the raw string on a non-enumerable
  * `__rawArguments` slot so observability layers can recover the pre-parse
@@ -123,12 +123,12 @@ export function resolveToolUseInput(
 
   // Malformed path — apply policy.
   //
-  // Wave-13 H-1: the default 'warn' path still uses a head-only preview
-  // (truncation ellipsis at 200 chars). But the 'throw' path now uses a
-  // head+tail preview for arguments longer than 400 chars so error messages
-  // surface tail-region corruption (e.g. a malformed closing brace) that was
-  // previously invisible. Below 400 chars we keep the single head-only form —
-  // there's no tail worth reporting separately.
+  // The default 'warn' path uses a head-only preview (truncation
+  // ellipsis at 200 chars). The 'throw' path uses a head+tail preview
+  // for arguments longer than 400 chars so error messages surface
+  // tail-region corruption (e.g. a malformed closing brace). Below 400
+  // chars we keep the single head-only form — there's no tail worth
+  // reporting separately.
   const raw = tc.arguments;
   const warnPreview = raw.length > 200 ? raw.slice(0, 200) + '…' : raw;
   const throwPreview =
@@ -148,8 +148,8 @@ export function resolveToolUseInput(
 
   if (typeof policy === 'function') {
     const replacement = policy(tc.arguments, parseErr);
-    // Wave-13 H-2: distinguish `undefined` (defer to default throw policy)
-    // from `null` (explicit empty-object request).
+    // Distinguish `undefined` (defer to default throw policy) from
+    // `null` (explicit empty-object request).
     if (replacement === undefined) {
       throw new HarnessError(
         `[harness-one/anthropic] onMalformedToolUse callback returned undefined for "${tc.name}"; ` +
@@ -174,7 +174,7 @@ export function resolveToolUseInput(
     return resolved;
   }
 
-  // Default 'warn' policy — backwards compatible with Wave-5F.
+  // Default 'warn' policy.
   if (isWarnActive(logger)) {
     const msg =
       parsed !== undefined && (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed))
@@ -223,7 +223,7 @@ export function toAnthropicMessage(
     for (const tc of msg.toolCalls) {
       // Narrow to object shape — silently casting a string to Record<string, unknown>
       // would hide LLM output corruption. When JSON is invalid or not an object,
-      // apply the configured `onMalformedToolUse` policy (P1-3).
+      // apply the configured `onMalformedToolUse` policy.
       const input = resolveToolUseInput(tc, malformedPolicy, logger);
       content.push({
         type: 'tool_use',
@@ -242,10 +242,10 @@ export function toAnthropicMessage(
 }
 
 /**
- * P2-19: known JsonSchema keys that this adapter projects onto
- * Anthropic's `Tool.InputSchema`. Any key on `ToolSchema['parameters']` that
- * is not in this set is silently dropped today; we warn once per unique key
- * to surface the drop to operators without flooding logs.
+ * Known JsonSchema keys that this adapter projects onto Anthropic's
+ * `Tool.InputSchema`. Any key on `ToolSchema['parameters']` that is not in
+ * this set is silently dropped today; we warn once per unique key to surface
+ * the drop to operators without flooding logs.
  */
 const _KNOWN_SCHEMA_KEYS: ReadonlySet<string> = new Set<string>([
   'type',
@@ -269,9 +269,9 @@ const _KNOWN_SCHEMA_KEYS: ReadonlySet<string> = new Set<string>([
 ]);
 
 /**
- * P2-19: module-scoped, size-capped set of schema keys for which we have
- * already emitted a warn. Capped at 64 distinct keys — beyond that we stop
- * growing to avoid unbounded memory growth on malicious or buggy callers.
+ * Module-scoped, size-capped set of schema keys for which we have already
+ * emitted a warn. Capped at 64 distinct keys — beyond that we stop growing
+ * to avoid unbounded memory growth on malicious or buggy callers.
  */
 const _WARNED_UNKNOWN_SCHEMA_KEYS: Set<string> = new Set<string>();
 const _MAX_WARNED_UNKNOWN_SCHEMA_KEYS = 64;
@@ -315,8 +315,8 @@ export function toAnthropicInputSchema(
   if (schema.const !== undefined) result.const = schema.const;
   if (schema.format !== undefined) result.format = schema.format;
 
-  // P2-19: warn once per distinct unknown key. Bound the warned-set at 64
-  // entries to avoid leaking under attacker-controlled schema keys.
+  // Warn once per distinct unknown key. Bound the warned-set at 64 entries
+  // to avoid leaking under attacker-controlled schema keys.
   const dropped: string[] = [];
   for (const key of Object.keys(schema as unknown as Record<string, unknown>)) {
     if (_KNOWN_SCHEMA_KEYS.has(key)) continue;

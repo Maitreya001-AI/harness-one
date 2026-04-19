@@ -2,7 +2,7 @@
 
 Developer-time toolkit for `harness-one`: evaluation runners, scorers, generator-evaluator pipelines, component registry, drift detection, and taste-coding utilities.
 
-Wave-5C extracted these surfaces from `harness-one/eval` and `harness-one/evolve` (both subpaths now removed). The runtime architecture-checker stayed in core under `harness-one/evolve-check`; everything dev-tool-shaped lives here.
+Eval + evolve dev-tooling ships from this sibling package — they are not subpaths of `harness-one`. The runtime architecture-checker stays in core under `harness-one/evolve-check`; everything dev-tool-shaped lives here.
 
 ## Install
 
@@ -50,18 +50,12 @@ import {
 
 The runtime architecture rule engine (`createArchitectureChecker`, `noCircularDepsRule`, `layerDependencyRule`, …) stays on the core's `harness-one/evolve-check` subpath because it gates production code.
 
-## Migration from pre-Wave-5C
+## Imports
 
-```diff
-- import { createEvalRunner } from 'harness-one/eval';
-- import { createComponentRegistry, createDriftDetector } from 'harness-one/evolve';
-+ import { createEvalRunner } from '@harness-one/devkit';
-+ import { createComponentRegistry, createDriftDetector } from '@harness-one/devkit';
-```
-
-```diff
-- import { createArchitectureChecker } from 'harness-one/evolve';
-+ import { createArchitectureChecker } from 'harness-one/evolve-check';
+```ts
+import { createEvalRunner } from '@harness-one/devkit';
+import { createComponentRegistry, createDriftDetector } from '@harness-one/devkit';
+import { createArchitectureChecker } from 'harness-one/evolve-check';
 ```
 
 ## Related

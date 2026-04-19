@@ -1,9 +1,8 @@
 /**
- * Iteration-runner behaviour tests — focused on Wave-12 P2-8 (bounded
- * tool-result serialization). The AgentLoop-level `agent-loop.test.ts`
- * also exercises the end-to-end path; these black-box tests observe the
- * serialized tool-message content end-to-end because the helper is
- * module-private.
+ * Iteration-runner behaviour tests — focused on bounded tool-result
+ * serialization. The AgentLoop-level `agent-loop.test.ts` also exercises
+ * the end-to-end path; these black-box tests observe the serialized
+ * tool-message content end-to-end because the helper is module-private.
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -36,7 +35,7 @@ async function runWithResult(toolResult: unknown): Promise<Message> {
   return msg;
 }
 
-describe('iteration-runner — Wave-12 P2-8 serializeToolResult', () => {
+describe('iteration-runner — serializeToolResult', () => {
   it('truncates payloads larger than 1 MiB with a marker preserving the prefix', async () => {
     const huge = 'q'.repeat(1.5 * 1024 * 1024);
     const msg = await runWithResult({ payload: huge });

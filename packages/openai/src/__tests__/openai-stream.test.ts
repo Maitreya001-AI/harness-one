@@ -1,7 +1,6 @@
 /**
- * Tests for `createOpenAIAdapter().stream()` — split out of the monolith
- * by Wave-16 M3. Covers SSE delta accumulation, tool_call streaming,
- * abort propagation, and edge cases.
+ * Tests for `createOpenAIAdapter().stream()`. Covers SSE delta accumulation,
+ * tool_call streaming, abort propagation, and edge cases.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -638,7 +637,7 @@ describe('createOpenAIAdapter', () => {
       expect((toolChunks[0] as StreamChunk).toolCall!.arguments).toBe(largeArgs);
     });
 
-    it('does not throw when consumer breaks early from stream (F8 resource cleanup)', async () => {
+    it('does not throw when consumer breaks early from stream (resource cleanup)', async () => {
       const abortFn = vi.fn();
       const asyncIter = {
         async *[Symbol.asyncIterator]() {

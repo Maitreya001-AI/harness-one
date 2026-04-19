@@ -14,8 +14,8 @@
  *   - an optional `pool_acquire_timeout` trace-span event attached just
  *     before the timeout rejection.
  *
- * Extracted from `agent-pool.ts` in Wave-23 so the pool module owns pool
- * lifecycle and the pending-queue module owns request choreography.
+ * Extracted from `agent-pool.ts` so the pool module owns pool lifecycle
+ * and the pending-queue module owns request choreography.
  *
  * @module
  */

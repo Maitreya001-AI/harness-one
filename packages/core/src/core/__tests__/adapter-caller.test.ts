@@ -1,10 +1,10 @@
 /**
- * Unit tests for AdapterCaller — covers Wave-12 Track B fixes that cannot
- * be exercised through the AgentLoop black box:
+ * Unit tests for AdapterCaller — covers behaviours that cannot be
+ * exercised through the AgentLoop black box:
  *
- *   - P1-4  adapter timeout on the non-streaming chat path
- *   - P1-17 Set-backed `retryableErrors` lookup (public API parity)
- *   - P2-1  abort listener registered before timer in backoff sleep
+ *   - adapter timeout on the non-streaming chat path
+ *   - Set-backed `retryableErrors` lookup (public API parity)
+ *   - abort listener registered before timer in backoff sleep
  *
  * The AgentLoop-level suites cover the retry loop and stream path; these
  * tests pin the contract of the lower-level adapter caller directly.
@@ -45,7 +45,7 @@ function baseConfig(adapter: AgentAdapter, signal: AbortSignal) {
   };
 }
 
-describe('AdapterCaller — Wave-12 P1-4 adapter timeout', () => {
+describe('AdapterCaller — adapter timeout', () => {
   it('returns CORE_TIMEOUT when adapter.chat hangs past adapterTimeoutMs', async () => {
     const controller = new AbortController();
     const chatSpy = vi.fn().mockImplementation(() => new Promise(() => {
@@ -94,7 +94,7 @@ describe('AdapterCaller — Wave-12 P1-4 adapter timeout', () => {
     expect(controller.signal.aborted).toBe(false);
   });
 
-  it('defaults to unlimited when adapterTimeoutMs is omitted (pre-Wave-12 behaviour)', async () => {
+  it('defaults to unlimited when adapterTimeoutMs is omitted', async () => {
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const adapter = makeAdapter({
@@ -113,7 +113,7 @@ describe('AdapterCaller — Wave-12 P1-4 adapter timeout', () => {
   });
 });
 
-describe('AdapterCaller — Wave-12 P1-17 retryableErrors Set lookup', () => {
+describe('AdapterCaller — retryableErrors Set lookup', () => {
   it('accepts a readonly string[] at the public API (no behaviour change)', async () => {
     // API parity smoke test: the internal representation is a Set but the
     // externally-observable behaviour when given the array form is
@@ -149,7 +149,7 @@ describe('AdapterCaller — Wave-12 P1-17 retryableErrors Set lookup', () => {
   });
 });
 
-describe('AdapterCaller — Wave-12 P2-1 abort-before-timer in backoff', () => {
+describe('AdapterCaller — abort-before-timer in backoff', () => {
   it('rejects promptly when abort fires synchronously before the first retry backoff arm', async () => {
     // Construct a scenario where the first attempt returns a RETRYABLE
     // error, then the caller's signal is already aborted — the backoff

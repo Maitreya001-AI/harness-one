@@ -1,10 +1,10 @@
 /**
  * Tenant-aware key construction for the Redis memory store.
  *
- * Wave-16 M2 extraction. Owns the "which Redis key does this entry / index
- * live at" concern so the factory body in `index.ts` can focus on lifecycle.
- * Keeping this split also makes it trivial to reuse the same key shape from
- * a future ops/admin CLI without importing the whole store.
+ * Owns the "which Redis key does this entry / index live at" concern so
+ * the factory body in `index.ts` can focus on lifecycle. Keeping this
+ * split also makes it trivial to reuse the same key shape from a future
+ * ops/admin CLI without importing the whole store.
  *
  * @module
  * @internal

@@ -1,18 +1,18 @@
 /**
- * Wave-12 OpenAI adapter fixes — behavioural tests.
+ * OpenAI adapter hardening — behavioural tests.
  *
  * Covers:
- *  - P0-2: stream controller cleanup uses a guarded narrow (no double-cast
+ *  - stream controller cleanup uses a guarded narrow (no double-cast
  *    semantics leaking) and tolerates missing / shape-drifted controllers.
- *  - P1-11: `_zeroUsageWarnedModels` stays bounded (FIFO cap) past the limit.
- *  - P1-13: `registerProvider` refuses to silently overwrite an existing
+ *  - `_zeroUsageWarnedModels` stays bounded (FIFO cap) past the limit.
+ *  - `registerProvider` refuses to silently overwrite an existing
  *    provider's baseURL; opt-in via `{ allowOverride: true }`.
- *  - P1-21: `toOpenAIParameters` is memoized via WeakMap — same input
+ *  - `toOpenAIParameters` is memoized via WeakMap — same input
  *    reference returns the same output reference.
- *  - P2-9: `isWarnEnabled` gate is honored when the logger exposes it.
- *  - P2-11: concurrent `registerProvider` / `sealProviders` calls throw.
- *  - P2-16: `OPENAI_EXTRA_ALLOW_LIST` filter-behaviour is unchanged (Set-based).
- *  - P2-19: unknown schema keys are dropped with a single warn per key.
+ *  - `isWarnEnabled` gate is honored when the logger exposes it.
+ *  - concurrent `registerProvider` / `sealProviders` calls throw.
+ *  - `OPENAI_EXTRA_ALLOW_LIST` filter-behaviour is Set-based.
+ *  - unknown schema keys are dropped with a single warn per key.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -57,10 +57,10 @@ function okResponse(): unknown {
 }
 
 // ---------------------------------------------------------------------------
-// P0-2 — stream controller cleanup
+// stream controller cleanup
 // ---------------------------------------------------------------------------
 
-describe('P0-2: stream controller cleanup uses a guarded narrow', () => {
+describe('stream controller cleanup uses a guarded narrow', () => {
   it('aborts when controller has an abort() function (happy path)', async () => {
     const abortFn = vi.fn();
     const mock = createMockClient();
@@ -142,10 +142,10 @@ describe('P0-2: stream controller cleanup uses a guarded narrow', () => {
 });
 
 // ---------------------------------------------------------------------------
-// P1-11 — bounded zero-usage warn set
+// bounded zero-usage warn set
 // ---------------------------------------------------------------------------
 
-describe('P1-11: _zeroUsageWarnedModels is FIFO-bounded', () => {
+describe('_zeroUsageWarnedModels is FIFO-bounded', () => {
   beforeEach(() => {
     _resetOpenAIWarnState();
   });
@@ -181,7 +181,7 @@ describe('P1-11: _zeroUsageWarnedModels is FIFO-bounded', () => {
     expect(zeroUsageWarns.length).toBe(300);
   });
 
-  it('re-warns for a re-entering model after it has been evicted by the FIFO (per-instance, Wave-13 G-1)', async () => {
+  it('re-warns for a re-entering model with a fresh adapter instance (per-instance LRU)', async () => {
     const mock = createMockClient();
     mock.create.mockResolvedValue({
       choices: [{ message: { role: 'assistant', content: 'ok' } }],
@@ -191,18 +191,17 @@ describe('P1-11: _zeroUsageWarnedModels is FIFO-bounded', () => {
     const warn = vi.fn();
     const logger = { warn, error: vi.fn() };
 
-    // Wave-13 G-1: the warned-models LRU is per-adapter-instance with a cap
-    // of 1_000 — no longer a module-wide singleton. To drive eviction we
-    // must use the SAME adapter instance across all models; swapping the
-    // `model` field on the instance is not possible (it's captured at
-    // factory time), so we exercise eviction via 1_000 separate chat()
-    // calls whose responses report distinct model IDs.
+    // The warned-models LRU is per-adapter-instance with a cap of 1_000 — it
+    // is not a module-wide singleton. To drive eviction we must use the SAME
+    // adapter instance across all models; swapping the `model` field on the
+    // instance is not possible (it's captured at factory time), so we
+    // exercise eviction via 1_000 separate chat() calls whose responses
+    // report distinct model IDs.
     //
     // A lighter regression test: with a per-instance set, re-using the same
     // adapter for the same model yields exactly one warn; re-using a fresh
     // adapter yields one additional warn. That preserves the "once per
-    // distinct adapter-instance × model pair" contract which replaces the
-    // cross-instance FIFO of Wave-12.
+    // distinct adapter-instance x model pair" contract.
     const a1 = createOpenAIAdapter({ client: mock.client, logger, model: 'evictee' });
     await a1.chat({ messages: [{ role: 'user', content: 'hi' }] });
     await a1.chat({ messages: [{ role: 'user', content: 'hi' }] }); // same instance: no new warn
@@ -217,10 +216,10 @@ describe('P1-11: _zeroUsageWarnedModels is FIFO-bounded', () => {
 });
 
 // ---------------------------------------------------------------------------
-// P1-13 — provider registry duplicate-override guard
+// provider registry duplicate-override guard
 // ---------------------------------------------------------------------------
 
-describe('P1-13: registerProvider refuses silent duplicate with different baseURL', () => {
+describe('registerProvider refuses silent duplicate with different baseURL', () => {
   it('throws CORE_INVALID_CONFIG when overwriting existing baseURL without allowOverride', () => {
     // Use a fresh provider name to avoid leaking across tests.
     const name = `dup-test-${Math.random().toString(36).slice(2)}`;
@@ -264,10 +263,10 @@ describe('P1-13: registerProvider refuses silent duplicate with different baseUR
 });
 
 // ---------------------------------------------------------------------------
-// P2-11 — concurrent mutation detection
+// concurrent mutation detection
 // ---------------------------------------------------------------------------
 
-describe('P2-11: reentrancy guard throws on concurrent registry mutation', () => {
+describe('reentrancy guard throws on concurrent registry mutation', () => {
   it('throws CORE_INVALID_CONFIG when registerProvider is called reentrantly via logger side-effect', () => {
     // We simulate concurrency by triggering a reentrant registerProvider()
     // from inside the `safeWarn` path for a private-IP warning. Any path that
@@ -321,10 +320,10 @@ describe('P2-11: reentrancy guard throws on concurrent registry mutation', () =>
 });
 
 // ---------------------------------------------------------------------------
-// P1-21 — memoized toOpenAIParameters
+// memoized toOpenAIParameters
 // ---------------------------------------------------------------------------
 
-describe('P1-21: toOpenAIParameters is memoized by schema reference', () => {
+describe('toOpenAIParameters is memoized by schema reference', () => {
   it('returns the same output reference for the same input schema object', async () => {
     const mock = createMockClient();
     mock.create.mockResolvedValue(okResponse());
@@ -376,10 +375,10 @@ describe('P1-21: toOpenAIParameters is memoized by schema reference', () => {
 });
 
 // ---------------------------------------------------------------------------
-// P2-9 — isWarnEnabled gate
+// isWarnEnabled gate
 // ---------------------------------------------------------------------------
 
-describe('P2-9: isWarnEnabled gate suppresses warn metadata when warn is disabled', () => {
+describe('isWarnEnabled gate suppresses warn metadata when warn is disabled', () => {
   beforeEach(() => {
     _resetOpenAIWarnState();
   });
@@ -454,10 +453,10 @@ describe('P2-9: isWarnEnabled gate suppresses warn metadata when warn is disable
 });
 
 // ---------------------------------------------------------------------------
-// P2-16 — allow-list filter behavior unchanged
+// allow-list filter behavior
 // ---------------------------------------------------------------------------
 
-describe('P2-16: OPENAI_EXTRA_ALLOW_LIST filter behaviour is unchanged with Set-based lookup', () => {
+describe('OPENAI_EXTRA_ALLOW_LIST filter behaviour with Set-based lookup', () => {
   it('accepts all documented allow-list keys and rejects the rest', async () => {
     const mock = createMockClient();
     mock.create.mockResolvedValue(okResponse());
@@ -495,10 +494,10 @@ describe('P2-16: OPENAI_EXTRA_ALLOW_LIST filter behaviour is unchanged with Set-
 });
 
 // ---------------------------------------------------------------------------
-// P2-19 — warn once on unknown schema keys
+// warn once on unknown schema keys
 // ---------------------------------------------------------------------------
 
-describe('P2-19: unknown schema keys warn once with dedupe', () => {
+describe('unknown schema keys warn once with dedupe', () => {
   beforeEach(() => {
     _resetOpenAIWarnState();
   });

@@ -546,10 +546,10 @@ describe('Issue 3: Tool call argument guardrail validation', () => {
 });
 
 // ---------------------------------------------------------------------------
-// F14: Auto-generated session IDs
+// Auto-generated session IDs
 // ---------------------------------------------------------------------------
 
-describe('F14: Auto-generated session IDs', () => {
+describe('Auto-generated session IDs', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -635,10 +635,10 @@ describe('F14: Auto-generated session IDs', () => {
 });
 
 // ---------------------------------------------------------------------------
-// F18a: Tiktoken prewarming
+// Tiktoken prewarming
 // ---------------------------------------------------------------------------
 
-describe('F18a: Tiktoken prewarming in initialize()', () => {
+describe('Tiktoken prewarming in initialize()', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -662,10 +662,10 @@ describe('F18a: Tiktoken prewarming in initialize()', () => {
 });
 
 // ---------------------------------------------------------------------------
-// F18d: Atomic batch input persistence
+// Atomic batch input persistence
 // ---------------------------------------------------------------------------
 
-describe('F18d: Atomic batch input persistence', () => {
+describe('Atomic batch input persistence', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -692,7 +692,7 @@ describe('F18d: Atomic batch input persistence', () => {
 
     for await (const _event of harness.run(inputMessages)) { /* drain */ }
 
-    // F18d: save() should be called once for the batch, NOT append() per message
+    // save() should be called once for the batch, NOT append() per message
     expect(saveSpy).toHaveBeenCalledTimes(1);
     const savedMessages = saveSpy.mock.calls[0][1];
     expect(savedMessages).toHaveLength(3);

@@ -1,17 +1,17 @@
 /**
- * Wave-13 Track D — error classifier fixes
+ * Error classifier hardening:
  *
- *   D-7: 5–7 sequential `.includes()` calls replaced with pre-compiled
- *        regex unions. Preserves classification ORDER semantics exactly.
- *   D-8: fallback path now emits a debug-level log via the optional
- *        logger port so unknown classifications are no longer silent.
+ *   - 5–7 sequential `.includes()` calls replaced with pre-compiled
+ *     regex unions. Preserves classification ORDER semantics exactly.
+ *   - fallback path emits a debug-level log via the optional logger
+ *     port so unknown classifications are no longer silent.
  */
 
 import { describe, it, expect, vi } from 'vitest';
 import { categorizeAdapterError } from '../error-classifier.js';
 import { HarnessErrorCode } from '../errors.js';
 
-describe('categorizeAdapterError — Wave-13 D-7 regex-union classification order', () => {
+describe('categorizeAdapterError — regex-union classification order', () => {
   it('rate-limit still beats auth when both keywords appear (order preserved)', () => {
     expect(
       categorizeAdapterError(new Error('Too many requests — unauthorized')),
@@ -44,7 +44,7 @@ describe('categorizeAdapterError — Wave-13 D-7 regex-union classification orde
   });
 });
 
-describe('categorizeAdapterError — Wave-13 D-8 fallback path emits debug log', () => {
+describe('categorizeAdapterError — fallback path emits debug log', () => {
   it('calls logger.debug with sliced error_message on unknown classification', () => {
     const debug = vi.fn();
     const result = categorizeAdapterError(new Error('xyzzy unknown'), { debug });

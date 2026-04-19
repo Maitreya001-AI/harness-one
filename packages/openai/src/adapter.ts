@@ -85,16 +85,16 @@ export interface OpenAIAdapterConfig {
 }
 
 /**
- * Wave-13 G-1 (P0-3): per-instance zero-usage warn-once dedupe.
+ * Per-instance zero-usage warn-once dedupe.
  *
- * Prior to Wave-13 this was a single module-scoped `Set` shared by every
- * adapter instance in the process. In multi-tenant deployments that meant
- * tenant A's warning silenced tenant B's alert for the same model name — an
- * observability hole that made cost-tracking drift between tenants invisible.
+ * In multi-tenant deployments a module-scoped `Set` shared by every adapter
+ * instance would mean tenant A's warning silences tenant B's alert for the
+ * same model name — an observability hole that would make cost-tracking
+ * drift between tenants invisible.
  *
  * The factory below creates a fresh bounded LRU set per `createOpenAIAdapter`
- * call, sized at `_ZERO_USAGE_WARN_CAP` (1000 — larger than before because the
- * dedupe is no longer shared, so per-instance models accumulate more slowly).
+ * call, sized at `_ZERO_USAGE_WARN_CAP` (1000 — large because the dedupe is
+ * not shared, so per-instance models accumulate slowly).
  */
 const _ZERO_USAGE_WARN_CAP = 1_000;
 
@@ -122,14 +122,13 @@ function createInstanceWarnedState(cap = _ZERO_USAGE_WARN_CAP): InstanceWarnedSt
 }
 
 /**
- * Wave-12 P0-2: guarded narrow on the OpenAI SDK stream's private
- * `controller` field.
+ * Guarded narrow on the OpenAI SDK stream's private `controller` field.
  *
  * The SDK exposes its underlying `AbortController`-like object via a
- * `controller` property on the stream instance. Reaching for it used to be
- * done with a pair of `as unknown as T` casts, which silently type-launders
- * any shape the SDK might ship in a future minor — a refactor that could
- * turn into a runtime `TypeError` on the very next `.abort()` call.
+ * `controller` property on the stream instance. A pair of `as unknown as T`
+ * casts would silently type-launder any shape the SDK might ship in a future
+ * minor — a refactor that could turn into a runtime `TypeError` on the very
+ * next `.abort()` call.
  *
  * This helper instead probes the runtime shape step-by-step and returns
  * `undefined` whenever the expected structure isn't present. No raw
@@ -156,15 +155,15 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
   });
   const model = config.model ?? 'gpt-4o';
   const strictExtra = config.strictExtraAllowList === true;
-  // Wave-5F T12: delegate default logger to core's redaction-enabled
-  // singleton instead of a hand-rolled console.warn/error fallback.
+  // Delegate default logger to core's redaction-enabled singleton instead of a
+  // hand-rolled console.warn/error fallback.
   const logger: Pick<Logger, 'warn' | 'error'> = config.logger ?? createDefaultLogger();
   const tokenizer = config.countTokens;
   const maxToolCalls = config.streamLimits?.maxToolCalls ?? MAX_TOOL_CALLS;
   const maxToolArgBytes = config.streamLimits?.maxToolArgBytes ?? MAX_TOOL_ARG_BYTES;
-  // Wave-13 G-1 (P0-3): per-instance zero-usage warned-models LRU. Scoped
-  // to this adapter instance so a single tenant's "rare model" warn does
-  // not silence every other tenant's first-touch alert for the same model.
+  // Per-instance zero-usage warned-models LRU. Scoped to this adapter instance
+  // so a single tenant's "rare model" warn does not silence every other
+  // tenant's first-touch alert for the same model.
   const zeroUsageWarned = createInstanceWarnedState();
 
   return {
@@ -191,7 +190,7 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
         }),
         // Spec: LLMConfig.extra MUST be forwarded to the provider. Merge LAST
         // so caller-supplied unknown keys win over base params (per provider-spec.md).
-        // T06: filtered against OPENAI_EXTRA_ALLOW_LIST; unknown keys are
+        // Filtered against OPENAI_EXTRA_ALLOW_LIST; unknown keys are
         // dropped-with-warn, or raise ADAPTER_INVALID_EXTRA under strictExtra.
         ...filterExtra(params.config?.extra, strictExtra, logger),
       }, { signal: params.signal });
@@ -202,8 +201,8 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
       }
 
       // SPEC-015: warn once per model when non-stream usage data is missing.
-      // Wave-13 G-1: dedupe is scoped to this adapter instance via
-      // `zeroUsageWarned`, not to the whole module.
+      // Dedupe is scoped to this adapter instance via `zeroUsageWarned`, not
+      // to the whole module.
       const usage = response.usage;
       const missingInput = usage?.prompt_tokens === undefined || usage?.prompt_tokens === null;
       const missingOutput = usage?.completion_tokens === undefined || usage?.completion_tokens === null;
@@ -249,7 +248,7 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
         stream_options: { include_usage: true },
         // Spec: LLMConfig.extra MUST be forwarded to the provider. Merge LAST
         // so caller-supplied unknown keys win over base params.
-        // T06: filtered against OPENAI_EXTRA_ALLOW_LIST; unknown keys are
+        // Filtered against OPENAI_EXTRA_ALLOW_LIST; unknown keys are
         // dropped-with-warn, or raise ADAPTER_INVALID_EXTRA under strictExtra.
         ...filterExtra(params.config?.extra, strictExtra, logger),
       }, { signal: params.signal });
@@ -323,9 +322,9 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
         }
 
         // Only emit bare done if stream ended without a usage chunk.
-        // OBS-011: Emit both a warning and a tagged event so cost tracking can
-        // detect this condition. Ensure stream_options.include_usage is set to
-        // true in the request to guarantee usage data in the final chunk.
+        // Emit both a warning and a tagged event so cost tracking can detect
+        // this condition. Ensure stream_options.include_usage is set to true
+        // in the request to guarantee usage data in the final chunk.
         logger.warn(
           '[harness-one/openai] Stream ended without usage data — token counts will be zero. ' +
           'Ensure stream_options.include_usage is true. This affects cost tracking and budget enforcement.',
@@ -339,11 +338,10 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
         // The OpenAI SDK stream exposes a controller that can be aborted to free
         // the HTTP connection when the consumer breaks out of the async iterator.
         //
-        // Wave-12 P0-2: replace the previous double-`as unknown as` casts with a
-        // guarded narrow (`getStreamController`) so SDK drift — e.g. a rename,
-        // removal, or type change of the private `controller` field — surfaces
-        // as a safe no-op rather than a silent type-lie that would explode at
-        // runtime the next time we dereference it.
+        // Use a guarded narrow (`getStreamController`) so SDK drift — e.g. a
+        // rename, removal, or type change of the private `controller` field —
+        // surfaces as a safe no-op rather than a silent type-lie that would
+        // explode at runtime the next time we dereference it.
         try {
           const ctrl = getStreamController(stream);
           if (ctrl && typeof ctrl.abort === 'function') {
@@ -370,18 +368,15 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
  *
  * Library consumers should NOT need to call this. It exists so unit tests can
  * exercise the one-time-warn behaviour across multiple `it()` cases without
- * leaking state between tests.
- *
- * Wave-12 extends this to also clear the `toOpenAIParameters` unknown-key
- * warn-once dedupe (P2-19) so schema-drift tests stay hermetic.
+ * leaking state between tests. Also clears the `toOpenAIParameters`
+ * unknown-key warn-once dedupe so schema-drift tests stay hermetic.
  *
  * @internal
  */
 export function _resetOpenAIWarnState(): void {
-  // Wave-13 G-1: per-instance warned state is no longer reachable from outside
-  // the factory closure, so this helper only clears the module-scoped caches
-  // that still exist (the unknown-schema-key dedupe in `convert.ts`). Tests
-  // that need to re-exercise per-instance dedupe behaviour should create a
-  // fresh adapter.
+  // Per-instance warned state is not reachable from outside the factory
+  // closure, so this helper only clears the module-scoped caches that still
+  // exist (the unknown-schema-key dedupe in `convert.ts`). Tests that need to
+  // re-exercise per-instance dedupe behaviour should create a fresh adapter.
   _resetConvertWarnState();
 }

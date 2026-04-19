@@ -2,8 +2,8 @@
  * Langfuse CostTracker — cost-tracking entry point for
  * `@harness-one/langfuse`.
  *
- * Wave-16 M2: the body of the 575-LOC monolith has been split into three
- * cohesive sibling files. This module is now the wiring layer:
+ * Structure: the wiring layer lives here; dedicated siblings own the
+ * sub-concerns.
  *
  *   - `cost-pricing.ts`  pricing table + `computeCost` (pure math)
  *   - `cost-export.ts`   `handleExportError`, pending-flush tracking,
@@ -54,7 +54,7 @@ export interface LangfuseCostTrackerConfig {
    */
   readonly budget?: number;
   /**
-   * OBS-015: Optional hook invoked when the Langfuse client fails to export
+   * Optional hook invoked when the Langfuse client fails to export
    * (e.g., flushAsync rejects). When omitted, errors are routed to
    * `logger.error` (if provided) or `console.warn` as a last resort.
    */
@@ -63,9 +63,9 @@ export interface LangfuseCostTrackerConfig {
     context: { op: 'flush' | 'record'; details?: unknown },
   ) => void;
   /**
-   * OBS-015: Optional structured logger. When `onExportError` is not set,
-   * export errors are reported via `logger.error`. Falls back to
-   * `console.warn` when neither is configured.
+   * Optional structured logger. When `onExportError` is not set, export
+   * errors are reported via `logger.error`. Falls back to `console.warn`
+   * when neither is configured.
    */
   readonly logger?: Logger;
 }
@@ -91,8 +91,8 @@ export interface LangfuseCostTracker extends CostTracker {
   /** Export-health counters. */
   getStats(): LangfuseCostTrackerStats;
   /**
-   * Wave-12 P1-8: Wait for every in-flight `client.flushAsync()` invocation
-   * issued by `recordUsage` to settle (fulfilled OR rejected). Resolves when
+   * Wait for every in-flight `client.flushAsync()` invocation issued by
+   * `recordUsage` to settle (fulfilled OR rejected). Resolves when
    * the pending-flush set drains or when `timeoutMs` elapses, whichever comes
    * first. Safe to call multiple times; never throws.
    *
@@ -121,8 +121,8 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): La
   const evictionStrategy: EvictionStrategy = lruStrategy;
   const { client } = config;
   const maxRecords = config.maxRecords ?? 10_000;
-  // Wave-16 m3: delegate to the shared helper so langfuse and core
-  // agree on what counts as a positive integer.
+  // Delegate to the shared helper so langfuse and core agree on what
+  // counts as a positive integer.
   requirePositiveInt(config.maxRecords, 'maxRecords');
   const pricingTable = createLangfusePricing(config.pricing);
   const exportHealth = createExportHealth({
@@ -133,34 +133,34 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): La
   const alertHandlers: ((alert: CostAlert) => void)[] = [];
   let budget: number | undefined;
 
-  // CQ-010(a): Compensated floating-point accumulation replaces the naive
-  // running total plus the 1000-record recalibration workaround. KahanSum
-  // keeps drift bounded without periodic O(N) reduce passes.
+  // Compensated floating-point accumulation replaces the naive running total
+  // plus the 1000-record recalibration workaround. KahanSum keeps drift
+  // bounded without periodic O(N) reduce passes.
   const runningSum = new KahanSum();
 
-  // CQ-010(b): Maintain per-model and per-trace totals incrementally. This
-  // turns `getCostByModel` / `getCostByTrace` from O(N) array scans into
-  // O(1) / O(k) lookups that scale with distinct keys, not total records.
+  // Maintain per-model and per-trace totals incrementally. This turns
+  // `getCostByModel` / `getCostByTrace` from O(N) array scans into O(1) /
+  // O(k) lookups that scale with distinct keys, not total records.
   const modelTotals = new Map<string, KahanSum>();
   const traceTotals = new Map<string, KahanSum>();
 
   const warningThreshold = config.warningThreshold ?? 0.8;
   const criticalThreshold = config.criticalThreshold ?? 0.95;
 
-  // OBS-003: Dedupe `budget_exceeded` event emission per (model + budget).
-  // Keys are re-seeded on `applyBudget` so a new budget produces a fresh
-  // window of events, and fully cleared on `reset()`.
+  // Dedupe `budget_exceeded` event emission per (model + budget). Keys are
+  // re-seeded on `applyBudget` so a new budget produces a fresh window of
+  // events, and fully cleared on `reset()`.
   const emittedBudgetExceeded = new Set<string>();
 
-  // P3-3: `setPricing` / `setBudget` mutators were removed from the returned
-  // tracker surface. The budget helper below shares its body with the async
+  // `setPricing` / `setBudget` mutators are not on the returned tracker
+  // surface. The budget helper below shares its body with the async
   // `updateBudget` method; pricing updates route through the pricing table.
   function applyBudget(newBudget: number): void {
-    // Wave-16 m3: shared helper keeps langfuse/core/preset in lockstep on
-    // what counts as a valid budget.
+    // Shared helper keeps langfuse/core/preset in lockstep on what
+    // counts as a valid budget.
     requireFiniteNonNegative(newBudget, 'budget');
     budget = newBudget;
-    // OBS-003: New budget => new dedupe window.
+    // New budget => new dedupe window.
     emittedBudgetExceeded.clear();
   }
 
@@ -171,7 +171,7 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): La
     applyBudget(config.budget);
   }
 
-  // OBS-015: Event counter (flush counter lives inside `exportHealth`).
+  // Event counter (flush counter lives inside `exportHealth`).
   let budgetExceededEvents = 0;
 
   // ARCH-008: thin wrapper around the LRU strategy's bucket resolution.
@@ -188,8 +188,8 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): La
     for (const handler of alertHandlers) {
       handler(alert);
     }
-    // OBS-003: When the budget is actually exceeded, emit a Langfuse event
-    // (deduped by model + budget) so downstream dashboards can alert. The
+    // When the budget is actually exceeded, emit a Langfuse event (deduped
+    // by model + budget) so downstream dashboards can alert. The
     // warning/critical thresholds are intentionally excluded — only true
     // exceedance triggers the stop signal.
     if (alert.type === 'exceeded') {
@@ -244,9 +244,9 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): La
       };
       records.push(record);
 
-      // CQ-010(a): KahanSum handles drift; no recalibration pass needed.
+      // KahanSum handles drift; no recalibration pass needed.
       runningSum.add(estimatedCost);
-      // CQ-010(b): Maintain per-model / per-trace totals incrementally.
+      // Maintain per-model / per-trace totals incrementally.
       addToKeyedMap(modelTotals, usage.model, estimatedCost);
       addToKeyedMap(traceTotals, usage.traceId, estimatedCost);
 
@@ -292,12 +292,12 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): La
         });
       }
 
-      // OBS-015: Flush errors surface through the configured hook / logger
-      // instead of being swallowed with a bare console.warn. The error is
-      // also counted so operators can observe degraded export health.
+      // Flush errors surface through the configured hook / logger instead
+      // of being swallowed with a bare console.warn. The error is also
+      // counted so operators can observe degraded export health.
       //
-      // Wave-12 P1-8 + Wave-16 M2: `exportHealth.trackFlush` owns the
-      // pending-promise set + the safe `handleExportError` routing.
+      // `exportHealth.trackFlush` owns the pending-promise set + the
+      // safe `handleExportError` routing.
       exportHealth.trackFlush(client.flushAsync());
 
       // F18c: Use the snapshot taken at entry, not the live `budget` variable.
@@ -326,25 +326,25 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): La
     },
 
     getCostByTrace(traceId: string): number {
-      // CQ-010(b): O(1) lookup — no per-record filter/reduce.
+      // O(1) lookup — no per-record filter/reduce.
       return traceTotals.get(traceId)?.total ?? 0;
     },
 
     /**
-     * Wave-13 C-1 / P3-3: async-serialised pricing update. Mirrors the core
-     * CostTracker contract so this Langfuse-backed tracker satisfies the same
-     * interface. Delegates to the `applyPricing` helper — Langfuse pricing
-     * state is still single-writer, but the Promise-returning shape lets
-     * callers compose updates with other concurrency-safe code paths
-     * uniformly.
+     * Async-serialised pricing update. Mirrors the core `CostTracker`
+     * contract so this Langfuse-backed tracker satisfies the same
+     * interface. Delegates to the `applyPricing` helper — Langfuse
+     * pricing state is still single-writer, but the Promise-returning
+     * shape lets callers compose updates with other concurrency-safe
+     * code paths uniformly.
      */
     async updatePricing(newPricing: ModelPricing[]): Promise<void> {
       pricingTable.apply(newPricing);
     },
 
     /**
-     * Wave-13 C-1 / P3-3: async-serialised budget update. Delegates to the
-     * `applyBudget` helper (same validation + dedupe-clear semantics as the
+     * Async-serialised budget update. Delegates to the `applyBudget`
+     * helper (same validation + dedupe-clear semantics as the
      * factory-time `config.budget` seed).
      */
     async updateBudget(newBudget: number): Promise<void> {
@@ -356,8 +356,8 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): La
       const currentCost = tracker.getTotalCost();
       const percentUsed = currentCost / budget;
 
-      // CQ-010(c): actual >= hard budget is a distinct, stronger state than
-      // `critical`. Surface it so callers can trigger shouldStop semantics.
+      // actual >= hard budget is a distinct, stronger state than `critical`.
+      // Surface it so callers can trigger shouldStop semantics.
       if (percentUsed >= 1.0) {
         return {
           type: 'exceeded',
@@ -464,8 +464,8 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): La
 
     isBudgetExceeded(): boolean {
       if (budget === undefined) return false;
-      // CQ-010(c): Keep isBudgetExceeded / shouldStop / checkBudget=exceeded
-      // on the same criterion so callers see consistent signals.
+      // Keep isBudgetExceeded / shouldStop / checkBudget=exceeded on the
+      // same criterion so callers see consistent signals.
       return tracker.getTotalCost() >= budget;
     },
 
@@ -487,8 +487,7 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): La
     },
 
     async dispose(timeoutMs: number = 5_000): Promise<void> {
-      // Wave-12 P1-8 + Wave-16 M2: pending-flush draining lives inside
-      // `exportHealth.dispose`.
+      // Pending-flush draining lives inside `exportHealth.dispose`.
       await exportHealth.dispose(timeoutMs);
     },
   };

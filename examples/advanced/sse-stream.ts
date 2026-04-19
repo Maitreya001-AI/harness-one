@@ -8,7 +8,7 @@
  *
  * Resilience:
  *   - Circular-reference / throwing-getter events fall back to an error
- *     envelope (Wave-12 P1-24); the stream is never broken by one bad event.
+ *     envelope; the stream is never broken by one bad event.
  *   - `formatSSE` produces the wire-format string — no hidden
  *     re-allocations, works under Bun / Node / Deno / edge runtimes.
  */

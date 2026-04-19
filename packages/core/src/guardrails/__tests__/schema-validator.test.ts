@@ -407,7 +407,7 @@ describe('createSchemaValidator', () => {
     });
   });
 
-  describe('additionalProperties (Wave-5E SEC-A05 — enforced)', () => {
+  describe('additionalProperties (SEC-A05 — enforced)', () => {
     it('rejects additional properties when additionalProperties is false', () => {
       const { guard } = createSchemaValidator({
         type: 'object',
@@ -415,7 +415,7 @@ describe('createSchemaValidator', () => {
         additionalProperties: false,
       });
 
-      // Wave-5E SEC-A05: additionalProperties: false now enforces.
+      // additionalProperties: false now enforces.
       const result = guard({ content: '{"name":"Alice","extra":123}' });
       expect(result.action).toBe('block');
     });

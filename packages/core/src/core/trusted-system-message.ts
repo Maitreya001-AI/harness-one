@@ -1,11 +1,11 @@
 /**
  * Trusted system-message factory.
  *
- * Wave-5E (SEC-A07): `SystemMessage` carries an optional opaque `_trust`
- * brand; messages restored from session/memory storage without the brand
- * are downgraded to `user` by {@link sanitizeRestoredMessage}, so an
- * attacker who can write to the conversation store cannot elevate a
- * user turn into a system prompt.
+ * `SystemMessage` carries an optional opaque `_trust` brand; messages
+ * restored from session/memory storage without the brand are downgraded
+ * to `user` by {@link sanitizeRestoredMessage}, so an attacker who can
+ * write to the conversation store cannot elevate a user turn into a
+ * system prompt.
  *
  * The brand is a process-local `Symbol`. It does NOT survive serialization
  * — that's the point: only freshly-minted instances produced through this

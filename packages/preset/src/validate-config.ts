@@ -1,16 +1,14 @@
 /**
  * Unified configuration validation for harness preset.
  *
- * Wave-15 consolidation: there used to be two `validateHarnessConfig`
- * functions — a structural one here and a numeric/provider one inside
- * `build-harness/run.ts`. Both now live in this module so adding a new
- * config field touches a single file and error messages stay consistent.
+ * Both structural and numeric/provider validation live in this module so
+ * adding a new config field touches a single file and error messages stay
+ * consistent.
  *
- * Wave-17 type-enforces `KNOWN_KEYS` against {@link HarnessConfigBase} +
+ * `KNOWN_KEYS` is type-enforced against {@link HarnessConfigBase} +
  * {@link SecurePresetOptions} so adding a new top-level field surfaces a
  * TypeScript error here until the validator is updated — the "shape in
- * types.ts, allow-list in validate-config.ts" drift the review flagged
- * can no longer happen silently.
+ * types.ts, allow-list in validate-config.ts" drift cannot happen silently.
  *
  * @module
  */

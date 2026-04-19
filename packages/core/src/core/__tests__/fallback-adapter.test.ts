@@ -311,7 +311,7 @@ describe('createFallbackAdapter', () => {
 
       const adapter = createFallbackAdapter({ adapters: [a1, a2, a3], maxFailures: 1 });
 
-      // CQ-004: With the bounded-loop implementation, a single chat() walks
+      // With the bounded-loop implementation, a single chat() walks
       // the entire chain: a1 fails -> switch to a2 -> a2 fails -> switch to a3
       // -> a3 succeeds.
       const result = await adapter.chat(PARAMS);
@@ -439,14 +439,14 @@ describe('createFallbackAdapter', () => {
       expect(successes.length).toBeGreaterThanOrEqual(1);
     });
 
-    // CQ-037 (Wave 4b): `pendingSwitch: Promise<void> | null` was racy: two
+    // `pendingSwitch: Promise<void> | null` was racy: two
     // concurrent failures could both see `pendingSwitch === null`, both
     // increment `failureCount`, and both trigger a switch (advancing the
     // index by 2). The AsyncLock-backed rewrite ensures that under a burst
     // of N concurrent failures on the same underlying adapter, exactly one
     // switch happens — the remaining failures see the counter was already
     // reset by the winning caller and take no action.
-    it('CQ-037: 10 concurrent failing requests trigger exactly one switch', async () => {
+    it('10 concurrent failing requests trigger exactly one switch', async () => {
       let primaryAttempts = 0;
       const primary: AgentAdapter = {
         async chat() {
@@ -510,9 +510,9 @@ describe('createFallbackAdapter', () => {
   });
 
   // =====================================================================
-  // CQ-004: Fallback adapter recursion → bounded loop
+  // Fallback adapter: bounded loop (no recursion)
   // =====================================================================
-  describe('CQ-004: bounded loop (no recursion) for chat and stream', () => {
+  describe('bounded loop (no recursion) for chat and stream', () => {
     it('chat: traverses all adapters in order without recursion, calling each at most once per chat() invocation', async () => {
       const callOrder: string[] = [];
       // 5 adapters: first 4 fail, 5th succeeds. With maxFailures=1, the chat
@@ -606,9 +606,9 @@ describe('createFallbackAdapter', () => {
   });
 
   // =====================================================================
-  // TEST-014: concurrent failure recovery with varying latencies
+  // Concurrent failure recovery with varying latencies
   // =====================================================================
-  describe('TEST-014: concurrent failure recovery with varying latencies', () => {
+  describe('concurrent failure recovery with varying latencies', () => {
     it('routes around a slow+failing primary chain to land on a fast survivor', async () => {
       // Scenario:
       //   - adapter A (primary): slow — resolves with a rejection after 50ms

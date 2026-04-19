@@ -1,17 +1,16 @@
 /**
- * Wave-13 Track J — OTel exporter hardening tests. Split out of the
- * monolith by Wave-16 M3.
+ * OTel exporter hardening tests.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createOTelExporter } from '../index.js';
 import { createMockTracer } from './otel-test-fixtures.js';
 
-describe('Wave-13 Track J — OTel exporter', () => {
+describe('OTel exporter — hardening', () => {
   let mock: ReturnType<typeof createMockTracer>;
   beforeEach(() => { mock = createMockTracer(); });
 
-  it('Wave-13 J-2: createOTelExporter return type exposes getDroppedAttributeMetrics', () => {
+  it('createOTelExporter return type exposes getDroppedAttributeMetrics', () => {
     const exporter = createOTelExporter({ tracer: mock.tracer });
     // The named interface guarantees this method is callable without an
     // intersection-type cast — regression guard for the anonymous-type fix.
@@ -20,7 +19,7 @@ describe('Wave-13 Track J — OTel exporter', () => {
     expect(m).toEqual({ droppedAttributes: 0, droppedEventAttributes: 0 });
   });
 
-  it('Wave-13 J-3: emits parent_fallback counter + debug log when parent resolved via evicted cache', async () => {
+  it('emits parent_fallback counter + debug log when parent resolved via evicted cache', async () => {
     const counterAdd = vi.fn();
     const metricsCounter = vi.fn().mockReturnValue({ add: counterAdd });
     const metrics = {
@@ -75,7 +74,7 @@ describe('Wave-13 Track J — OTel exporter', () => {
     );
   });
 
-  it('Wave-13 J-3: no counter emitted when parent is live in spanMap', async () => {
+  it('no counter emitted when parent is live in spanMap', async () => {
     const counterAdd = vi.fn();
     const metrics = {
       counter: vi.fn().mockReturnValue({ add: counterAdd }),

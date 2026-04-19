@@ -135,7 +135,7 @@ export function getEvictionStrategy(name: EvictionStrategyName): EvictionStrateg
 }
 
 /**
- * Wave-15: shared eviction loop used by both {@link createCostTracker} and
+ * Shared eviction loop used by both {@link createCostTracker} and
  * `@harness-one/langfuse`'s `createLangfuseCostTracker`. Centralizes the
  * "shift oldest, decrement running total, notify strategy" sequence so the
  * two trackers agree byte-for-byte on eviction semantics.

@@ -31,12 +31,12 @@ export interface HandoffConfig {
   /** Maximum inbox size per agent. Default: 1000. */
   readonly maxInboxPerAgent?: number;
   /**
-   * Wave-5E SEC-A11: maximum serialised payload size in bytes. Default
+   * maximum serialised payload size in bytes. Default
    * 64 KiB. Exceeding this throws `ORCH_HANDOFF_SERIALIZATION_ERROR`.
    */
   readonly maxPayloadBytes?: number;
   /**
-   * Wave-5E SEC-A11: maximum nested depth of a handoff payload. Default
+   * maximum nested depth of a handoff payload. Default
    * 16. Exceeding this throws `ORCH_HANDOFF_SERIALIZATION_ERROR` before
    * JSON.stringify runs, so pathological recursive objects cannot exhaust
    * the call stack.
@@ -45,7 +45,7 @@ export interface HandoffConfig {
 }
 
 /**
- * Wave-5E SEC-A10: sealed handle binding a `from` agent identity. Created
+ * sealed handle binding a `from` agent identity. Created
  * via {@link HandoffManager.createSendHandle}; issuing code passes the
  * handle to the sender instead of letting the sender supply its own `from`
  * string. Prevents agents from forging turn-of-origin on outbound handoffs.
@@ -92,7 +92,7 @@ export function createHandoff(transport: MessageTransport, handoffConfig?: Hando
   const maxReceipts = handoffConfig?.maxReceipts ?? DEFAULT_MAX_RECEIPTS;
   const maxInboxPerAgent = handoffConfig?.maxInboxPerAgent ?? DEFAULT_MAX_INBOX_PER_AGENT;
 
-  // Wave-5E SEC-A11 / Wave-15: depth + byte caps delegate to the shared
+  // depth + byte caps delegate to the shared
   // safe-payload helper so a single module owns the cross-agent
   // serialization contract.
   const MAX_HANDOFF_PAYLOAD_BYTES = handoffConfig?.maxPayloadBytes ?? DEFAULT_PAYLOAD_MAX_BYTES;
@@ -186,7 +186,7 @@ export function createHandoff(transport: MessageTransport, handoffConfig?: Hando
         inbox.set(to, queue);
       }
 
-      // A1-4 (Wave 4b): push + eviction must be one atomic critical section so
+      // push + eviction must be one atomic critical section so
       // that concurrent `send()` invocations never leave the queue longer than
       // `maxInboxPerAgent`. `send()` is synchronous and this block contains no
       // `await`, so JS's single-threaded event-loop already guarantees

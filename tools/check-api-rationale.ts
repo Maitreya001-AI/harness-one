@@ -1,5 +1,5 @@
 /**
- * Wave-5C PR-3 T-3.5: PR-body rationale gate for api-extractor changes.
+ * PR-body rationale gate for api-extractor changes.
  *
  * When any `packages/*​/etc/*.api.md` snapshot diffs vs the PR base, the PR
  * body MUST contain a `## API change rationale` section with ≥20 chars of

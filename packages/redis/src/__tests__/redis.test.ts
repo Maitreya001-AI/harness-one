@@ -232,7 +232,7 @@ describe('createRedisStore', () => {
     expect(results[0].content).toBe('tagged');
   });
 
-  it('queries with multiple tags using OR semantics (any tag may match) — CQ-006', async () => {
+  it('queries with multiple tags using OR semantics (any tag may match)', async () => {
     const store = createRedisStore({ client: redis, prefix: 'test' });
 
     await store.write({ key: 'a', content: 'both-tags', grade: 'useful', tags: ['urgent', 'critical'] });
@@ -242,7 +242,7 @@ describe('createRedisStore', () => {
 
     // Filtering with ['urgent', 'critical'] must return every entry carrying
     // AT LEAST ONE of the tags — OR semantics aligned with the in-memory and
-    // fs-store backends (CQ-006: semantic divergence between providers).
+    // fs-store backends (semantic divergence between providers).
     const results = await store.query({ tags: ['urgent', 'critical'] });
     expect(results).toHaveLength(3);
     const contents = results.map((r) => r.content).sort();
@@ -522,7 +522,7 @@ describe('createRedisStore', () => {
     expect(mockRedis.get).not.toHaveBeenCalled();
   });
 
-  it('compact batches DEL + SREM through a single multi() pipeline (CQ-023)', async () => {
+  it('compact batches DEL + SREM through a single multi() pipeline', async () => {
     const store = createRedisStore({ client: redis, prefix: 'test' });
 
     // Ten ephemeral entries — all evictable under maxEntries: 0.
@@ -544,7 +544,7 @@ describe('createRedisStore', () => {
     const result = await store.compact({ maxEntries: 0 });
     expect(result.removed).toBe(10);
 
-    // CQ-023: one pipeline for the whole eviction (up to chunkSize=1000). The
+    // One pipeline for the whole eviction (up to chunkSize=1000). The
     // pipeline's inner `srem` must be invoked exactly once with every id as a
     // vararg — witness that the fix collapses N sequential round-trips into a
     // single MULTI/EXEC.
@@ -653,8 +653,8 @@ describe('createRedisStore', () => {
   // ── Mid-batch connection failure handling ──────────────────────────────
 
   it('query returns partial results when mget fails mid-batch', async () => {
-    // Wave-13 K-1: Opt in to legacy partial-ok semantics — defaults changed to
-    // strict (throw on any MGET sub-batch failure).
+    // Opt in to partial-ok semantics — default is strict (throw on
+    // any MGET sub-batch failure).
     const store = createRedisStore({ client: redis, prefix: 'test', partialOk: true });
 
     // Write enough entries to span multiple batches (>100)
@@ -702,7 +702,7 @@ describe('createRedisStore', () => {
   });
 
   it('query does not throw when mget fails on first batch', async () => {
-    // Wave-13 K-1: explicit opt-in to partial-ok semantics.
+    // Explicit opt-in to partial-ok semantics.
     const store = createRedisStore({ client: redis, prefix: 'test', partialOk: true });
 
     const mockRedis = redis as unknown as {
@@ -738,9 +738,9 @@ describe('createRedisStore', () => {
     expect(results).toEqual([]);
   });
 
-  // ── F10: Optimistic locking on update ────────────────────────────────
+  // ── Optimistic locking on update ────────────────────────────────
 
-  it('update uses WATCH/MULTI/EXEC for optimistic locking (F10)', async () => {
+  it('update uses WATCH/MULTI/EXEC for optimistic locking', async () => {
     const store = createRedisStore({ client: redis, prefix: 'test' });
     const mockRedis = redis as unknown as {
       watch: ReturnType<typeof vi.fn>;
@@ -761,7 +761,7 @@ describe('createRedisStore', () => {
     expect(mockRedis.multi).toHaveBeenCalledTimes(1);
   });
 
-  it('update retries on WATCH conflict (exec returns null) — F10', async () => {
+  it('update retries on WATCH conflict (exec returns null)', async () => {
     const store = createRedisStore({ client: redis, prefix: 'test' });
     const mockRedis = redis as unknown as {
       watch: ReturnType<typeof vi.fn>;
@@ -804,7 +804,7 @@ describe('createRedisStore', () => {
     expect(mockRedis.watch).toHaveBeenCalledTimes(3);
   });
 
-  it('update throws after 3 failed retry attempts — F10', async () => {
+  it('update throws after 3 failed retry attempts', async () => {
     const store = createRedisStore({ client: redis, prefix: 'test' });
     const mockRedis = redis as unknown as {
       watch: ReturnType<typeof vi.fn>;
@@ -832,7 +832,7 @@ describe('createRedisStore', () => {
     expect(mockRedis.watch).toHaveBeenCalledTimes(3);
   });
 
-  it('update calls unwatch when entry not found during optimistic locking — F10', async () => {
+  it('update calls unwatch when entry not found during optimistic locking', async () => {
     const store = createRedisStore({ client: redis, prefix: 'test' });
     const mockRedis = redis as unknown as {
       watch: ReturnType<typeof vi.fn>;
@@ -887,7 +887,7 @@ describe('createRedisStore', () => {
   it('batch read failure includes structured metadata in logs (M6)', async () => {
     const warnFn = vi.fn();
     const customLogger = { warn: warnFn };
-    // Wave-13 K-1: partial-ok preserves warn-and-continue semantics for the M6 test.
+    // partial-ok preserves warn-and-continue semantics for this test.
     const store = createRedisStore({ client: redis, prefix: 'test', logger: customLogger, partialOk: true });
 
     const mockRedis = redis as unknown as {
@@ -978,9 +978,9 @@ describe('createRedisStore', () => {
     expect(result.removed).toBe(100);
   });
 
-  // ── Wave-13 — Track K (Redis) fixes ───────────────────────────────────────
+  // ── WATCH/UNWATCH transaction contract ───────────────────────────────────
 
-  it('Wave-13 P0-7: update() calls UNWATCH when the key is missing (error path)', async () => {
+  it('update() calls UNWATCH when the key is missing (error path)', async () => {
     const store = createRedisStore({ client: redis, prefix: 'test' });
     const mockRedis = redis as unknown as {
       unwatch: ReturnType<typeof vi.fn>;
@@ -991,7 +991,7 @@ describe('createRedisStore', () => {
     expect(mockRedis.unwatch).toHaveBeenCalled();
   });
 
-  it('Wave-13 P0-7: update() calls UNWATCH when parse fails (corruption path)', async () => {
+  it('update() calls UNWATCH when parse fails (corruption path)', async () => {
     const store = createRedisStore({ client: redis, prefix: 'test' });
     const mockRedis = redis as unknown as {
       unwatch: ReturnType<typeof vi.fn>;
@@ -1011,7 +1011,7 @@ describe('createRedisStore', () => {
     expect(mockRedis.unwatch).toHaveBeenCalled();
   });
 
-  it('Wave-13 P0-7: update() calls UNWATCH when client.get throws', async () => {
+  it('update() calls UNWATCH when client.get throws', async () => {
     const store = createRedisStore({ client: redis, prefix: 'test' });
     const mockRedis = redis as unknown as {
       get: ReturnType<typeof vi.fn>;
@@ -1022,7 +1022,7 @@ describe('createRedisStore', () => {
     expect(mockRedis.unwatch).toHaveBeenCalled();
   });
 
-  it('Wave-13 P0-7: update() uses WATCH -> GET -> MULTI -> EXEC with no intervening awaits between MULTI and EXEC', async () => {
+  it('update() uses WATCH -> GET -> MULTI -> EXEC with no intervening awaits between MULTI and EXEC', async () => {
     // Verify call ordering: for a successful update() the sequence must be
     // watch(key), get(key), multi(), <pipeline commands>, exec(). This is the
     // canonical optimistic-lock shape.
@@ -1059,7 +1059,7 @@ describe('createRedisStore', () => {
     expect(calls).toEqual(['watch', 'get', 'multi', 'exec']);
   });
 
-  it('Wave-13 K-1: query() throws HarnessError(MEMORY_CORRUPT) by default when mget fails', async () => {
+  it('query() throws HarnessError(MEMORY_CORRUPT) by default when mget fails', async () => {
     const store = createRedisStore({ client: redis, prefix: 'test' });
     const mockRedis = redis as unknown as {
       mget: ReturnType<typeof vi.fn>;
@@ -1084,7 +1084,7 @@ describe('createRedisStore', () => {
     });
   });
 
-  it('Wave-13 K-1: partialOk=true restores legacy skip-and-continue behaviour', async () => {
+  it('partialOk=true restores warn-and-continue behaviour', async () => {
     const store = createRedisStore({ client: redis, prefix: 'test', partialOk: true });
     const mockRedis = redis as unknown as {
       mget: ReturnType<typeof vi.fn>;
@@ -1108,7 +1108,7 @@ describe('createRedisStore', () => {
     expect(result).toEqual([]);
   });
 
-  it('Wave-13 K-2: createRedisStore() returns a RedisMemoryStore with repair()', async () => {
+  it('createRedisStore() returns a RedisMemoryStore with repair()', async () => {
     const store = createRedisStore({ client: redis, prefix: 'test' });
     // Compile-time + runtime guard: `repair()` must be directly callable.
     expect(typeof store.repair).toBe('function');
@@ -1119,7 +1119,7 @@ describe('createRedisStore', () => {
 
 // ---------------------------------------------------------------------------
 // MemoryStore conformance suite — run the core contract tests against the
-// Redis-backed implementation so semantic divergence (CQ-006: tag semantics,
+// Redis-backed implementation so semantic divergence (tag semantics,
 // pagination, delete semantics) can never silently regress.
 // ---------------------------------------------------------------------------
 import { runMemoryStoreConformance } from 'harness-one/memory';

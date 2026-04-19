@@ -1,6 +1,6 @@
 /**
- * Tests for `createLangfusePromptBackend` — split out of the monolith by
- * Wave-16 M3. Covers prompt fetch, cache, list, and error paths.
+ * Tests for `createLangfusePromptBackend`. Covers prompt fetch, cache,
+ * list, and error paths.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -53,15 +53,15 @@ describe('createLangfusePromptBackend', () => {
     const warnSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const result = await backend.fetch('chat-prompt');
     expect(result).toBeUndefined();
-    // Wave-5F T13: default logger renders a JSON line; assert both phrases
-    // appear in the single formatted argument.
+    // Default logger renders a JSON line; assert both phrases appear in
+    // the single formatted argument.
     const line = (warnSpy.mock.calls[0]?.[0] ?? '') as string;
     expect(line).toContain('Failed to fetch prompt');
     expect(line).toContain('not a string type');
     warnSpy.mockRestore();
   });
 
-  it('TEST-002: non-string prompt raises HarnessError(PROVIDER_ERROR) before being caught', async () => {
+  it('non-string prompt raises HarnessError(PROVIDER_ERROR) before being caught', async () => {
     // This test asserts the internal throw path: toPromptTemplate throws a
     // HarnessError with code PROVIDER_ERROR. The outer try/catch in fetch()
     // swallows it, so we verify the thrown error via a direct rethrow spy
@@ -72,7 +72,7 @@ describe('createLangfusePromptBackend', () => {
       version: 7,
     });
 
-    // Wave-5F T13: default logger emits a single JSON line via console.log.
+    // Default logger emits a single JSON line via console.log.
     // Assert both the prefix and the propagated error.message appear.
     const warnLines: string[] = [];
     const warnSpy = vi.spyOn(console, 'log').mockImplementation((line: string) => {

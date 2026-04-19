@@ -1,11 +1,11 @@
 /**
  * Parallel tool execution tests for {@link AgentLoop}.
  *
- * Wave-16 M1 extraction from `agent-loop.test.ts`. Covers default
- * sequential behaviour, `parallel: true` fan-out, `isSequentialTool`
- * hybrid scheduling, event-ordering invariants (all tool_call events
- * precede tool_result events), conversation-ordering of results, custom
- * ExecutionStrategy plumbing, and the single-call edge case.
+ * Covers default sequential behaviour, `parallel: true` fan-out,
+ * `isSequentialTool` hybrid scheduling, event-ordering invariants (all
+ * tool_call events precede tool_result events), conversation-ordering of
+ * results, custom ExecutionStrategy plumbing, and the single-call edge
+ * case.
  */
 
 import { describe, it, expect, vi } from 'vitest';

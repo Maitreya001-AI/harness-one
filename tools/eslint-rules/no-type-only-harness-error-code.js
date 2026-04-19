@@ -1,13 +1,12 @@
 /**
  * ESLint rule: no-type-only-harness-error-code
  *
- * Wave-5C PR-3 T-3.3 / ADR §3.f + §7 PR-3 step 4.
- *
- * `HarnessErrorCode` is a **string enum** — a runtime `Object.values()`-able
- * record. `import type { HarnessErrorCode }` silently drops the runtime
- * object, so consumer code that later does `Object.values(HarnessErrorCode)`
- * at runtime blows up with a cryptic `undefined` error at the call site,
- * not at import time. This rule flags the mistake at lint time.
+ * `HarnessErrorCode` is a **string enum** — a runtime
+ * `Object.values()`-able record. `import type { HarnessErrorCode }`
+ * silently drops the runtime object, so consumer code that later does
+ * `Object.values(HarnessErrorCode)` at runtime blows up with a cryptic
+ * `undefined` error at the call site, not at import time. This rule
+ * flags the mistake at lint time.
  *
  * @type {import('eslint').Rule.RuleModule}
  */

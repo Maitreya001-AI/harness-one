@@ -8,14 +8,12 @@ import { HarnessError, HarnessErrorCode} from 'harness-one';
 
 // ── Module definitions ────────────────────────────────────────────────────────
 
-// Wave-13 M-1: `Object.freeze` + `as const` makes these module-scoped
-// registries immutable at both compile time (readonly tuple / Readonly
-// record) and runtime (frozen object). Previously they were `as const`
-// but not runtime-frozen, so a downstream consumer could mutate the
-// array / object and silently corrupt every other caller in the same
-// process. The cast keeps the tuple literal type intact after
-// `Object.freeze`, which returns `Readonly<T>` and loses tuple
-// narrowing without this annotation.
+// `Object.freeze` + `as const` makes these module-scoped registries immutable
+// at both compile time (readonly tuple / Readonly record) and runtime (frozen
+// object). Without runtime freeze, a downstream consumer could mutate the
+// array / object and silently corrupt every other caller in the same process.
+// The cast keeps the tuple literal type intact after `Object.freeze`, which
+// returns `Readonly<T>` and loses tuple narrowing without this annotation.
 export const ALL_MODULES = Object.freeze([
   'core',
   'prompt',
@@ -33,12 +31,11 @@ export const ALL_MODULES = Object.freeze([
 
 export type ModuleName = (typeof ALL_MODULES)[number];
 
-// Wave-13 M-1: Frozen so a rogue import cannot `delete
-// MODULE_DESCRIPTIONS.core` or overwrite a description at runtime. The
-// `as const` preserves literal string types; `Object.freeze` enforces
-// runtime immutability. Together they match the contract surfaced via
-// `Record<ModuleName, string>` — callers treat it as read-only, and now
-// the runtime agrees.
+// Frozen so a rogue import cannot `delete MODULE_DESCRIPTIONS.core` or
+// overwrite a description at runtime. The `as const` preserves literal string
+// types; `Object.freeze` enforces runtime immutability. Together they match
+// the contract surfaced via `Record<ModuleName, string>` — callers treat it
+// as read-only, and the runtime agrees.
 export const MODULE_DESCRIPTIONS: Readonly<Record<ModuleName, string>> = Object.freeze({
   core: 'Agent Loop -- LLM adapter, tool dispatch, safety valves',
   prompt: 'Prompt Engineering -- builder, registry, skills, disclosure',
@@ -87,8 +84,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
   }
 
   if (all && modules.length > 0) {
-    // CQ-040: Surface via HarnessError so wrappers / test harnesses can
-    // catch by `.code === HarnessErrorCode.CLI_PARSE_ERROR` instead of string-matching.
+    // Surface via HarnessError so wrappers / test harnesses can catch by
+    // `.code === HarnessErrorCode.CLI_PARSE_ERROR` instead of string-matching.
     throw new HarnessError(
       'Conflicting flags: --all and --modules cannot be used together.',
       HarnessErrorCode.CLI_PARSE_ERROR,

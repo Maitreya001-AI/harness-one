@@ -1,11 +1,10 @@
 /**
  * Query + filter logic for the Redis memory store.
  *
- * Wave-16 M2 extraction. The MGET-batched fetch loop plus the in-memory
- * predicate application used to live inline inside `createRedisStore`. It
- * is split here so the factory body stays focused and so the "filter a
- * decoded entry by the MemoryFilter contract" predicate is sharable with
- * the compaction / repair paths.
+ * Owns the MGET-batched fetch loop and the in-memory predicate
+ * application. Split out of the factory body so the "filter a decoded
+ * entry by the MemoryFilter contract" predicate can be shared with the
+ * compaction / repair paths.
  *
  * @module
  * @internal
@@ -27,7 +26,7 @@ export interface RedisQueryContext {
   readonly client: Redis;
   readonly keyspace: RedisKeyspace;
   readonly logger: WarnLogger;
-  /** See `RedisStoreConfig.partialOk` — Wave-13 K-1 strict-by-default flag. */
+  /** See `RedisStoreConfig.partialOk` — strict-by-default flag. */
   readonly partialOk: boolean;
 }
 
@@ -38,7 +37,7 @@ const MGET_BATCH_SIZE = 100;
  * True iff `entry` satisfies the non-id portions of `filter`. Kept as a
  * pure function so the compaction / repair paths can reuse the exact
  * predicate the query path applies. Aligned with the in-memory and
- * fs-store implementations (CQ-006: tag filter is OR across requested tags).
+ * fs-store implementations (tag filter is OR across requested tags).
  */
 export function matchesFilter(entry: MemoryEntry, filter: MemoryFilter): boolean {
   if (filter.grade && entry.grade !== filter.grade) return false;
@@ -76,10 +75,10 @@ export async function queryEntries(
     try {
       values = await client.mget(...keys);
     } catch (err) {
-      // Wave-13 K-1: by default, an MGET sub-batch failure is a hard
-      // error so partial result sets never leak to the caller. Opt-in
-      // `partialOk: true` restores the legacy "warn + skip chunk" semantics
-      // for callers that explicitly accept degraded reads.
+      // By default, an MGET sub-batch failure is a hard error so
+      // partial result sets never leak to the caller. `partialOk: true`
+      // opts into "warn + skip chunk" semantics for callers that
+      // explicitly accept degraded reads.
       if (!partialOk) {
         throw new HarnessError(
           `query() aborted: MGET batch ${Math.floor(i / MGET_BATCH_SIZE)} failed — partial results suppressed`,

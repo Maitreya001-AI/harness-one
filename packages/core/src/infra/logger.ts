@@ -20,7 +20,7 @@ export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 /** Structured logger interface. */
 export interface Logger {
   /**
-   * P2-18: `meta` is accepted as `Readonly<Record<string, unknown>>`. Callers
+   * `meta` is accepted as `Readonly<Record<string, unknown>>`. Callers
    * are free to pass either a mutable or a frozen object — the logger never
    * mutates the caller's reference. Widening from `Record` to `Readonly` is a
    * backward-compatible signature change (a mutable record satisfies the
@@ -51,12 +51,12 @@ export interface LoggerConfig {
   /** Custom output function. Default: console.log. */
   readonly output?: (line: string) => void;
   /**
-   * SEC-001 + T02 (Wave-5A): Secret redaction configuration.
+   * SEC-001 + T02: Secret redaction configuration.
    *
    * Every metadata object passed through the logger is scrubbed before
    * serialization (API keys, tokens, passwords, cookies, etc.).
    *
-   * Semantics (Wave-5, secure-by-default):
+   * Semantics (secure-by-default):
    *   - `undefined` (omitted)   → DEFAULT redactor is enabled
    *                               (equivalent to `{ useDefaultPattern: true }`).
    *   - `false`                 → Redaction is fully disabled. Metadata flows
@@ -68,19 +68,19 @@ export interface LoggerConfig {
    *                               verbatim to `createRedactor`. `{}` still
    *                               activates the default pattern.
    *
-   * Migration note from Wave-4: previously `undefined` meant "no redaction".
+   * Migration note: previously `undefined` meant "no redaction".
    * This is a breaking change in semantics: existing callers who relied on
    * zero redaction must now set `redact: false` explicitly.
    */
   readonly redact?: RedactConfig | false;
   /**
-   * OBS-001: Correlation ID automatically injected into every log record
+   * Correlation ID automatically injected into every log record
    * under the `correlationId` field. Useful for linking logs to a request or
    * trace. Propagates to child loggers via normal baseMeta merging.
    */
   readonly correlationId?: string;
   /**
-   * P1-7: Per-call context hook invoked on every log emission to pull the
+   * Per-call context hook invoked on every log emission to pull the
    * current trace/span id from an external async-context source (e.g.
    * AsyncLocalStorage, OpenTelemetry's `trace.getActiveSpan()`).
    *
@@ -96,7 +96,7 @@ export interface LoggerConfig {
    */
   readonly getContext?: () => { traceId?: string; spanId?: string } | undefined;
   /**
-   * P2-14: Stack-trace path sanitizer override. When set, absolute paths in
+   * Stack-trace path sanitizer override. When set, absolute paths in
    * `Error.stack` output are rewritten to be relative to this prefix.
    * Default: `process.cwd()` when available.
    */
@@ -104,7 +104,7 @@ export interface LoggerConfig {
 }
 
 /**
- * P2-14: Sanitize a stack trace by replacing absolute paths with relative
+ * Sanitize a stack trace by replacing absolute paths with relative
  * forms. Useful for redacting local filesystem layout and monorepo roots
  * before emitting to log aggregators.
  *
@@ -153,11 +153,11 @@ const LOG_LEVEL_VALUES: Record<LogLevel, number> = { debug: 0, info: 1, warn: 2,
  * - Date objects are serialized as ISO 8601 strings.
  * - Circular references are replaced with the string `"[Circular]"`.
  *
- * PERF-030: The returned replacer carries per-call cycle-tracking state
+ * The returned replacer carries per-call cycle-tracking state
  * (a WeakSet), so it MUST be constructed fresh for each `JSON.stringify`
  * invocation. The factory itself is stateless and hoisted to module scope.
  *
- * P2-14: Optional `sanitizeStack` callback rewrites `Error.stack` before
+ * Optional `sanitizeStack` callback rewrites `Error.stack` before
  * emission so absolute filesystem paths don't leak into log sinks.
  */
 export function createSafeReplacer(opts?: {
@@ -165,7 +165,7 @@ export function createSafeReplacer(opts?: {
 }): (key: string, value: unknown) => unknown {
   const seen = new WeakSet<object>();
   const sanitizeStack = opts?.sanitizeStack;
-  // Wave-13 C-9: Recursive helper that materialises an Error (plus its
+  // Recursive helper that materialises an Error (plus its
   // `cause` chain) into a plain `{ name, message, stack, cause? }` envelope
   // with stack sanitisation applied at every level. A cycle guard prevents
   // infinite recursion if `cause` forms a loop (rare but observed in the
@@ -200,7 +200,7 @@ export function createSafeReplacer(opts?: {
   }
 
   return (key: string, value: unknown): unknown => {
-    // P2-14: Apply the stack sanitizer whenever we emit a `stack` string
+    // Apply the stack sanitizer whenever we emit a `stack` string
     // field — not just when the value is an Error. The upstream redactor
     // (`sanitizeAttributes`) pre-serializes Error instances into plain
     // `{ name, message, stack }` objects before our replacer runs, so by
@@ -211,7 +211,7 @@ export function createSafeReplacer(opts?: {
       return sanitizeStack(value);
     }
     if (value instanceof Error) {
-      // Wave-13 C-9: recursively redact the `cause` chain. Prior behaviour
+      // recursively redact the `cause` chain. Prior behaviour
       // only emitted the top-level error's fields and dropped `cause`
       // entirely, hiding the root-cause context from log aggregators.
       return renderError(value, 0, new WeakSet<Error>());
@@ -230,7 +230,7 @@ export function createSafeReplacer(opts?: {
 }
 
 /**
- * PERF-030: Object-key check that avoids allocating the `Object.keys(obj)`
+ * Object-key check that avoids allocating the `Object.keys(obj)`
  * array just to ask "does this object have any own enumerable keys?". Used by
  * the text-format path to decide whether to emit a JSON meta suffix.
  */
@@ -257,7 +257,7 @@ export function createLogger(config?: LoggerConfig): Logger {
   const json = config?.json ?? false;
   // eslint-disable-next-line no-console -- library fallback when no output provided
   const output = config?.output ?? console.log;
-  // SEC-001 + T02 (Wave-5A): Build the redactor once at logger creation.
+  // SEC-001 + T02: Build the redactor once at logger creation.
   // New defaulting semantics:
   //   - `redact === false`    → no redactor (explicit opt-out).
   //   - `redact === undefined`→ default redactor (useDefaultPattern: true).
@@ -272,7 +272,7 @@ export function createLogger(config?: LoggerConfig): Logger {
       : createRedactor(config?.redact ?? { useDefaultPattern: true });
   const correlationId = config?.correlationId;
   const getContext = config?.getContext;
-  // P2-14: resolve cwd for stack sanitization once at factory time.
+  // resolve cwd for stack sanitization once at factory time.
   const stackSanitizerDisabled = config?.stackSanitizer?.disabled === true;
   const stackSanitizerCwd =
     config?.stackSanitizer?.cwd ?? (typeof process !== 'undefined' ? process.cwd() : '');
@@ -285,7 +285,7 @@ export function createLogger(config?: LoggerConfig): Logger {
   }
 
   /**
-   * P1-7: Evaluate the optional `getContext` hook and return a shallow
+   * Evaluate the optional `getContext` hook and return a shallow
    * object of `trace_id` / `span_id` fields ready for merging. The hook
    * is fail-open: any throw or invalid return yields an empty object so a
    * buggy context provider cannot silence logs.
@@ -307,17 +307,17 @@ export function createLogger(config?: LoggerConfig): Logger {
 
   function createLoggerWithMeta(baseMeta: Record<string, unknown>): Logger {
     function log(level: LogLevel, message: string, meta?: Readonly<Record<string, unknown>>): void {
-      // PERF-030: Gate ALL work behind the level check. Previously we still
+      // Gate ALL work behind the level check. Previously we still
       // constructed `merged`, invoked the redactor, stamped a timestamp, and
       // built a replacer even when the call was below the configured level —
       // a common pattern in hot loops (`logger.debug(...)` at info level).
       // Now `debug()` under a production `info` logger is a single branch.
       if (!shouldLog(level)) return;
-      // P1-7: Inject trace_id / span_id from the async context hook BEFORE
+      // Inject trace_id / span_id from the async context hook BEFORE
       // baseMeta / meta so caller fields win on collision. The hook never
       // overwrites explicit user fields (e.g. `logger.warn('x', { trace_id })`).
       const ctxFields = resolveContextFields();
-      // OBS-001: Inject correlationId (if configured) before redaction so it
+      // Inject correlationId (if configured) before redaction so it
       // survives as-is — unless the caller intentionally overrides it in meta.
       const merged: Record<string, unknown> = {
         ...(correlationId !== undefined ? { correlationId } : {}),
@@ -332,9 +332,9 @@ export function createLogger(config?: LoggerConfig): Logger {
       const epochMs = Date.now();
       const timestamp = new Date(epochMs).toISOString();
       // Fix 9 + PERF-014: Use safe replacer for Error/Date/circular handling.
-      // PERF-030: Only construct the replacer when we actually need to
+      // Only construct the replacer when we actually need to
       // stringify. Text mode without meta keys skips it entirely.
-      // P2-14: Only thread the stack sanitizer when enabled.
+      // Only thread the stack sanitizer when enabled.
       // `exactOptionalPropertyTypes` forbids `{ key: undefined }` against an
       // optional-only schema, so build the options object conditionally.
       const replacerOpts = sanitizeStackFn ? { sanitizeStack: sanitizeStackFn } : undefined;

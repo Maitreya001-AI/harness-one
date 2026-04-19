@@ -1,13 +1,13 @@
 /**
- * Wave-13 Track G — OpenAI adapter fixes.
+ * OpenAI adapter provider-registry tests.
  *
  * Covers:
- *  - G-1 (P0-3): per-instance zero-usage warned-models LRU (no cross-tenant
+ *  - per-instance zero-usage warned-models LRU (no cross-tenant
  *    contamination of the warn-once dedupe).
- *  - G-2: `registerProvider()` honors `trustedOrigins` whitelist; origin
+ *  - `registerProvider()` honors `trustedOrigins` whitelist; origin
  *    mismatch throws PROVIDER_REGISTRY_SEALED.
- *  - G-3: `providers` constant is deep-frozen (outer and inner entries).
- *  - G-4: `registerProvider(name)` shorthand using bundled `providers` map.
+ *  - `providers` constant is deep-frozen (outer and inner entries).
+ *  - `registerProvider(name)` shorthand using bundled `providers` map.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -44,10 +44,10 @@ function createMockClient(): {
 }
 
 // ---------------------------------------------------------------------------
-// G-1 (P0-3): per-instance zero-usage warn-once dedupe
+// per-instance zero-usage warn-once dedupe
 // ---------------------------------------------------------------------------
 
-describe('Wave-13 G-1: per-instance zero-usage warned-models LRU', () => {
+describe('per-instance zero-usage warned-models LRU', () => {
   beforeEach(() => {
     _resetOpenAIWarnState();
   });
@@ -92,15 +92,15 @@ describe('Wave-13 G-1: per-instance zero-usage warned-models LRU', () => {
 });
 
 // ---------------------------------------------------------------------------
-// G-2: trustedOrigins whitelist
+// trustedOrigins whitelist
 // ---------------------------------------------------------------------------
 
-describe('Wave-13 G-2: registerProvider honors trustedOrigins whitelist', () => {
+describe('registerProvider honors trustedOrigins whitelist', () => {
   it('accepts a baseURL whose origin is on the whitelist', () => {
     // Use a unique name per test to avoid colliding with other suites.
     expect(() =>
       registerProvider(
-        'wave13-g2-accept',
+        'trusted-origin-accept',
         { baseURL: 'https://api.example-accept.test/v1' },
         { trustedOrigins: ['https://api.example-accept.test'] },
       ),
@@ -110,7 +110,7 @@ describe('Wave-13 G-2: registerProvider honors trustedOrigins whitelist', () => 
   it('rejects a baseURL whose origin is not on the whitelist', () => {
     try {
       registerProvider(
-        'wave13-g2-reject',
+        'trusted-origin-reject',
         { baseURL: 'https://api.hostile.test/v1' },
         { trustedOrigins: ['https://api.trusted.test'] },
       );
@@ -127,7 +127,7 @@ describe('Wave-13 G-2: registerProvider honors trustedOrigins whitelist', () => 
   it('does not enforce the whitelist when trustedOrigins is omitted', () => {
     expect(() =>
       registerProvider(
-        'wave13-g2-omitted',
+        'trusted-origin-omitted',
         { baseURL: 'https://api.anything-goes.test/v1' },
       ),
     ).not.toThrow();
@@ -137,7 +137,7 @@ describe('Wave-13 G-2: registerProvider honors trustedOrigins whitelist', () => 
     // Empty list is treated as "no whitelist configured" (same as undefined).
     expect(() =>
       registerProvider(
-        'wave13-g2-empty',
+        'trusted-origin-empty',
         { baseURL: 'https://api.empty-list.test/v1' },
         { trustedOrigins: [] },
       ),
@@ -146,10 +146,10 @@ describe('Wave-13 G-2: registerProvider honors trustedOrigins whitelist', () => 
 });
 
 // ---------------------------------------------------------------------------
-// G-3: providers deep-freeze
+// providers deep-freeze
 // ---------------------------------------------------------------------------
 
-describe('Wave-13 G-3: providers entries are deep-frozen', () => {
+describe('providers entries are deep-frozen', () => {
   it('each bundled provider entry returned by the proxy is frozen', () => {
     const groq = providers.groq;
     expect(groq).toBeDefined();
@@ -178,18 +178,18 @@ describe('Wave-13 G-3: providers entries are deep-frozen', () => {
 
   it('providers still surfaces entries registered via registerProvider()', () => {
     // Sanity: proxy is not a snapshot; late-registered entries must appear.
-    registerProvider('wave13-g3-late', { baseURL: 'https://late.example.test/v1' });
-    expect(providers['wave13-g3-late']?.baseURL).toBe('https://late.example.test/v1');
+    registerProvider('deep-freeze-late', { baseURL: 'https://late.example.test/v1' });
+    expect(providers['deep-freeze-late']?.baseURL).toBe('https://late.example.test/v1');
     // And the returned entry is still frozen.
-    expect(Object.isFrozen(providers['wave13-g3-late'])).toBe(true);
+    expect(Object.isFrozen(providers['deep-freeze-late'])).toBe(true);
   });
 });
 
 // ---------------------------------------------------------------------------
-// G-4: registerProvider(name) shorthand
+// registerProvider(name) shorthand
 // ---------------------------------------------------------------------------
 
-describe('Wave-13 G-4: registerProvider shorthand uses bundled providers', () => {
+describe('registerProvider shorthand uses bundled providers', () => {
   it('registerProvider("groq") is idempotent (same bundled baseURL)', () => {
     // `groq` is already bundled; calling the shorthand form should not throw
     // (idempotent re-registration with the same baseURL is a no-op).

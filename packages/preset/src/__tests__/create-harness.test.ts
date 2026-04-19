@@ -169,7 +169,7 @@ describe('createHarness() factory', () => {
       expect(harness.memory).toBeDefined();
       expect(harness.prompts).toBeDefined();
       expect(harness.eval).toBeDefined();
-      // Wave-5C T-1.6: `eventBus` field removed (ARCH-010 deprecation fully landed).
+      // `eventBus` field removed (ARCH-010 deprecation fully landed).
       expect(harness.logger).toBeDefined();
       expect(harness.conversations).toBeDefined();
       expect(harness.middleware).toBeDefined();
@@ -281,7 +281,7 @@ describe('createHarness() factory', () => {
       expect(() => createHarness({} as unknown as AnthropicHarnessConfig)).toThrow(HarnessError);
     });
 
-    it('throws HarnessError when both adapter AND client are provided (Wave-14 XOR)', () => {
+    it('throws HarnessError when both adapter AND client are provided (XOR)', () => {
       const customAdapter = { chat: vi.fn() };
       const bad = {
         ...anthropicConfig,
@@ -1234,7 +1234,7 @@ describe('createHarness() factory', () => {
       });
 
       const harness = createHarness(anthropicConfig);
-      // F18d: input messages now use save() for batch persistence
+      // input messages now use save() for batch persistence
       vi.spyOn(harness.conversations, 'save').mockRejectedValue(new Error('storage failure'));
 
       const events: unknown[] = [];
@@ -1257,8 +1257,8 @@ describe('createHarness() factory', () => {
       });
 
       const harness = createHarness(anthropicConfig);
-      // F18d: user messages now use save() for batch persistence, so
-      // append() is only called for assistant/tool messages during the loop.
+      // user messages now use save() for batch persistence, so append() is
+      // only called for assistant/tool messages during the loop.
       vi.spyOn(harness.conversations, 'append').mockRejectedValue(new Error('storage failure'));
 
       const events: unknown[] = [];
@@ -1281,7 +1281,7 @@ describe('createHarness() factory', () => {
       });
 
       const harness = createHarness(anthropicConfig);
-      // F18d: user messages use save(); append() is only for loop events.
+      // user messages use save(); append() is only for loop events.
       vi.spyOn(harness.conversations, 'append').mockRejectedValue(new Error('storage failure'));
 
       const events: unknown[] = [];
@@ -1446,9 +1446,9 @@ describe('createHarness() factory', () => {
   });
 
   // -----------------------------------------------------------------------
-  // P1-14 (Wave-12): deep-readonly guardrail config types
+  // deep-readonly guardrail config types
   // -----------------------------------------------------------------------
-  describe('P1-14: guardrails config is deeply readonly', () => {
+  describe('guardrails config is deeply readonly', () => {
     it('rejects mutation of rateLimit fields at compile time', () => {
       const config = {
         ...anthropicConfig,
@@ -1515,9 +1515,9 @@ describe('createHarness() factory', () => {
   });
 
   // -----------------------------------------------------------------------
-  // P1-20 (Wave-12): onSessionId callback surfaces auto-generated id
+  // onSessionId callback surfaces auto-generated id
   // -----------------------------------------------------------------------
-  describe('P1-20: onSessionId callback', () => {
+  describe('onSessionId callback', () => {
     it('invokes the callback with the caller-provided sessionId verbatim', async () => {
       mocks.mockAgentLoopRun.mockImplementation(async function* () {
         yield { type: 'done' as const, reason: 'end_turn' as const, totalUsage: { inputTokens: 0, outputTokens: 0 } };

@@ -1,8 +1,6 @@
 /**
  * Shared fixtures for the OTel adapter tests.
  *
- * Wave-16 M3 extraction.
- *
  * @module
  * @internal
  */

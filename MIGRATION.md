@@ -10,17 +10,17 @@ Once the first release ships (driven by `@changesets/cli`, see
 migration steps — API renames, removed symbols, behaviour changes.
 Until then, read the source.
 
-## Unreleased — through Wave-27 audit pass
+## Unreleased
 
 Breaking + observable changes that downstream consumers on a SHA-pinned
 build should know about:
 
 - `harness-one/testing` subpath added; mock `AgentAdapter` factories moved
-  off `harness-one/advanced`. Wave-27: `createMockAdapter` /
+  off `harness-one/advanced`. `createMockAdapter` /
   `createFailingAdapter` / `createStreamingMockAdapter` /
-  `createErrorStreamingMockAdapter` + `MockAdapterConfig` used to ship from
-  `harness-one/advanced` alongside production extension primitives. They
-  are test doubles — routing them through the same surface as
+  `createErrorStreamingMockAdapter` + `MockAdapterConfig` previously shipped
+  from `harness-one/advanced` alongside production extension primitives.
+  They are test doubles — routing them through the same surface as
   `createFallbackAdapter` / `createResilientLoop` misled adapter authors
   into treating them as production fallback. Migration:
   ```diff
@@ -41,19 +41,14 @@ build should know about:
   `harness-one/core`, `harness-one/infra`) rather than the internal
   `packages/core/src/...` file layout, which is not reachable through the
   `exports` map from an npm install.
-- `harness-one/infra` subpath is now actually published. Docs have
-  promised `createAdmissionController` + `unrefTimeout` / `unrefInterval`
-  under this path since Wave-5D/5F, but the package.json `exports` entry
-  and tsup entry point were missing, so `import … from 'harness-one/infra'`
-  resolved to `ERR_PACKAGE_PATH_NOT_EXPORTED`. The subpath now exports
-  exactly those documented symbols and nothing else — the rest of
-  `src/infra/` stays private. Additive; no consumer could have depended
-  on the broken state.
+- `harness-one/infra` subpath is published. It exports exactly
+  `createAdmissionController` + `unrefTimeout` / `unrefInterval` (plus
+  their supporting types) — the rest of `src/infra/` stays private.
 - `MessageQueue` is now a factory: `createMessageQueue(config)` returns
   a `MessageQueue` interface. `new MessageQueue(...)` no longer works.
   The implementing class is hidden per `docs/ARCHITECTURE.md`
   §Construction.
-- `StreamAggregator` drops the Wave-15 `initialize()` / `finalize()`
+- `StreamAggregator` does not have `initialize()` / `finalize()`
   aliases. Use `reset()` / `getMessage(usage)` instead.
 - `AgentLoop.status` adds an `'errored'` state. Normal `end_turn`
   completions still report `'completed'`; abort / max_iterations /

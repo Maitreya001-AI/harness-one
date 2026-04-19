@@ -4,12 +4,9 @@
  * (lifted from `infra/validate.ts`), and the pure pricing math
  * (`priceUsage`).
  *
- * Wave-15 consolidated the pricing math + type from three disparate homes
- * (`observe/cost-tracker-types.ts`, the retired `observe/cost-math.ts`, and
- * `infra/validate.ts`); Wave-16 m6 deleted `cost-math.ts`; Wave-17 moved the
- * `TokenUsageRecord` shape itself from observe (L3) into this module so L2
- * no longer reaches into L3 for types. Observe re-exports the record type
- * for its own public API (`harness-one/observe`).
+ * The pricing math + type live here (L2) so L2 never reaches into L3
+ * for cost-related types. Observe re-exports the record type as part
+ * of its own public API (`harness-one/observe`).
  *
  * @module
  */

@@ -9,7 +9,7 @@ import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import { computeBackoffMs } from '../infra/backoff.js';
 
 /**
- * A1-19 (Wave 4b): AbortSignal-aware sleep.
+ * AbortSignal-aware sleep.
  *
  * Rejects with a `HarnessError(HarnessErrorCode.GUARD_SELF_HEALING_ABORTED)` if the signal fires
  * during the sleep. On both resolution paths we clear the timer AND detach the
@@ -121,7 +121,7 @@ export async function withSelfHealing(
 
     // Exponential backoff with jitter via shared utility.
     const backoffMs = computeBackoffMs(attempt - 1);
-    // A1-19 (Wave 4b): honour external abort during backoff. Previously we
+    // honour external abort during backoff. Previously we
     // used a raw setTimeout so aborting during sleep kept the timer armed
     // until natural expiry (wasted handle + delayed shutdown). `sleepWithAbort`
     // clears the timer and detaches the listener on either resolution path.

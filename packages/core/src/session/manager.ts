@@ -1,7 +1,7 @@
 /**
  * Session management with TTL, LRU eviction, and prompt locking.
  *
- * After Wave-14 the concerns are split:
+ * The concerns are split:
  *
  * - This file owns session lifecycle (create/get/access/lock/destroy/list/gc)
  *   and the metadata-size guard.
@@ -23,7 +23,7 @@ import { createSessionEventBus } from './session-event-bus.js';
 export type { SessionManager } from './manager-types.js';
 
 /**
- * Wave-15: pluggable session storage backend. The default in-process Map
+ * pluggable session storage backend. The default in-process Map
  * implementation is suitable for single-instance deployments; distributed
  * deployments can supply a Redis- or DB-backed implementation so session
  * state survives process restarts and is shared across nodes.
@@ -88,7 +88,7 @@ export function createSessionManager(config?: {
    */
   maxMetadataBytes?: number;
   /**
-   * Wave-15: optional storage backend. Defaults to an in-process `Map`,
+   * optional storage backend. Defaults to an in-process `Map`,
    * which is correct for single-instance deployments. Distributed
    * deployments can supply a shared implementation (e.g. backed by
    * `@harness-one/redis`) so session state survives restarts.

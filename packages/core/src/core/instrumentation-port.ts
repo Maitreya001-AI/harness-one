@@ -1,10 +1,9 @@
 /**
  * InstrumentationPort — minimal tracing contract for subsystems.
  *
- * Wave-15 promoted this from observe (L3) to core/core (L2). RAG and
- * other subsystems consume the port without coupling to the full
- * {@link TraceManager} surface, and keeping the port at L2 removes an
- * L3→L3 edge (see docs/ARCHITECTURE.md).
+ * The port lives in core/core (L2). RAG and other subsystems consume it
+ * without coupling to the full {@link TraceManager} surface, and keeping
+ * the port at L2 removes an L3→L3 edge (see docs/ARCHITECTURE.md).
  *
  * The harness-one `TraceManager` implements this interface structurally —
  * any existing `TraceManager` instance is a valid `InstrumentationPort`,

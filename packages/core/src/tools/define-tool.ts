@@ -77,7 +77,7 @@ export function defineTool<TParams = unknown>(def: {
   responseFormat?: 'concise' | 'detailed';
   /**
    * Declared capabilities for the tool. See {@link ToolDefinition.capabilities}.
-   * Optional in Wave-5A (warn-only), planned to become required in 1.0.
+   * Optional (warn-only), planned to become required in 1.0.
    */
   capabilities?: readonly ToolCapabilityValue[];
   execute: (params: TParams, signal?: AbortSignal) => Promise<ToolResult>;

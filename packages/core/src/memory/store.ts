@@ -60,7 +60,7 @@ export interface MemoryStore {
   write(entry: Omit<MemoryEntry, 'id' | 'createdAt' | 'updatedAt'>): Promise<MemoryEntry>;
   read(id: string): Promise<MemoryEntry | null>;
   /**
-   * Filter/query entries. Wave-13 E-5: accepts an optional `opts.signal`
+   * Filter/query entries. E-5: accepts an optional `opts.signal`
    * `AbortSignal`. When aborted, implementations SHOULD throw
    * `HarnessError(CORE_ABORTED)` at the next batch/check boundary.
    * The signature is backwards compatible — `opts` is optional.
@@ -209,7 +209,7 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
     },
 
     async write(input) {
-      // Wave-5E SEC-A08: enforce byte caps + reject reserved metadata keys.
+      // enforce byte caps + reject reserved metadata keys.
       assertMemoryEntrySize(input);
       // Validate embedding dimension consistency before storing
       const inputEmbedding = input.metadata?.['embedding'];
@@ -323,7 +323,7 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
     },
 
     async query(filter, opts) {
-      // Wave-13 E-5: honor AbortSignal. Check at entry and again after each
+      // honor AbortSignal. Check at entry and again after each
       // filter stage so long-running queries over large stores can be
       // interrupted promptly.
       const signal = opts?.signal;
@@ -338,12 +338,12 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
       };
       throwIfAborted();
 
-      // Wave-16 m7: index set-algebra (union / intersect) lives in
+      // index set-algebra (union / intersect) lives in
       // `memory-query.ts` so this function can focus on orchestration.
       const candidateIds = resolveCandidateIds(filter, { gradeIndex, tagIndex });
 
       // Resolve candidates to entries, or fall back to full scan.
-      // PERF-007: In the full-scan path we intentionally iterate directly over
+      // In the full-scan path we intentionally iterate directly over
       // `entries.values()` without copying via Array.from. The earlier copy was
       // wasted work — we still need to allocate a results array anyway to
       // apply filters + sort.
@@ -454,7 +454,7 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
       }
 
       // Trim to maxEntries by removing lowest-weighted entries first.
-      // PERF-002: Previously `shift()` was called in a while-loop, giving
+      // Previously `shift()` was called in a while-loop, giving
       // O(n²) behavior on large stores. Sort once, iterate by index instead.
       if (policy.maxEntries !== undefined && entries.size > policy.maxEntries) {
         const sorted = Array.from(entries.values()).sort(

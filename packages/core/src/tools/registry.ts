@@ -31,7 +31,7 @@ export interface ResolvedRegistryConfig {
   /** Per-call timeout in ms (default: 30_000). `undefined` disables timeout. */
   timeoutMs: number | undefined;
   /**
-   * Wave-13 E-4: cumulative byte cap on tool-call arguments within a single
+   * cumulative byte cap on tool-call arguments within a single
    * turn (default: 10 MiB). Exceeding the cap throws `ADAPTER_PAYLOAD_OVERSIZED`.
    * Reset on `resetTurn()`.
    */
@@ -76,13 +76,13 @@ export interface CreateRegistryConfig {
   /** Optional timeout in milliseconds for tool execution. */
   timeoutMs?: number;
   /**
-   * Wave-13 E-4: cumulative cap on tool-argument bytes per turn. Default
+   * cumulative cap on tool-argument bytes per turn. Default
    * 10 MiB. When exceeded, `execute()` throws `ADAPTER_PAYLOAD_OVERSIZED`.
    * Reset on `resetTurn()` / `resetSession()`.
    */
   maxTotalArgBytesPerTurn?: number;
   /**
-   * Wave-5A: capability allow-list enforced at `register()` time. Tools
+   * capability allow-list enforced at `register()` time. Tools
    * declaring a capability outside this list are rejected with
    * `TOOL_CAPABILITY_DENIED`. Default: `['readonly']` (fail-closed).
    *
@@ -101,23 +101,23 @@ export interface CreateRegistryConfig {
 
 export function createRegistry(config?: CreateRegistryConfig): ToolRegistry {
   const tools = new Map<string, ToolDefinition>();
-  // T08: production-grade defaults. Callers can still opt out by passing
+  // production-grade defaults. Callers can still opt out by passing
   // `Infinity` (rate limits) or their own numeric override (timeout).
   const maxPerTurn = config?.maxCallsPerTurn ?? 20;
   const maxPerSession = config?.maxCallsPerSession ?? 100;
   const customValidator = config?.validator;
   const permissions = config?.permissions;
   const timeoutMs = config?.timeoutMs ?? 30_000;
-  // Wave-13 E-4: per-turn cumulative argument byte cap. 10 MiB default.
+  // per-turn cumulative argument byte cap. 10 MiB default.
   const maxTotalArgBytesPerTurn = config?.maxTotalArgBytesPerTurn ?? 10 * 1024 * 1024;
-  // T09: capability allow-list. Default fail-closed to `readonly` only.
+  // capability allow-list. Default fail-closed to `readonly` only.
   const allowedCapabilities = new Set<ToolCapabilityValue>(
     config?.allowedCapabilities ?? ['readonly'],
   );
   const logger = config?.logger;
   let turnCalls = 0;
   let sessionCalls = 0;
-  // Wave-13 E-4: cumulative arg bytes consumed this turn.
+  // cumulative arg bytes consumed this turn.
   let turnArgBytes = 0;
 
   function register(tool: ToolDefinition): void {
@@ -137,7 +137,7 @@ export function createRegistry(config?: CreateRegistryConfig): ToolRegistry {
     }
 
     // -----------------------------------------------------------------
-    // T09: Capability allow-list enforcement.
+    // Capability allow-list enforcement.
     //
     // ORDERING (INT-09-01): capability check runs at register()-time and
     // therefore necessarily precedes the permission check (which runs at
@@ -145,17 +145,17 @@ export function createRegistry(config?: CreateRegistryConfig): ToolRegistry {
     // its whole point is to *prevent registration* of disallowed tools so
     // they cannot be reached at all.
     //
-    // Wave-5C upgrade plan (breaking, deferred to avoid a double breaking
-    // window with Wave-5A defaults):
+    // upgrade plan (breaking, deferred to avoid a double breaking
+    // window with defaults):
     //   1. `ToolDefinition.capabilities` becomes required (TS-level break).
     //   2. Missing capabilities escalate from safeWarn to throw
     //      TOOL_CAPABILITY_DENIED.
-    //   3. Keep warning in Wave-5A so legacy tools still load.
+    //   3. Keep warning so legacy tools still load.
     // -----------------------------------------------------------------
     if (tool.capabilities === undefined) {
       safeWarn(
         logger,
-        `tool "${tool.name}" missing capabilities declaration — will be required in 1.0 (Wave-5C)`,
+        `tool "${tool.name}" missing capabilities declaration — will be required in 1.0`,
         { tool: tool.name },
       );
     } else {
@@ -248,7 +248,7 @@ export function createRegistry(config?: CreateRegistryConfig): ToolRegistry {
       };
     }
 
-    // Wave-13 E-4: cumulative per-turn argument byte cap. Throw to make the
+    // cumulative per-turn argument byte cap. Throw to make the
     // violation explicit to supervising loops.
     if (turnArgBytes + argByteLen > maxTotalArgBytesPerTurn) {
       refundClaimedCounters();
@@ -373,7 +373,7 @@ export function createRegistry(config?: CreateRegistryConfig): ToolRegistry {
       buildToolMiddlewareChain(tool, params, call.name, sig);
 
     /**
-     * Wave-12 P2-24: runtime shape assertion for tool return values.
+     * runtime shape assertion for tool return values.
      *
      * Tool implementations are typed to return `ToolResult`, but JS callers
      * (or buggy middleware) can still return a plain object, a string, `null`,
@@ -403,7 +403,7 @@ export function createRegistry(config?: CreateRegistryConfig): ToolRegistry {
     // Execute with optional timeout using a simple timer promise pattern
     // that avoids listener leaks by not attaching abort signal listeners.
     //
-    // CQ-008: The timeout branch mirrors the non-timeout branch's try/catch
+    // The timeout branch mirrors the non-timeout branch's try/catch
     // so a throwing tool.execute() is converted into a `toolError` reply
     // instead of propagating. Rate-limit counters (turnCalls / sessionCalls)
     // are pre-claimed; we keep them claimed whether the tool succeeds, errors,
@@ -412,17 +412,17 @@ export function createRegistry(config?: CreateRegistryConfig): ToolRegistry {
     if (timeoutMs !== undefined) {
       const ac = new AbortController();
       let timer: ReturnType<typeof setTimeout> | undefined;
-      // Wave-12 P1-18: when a tool keeps running long after the signal has
+      // when a tool keeps running long after the signal has
       // fired, warn so operators can identify tools that ignore the signal
       // (see ToolDefinition.execute TSDoc). Threshold: 2× timeout.
       let nonResponsiveTimer: ReturnType<typeof setTimeout> | undefined;
       let timedOut = false;
-      // P2-24: wrap the raw chain in the shape assertion so garbage return
+      // wrap the raw chain in the shape assertion so garbage return
       // values cannot propagate up through the Promise.race winner.
       const chainPromise = buildChain(ac.signal)().then(assertToolResult);
       try {
         const timeoutPromise = new Promise<ToolResult>((resolve) => {
-          // Wave-5F m-2: unref so an abandoned Promise.race doesn't hold the
+          // unref so an abandoned Promise.race doesn't hold the
           // event loop open past the caller's expected process lifetime.
           timer = unrefTimeout(() => {
             timedOut = true;
@@ -460,7 +460,7 @@ export function createRegistry(config?: CreateRegistryConfig): ToolRegistry {
         try {
           return await Promise.race([chainPromise, timeoutPromise]);
         } catch (err) {
-          // CQ-008: Same error-to-toolError conversion as the non-timeout path.
+          // Same error-to-toolError conversion as the non-timeout path.
           return toolError(
             err instanceof Error ? err.message : String(err),
             'internal',
@@ -478,7 +478,7 @@ export function createRegistry(config?: CreateRegistryConfig): ToolRegistry {
     // If tool.execute() throws (instead of returning a ToolResult error),
     // the pre-claimed turnCalls/sessionCalls counters would never be decremented.
     try {
-      // P2-24: same shape assertion as the timeout branch.
+      // same shape assertion as the timeout branch.
       return assertToolResult(await buildChain()());
     } catch (err) {
       return toolError(
@@ -498,14 +498,14 @@ export function createRegistry(config?: CreateRegistryConfig): ToolRegistry {
 
   function resetTurn(): void {
     turnCalls = 0;
-    // Wave-13 E-4: reset per-turn byte counter on turn boundaries.
+    // reset per-turn byte counter on turn boundaries.
     turnArgBytes = 0;
   }
 
   function resetSession(): void {
     sessionCalls = 0;
     turnCalls = 0;
-    // Wave-13 E-4: session reset implies a new turn.
+    // session reset implies a new turn.
     turnArgBytes = 0;
   }
 
@@ -518,7 +518,7 @@ export function createRegistry(config?: CreateRegistryConfig): ToolRegistry {
     };
   }
 
-  // Wave-12 P1-18: add a Symbol.toStringTag marker so Object.prototype.toString
+  // add a Symbol.toStringTag marker so Object.prototype.toString
   // surfaces a descriptive tag (e.g. `[object HarnessToolRegistry]`) for
   // debuggers and structured-logging pretty-printers.
   const registry: ToolRegistry = { register, get, list, schemas, execute, handler, resetTurn, resetSession, getConfig };

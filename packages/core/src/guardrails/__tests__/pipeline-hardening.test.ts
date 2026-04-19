@@ -1,5 +1,5 @@
 /**
- * Wave-13 E-6: per-guard fairness — clamp guard timeoutMs to remaining
+ * per-guard fairness — clamp guard timeoutMs to remaining
  * global budget and emit a `guard_timeout` span event on guard-level timeout.
  */
 
@@ -13,7 +13,7 @@ const sleepGuard = (ms: number): Guardrail => async () => {
   return { action: 'allow' };
 };
 
-describe('createPipeline Wave-13 E-6: per-guard fairness', () => {
+describe('createPipeline E-6: per-guard fairness', () => {
   it('clamps guard timeoutMs to remaining global budget', async () => {
     const events: GuardrailEvent[] = [];
     const pipeline = createPipeline({

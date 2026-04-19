@@ -39,15 +39,15 @@ interface CachedEntry {
  * Module-level encoder cache. Avoids expensive encoder creation on every call.
  * Maps model name -> cached entry.
  *
- * F19: Bounded to {@link MAX_CACHE_SIZE} entries. When the cache exceeds the
+ * Bounded to {@link MAX_CACHE_SIZE} entries. When the cache exceeds the
  * limit, the least-recently-used encoder is evicted and its WASM memory freed
  * via `.free()`.
  */
 const encoderCache = new Map<string, CachedEntry>();
 
 /**
- * F19: Maximum number of model encoders to retain in the cache.
- * When exceeded, the least-recently-used encoder is evicted and freed.
+ * Maximum number of model encoders to retain in the cache. When exceeded,
+ * the least-recently-used encoder is evicted and freed.
  */
 const MAX_CACHE_SIZE = 10;
 
@@ -63,7 +63,7 @@ const DEFAULT_MODELS: string[] = [
 let defaultsRegistered = false;
 
 /**
- * CQ-044: Track models we've already warned about so the fallback notification
+ * Track models we've already warned about so the fallback notification
  * is emitted at most once per model per process. Without this, a misconfigured
  * model would spam stderr on every `createTiktokenTokenizer()` call.
  */
@@ -133,7 +133,7 @@ export function createTiktokenTokenizer(model: string): Tokenizer {
   // Check encoder cache first — touch (delete+reinsert) to mark as recently used
   const cached = encoderCache.get(model);
   if (cached) {
-    // F19: LRU touch — move to end of insertion order
+    // LRU touch — move to end of insertion order
     encoderCache.delete(model);
     encoderCache.set(model, cached);
     return cached.tokenizer;
@@ -143,9 +143,9 @@ export function createTiktokenTokenizer(model: string): Tokenizer {
   try {
     encoder = encoding_for_model(model as TiktokenModel) as unknown as NativeEncoder;
   } catch {
-    // CQ-044: Unknown model — fall back to a heuristic encoder rather than
-    // throwing. Emit a one-time warn per model so misconfiguration surfaces
-    // without spamming stderr on the hot path.
+    // Unknown model — fall back to a heuristic encoder rather than throwing.
+    // Emit a one-time warn per model so misconfiguration surfaces without
+    // spamming stderr on the hot path.
     if (!fallbackWarned.has(model)) {
       fallbackWarned.add(model);
       fallbackWarner('Tokenizer fallback for unknown model', model);
@@ -175,8 +175,9 @@ export function createTiktokenTokenizer(model: string): Tokenizer {
   // Cache the encoder (even if undefined) so the warn fires exactly once per model.
   encoderCache.set(model, { tokenizer, encoder: encoder ?? ({ encode: () => new Uint32Array() } as NativeEncoder) });
 
-  // F19: Evict the least-recently-used encoder when the cache exceeds MAX_CACHE_SIZE.
-  // Map insertion order gives us LRU — the first key is the oldest.
+  // Evict the least-recently-used encoder when the cache exceeds
+  // MAX_CACHE_SIZE. Map insertion order gives us LRU — the first key is
+  // the oldest.
   while (encoderCache.size > MAX_CACHE_SIZE) {
     const oldest = encoderCache.keys().next().value;
     if (oldest === undefined) break;
@@ -194,8 +195,8 @@ export function createTiktokenTokenizer(model: string): Tokenizer {
 /**
  * Release all cached tiktoken WASM encoders and clear the module-level cache.
  *
- * CQ-012 fix: the tiktoken package allocates native WASM memory per encoder
- * (via `encoding_for_model()`). Because we cache encoders for the lifetime of
+ * The tiktoken package allocates native WASM memory per encoder (via
+ * `encoding_for_model()`). Because we cache encoders for the lifetime of
  * the process, long-running or frequently-restarting-in-place harnesses can
  * accumulate WASM allocations that the JS GC cannot reclaim directly. Hosts
  * that want a clean shutdown (e.g. between test runs, during graceful

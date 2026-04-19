@@ -8,7 +8,7 @@
 
 /**
  * Brand helper + `TraceId`/`SpanId`/`SessionId` branded-id types live in
- * `infra/brands.ts` (Wave-15) so `infra/ids.ts` can reference them without
+ * `infra/brands.ts` so `infra/ids.ts` can reference them without
  * importing upward. This module re-exports the canonical definitions for
  * backward compatibility with the rest of the codebase.
  */
@@ -26,12 +26,12 @@ interface BaseMessage {
 }
 
 /**
- * A system message. Wave-5E (SEC-A07) adds an opaque `_trust` brand
- * recognised on the session-restore path — host code mints trusted
- * instances via {@link createTrustedSystemMessage}; restored messages
- * lacking the brand are downgraded to `user` role so an attacker who
- * can write to the session store cannot elevate a user turn into a
- * system prompt. Fresh construction accepts either shape.
+ * A system message. An opaque `_trust` brand is recognised on the
+ * session-restore path — host code mints trusted instances via
+ * {@link createTrustedSystemMessage}; restored messages lacking the
+ * brand are downgraded to `user` role so an attacker who can write to
+ * the session store cannot elevate a user turn into a system prompt.
+ * Fresh construction accepts either shape.
  */
 export interface SystemMessage extends BaseMessage {
   readonly role: 'system';
@@ -226,9 +226,9 @@ export interface ExecutionStrategy {
   /**
    * Execute a batch of tool calls.
    *
-   * Wave-5B Step 3 (M-5): `options` is `Readonly<>` so the AgentLoop can hoist
-   * one frozen options bag at construction time and reuse the reference across
-   * iterations without paying for an `Object.assign` per batch (PERF-025) and
+   * `options` is `Readonly<>` so the AgentLoop can hoist one frozen
+   * options bag at construction time and reuse the reference across
+   * iterations without paying for an `Object.assign` per batch, and
    * without risk of a strategy mutating shared state.
    */
   execute(

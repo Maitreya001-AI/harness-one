@@ -5,8 +5,8 @@
 
 ## 概述
 
-Wave-5C 起，eval / evolve surface 从核心包 `harness-one` 抽出到
-`@harness-one/devkit`，让核心包保持零运行时依赖、更瘦的 production bundle。
+eval / evolve surface 位于 `@harness-one/devkit`（非核心包 `harness-one`），
+让核心包保持零运行时依赖、更瘦的 production bundle。
 eval 模块提供 Agent 输出质量的评估框架：`createEvalRunner` 将测试用例通过
 生成函数和评分器批量评估并产出报告；4 种内置 Scorer（relevance、
 faithfulness、length、custom）；`runGeneratorEvaluator` 实现"生成-评估-

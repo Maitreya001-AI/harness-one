@@ -15,7 +15,7 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { HarnessError, HarnessErrorCode } from 'harness-one';
 
-// F24: Exit code constants for structured process termination.
+// Exit code constants for structured process termination.
 export const EXIT_SUCCESS = 0;
 export const EXIT_ERROR = 1;
 export const EXIT_INVALID_ARGS = 2;
@@ -183,7 +183,7 @@ async function main(): Promise<void> {
 
 main().catch((err) => {
   console.error(c.red('Error:'), err instanceof Error ? err.message : String(err));
-  // F24: Use EXIT_INVALID_ARGS (2) for argument parsing errors,
+  // Use EXIT_INVALID_ARGS (2) for argument parsing errors,
   // EXIT_ERROR (1) for all other failures.
   const exitCode = err instanceof HarnessError && err.code === HarnessErrorCode.CLI_PARSE_ERROR
     ? EXIT_INVALID_ARGS

@@ -87,11 +87,11 @@ describe('computeJitterMs', () => {
   });
 });
 
-// P2-23 (Wave-12): Property-style tests for computeBackoffMs.
+// Property-style tests for computeBackoffMs.
 // We use a deterministic seeded PRNG (mulberry32) rather than fast-check
 // because fast-check is not a project dependency. The PRNG produces a fixed
 // sequence of inputs, giving reproducible property coverage across 500 runs.
-describe('P2-23 (Wave-12): computeBackoffMs invariants (property tests)', () => {
+describe('computeBackoffMs invariants (property tests)', () => {
   /** Deterministic PRNG — mulberry32 keeps this test reproducible. */
   function mulberry32(seed: number): () => number {
     let a = seed >>> 0;

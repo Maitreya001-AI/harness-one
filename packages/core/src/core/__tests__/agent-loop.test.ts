@@ -2,8 +2,7 @@
  * AgentLoop integration test suite — core lifecycle + non-streaming
  * end-to-end coverage.
  *
- * Wave-16 M1: the 3231-LOC monolith has been split into cohesive sibling
- * files; shared fixtures (mock adapters, event helpers) live in
+ * Shared fixtures (mock adapters, event helpers) live in
  * `agent-loop-test-fixtures.ts` so the split adds no duplicated setup.
  *
  * Streaming / parallel-tool / retry scenarios moved to their own files;
@@ -11,9 +10,9 @@
  * behaviours that don't fit one of those axes.
  *
  * Focused sibling files:
- * - `agent-loop-streaming.test.ts` — streaming state machine (Wave-16 M1)
- * - `agent-loop-parallel-tools.test.ts` — parallel tool execution (Wave-16 M1)
- * - `agent-loop-retry.test.ts` — adapter rate-limit retry (Wave-16 M1)
+ * - `agent-loop-streaming.test.ts` — streaming state machine
+ * - `agent-loop-parallel-tools.test.ts` — parallel tool execution
+ * - `agent-loop-retry.test.ts` — adapter rate-limit retry
  * - `adapter-timeout.test.ts` — timeout/abort-chaining helper
  * - `adapter-caller.test.ts` — retry orchestration
  * - `agent-loop-config-v2.test.ts` — nested config flattening
@@ -21,7 +20,7 @@
  * - `agent-loop-guardrails.test.ts` — guardrail integration
  * - `agent-loop-status.test.ts` — iteration + lifecycle status
  * - `iteration-runner.test.ts` — per-iteration state machine
- * - `iteration-coordinator.test.ts` — Wave-15 event-sequencing state machine
+ * - `iteration-coordinator.test.ts` — event-sequencing state machine
  * - `retry-policy.test.ts` — retry / backoff / circuit-breaker policy
  * - `guardrail-runner.test.ts` — guardrail dispatch per phase
  * - `hook-dispatcher.test.ts` — hook error isolation
@@ -221,7 +220,7 @@ describe('AgentLoop', () => {
     });
   });
 
-  describe('FIX-3: Negative token budget underflow', () => {
+  describe('negative token budget underflow', () => {
     it('clamps negative token values to zero so they cannot bypass budget', async () => {
       const toolCall: ToolCallRequest = { id: 'call_1', name: 'tool', arguments: '{}' };
       // First call: adapter reports negative tokens (malicious/buggy adapter)
@@ -261,7 +260,7 @@ describe('AgentLoop', () => {
     });
   });
 
-  describe('FIX-7: Generator cleanup on .return()/.throw()', () => {
+  describe('generator cleanup on .return()/.throw()', () => {
     it('yields a done event with reason aborted when consumer breaks out early', async () => {
       const toolCall: ToolCallRequest = { id: 'call_1', name: 'loop', arguments: '{}' };
       const adapter: AgentAdapter = {
@@ -762,7 +761,7 @@ describe('AgentLoop', () => {
     });
   });
 
-  // Wave-23: Streaming edge-case blocks (null result / tool_call_delta
+  // Streaming edge-case blocks (null result / tool_call_delta
   // no-id / tool_call_delta same-id rename / non-Error throw wrapping)
   // moved to `agent-loop-streaming.test.ts` for topic cohesion.
 
@@ -891,7 +890,7 @@ describe('AgentLoop', () => {
     });
   });
 
-  // Wave-23: "Streaming: post-call budget check" + "Streaming: done chunk
+  // "Streaming: post-call budget check" + "Streaming: done chunk
   // without usage" moved to `agent-loop-streaming.test.ts` for topic cohesion.
 
   describe('Pre-call token budget check (lines 128-135)', () => {
@@ -1231,13 +1230,13 @@ describe('AgentLoop', () => {
       expect(lastCapturedMessages.length).toBeLessThanOrEqual(3);
     });
 
-    // Wave-12 P0-4: the pruning branch previously used
+    // The pruning branch previously used
     // `conversation.splice(0, len, ...pruned)`, which spreads `pruned`
     // onto the call stack (stack-depth risk) and performs an O(n)
     // insert. The in-place overwrite must preserve the same observable
     // behaviour — same identity of the `conversation` array, same tail
     // ordering — without the spread.
-    it('Wave-12 P0-4: pruning uses in-place overwrite (same array identity preserved)', async () => {
+    it('pruning uses in-place overwrite (same array identity preserved)', async () => {
       const toolCall: ToolCallRequest = { id: 'call_1', name: 'tool', arguments: '{}' };
       const capturedIdentity: Array<Message[]> = [];
       let callCount = 0;
@@ -1297,8 +1296,8 @@ describe('AgentLoop', () => {
       expect(done.reason).toBe('end_turn');
 
       // The tool result message in conversation should have gracefully handled
-      // the cycle. PERF-004 introduced a depth/cycle-aware replacer that
-      // substitutes cycles with "[circular]" rather than aborting serialization.
+      // the cycle. A depth/cycle-aware replacer substitutes cycles with
+      // "[circular]" rather than aborting serialization.
       const toolMsg = capturedMessages.find((m) => m.role === 'tool');
       expect(toolMsg).toBeDefined();
       expect(toolMsg!.content).toContain('[circular]');
@@ -1648,14 +1647,14 @@ describe('AgentLoop', () => {
       // If no error thrown, cleanup worked correctly
     });
 
-    // A1-20 (Wave 4b): the external-signal listener captured `this.abortController`
+    // The external-signal listener captured `this.abortController`
     // and could fire even after dispose() had run — invoking `abort()` on a
     // disposed loop (harmless today but dangerous if dispose() also nulled
     // internal state). The fix adds a `disposed` status guard inside the
     // listener body AND relies on dispose() removing the listener before
     // nulling it. This test simulates a dispose landing between the signal
     // firing and the listener running, asserting the listener is a no-op.
-    it('A1-20: external-signal listener is a no-op after dispose()', async () => {
+    it('external-signal listener is a no-op after dispose()', async () => {
       const externalController = new AbortController();
       const adapter = createMockAdapter([
         { message: { role: 'assistant', content: 'hello' }, usage: USAGE },
@@ -2253,9 +2252,9 @@ describe('AgentLoop', () => {
 
 
   // =====================================================================
-  // PERF-004: depth- and size-bounded tool result serialization
+  // Depth- and size-bounded tool result serialization
   // =====================================================================
-  describe('PERF-004: bounded tool-result serialization', () => {
+  describe('bounded tool-result serialization', () => {
     async function runWithToolResult(toolResult: unknown): Promise<Message> {
       const toolCall: ToolCallRequest = { id: 'call_1', name: 'tool', arguments: '{}' };
       let callCount = 0;
@@ -2278,11 +2277,11 @@ describe('AgentLoop', () => {
       return toolMsg;
     }
 
-    it('truncates oversized results with a marker (Wave-12 P2-8)', async () => {
+    it('truncates oversized results with a marker', async () => {
       // Build a string payload > 1 MiB so the serialized JSON crosses the cap.
       const huge = 'x'.repeat(2 * 1024 * 1024);
       const toolMsg = await runWithToolResult({ payload: huge });
-      // Wave-12 P2-8: oversized results are truncated with a marker so
+      // Oversized results are truncated with a marker so
       // the LLM retains useful prefix context instead of a placeholder.
       expect(toolMsg.content).toContain('[truncated: result exceeded 1MiB]');
       expect(toolMsg.content.length).toBeLessThanOrEqual(1 * 1024 * 1024);
@@ -2290,7 +2289,7 @@ describe('AgentLoop', () => {
       expect(toolMsg.content.startsWith('{"payload":"xxx')).toBe(true);
     });
 
-    it('drops deeply nested structures past max depth (Wave-12 P2-8)', async () => {
+    it('drops deeply nested structures past max depth', async () => {
       // Build a 20-deep chain; max depth is 10. Values past the cap are
       // returned as `undefined` by the replacer, so they are dropped from
       // the serialized output entirely.
@@ -2323,9 +2322,9 @@ describe('AgentLoop', () => {
   });
 
   // =====================================================================
-  // PERF-013: removeEventListener in finally must not leak on throw
+  // removeEventListener in finally must not leak on throw
   // =====================================================================
-  describe('PERF-013: external signal listener cleanup is defensive', () => {
+  describe('external signal listener cleanup is defensive', () => {
     it('does not throw if removeEventListener fails', async () => {
       const adapter = createMockAdapter([
         { message: { role: 'assistant', content: 'hi' }, usage: USAGE },
@@ -2367,9 +2366,9 @@ describe('AgentLoop', () => {
   });
 
   // =====================================================================
-  // PERF-020: tool timeout callback must not double-resolve
+  // Tool timeout callback must not double-resolve
   // =====================================================================
-  describe('PERF-020: tool timeout guards against double-resolution', () => {
+  describe('tool timeout guards against double-resolution', () => {
     it('does not treat a successful tool as timed out even under event-loop pressure', async () => {
       const toolCall: ToolCallRequest = { id: 'call_1', name: 'slow', arguments: '{}' };
       let callCount = 0;

@@ -2,11 +2,10 @@
  * Optimistic-locking update for the Redis memory store: WATCH → GET → MULTI
  * → EXEC, retried up to `MAX_RETRIES` times on concurrent modification.
  *
- * Wave-16 M2 extraction. The transaction body has a dozen subtle invariants
- * (pre-WATCH computation, UNWATCH on every error path, no `await` between
- * MULTI and EXEC) documented in place — pulling it into its own module
- * keeps the store factory readable and makes this critical section easy to
- * find in the future.
+ * The transaction body has a dozen subtle invariants (pre-WATCH
+ * computation, UNWATCH on every error path, no `await` between MULTI
+ * and EXEC) documented in place. Keeping it in its own module makes
+ * this critical section easy to find.
  *
  * @module
  * @internal
@@ -36,11 +35,11 @@ const MAX_RETRIES = 3;
 /**
  * Update an entry with optimistic locking via WATCH/MULTI/EXEC.
  *
- * F10: The read-modify-write cycle is protected against concurrent
+ * The read-modify-write cycle is protected against concurrent
  * mutations. If another client modifies the key between WATCH and EXEC,
  * the transaction returns `null` and we retry (up to `MAX_RETRIES` times).
  *
- * Wave-13 P0-7: Hardened around the WATCH/UNWATCH contract.
+ * Hardened around the WATCH/UNWATCH contract:
  *   (a) All data that does NOT depend on the read (i.e. the updates bag
  *       and the serialisation overhead) is prepared BEFORE WATCH, so the
  *       WATCH → GET → MULTI → EXEC window is as tight as possible.

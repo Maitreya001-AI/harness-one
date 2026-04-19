@@ -206,7 +206,7 @@ export function createInjectionDetector(config?: {
       }
     } else {
       const prefix = normalized.slice(0, MAX_PATTERN_INPUT_LENGTH);
-      // Wave-8: Sample the middle section to prevent middle-payload injection bypass.
+      // Sample the middle section to prevent middle-payload injection bypass.
       // Pick a window centered at the midpoint of the content.
       const midStart = Math.max(0, Math.floor(normalized.length / 2) - Math.floor(MAX_PATTERN_INPUT_LENGTH / 2));
       const middle = normalized.slice(midStart, midStart + MAX_PATTERN_INPUT_LENGTH);

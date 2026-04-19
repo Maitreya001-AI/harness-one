@@ -1,18 +1,18 @@
 /**
- * Wave-13 Track D — middleware fixes
+ * Middleware hardening:
  *
- *   D-1: HarnessError thrown from a middleware is re-wrapped with
- *        CORE_MIDDLEWARE_ERROR so observers can trace the middleware
- *        boundary in the cause chain.
- *   D-2: a throwing `onError` callback must not escape / clobber the
- *        original middleware failure.
+ *   - HarnessError thrown from a middleware is re-wrapped with
+ *     CORE_MIDDLEWARE_ERROR so observers can trace the middleware
+ *     boundary in the cause chain.
+ *   - a throwing `onError` callback must not escape / clobber the
+ *     original middleware failure.
  */
 
 import { describe, it, expect, vi } from 'vitest';
 import { createMiddlewareChain } from '../middleware.js';
 import { HarnessError, HarnessErrorCode } from '../errors.js';
 
-describe('middleware — Wave-13 D-1 HarnessError wrapped with middleware boundary', () => {
+describe('middleware — HarnessError wrapped with middleware boundary', () => {
   it('wraps a HarnessError thrown from a middleware with CORE_MIDDLEWARE_ERROR, preserving original as cause', async () => {
     const chain = createMiddlewareChain();
     const inner = new HarnessError(
@@ -30,7 +30,7 @@ describe('middleware — Wave-13 D-1 HarnessError wrapped with middleware bounda
     });
   });
 
-  it('still wraps non-HarnessError throws with CORE_MIDDLEWARE_ERROR (pre-D-1 behaviour intact)', async () => {
+  it('still wraps non-HarnessError throws with CORE_MIDDLEWARE_ERROR (legacy behaviour intact)', async () => {
     const chain = createMiddlewareChain();
     const inner = new Error('plain throw');
     chain.use(async () => {
@@ -68,7 +68,7 @@ describe('middleware — Wave-13 D-1 HarnessError wrapped with middleware bounda
   });
 });
 
-describe('middleware — Wave-13 D-2 throwing onError does not escape', () => {
+describe('middleware — throwing onError does not escape', () => {
   it('does not replace the original middleware throw when onError itself throws', async () => {
     const onError = vi.fn(() => {
       throw new Error('observer bug');

@@ -30,9 +30,9 @@ jobs:
       - run: pnpm build
 
       - name: Typecheck all workspaces (includes examples/)
-        # `pnpm -r typecheck` covers every workspace with a `typecheck` script,
-        # which now includes `examples/` (Wave-5C PR-2 T-2.11b/T-2.13). CI fails
-        # if any example's subpath-import migration regresses.
+        # `pnpm typecheck` runs the root typecheck script which covers every
+        # workspace, including `examples/`. CI fails if any example's
+        # subpath-import regresses or drifts out of sync with the public API.
         run: pnpm typecheck
 
       - name: Test with coverage (enforces per-package thresholds)

@@ -3,7 +3,7 @@
  *
  * The list keeps its prev/next pointers and membership flag in an internal
  * `WeakMap<T, LruNode>` keyed on the caller's object. Users never see the
- * pointers — the previous Wave-15 design exposed them on the value type and
+ * pointers — the previous design exposed them on the value type and
  * relied on convention to prevent callers from mutating them. Moving the
  * pointers into a private WeakMap makes that a type error instead of a
  * style rule, while still giving the trace-manager O(1) link / unlink /

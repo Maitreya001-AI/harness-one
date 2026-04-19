@@ -1,20 +1,8 @@
 /**
- * T10 (Wave-5A): AgentLoop guardrail integration.
+ * AgentLoop guardrail integration.
  *
  * Pin the hook points, hard-block semantics, and cross-cutting invariants for
- * input / tool_output / output guardrail phases. Risk-assessor blocking
- * conditions mapped onto individual tests:
- *
- *   1. "missing pipeline warn-once"       — TECH-10-05
- *   2. "input hard-block"                 — TECH-10-02 (input hook)
- *   3. "tool_output stub rewrite"         — TECH-10-04 (tool result safety)
- *   4. "output hard-block"                — TECH-10-02 (output hook)
- *   5. "abort on hard-block"              — TECH-10-01 (stream teardown)
- *   6. "classifier non-retryable"         — TECH-10-06 (error classifier)
- *   7. "streaming output abort"           — TECH-10-03 (streaming abort)
- *   8. "runToolOutput pass passthrough"   — TECH-10-04 (no-op on pass)
- *   9. "runInput pass adapter called"     — TECH-10-02 (no-op on pass)
- *  10. "ReDoS-safe timeout bound"         — TECH-10-07 (pipeline timeout)
+ * input / tool_output / output guardrail phases.
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -75,8 +63,8 @@ function passPipeline(): GuardrailPipeline {
 
 // -------------------------------------------------------------------------
 
-describe('T10 AgentLoop guardrail integration', () => {
-  it('[TECH-10-05] warns exactly once per AgentLoop instance when no pipeline is configured', async () => {
+describe('AgentLoop guardrail integration', () => {
+  it('warns exactly once per AgentLoop instance when no pipeline is configured', async () => {
     const { adapter } = adapterFromResponses([
       { message: { role: 'assistant', content: 'ok1' }, usage: USAGE },
       { message: { role: 'assistant', content: 'ok2' }, usage: USAGE },
@@ -96,7 +84,7 @@ describe('T10 AgentLoop guardrail integration', () => {
     expect(guardrailWarns[0][0]).toMatch(/no guardrail pipeline/i);
   });
 
-  it('[TECH-10-02] inputPipeline hard-block yields guardrail_blocked + error and skips adapter', async () => {
+  it('inputPipeline hard-block yields guardrail_blocked + error and skips adapter', async () => {
     const { adapter, calls } = adapterFromResponses([
       { message: { role: 'assistant', content: 'should not run' }, usage: USAGE },
     ]);
@@ -124,7 +112,7 @@ describe('T10 AgentLoop guardrail integration', () => {
     expect(done?.reason).toBe('error');
   });
 
-  it('[TECH-10-04] outputPipeline.runToolOutput hard-block rewrites tool result to stub and continues', async () => {
+  it('outputPipeline.runToolOutput hard-block rewrites tool result to stub and continues', async () => {
     const tc = { id: 't1', name: 'danger', arguments: '{}' };
     const { adapter, calls } = adapterFromResponses([
       { message: { role: 'assistant', content: '', toolCalls: [tc] }, usage: USAGE },
@@ -171,7 +159,7 @@ describe('T10 AgentLoop guardrail integration', () => {
     expect(done?.reason).toBe('end_turn');
   });
 
-  it('[TECH-10-02] outputPipeline.runOutput hard-block on final assistant yields guardrail_blocked + error', async () => {
+  it('outputPipeline.runOutput hard-block on final assistant yields guardrail_blocked + error', async () => {
     const { adapter } = adapterFromResponses([
       { message: { role: 'assistant', content: 'leak: ssn=123-45-6789' }, usage: USAGE },
     ]);
@@ -197,7 +185,7 @@ describe('T10 AgentLoop guardrail integration', () => {
     expect(done?.reason).toBe('error');
   });
 
-  it('[TECH-10-01] hard-block aborts internal signal (so in-flight adapter calls tear down)', async () => {
+  it('hard-block aborts internal signal (so in-flight adapter calls tear down)', async () => {
     // Adapter exposes the signal it was called with via closure.
     let capturedSignal: AbortSignal | undefined;
     const adapter: AgentAdapter = {
@@ -217,7 +205,7 @@ describe('T10 AgentLoop guardrail integration', () => {
     expect(capturedSignal!.aborted).toBe(true);
   });
 
-  it('[TECH-10-06] categorizeAdapterError returns a category for GUARDRAIL_VIOLATION that is not retryable by default', () => {
+  it('categorizeAdapterError returns a category for GUARDRAIL_VIOLATION that is not retryable by default', () => {
     const err = new HarnessError(
       'guardrail blocked',
       HarnessErrorCode.GUARD_VIOLATION,
@@ -231,7 +219,7 @@ describe('T10 AgentLoop guardrail integration', () => {
     expect(defaultRetryable.includes(category)).toBe(false);
   });
 
-  it('[TECH-10-03] streaming mode: runOutput hard-block aborts upstream stream', async () => {
+  it('streaming mode: runOutput hard-block aborts upstream stream', async () => {
     const chunks: StreamChunk[] = [
       { type: 'text_delta', text: 'hello' },
       { type: 'done', usage: USAGE },
@@ -258,7 +246,7 @@ describe('T10 AgentLoop guardrail integration', () => {
     expect(capturedSignal!.aborted).toBe(true);
   });
 
-  it('[TECH-10-04] outputPipeline.runToolOutput passing tool result passes through unchanged', async () => {
+  it('outputPipeline.runToolOutput passing tool result passes through unchanged', async () => {
     const tc = { id: 't1', name: 'safe', arguments: '{}' };
     const { adapter, calls } = adapterFromResponses([
       { message: { role: 'assistant', content: '', toolCalls: [tc] }, usage: USAGE },
@@ -278,7 +266,7 @@ describe('T10 AgentLoop guardrail integration', () => {
     expect(toolResult?.content).toBe('clean-result'); // string passes through untouched
   });
 
-  it('[TECH-10-02] inputPipeline passing allows adapter call as normal', async () => {
+  it('inputPipeline passing allows adapter call as normal', async () => {
     const { adapter, calls } = adapterFromResponses([
       { message: { role: 'assistant', content: 'ok' }, usage: USAGE },
     ]);
@@ -298,7 +286,7 @@ describe('T10 AgentLoop guardrail integration', () => {
   });
 
   it(
-    '[TECH-10-07] ReDoS-safe: adversarial input completes via pipeline timeout within 5 seconds',
+    'ReDoS-safe: adversarial input completes via pipeline timeout within 5 seconds',
     { timeout: 10_000 },
     async () => {
       // Build an injection-detector pipeline (default patterns are ReDoS-safe,

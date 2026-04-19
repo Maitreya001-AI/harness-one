@@ -58,7 +58,7 @@ function createInMemoryStorage(): CheckpointStorage {
 export function createCheckpointManager(
   config?: CheckpointManagerConfig,
 ): CheckpointManager {
-  // Wave-5F SEC-A14: use crypto-backed IDs so checkpoint handles cannot be
+  // use crypto-backed IDs so checkpoint handles cannot be
   // guessed by an attacker who can see timestamps. `prefixedSecureId` uses
   // `crypto.randomBytes` and returns a URL-safe suffix.
   function generateId(): string {

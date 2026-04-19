@@ -530,13 +530,13 @@ describe('withSelfHealing', () => {
       expect(result.passed).toBe(true);
     });
 
-    // A1-19 (Wave 4b): previously the backoff used a raw `setTimeout` with no
+    // previously the backoff used a raw `setTimeout` with no
     // abort linkage — aborting during sleep left the timer armed until natural
     // expiry, delaying shutdown and keeping the event loop alive. The new
     // `sleepWithAbort` helper clears the timer AND detaches the abort
     // listener on both resolution paths, and rejects with
     // `SELF_HEALING_ABORTED` when abort fires during sleep.
-    it('A1-19: abort during backoff clears the timer and short-circuits', async () => {
+    it('abort during backoff clears the timer and short-circuits', async () => {
       const guard: Guardrail = () => ({ action: 'block', reason: 'bad' });
       const regenerate = vi.fn().mockResolvedValue('still bad');
       const controller = new AbortController();
@@ -579,7 +579,7 @@ describe('withSelfHealing', () => {
       expect(regenerate).not.toHaveBeenCalled();
     });
 
-    it('A1-19: normal backoff completion also clears the timer (no listener leak)', async () => {
+    it('normal backoff completion also clears the timer (no listener leak)', async () => {
       // Guarantee the happy path: when no abort fires, sleepWithAbort still
       // cleans up its signal listener on resolve. We can't observe listener
       // counts directly on AbortSignal, but we can assert the function

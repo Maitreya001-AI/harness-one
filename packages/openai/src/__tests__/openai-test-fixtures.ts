@@ -1,9 +1,7 @@
 /**
  * Shared fixtures for the OpenAI adapter tests.
  *
- * Wave-16 M3 extraction — the 1640-LOC `openai.test.ts` monolith is
- * split here; this module owns the mock client the focused suites all
- * reach for.
+ * Owns the mock client that the focused suites reach for.
  *
  * @module
  * @internal

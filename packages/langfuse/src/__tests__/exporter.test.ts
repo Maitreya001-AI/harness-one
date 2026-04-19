@@ -1,7 +1,7 @@
 /**
- * Tests for `createLangfuseExporter` — split out of the monolith by
- * Wave-16 M3. Covers trace/span creation, sanitize hooks, shutdown
- * ordering, exportTrace error paths, and event-attribute sanitization.
+ * Tests for `createLangfuseExporter`. Covers trace/span creation,
+ * sanitize hooks, shutdown ordering, exportTrace error paths, and
+ * event-attribute sanitization.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -722,11 +722,11 @@ describe('createLangfuseExporter', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Wave-12 P1-23: exportTrace must not leave a poisoned traceMap entry
+  // exportTrace must not leave a poisoned traceMap entry
   // when the underlying client.update() throws.
   // -------------------------------------------------------------------------
 
-  describe('Wave-12 P1-23: exportTrace cleans up on update() throw', () => {
+  describe('exportTrace cleans up on update() throw', () => {
     it('deletes the newly-cached trace entry when update() throws', async () => {
       mock.mocks.update.mockImplementationOnce(() => {
         throw new Error('update failed');
@@ -810,11 +810,11 @@ describe('createLangfuseExporter', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Wave-12 P1-26: events[].attributes are sanitized the same way as the
+  // events[].attributes are sanitized the same way as the
   // top-level span.attributes bag.
   // -------------------------------------------------------------------------
 
-  describe('Wave-12 P1-26: event-attribute sanitization', () => {
+  describe('event-attribute sanitization', () => {
     it('redacts secret keys in events[].attributes via the default sanitizer', async () => {
       const exporter = createLangfuseExporter({ client: mock.client });
       const span: Span = {

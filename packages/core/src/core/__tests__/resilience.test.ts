@@ -514,9 +514,9 @@ describe('createResilientLoop', () => {
   });
 
   // =====================================================================
-  // CQ-015: ResilientLoop must dispose inner AgentLoop to release resources
+  // ResilientLoop must dispose inner AgentLoop to release resources
   // =====================================================================
-  describe('CQ-015: inner AgentLoop is disposed after each attempt', () => {
+  describe('inner AgentLoop is disposed after each attempt', () => {
     it('calls dispose() on every inner loop created during retries', async () => {
       // Instrument AgentLoop.prototype.dispose so we can count calls.
       const { AgentLoop } = await import('../agent-loop.js');
@@ -578,12 +578,12 @@ describe('createResilientLoop', () => {
       }
     });
 
-    // P2-25: Pin down current behavior when onRetry itself throws.
+    // Pin down current behavior when onRetry itself throws.
     // The generator awaits onRetry directly (no try/catch), so the throw
     // propagates to the consumer and aborts the run. This test documents
     // that contract so future refactors that swallow the error must
     // update this test deliberately.
-    it('P2-25: onRetry throwing propagates through the generator (current behavior)', async () => {
+    it('onRetry throwing propagates through the generator (current behavior)', async () => {
       const toolCall: ToolCallRequest = { id: 'call_1', name: 'loop', arguments: '{}' };
 
       // Always return tool calls so the inner loop hits max_iterations and

@@ -1,12 +1,12 @@
 /**
- * T04 (Wave-5A · SEC-A01) — langfuseExporter sanitize default-on.
+ * langfuseExporter — sanitize default-on.
  *
  * When `LangfuseExporterConfig.sanitize` is NOT provided, exportSpan MUST
  * scrub sensitive attribute keys (api_key, token, password, authorization,
  * cookie, …) using a built-in default redactor. Explicit `sanitize: fn`
  * continues to override.
  *
- * Unlike SEC-A01 for logger / trace-manager, the exporter has NO opt-out:
+ * Unlike logger / trace-manager, the exporter has NO opt-out:
  * callers can only replace the sanitize function, never disable it.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -49,7 +49,7 @@ function createMockLangfuse() {
   };
 }
 
-describe('SEC-A01 · langfuse exporter default sanitize', () => {
+describe('langfuse exporter default sanitize', () => {
   let mock: ReturnType<typeof createMockLangfuse>;
 
   beforeEach(() => {

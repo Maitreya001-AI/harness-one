@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createAdmissionController } from '../admission-controller.js';
 
-describe('createAdmissionController (Wave-5D ARCH-8)', () => {
+describe('createAdmissionController', () => {
   it('grants permits up to maxInflight immediately', async () => {
     const ac = createAdmissionController({ maxInflight: 2 });
     const p1 = await ac.acquire('tenant-a');

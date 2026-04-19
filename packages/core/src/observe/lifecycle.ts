@@ -1,7 +1,7 @@
 /**
  * Harness lifecycle state machine + aggregated health check.
  *
- * Wave-5D ARCH-6: `Harness` was previously a bag of 13 subsystems with
+ * `Harness` was previously a bag of 13 subsystems with
  * no explicit `ready()` / `isHealthy()` / `drain()` contract. Hosts had
  * to probe each sub-component individually and couldn't tell if the
  * harness was about to reject new work, already shutting down, or

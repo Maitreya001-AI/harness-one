@@ -13,7 +13,7 @@
 import { LRUCache } from './lru-cache.js';
 
 /**
- * CQ-018: Module-level bounded LRU cache for compiled RegExp instances,
+ * Module-level bounded LRU cache for compiled RegExp instances,
  * keyed by the pattern string. Prevents repeatedly recompiling the same
  * pattern across validate() calls. Size is bounded to avoid unbounded
  * growth when many unique patterns are encountered.
@@ -230,7 +230,7 @@ function validate(
       } else if (!isSafePattern(schema.pattern)) {
         errors.push({ path, message: 'Pattern rejected: potential ReDoS' });
       } else {
-        // CQ-018: use the module-level LRU cache instead of compiling each call.
+        // use the module-level LRU cache instead of compiling each call.
         const re = getCompiledPattern(schema.pattern);
         if (re === null) {
           errors.push({ path, message: `Pattern rejected: invalid regular expression "${schema.pattern}"` });
@@ -285,7 +285,7 @@ function validate(
         }
       }
     }
-    // Wave-5E SEC-A05: honour `additionalProperties: false`. When declared,
+    // honour `additionalProperties: false`. When declared,
     // every own key of the payload that is not in `schema.properties` is a
     // validation error. Other values (true / schema object) are not yet
     // supported by this minimal validator; they're treated as the default

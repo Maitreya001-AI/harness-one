@@ -119,14 +119,12 @@ describe('AgentLoop span enrichment', () => {
     await tm.dispose();
   });
 
-  // Wave-5B Step 2 gating test (ADR §7 Step 2 / critic §3 / edit #3):
-  // the chat-path `adapter_retry` span event must carry the original
-  // throw's message as an `error` attribute, sliced to ≤500 chars. This
-  // guards the contract at docs/architecture/01-core.md:161 — operators
-  // rely on the preview for triage without needing to enable logger
-  // capture. The asymmetry with the streaming path is intentional
-  // (ADR §2.1): StreamResult only carries the already-wrapped error,
-  // so `errorPreview` is omitted on stream retries.
+  // The chat-path `adapter_retry` span event must carry the original
+  // throw's message as an `error` attribute, sliced to ≤500 chars.
+  // Operators rely on the preview for triage without needing to enable
+  // logger capture. The asymmetry with the streaming path is intentional:
+  // StreamResult only carries the already-wrapped error, so `errorPreview`
+  // is omitted on stream retries.
   it('adapter retry event on CHAT path carries `error` attribute (string, ≤500 chars)', async () => {
     let calls = 0;
     // A deliberately long message so we can verify the 500-char slice.

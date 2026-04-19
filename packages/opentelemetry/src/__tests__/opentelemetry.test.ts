@@ -68,8 +68,8 @@ describe('createOTelExporter', () => {
 
     await exporter.exportTrace(trace);
 
-    // CQ-001: startActiveSpan now passes a startTime option derived from
-    // the harness trace's real startTime rather than defaulting to wall-clock.
+    // startActiveSpan passes a startTime option derived from the harness
+    // trace's real startTime rather than defaulting to wall-clock.
     expect(mock.mocks.startActiveSpan).toHaveBeenCalledWith(
       'agent-run',
       expect.objectContaining({ startTime: expect.any(Date) }),
@@ -79,7 +79,7 @@ describe('createOTelExporter', () => {
     expect(mock.mocks.setAttribute).toHaveBeenCalledWith('harness.trace.status', 'completed');
     expect(mock.mocks.setStatus).toHaveBeenCalledWith({ code: 1 }); // SpanStatusCode.OK = 1
     expect(mock.mocks.end).toHaveBeenCalled();
-    // CQ-001: end() is called with the real endTime (as Date), not undefined.
+    // end() is called with the real endTime (as Date), not undefined.
     expect(mock.mocks.end).toHaveBeenCalledWith(new Date(2000));
   });
 
@@ -263,8 +263,8 @@ describe('createOTelExporter', () => {
     };
     await exporter.exportSpan(childSpan);
 
-    // CQ-002: a trace-level root span is lazily created for the trace; find
-    // the specific child-op call by name rather than by index.
+    // A trace-level root span is lazily created for the trace; find the
+    // specific child-op call by name rather than by index.
     const childCall = mock.mocks.startActiveSpan.mock.calls.find(
       (c: unknown[]) => c[0] === 'child-op',
     );
@@ -289,8 +289,8 @@ describe('createOTelExporter', () => {
     };
     await exporter.exportSpan(span);
 
-    // CQ-002: orphan spans are re-parented under the per-trace OTel root span
-    // so they remain part of the trace hierarchy instead of becoming unlinked
+    // Orphan spans are re-parented under the per-trace OTel root span so
+    // they remain part of the trace hierarchy instead of becoming unlinked
     // roots. The call arity therefore includes parent context (4 args).
     const call = mock.mocks.startActiveSpan.mock.calls.find(
       (c: unknown[]) => c[0] === 'orphan-op',
@@ -524,9 +524,9 @@ describe('createOTelExporter', () => {
     });
   });
 
-  describe('Wave-12 P1-9: evicted-parent retention is size-based only (no TTL)', () => {
+  describe('evicted-parent retention is size-based only (no TTL)', () => {
     it('retains evicted parent entries indefinitely until LRU evicts them', async () => {
-      // P1-9: TTL-based expiry removed. An evicted parent must remain
+      // TTL-based expiry was removed. An evicted parent must remain
       // available to link in-flight children regardless of elapsed time, up
       // to the size limit. Previously a parent would silently expire after
       // 5 minutes, orphaning any child that arrived later.
@@ -972,7 +972,7 @@ describe('createOTelExporter', () => {
       debugSpy.mockRestore();
     });
 
-    describe('Wave-12 P2-12: stringifyComplexAttributes opt-in', () => {
+    describe('stringifyComplexAttributes opt-in', () => {
       it('JSON-stringifies object attributes when enabled', async () => {
         const onDropped = vi.fn();
         const localMock = createMockTracer();
@@ -1307,9 +1307,9 @@ describe('createOTelExporter', () => {
       expect(pfcCall.length).toBe(4); // flush-4 preserved
     });
 
-    it('Wave-12 P1-9: entries under the LRU threshold survive arbitrary elapsed time', async () => {
-      // Previously this verified the lazy-TTL path expired entries on read.
-      // With P1-9 the TTL was removed to eliminate the child-arrival race, so
+    it('entries under the LRU threshold survive arbitrary elapsed time', async () => {
+      // The lazy-TTL path no longer expires entries on read. The TTL
+      // was removed to eliminate the child-arrival race, so
       // an entry under the size threshold must remain reachable no matter how
       // much wall-clock time passes.
       const localMock = createMockTracer();

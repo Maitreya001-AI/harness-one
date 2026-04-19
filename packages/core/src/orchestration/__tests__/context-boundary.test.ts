@@ -38,7 +38,7 @@ describe('createContextBoundary', () => {
   });
 
   it('denyRead takes precedence over allowRead', () => {
-    // Wave-5E SEC-A09: prefixes must end with a segment separator. Use
+    // prefixes must end with a segment separator. Use
     // `'shared.b.'` so only `shared.b.*` is denied and `shared.a` still
     // resolves via the allowRead `'shared.'` prefix. The previous
     // non-segment `'shared.b'` would have leaked to `'shared.banana'`.

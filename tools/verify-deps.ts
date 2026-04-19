@@ -2,20 +2,20 @@
 /**
  * tools/verify-deps.ts — workspace dependency auditor.
  *
- * Wave-5C T-1.8 / PRD F-12. Scans every workspace package for runtime imports
+ * Scans every workspace package for runtime imports
  * of `harness-one`, `harness-one/<subpath>`, or `@harness-one/<pkg>` and
  * asserts the importer declares each one in its own `package.json` under
  * `dependencies`, `peerDependencies`, or `optionalDependencies` with the
  * `workspace:*` (or `workspace:^`/`workspace:~`) protocol.
  *
- * Also performs the R-15 merge-guard: `@harness-one/ajv` and
+ * Also performs the merge-guard: `@harness-one/ajv` and
  * `@harness-one/tiktoken` must exist as independent workspace packages with
  * their own `package.json`.
  *
  * Exits 0 on success. Prints every violation and exits 1 on failure.
  *
  * Runs on ubuntu / macOS / windows — uses `node:path` everywhere and does
- * not shell out, so the `windows-latest` CI matrix (R-18) is covered.
+ * not shell out, so the `windows-latest` CI matrix is covered.
  *
  * Usage:
  *   pnpm verify:deps
@@ -143,7 +143,7 @@ function main(): void {
   const violations: Violation[] = [];
   const infos: string[] = [];
 
-  // R-15 merge-guard: ajv + tiktoken must exist as separate workspace packages.
+  // merge-guard: ajv + tiktoken must exist as separate workspace packages.
   const ajvPkg = path.join(packagesDir, 'ajv', 'package.json');
   const tiktokenPkg = path.join(packagesDir, 'tiktoken', 'package.json');
   if (!existsSync(ajvPkg)) {
@@ -151,7 +151,7 @@ function main(): void {
       importer: '(merge-guard)',
       importerFile: ajvPkg,
       missing: '@harness-one/ajv',
-      reason: 'R-15 merge-guard: packages/ajv/package.json missing (ADR §3.c requires ajv/tiktoken stay separate).',
+      reason: 'merge-guard: packages/ajv/package.json missing (ADR §3.c requires ajv/tiktoken stay separate).',
     });
   }
   if (!existsSync(tiktokenPkg)) {
@@ -159,7 +159,7 @@ function main(): void {
       importer: '(merge-guard)',
       importerFile: tiktokenPkg,
       missing: '@harness-one/tiktoken',
-      reason: 'R-15 merge-guard: packages/tiktoken/package.json missing (ADR §3.c requires ajv/tiktoken stay separate).',
+      reason: 'merge-guard: packages/tiktoken/package.json missing (ADR §3.c requires ajv/tiktoken stay separate).',
     });
   }
   // Broader sanity: ≥10 package.json files under packages/.

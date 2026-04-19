@@ -102,9 +102,9 @@ describe('toSSEStream', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Wave-12 P1-24 / P2-6: guarded JSON.stringify + reusable fallback.
+// Guarded JSON.stringify + reusable fallback.
 // ---------------------------------------------------------------------------
-describe('toSSEStream — guarded serialization (Wave-12 P1-24)', () => {
+describe('toSSEStream — guarded serialization', () => {
   it('does not crash on circular references; emits an error SSE chunk', async () => {
     const cyclic: Record<string, unknown> = { type: 'custom' };
     cyclic.loop = cyclic;
@@ -137,7 +137,7 @@ describe('toSSEStream — guarded serialization (Wave-12 P1-24)', () => {
     expect(chunks[0].data).toContain('Event serialization failed');
   });
 
-  it('continues emitting subsequent events after a poisoned one (P1-24)', async () => {
+  it('continues emitting subsequent events after a poisoned one', async () => {
     const cyclic: Record<string, unknown> = { type: 'bad' };
     cyclic.loop = cyclic;
     async function* mixed(): AsyncGenerator<AgentEvent> {
@@ -151,7 +151,7 @@ describe('toSSEStream — guarded serialization (Wave-12 P1-24)', () => {
     expect(JSON.parse(chunks[1].data).iteration).toBe(42);
   });
 
-  it('P2-6: pre-serialized string events skip JSON.stringify', async () => {
+  it('pre-serialized string events skip JSON.stringify', async () => {
     // Non-object input (string) is short-circuited into a `message`
     // event without invoking JSON.stringify — this shaves a full
     // stringify call per chunk on the SSE hot path.

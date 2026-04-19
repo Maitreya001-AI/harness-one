@@ -1,21 +1,20 @@
 /**
- * T02 (Wave-5A): createLogger redact-by-default behavior.
+ * createLogger redact-by-default behavior.
  *
- * Wave-4 semantics: `redact` was opt-in — omitting it meant zero redaction.
- * Wave-5 semantics:
+ * Semantics:
  *   - `redact: undefined` (omitted) → default pattern redaction ENABLED.
  *   - `redact: false`               → explicitly OFF (escape hatch).
  *   - `redact: { ... }`             → unchanged (explicit custom config).
  *
- * This file covers only the new defaulting logic. Existing behavioral
- * coverage (extraKeys, text mode redaction, nested redaction, prototype
- * pollution, child logger propagation) lives in `logger.test.ts`.
+ * This file covers only the defaulting logic. Existing behavioral coverage
+ * (extraKeys, text mode redaction, nested redaction, prototype pollution,
+ * child logger propagation) lives in `logger.test.ts`.
  */
 
 import { describe, it, expect } from 'vitest';
 import { createLogger } from '../logger.js';
 
-describe('createLogger redact default (T02, Wave-5A)', () => {
+describe('createLogger redact default', () => {
   function captureOutput() {
     const lines: string[] = [];
     const output = (line: string) => lines.push(line);
@@ -66,15 +65,15 @@ describe('createLogger redact default (T02, Wave-5A)', () => {
       // No config object at all — the defaulting logic must still activate
       // the default redactor rather than leaving `redactor` undefined.
       const captured: string[] = [];
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       const origLog = (console as any).log;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       (console as any).log = (line: string) => captured.push(line);
       try {
         const logger = createLogger();
         logger.info('default', { api_key: 'sk-xyz' });
       } finally {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+         
         (console as any).log = origLog;
       }
       expect(captured).toHaveLength(1);
@@ -104,7 +103,7 @@ describe('createLogger redact default (T02, Wave-5A)', () => {
     });
   });
 
-  describe('explicit redact config → Wave-4 semantics preserved', () => {
+  describe('explicit redact config preserved', () => {
     it('redact: { useDefaultPattern: false, extraKeys: ["x"] } only redacts x', () => {
       const { lines, output } = captureOutput();
       const logger = createLogger({

@@ -537,11 +537,11 @@ describe('createInMemoryRetriever', () => {
     });
   });
 
-  // A1-8 (Wave 4b): the query-embedding LRU does `delete + set` across an
+  // the query-embedding LRU does `delete + set` across an
   // `await embed(...)`; without `createLazyAsync`, two concurrent retrieves
   // for the same uncached query both see a miss and both call the embedder.
   // With createLazyAsync the second caller joins the in-flight promise.
-  describe('A1-8: concurrent identical retrieves share one embed() call', () => {
+  describe('concurrent identical retrieves share one embed() call', () => {
     it('10 parallel retrieves of the same query invoke the embedder exactly once', async () => {
       // Use a blocking embedder so all 10 retrieves definitely observe the
       // miss before the first embed() resolves. Without the LazyAsync fix,

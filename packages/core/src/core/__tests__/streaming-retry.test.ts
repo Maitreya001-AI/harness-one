@@ -1,13 +1,11 @@
 /**
- * Unit tests for the Wave-21 `streaming-retry.ts` extraction.
+ * Unit tests for `streaming-retry.ts`.
  *
  * The helper is the pump-and-decide for one streaming adapter attempt.
  * It forwards delta/warning events verbatim, buffers the single terminal
  * `{type:'error'}` event, and — at stream end — reports success, retry,
  * or terminal-failure. These tests fence each behaviour the outer retry
- * loop in `adapter-caller.ts` relies on. Wave-23 backfill: before this
- * file the helper had zero direct tests (covered only indirectly through
- * agent-loop streaming tests).
+ * loop in `adapter-caller.ts` relies on.
  */
 
 import { describe, it, expect, vi } from 'vitest';

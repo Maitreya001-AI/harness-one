@@ -112,7 +112,7 @@ describe('createDisclosureManager', () => {
         { level: 2, content: 'Refresh via httpOnly cookies.' },
       ]);
 
-      // expand should work without `this` context
+      // Expand should work without `this` context
       const content1 = expand('auth');
       expect(content1).toBe('Tokens expire after 1h.');
       expect(getCurrentLevel('auth')).toBe(1);
@@ -121,7 +121,7 @@ describe('createDisclosureManager', () => {
       expect(content2).toBe('Refresh via httpOnly cookies.');
       expect(getCurrentLevel('auth')).toBe(2);
 
-      // expand beyond max should return all content (uses getContent internally)
+      // Expand beyond max should return all content (uses getContent internally)
       const contentMax = expand('auth');
       expect(contentMax).toContain('Auth uses JWT.');
       expect(contentMax).toContain('Tokens expire after 1h.');
@@ -188,7 +188,7 @@ describe('createDisclosureManager', () => {
         { level: 0, content: 'Level zero' },
         { level: 2, content: 'Level two' },
       ]);
-      // expand from 0 should skip level 1 and jump to level 2
+      // Expand from 0 should skip level 1 and jump to level 2
       const content = dm.expand('gapped');
       expect(content).toBe('Level two');
       expect(dm.getCurrentLevel('gapped')).toBe(2);
@@ -200,7 +200,7 @@ describe('createDisclosureManager', () => {
         { level: 0, content: 'Level zero' },
         { level: 3, content: 'Level three' },
       ]);
-      // expand from 0 should jump directly to 3 (the next available)
+      // Expand from 0 should jump directly to 3 (the next available)
       expect(dm.expand('gapped')).toBe('Level three');
       expect(dm.getCurrentLevel('gapped')).toBe(3);
     });

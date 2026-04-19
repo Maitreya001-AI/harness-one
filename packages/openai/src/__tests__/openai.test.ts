@@ -545,7 +545,7 @@ describe('createOpenAIAdapter', () => {
 
     it('registerProvider overwrites an existing non-built-in provider when { allowOverride: true }', () => {
       // ollama is a convenience entry, not a reserved built-in.
-      // Wave-12 P1-13: silent override is gated behind `allowOverride: true`.
+      // Silent override is gated behind `allowOverride: true`.
       registerProvider(
         'ollama',
         { baseURL: 'http://127.0.0.1:11434/v1' },
@@ -648,7 +648,7 @@ describe('createOpenAIAdapter', () => {
   });
 
   // -------------------------------------------------------------------------
-  // F15: countTokens()
+  // countTokens()
   // -------------------------------------------------------------------------
   describe('countTokens()', () => {
     it('returns a reasonable heuristic count without custom tokenizer', async () => {
@@ -754,9 +754,9 @@ describe('createOpenAIAdapter', () => {
 
   // -------------------------------------------------------------------------
   // SPEC-005 / SPEC-014: LLMConfig.extra must be forwarded to provider
-  // T06 (Wave-5A): extra is now filtered against OPENAI_EXTRA_ALLOW_LIST.
-  // These tests use allow-listed keys to validate the forwarding contract;
-  // see __tests__/extra-allow-list.test.ts for the full filter/strict behavior.
+  // Extra is filtered against OPENAI_EXTRA_ALLOW_LIST. These tests use
+  // allow-listed keys to validate the forwarding contract; see
+  // __tests__/extra-allow-list.test.ts for the full filter/strict behavior.
   // -------------------------------------------------------------------------
   describe('LLMConfig.extra forwarding (SPEC-005)', () => {
     it('forwards config.extra keys into chat() request body', async () => {
@@ -895,9 +895,9 @@ describe('createOpenAIAdapter', () => {
   });
 
   // -------------------------------------------------------------------------
-  // CQ-027: logger injection routes warnings away from console.warn
+  // logger injection routes warnings away from console.warn
   // -------------------------------------------------------------------------
-  describe('logger config (CQ-027)', () => {
+  describe('logger config', () => {
     beforeEach(() => {
       _resetOpenAIWarnState();
     });

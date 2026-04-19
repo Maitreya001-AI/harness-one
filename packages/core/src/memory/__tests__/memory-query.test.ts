@@ -1,8 +1,8 @@
 /**
- * Unit tests for the Wave-16 m7 extraction: set-algebra helpers previously
- * inlined inside `createInMemoryStore`. Isolated tests let us cover the
- * tricky cases (empty results, unknown tags, disjoint sets) without
- * building a full store + memory entries.
+ * Unit tests for the set-algebra helpers (union / intersect) extracted
+ * from `createInMemoryStore` into their own module. Isolated tests let us
+ * cover the tricky cases (empty results, unknown tags, disjoint sets)
+ * without building a full store + memory entries.
  */
 
 import { describe, it, expect } from 'vitest';

@@ -66,7 +66,7 @@ describe('categorizeAdapterError', () => {
     });
   });
 
-  describe('ADAPTER_UNAVAILABLE (Wave-12 P1-1)', () => {
+  describe('ADAPTER_UNAVAILABLE', () => {
     it('classifies 502 status', () => {
       expect(categorizeAdapterError(new Error('HTTP 502 upstream'))).toBe('ADAPTER_UNAVAILABLE');
     });

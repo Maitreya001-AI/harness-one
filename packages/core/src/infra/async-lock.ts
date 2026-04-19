@@ -50,7 +50,7 @@ interface Waiter {
   onAbort?: () => void;
   signal?: AbortSignal;
   /**
-   * Wave-13 A-4: Set to `true` by whichever of `dispose()` or the abort
+   * Set to `true` by whichever of `dispose()` or the abort
    * handler runs first. The second runner sees the flag and skips its own
    * `reject()`, preventing a double-reject race where both paths observe
    * the waiter in-flight and both try to settle the same promise.
@@ -136,7 +136,7 @@ export function createAsyncLock(): AsyncLock {
       const waiter: Waiter = { resolve, reject, aborted: false };
       if (signal) {
         const onAbort = (): void => {
-          // Wave-13 A-4: Race protection against dispose().
+          // Race protection against dispose().
           // If dispose() already claimed this waiter, its `aborted` flag is
           // set; skip the reject to avoid a double-settle and do not touch
           // the queue (dispose() already drained it).
@@ -149,7 +149,7 @@ export function createAsyncLock(): AsyncLock {
           waiter.aborted = true;
           const idx = queue.indexOf(waiter);
           if (idx >= 0) queue.splice(idx, 1);
-          // Wave-13 A-4: Unconditionally detach the listener to avoid
+          // Unconditionally detach the listener to avoid
           // unbounded accumulation on long-lived AbortSignals. The
           // `{ once: true }` option handles the common case, but an
           // explicit removeEventListener is robust against runtime
@@ -184,7 +184,7 @@ export function createAsyncLock(): AsyncLock {
     disposed = true;
     while (queue.length > 0) {
       const waiter = queue.shift() as Waiter;
-      // Wave-13 A-4: Race protection against concurrent abort-handler.
+      // Race protection against concurrent abort-handler.
       // If the abort handler already claimed this waiter, skip — it
       // already rejected and removed its listener. Without this check,
       // both paths would call `reject()` on the same promise; while

@@ -1,11 +1,11 @@
 /**
  * In-process AdmissionController — per-tenant token-bucket backpressure.
  *
- * Wave-5D ARCH-8: harness-one had no global/tenant concurrency budget.
- * An upstream 429 storm could flood retries and amplify load downstream.
- * This controller caps inflight work per tenant using a classic token
- * bucket; callers `acquire()` before issuing a request and `release()`
- * afterwards (or use `withPermit` for the happy path).
+ * Provides the global/tenant concurrency budget that keeps an upstream 429
+ * storm from flooding retries and amplifying load downstream. The controller
+ * caps inflight work per tenant using a classic token bucket; callers
+ * `acquire()` before issuing a request and `release()` afterwards (or use
+ * `withPermit` for the happy path).
  *
  * Design notes:
  * - **In-process only.** Cross-process coordination (Redis-backed
@@ -104,7 +104,7 @@ export function createAdmissionController(
         const timeoutMs = options?.timeoutMs ?? defaultTimeoutMs;
         let timer: ReturnType<typeof setTimeout> | undefined;
         let settled = false;
-        /** CQ-038: Prevents double-removal when abort and timeout fire concurrently. */
+        /** Prevents double-removal when abort and timeout fire concurrently. */
         let removedFromQueue = false;
 
         function removeFromQueue(): void {

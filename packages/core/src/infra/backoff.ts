@@ -127,8 +127,8 @@ export function computeJitterMs(
  * sleep-capable sleeper so callers never re-implement the "compute delay,
  * sleep, honour abort" dance.
  *
- * Wave-15 introduced this so adapter-caller, guardrail self-healing, and
- * any future retry site share a single backoff implementation. Callers
+ * Exists so adapter-caller, guardrail self-healing, and any future retry
+ * site share a single backoff implementation. Callers
  * that need only the delay computation (no sleep) can keep using
  * {@link computeBackoffMs} directly.
  *

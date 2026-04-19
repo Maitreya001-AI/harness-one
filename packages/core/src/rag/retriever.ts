@@ -77,7 +77,7 @@ export function createInMemoryRetriever(config: {
   // LRU cache for query embeddings to avoid redundant API calls for repeated queries.
   const queryCacheMax = config.queryCacheSize ?? 64;
   const queryEmbeddingCache = new Map<string, readonly number[]>();
-  // A1-8 (Wave 4b): per-cache-key in-flight lazy handles. When two concurrent
+  // per-cache-key in-flight lazy handles. When two concurrent
   // `retrieve()` calls observe a cache miss for the same key, the previous
   // implementation issued two embed() calls because the "miss detection ->
   // await embed -> set cache" sequence races across the await. `createLazyAsync`
@@ -146,7 +146,7 @@ export function createInMemoryRetriever(config: {
       return cached;
     }
 
-    // A1-8 (Wave 4b): share one embed() call across concurrent cache misses.
+    // share one embed() call across concurrent cache misses.
     // If another caller has already kicked off the embed for this key, join
     // that in-flight promise instead of starting a duplicate.
     let lazy = inflightEmbeds.get(cacheKey);

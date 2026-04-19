@@ -6,6 +6,6 @@ coverage-temp/
 tsup.config.bundled_*.mjs
 .claude/
 
-# Wave-5C T-1.9: api-extractor scratch dir (contents regenerated on each
+# api-extractor scratch dir (contents regenerated on each
 # `pnpm api:update`; the committed baseline lives under packages/*/etc/).
 packages/*/temp/

@@ -108,8 +108,8 @@ export function createMiddlewareChain<TExtra extends Record<string, unknown> = R
             return await mw(ctx, next);
           } catch (err) {
             const error = err instanceof Error ? err : new Error(String(err));
-            // D-2 (Wave-13): a throwing `onError` must NOT escape and clobber
-            // the original middleware failure. Wrap the callback so observer
+            // A throwing `onError` must NOT escape and clobber the
+            // original middleware failure. Wrap the callback so observer
             // bugs don't corrupt the error-propagation path.
             if (onError) {
               try {
@@ -118,11 +118,12 @@ export function createMiddlewareChain<TExtra extends Record<string, unknown> = R
                 /* onError itself threw — swallow to preserve the original throw */
               }
             }
-            // D-1 (Wave-13): even when middleware throws a HarnessError, wrap
-            // it with CORE_MIDDLEWARE_ERROR so observers can trace the
-            // middleware-boundary in the cause chain. The original HarnessError
-            // is preserved as `cause` so downstream code (e.g. switch-on-code)
-            // can still inspect the inner failure via `err.cause`.
+            // Even when middleware throws a HarnessError, wrap it with
+            // CORE_MIDDLEWARE_ERROR so observers can trace the
+            // middleware-boundary in the cause chain. The original
+            // HarnessError is preserved as `cause` so downstream code
+            // (e.g. switch-on-code) can still inspect the inner failure
+            // via `err.cause`.
             if (err instanceof HarnessError) {
               throw new HarnessError(
                 error.message,

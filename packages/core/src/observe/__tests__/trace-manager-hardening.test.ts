@@ -30,8 +30,8 @@ function slowExporter(delayMs: number, name: string): TraceExporter {
   };
 }
 
-describe('Wave-13 trace-manager fixes', () => {
-  describe('Wave-13 C-4: flush() uses Promise.allSettled with per-exporter timeout', () => {
+describe('trace-manager fixes', () => {
+  describe('flush() uses Promise.allSettled with per-exporter timeout', () => {
     it('does not block on the slowest exporter past per-exporter deadline', async () => {
       const fast: TraceExporter = {
         name: 'fast',
@@ -72,7 +72,7 @@ describe('Wave-13 trace-manager fixes', () => {
     });
   });
 
-  describe('Wave-13 C-5: startSpan on dead trace is observable', () => {
+  describe('startSpan on dead trace is observable', () => {
     it('returns a dead span id and increments counter when strictSpanCreation=false', () => {
       const unhealthy: TraceExporter = {
         name: 'unhealthy',
@@ -122,7 +122,7 @@ describe('Wave-13 trace-manager fixes', () => {
     });
   });
 
-  describe('Wave-13 C-6: initialize() promises are tracked so flush() awaits them', () => {
+  describe('initialize() promises are tracked so flush() awaits them', () => {
     it('awaits lazy init promises via flush()', async () => {
       let initResolved = false;
       const lazyExporter: TraceExporter = {
@@ -168,7 +168,7 @@ describe('Wave-13 trace-manager fixes', () => {
     });
   });
 
-  describe('Wave-13 C-7: LRU mutation documentation', () => {
+  describe('LRU mutation documentation', () => {
     it('still serialises concurrent startTrace()/endTrace() calls correctly under the synchronous model', () => {
       const tm = createTraceManager({ maxTraces: 3 });
       const ids: string[] = [];
@@ -180,7 +180,7 @@ describe('Wave-13 trace-manager fixes', () => {
     });
   });
 
-  describe('Wave-13 C-10: span LRU eviction emits metrics + 80% warning', () => {
+  describe('span LRU eviction emits metrics + 80% warning', () => {
     it('emits trace + span eviction counters when maxTraces is exceeded', () => {
       const { port, counters } = makeRecordingMetricsPort();
       const tm = createTraceManager({ maxTraces: 2, metrics: port });

@@ -53,7 +53,7 @@ describe('AbortedError', () => {
 
 describe('guardrail-block error (HarnessError form)', () => {
   it('carries GUARD_BLOCKED / GUARD_VIOLATION codes from the pipeline', () => {
-    /* Wave-17 removed the GuardrailBlockedError subclass. The pipeline
+    /* The GuardrailBlockedError subclass has been removed. The pipeline
      * throws plain HarnessError with the typed code instead. This test
      * locks in the guard-code contract for consumers. */
     const blocked = new HarnessError(
@@ -94,7 +94,7 @@ describe('TokenBudgetExceededError', () => {
   });
 });
 
-describe('Wave-5 error codes', () => {
+describe('typed error codes', () => {
   it('accepts ADAPTER_INVALID_EXTRA as a typed code', () => {
     const err = new HarnessError(
       'unknown extra key "foo"',
@@ -125,7 +125,7 @@ describe('Wave-5 error codes', () => {
   });
 });
 
-describe('createCustomErrorCode (Wave-15 extension point — Wave-18 witness test)', () => {
+describe('createCustomErrorCode extension point', () => {
   // The closed HarnessErrorCode enum can't be extended by downstream packages
   // without forking. `createCustomErrorCode` is the canonical escape hatch:
   // downstream packages (@harness-one/prompt, adapter SDKs, etc.) thread a

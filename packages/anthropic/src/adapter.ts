@@ -36,14 +36,14 @@ import {
 
 /**
  * Policy for how the adapter reacts when an assistant `toolCalls[].arguments`
- * string is not parseable as a JSON object (Wave-12 P1-3, Wave-13 H-2).
+ * string is not parseable as a JSON object.
  *
- * - `'warn'` (default, backwards compatible): emit `logger.warn(...)`, substitute
- *   an empty object, continue. Preserves Wave-5F behavior.
- * - `'throw'`: throw `HarnessError(ADAPTER_ERROR)` with the raw argument string
- *   preserved on the error's `context` via its message (Wave-13 H-1: uses a
- *   head+tail preview for payloads over 400 chars). Fail fast for operators
- *   who would rather observe malformed LLM output than mask it.
+ * - `'warn'` (default): emit `logger.warn(...)`, substitute an empty
+ *   object, continue.
+ * - `'throw'`: throw `HarnessError(ADAPTER_ERROR)` with the raw argument
+ *   string preserved on the error's `context` via its message (head+tail
+ *   preview for payloads over 400 chars). Fail fast for operators who
+ *   would rather observe malformed LLM output than mask it.
  * - Custom callback: receive `(raw, err)` and return one of:
  *     * A `Record<string, unknown>` — used verbatim as the replacement
  *       `tool_use.input`.
@@ -57,11 +57,9 @@ import {
  *       had nothing to say" — callers who do want the empty-object fallback
  *       MUST return `null` explicitly.
  *
- * Wave-13 H-2: before this wave the contract did not distinguish `null` from
- * `undefined`; both fell through to `{}`. Callers who wanted fail-fast
- * semantics from a custom callback had to throw themselves. The new
- * `undefined` → default-throw path closes that gap without breaking
- * callers who already return `null`.
+ * Note: `null` and `undefined` mean different things. `null` requests
+ * the empty-object default; `undefined` defers to the default throw
+ * policy. Return `null` explicitly if you want the `{}` substitution.
  */
 export type AnthropicMalformedToolUsePolicy =
   | 'warn'

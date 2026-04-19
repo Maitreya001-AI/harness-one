@@ -88,10 +88,10 @@ export function createTraceManager(config?: {
    */
   redact?: RedactConfig | false;
   /**
-   * Wave-15: pre-compiled {@link Redactor} instance. Use this to share a
-   * single redactor across trace manager, logger, and dataset exporter
-   * instead of each component compiling its own pattern set. Takes
-   * precedence over {@link redact} when both are set.
+   * Pre-compiled {@link Redactor} instance. Use this to share a single
+   * redactor across trace manager, logger, and dataset exporter instead of
+   * each component compiling its own pattern set. Takes precedence over
+   * {@link redact} when both are set.
    */
   redactor?: Redactor;
   /**

@@ -4,14 +4,12 @@
  * Maps harness-one traces and spans to OpenTelemetry spans with attributes,
  * events, and status codes.
  *
- * Wave-16 M2: the 502-LOC monolith split into cohesive siblings:
+ * Structure: the factory + public types live here; sub-concerns split
+ * into siblings.
  *
  *   - `span-map.ts`    live-span + evicted-parent LRU bookkeeping
  *   - `attributes.ts`  semconv rename table, JSON-stringify fallback,
  *                      and dropped-attribute counters
- *
- * This module keeps the public types and the factory that wires everything
- * together.
  *
  * | harness-one key | OTel semconv key  |
  * |-----------------|-------------------|
@@ -32,13 +30,13 @@ import { createOTelSpanMap } from './span-map.js';
 import { createAttributeSink } from './attributes.js';
 
 /**
- * F18b: Minimal logger interface accepted by the OTel exporter.
- * When provided, parent-linking warnings and diagnostics are routed here
- * instead of falling back to `console.warn`.
+ * Minimal logger interface accepted by the OTel exporter. When provided,
+ * parent-linking warnings and diagnostics are routed here instead of
+ * falling back to `console.warn`.
  *
- * Wave-13 J-3: Adds optional `debug` so parent-fallback events can be
- * surfaced without spamming `warn`. Both methods are optional so existing
- * `warn`-only loggers continue to satisfy the type.
+ * Supports an optional `debug` method so parent-fallback events can be
+ * surfaced without spamming `warn`. The `debug` method is optional so
+ * existing `warn`-only loggers continue to satisfy the type.
  */
 export interface OTelExporterLogger {
   warn: (message: string, context?: Record<string, unknown>) => void;
@@ -57,27 +55,27 @@ export interface OTelExporterConfig {
    * this fallback map provides the minimal context needed to link them correctly.
    * Defaults to 1000.
    *
-   * Wave-12 P1-9: Parent mapping is retained until LRU evicts. Increase this
-   * value if deep trees lose hierarchy (symptom: repeated
-   * `Parent span '...' not found` warnings for expected-alive parents).
+   * Parent mapping is retained until LRU evicts. Increase this value if
+   * deep trees lose hierarchy (symptom: repeated "Parent span '...' not
+   * found" warnings for expected-alive parents).
    */
   readonly maxEvictedParents?: number;
   /** Maximum number of active spans to retain before LRU eviction. Defaults to 10000. */
   readonly maxSpans?: number;
   /**
-   * OBS-004: Callback invoked when a non-primitive attribute is dropped
-   * during export. Receives the offending key and type. When unset, falls back
-   * to `console.debug` for compatibility. Lets ops route dropped-attribute
+   * Callback invoked when a non-primitive attribute is dropped during export.
+   * Receives the offending key and type. When unset, falls back to
+   * `console.debug` for compatibility. Lets ops route dropped-attribute
    * signals into their metrics pipeline.
    */
   readonly onDroppedAttribute?: (info: { key: string; type: string; where: 'attribute' | 'event' }) => void;
   /**
-   * F18b: Optional logger for diagnostic warnings (e.g., parent-linking
-   * fallback). Falls back to `console.warn` when not provided.
+   * Optional logger for diagnostic warnings (e.g., parent-linking fallback).
+   * Falls back to `console.warn` when not provided.
    */
   readonly logger?: OTelExporterLogger;
   /**
-   * Wave-12 P2-12: When `true`, non-primitive attributes (objects, arrays) are
+   * When `true`, non-primitive attributes (objects, arrays) are
    * `JSON.stringify()`-ed and attached to the span as string attributes rather
    * than being dropped. Functions, symbols, and circular references remain
    * dropped (JSON.stringify would throw on the latter). Defaults to `false` so
@@ -86,7 +84,7 @@ export interface OTelExporterConfig {
    */
   readonly stringifyComplexAttributes?: boolean;
   /**
-   * Wave-13 J-3: Optional metrics port. When supplied, the exporter emits:
+   * Optional metrics port. When supplied, the exporter emits:
    *
    *  - `harness.otel.parent_fallback` (counter) — incremented each time a
    *    child span's parent was found in the `evictedParents` LRU cache
@@ -99,20 +97,20 @@ export interface OTelExporterConfig {
   readonly metrics?: MetricsPort;
 }
 
-/** OBS-004: Runtime counter exposed by the exporter for dropped attributes. */
+/** Runtime counter exposed by the exporter for dropped attributes. */
 export interface OTelDroppedAttributeMetrics {
   readonly droppedAttributes: number;
   readonly droppedEventAttributes: number;
 }
 
 /**
- * Wave-13 J-2: Named return type for {@link createOTelExporter}. Extracted
- * from an anonymous intersection so downstream consumers can type-reference
- * the exporter, and future additive methods (e.g. parent-fallback counters)
- * can be declared on a single surface.
+ * Named return type for {@link createOTelExporter}. Extracted from an
+ * anonymous intersection so downstream consumers can type-reference
+ * the exporter, and future additive methods (e.g. parent-fallback
+ * counters) can be declared on a single surface.
  */
 export interface OTelTraceExporter extends TraceExporter {
-  /** OBS-004: inspect dropped-attribute counters. */
+  /** Inspect dropped-attribute counters. */
   readonly getDroppedAttributeMetrics: () => OTelDroppedAttributeMetrics;
 }
 
@@ -128,8 +126,8 @@ export function createOTelExporter(config?: OTelExporterConfig): OTelTraceExport
   const maxEvictedParents = config?.maxEvictedParents ?? 1000;
   const logger = config?.logger;
   const maxSpans = config?.maxSpans ?? 10_000;
-  // Wave-13 J-3: lazy metric handle — only materialised when a metrics port
-  // was supplied, so the common no-metric path stays allocation-free.
+  // Lazy metric handle — only materialised when a metrics port was
+  // supplied, so the common no-metric path stays allocation-free.
   const parentFallbackCounter = config?.metrics?.counter(
     'harness.otel.parent_fallback',
     {
@@ -138,18 +136,18 @@ export function createOTelExporter(config?: OTelExporterConfig): OTelTraceExport
     },
   );
 
-  // Wave-16 M2 split: bookkeeping lives in `span-map.ts`, attribute
-  // translation / drop counters live in `attributes.ts`.
+  // Bookkeeping lives in `span-map.ts`; attribute translation / drop
+  // counters live in `attributes.ts`.
   const spans = createOTelSpanMap({ maxEvictedParents });
   const attributes = createAttributeSink({
     stringifyComplexAttributes: config?.stringifyComplexAttributes ?? false,
     ...(config?.onDroppedAttribute !== undefined && { onDroppedAttribute: config.onDroppedAttribute }),
   });
 
-  // CQ-002: Per-trace OTel root span, lazily created on first span of a
-  // harness trace. `exportSpan` links root-less harness spans to this root
-  // so OTel visualization shows a single hierarchy. `exportTrace` upgrades
-  // the root (attrs + end with real endTime) instead of creating a new one.
+  // Per-trace OTel root span, lazily created on first span of a harness
+  // trace. `exportSpan` links root-less harness spans to this root so OTel
+  // visualization shows a single hierarchy. `exportTrace` upgrades the root
+  // (attrs + end with real endTime) instead of creating a new one.
   const traceRootMap = new Map<string, OTelSpan>();
   const traceRootCreated = new Set<string>();
 
@@ -157,7 +155,7 @@ export function createOTelExporter(config?: OTelExporterConfig): OTelTraceExport
    * Lazily start the OTel root span for a harness trace. Idempotent — returns
    * the existing root if one is already registered.
    *
-   * CQ-001: Passes `startTime: new Date(startTime)` so the OTel span reflects
+   * Passes `startTime: new Date(startTime)` so the OTel span reflects
    * harness-one's actual start timestamp rather than the export time.
    */
   function ensureTraceRoot(traceId: string, name: string, startTime: number): OTelSpan {
@@ -178,9 +176,9 @@ export function createOTelExporter(config?: OTelExporterConfig): OTelTraceExport
     name: 'opentelemetry',
 
     async exportTrace(harnessTrace: Trace): Promise<void> {
-      // CQ-002: upgrade the existing root (if any) with trace attributes and
-      // end it at the real endTime; only create a fresh root when no span of
-      // this trace has arrived yet (e.g., empty trace).
+      // Upgrade the existing root (if any) with trace attributes and end it
+      // at the real endTime; only create a fresh root when no span of this
+      // trace has arrived yet (e.g., empty trace).
       const root = traceRootMap.get(harnessTrace.id)
         ?? ensureTraceRoot(harnessTrace.id, harnessTrace.name, harnessTrace.startTime);
 
@@ -206,7 +204,7 @@ export function createOTelExporter(config?: OTelExporterConfig): OTelTraceExport
         root.setStatus({ code: SpanStatusCode.OK });
       }
 
-      // CQ-001: end the OTel trace span at the real harness endTime.
+      // End the OTel trace span at the real harness endTime.
       root.end(harnessTrace.endTime ? new Date(harnessTrace.endTime) : undefined);
       traceRootMap.delete(harnessTrace.id);
       traceRootCreated.delete(harnessTrace.id);
@@ -217,10 +215,10 @@ export function createOTelExporter(config?: OTelExporterConfig): OTelTraceExport
 
     async exportSpan(harnessSpan: Span): Promise<void> {
       // Check spanMap first, then fall back to evictedParents for already-evicted spans.
-      // Wave-13 J-3: split the lookup so we can observe when the fallback
-      // cache actually resolved the parent. Previously this was silent —
-      // operators had no signal that `maxEvictedParents` might be
-      // undersized until child spans started appearing orphaned.
+      // Split the lookup so we can observe when the fallback cache
+      // actually resolved the parent — operators need a signal that
+      // `maxEvictedParents` might be undersized before child spans
+      // start appearing orphaned.
       let parentOTelSpan: OTelSpan | undefined;
       let parentFromEvictedCache = false;
       if (harnessSpan.parentId) {
@@ -249,7 +247,7 @@ export function createOTelExporter(config?: OTelExporterConfig): OTelTraceExport
       }
 
       // If parentId was specified but neither map has it, log a warning.
-      // The span still gets linked under the trace root below (CQ-002) so the
+      // The span still gets linked under the trace root below so the
       // hierarchy stays connected — we just couldn't resolve the direct parent.
       if (harnessSpan.parentId && !parentOTelSpan) {
         const warnMsg =
@@ -262,9 +260,9 @@ export function createOTelExporter(config?: OTelExporterConfig): OTelTraceExport
         }
       }
 
-      // CQ-002: when no parent context is available (either the span has no
-      // parentId OR its parentId was not found), root this span under the
-      // per-trace OTel root so the resulting hierarchy is a single tree.
+      // When no parent context is available (either the span has no parentId
+      // OR its parentId was not found), root this span under the per-trace
+      // OTel root so the resulting hierarchy is a single tree.
       if (!parentOTelSpan) {
         parentOTelSpan = ensureTraceRoot(
           harnessSpan.traceId,
@@ -314,14 +312,14 @@ export function createOTelExporter(config?: OTelExporterConfig): OTelTraceExport
           otelSpan.setStatus({ code: SpanStatusCode.OK });
         }
 
-        // CQ-001: end with real harness endTime rather than the current wall
-        // clock, so downstream observability shows the correct duration.
+        // End with real harness endTime rather than the current wall clock,
+        // so downstream observability shows the correct duration.
         otelSpan.end(harnessSpan.endTime ? new Date(harnessSpan.endTime) : undefined);
       };
 
-      // CQ-001: pass startTime so the OTel span reflects harness.startTime
-      // rather than the moment export happens. When a parent context exists,
-      // we must still pass options and context in order.
+      // Pass startTime so the OTel span reflects harness.startTime rather
+      // than the moment export happens. When a parent context exists, we
+      // must still pass options and context in order.
       const options = { startTime: new Date(harnessSpan.startTime) };
       if (parentContext) {
         tracer.startActiveSpan(harnessSpan.name, options, parentContext, spanCallback);
@@ -331,11 +329,11 @@ export function createOTelExporter(config?: OTelExporterConfig): OTelTraceExport
     },
 
     async flush(): Promise<void> {
-      // Wave-16 M2: bookkeeping lives in `span-map.ts`.
+      // Bookkeeping lives in `span-map.ts`.
       spans.migrateLiveToEvicted();
     },
 
-    /** OBS-004: inspect dropped-attribute counters. */
+    /** Inspect dropped-attribute counters. */
     getDroppedAttributeMetrics(): OTelDroppedAttributeMetrics {
       return {
         droppedAttributes: attributes.getDroppedAttributes(),

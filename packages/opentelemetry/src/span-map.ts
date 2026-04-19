@@ -1,12 +1,11 @@
 /**
  * LRU-tracked span lookup for the OTel exporter.
  *
- * Wave-16 M2 extraction. The exporter originally held four sibling Maps
- * (spanMap / spanParentMap / spanAccessTime / evictedParents +
- * evictedParentsAccessTime) and five helpers to keep them in sync. That
- * bookkeeping is one cohesive responsibility, so it lives here now and the
- * exporter factory orchestrates against a handful of intention-revealing
- * methods.
+ * Consolidates what would otherwise be four sibling Maps (spanMap /
+ * spanParentMap / spanAccessTime / evictedParents +
+ * evictedParentsAccessTime) and their helpers into one cohesive
+ * responsibility. The exporter factory orchestrates against a handful
+ * of intention-revealing methods instead.
  *
  * All operations are O(1) amortised; eviction piggy-backs on Map insertion
  * order (the same trick `core/infra/lru-cache.ts` uses).
@@ -160,9 +159,9 @@ export function createOTelSpanMap(config: OTelSpanMapConfig): OTelSpanMap {
         evictedAccessTime.delete(id);
         evictedAccessTime.set(id, Date.now());
       }
-      // Wave-12 P1-9: purge-by-TTL removed — the race with in-flight child
-      // exports caused orphaned subtrees. Size-based LRU is the only
-      // retention policy.
+      // Size-based LRU is the only retention policy; purge-by-TTL
+      // races with in-flight child exports and causes orphaned
+      // subtrees.
       if (evicted.size > maxEvictedParents) {
         const excess = evicted.size - maxEvictedParents;
         let removed = 0;

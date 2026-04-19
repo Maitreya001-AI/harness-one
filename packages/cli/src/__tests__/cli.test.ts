@@ -70,7 +70,7 @@ describe('CLI argument parser', () => {
     ).toThrow('Conflicting flags: --all and --modules cannot be used together');
   });
 
-  it('CQ-040: throws HarnessError with CLI_PARSE_ERROR code on conflicting flags', () => {
+  it('throws HarnessError with CLI_PARSE_ERROR code on conflicting flags', () => {
     try {
       parseArgs(['node', 'harness-one', 'init', '--all', '--modules', 'core,tools']);
       throw new Error('expected throw');
@@ -153,9 +153,9 @@ describe('Template generation', () => {
   });
 
   it('templates use correct import paths', () => {
-    // After Wave-5C PR-2, `eval` + (parts of) `evolve` are served by
-    // `@harness-one/devkit` rather than `harness-one/<mod>`. The rest of
-    // the modules still import from the core subpaths.
+    // `eval` and parts of `evolve` are served by `@harness-one/devkit` rather
+    // than `harness-one/<mod>`. The rest of the modules still import from the
+    // core subpaths.
     const DEVKIT_ONLY: ReadonlySet<ModuleName> = new Set<ModuleName>(['eval']);
     for (const mod of ALL_MODULES) {
       const template = getTemplate(mod);
@@ -742,10 +742,10 @@ describe('showHelp', () => {
 });
 
 // ---------------------------------------------------------------------------
-// F24: Exit code constants
+// Exit code constants
 // ---------------------------------------------------------------------------
 
-describe('F24: Exit code constants', () => {
+describe('Exit code constants', () => {
   it('EXIT_SUCCESS is 0', () => {
     expect(EXIT_SUCCESS).toBe(0);
   });
@@ -765,15 +765,15 @@ describe('F24: Exit code constants', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Wave-13 — Track M (CLI) fixes
+// CLI module-scoped immutability
 // ---------------------------------------------------------------------------
 
-describe('Wave-13 Track M — module-scoped immutability', () => {
-  it('Wave-13 M-1: ALL_MODULES is frozen at runtime', () => {
+describe('module-scoped immutability', () => {
+  it('ALL_MODULES is frozen at runtime', () => {
     expect(Object.isFrozen(ALL_MODULES)).toBe(true);
   });
 
-  it('Wave-13 M-1: ALL_MODULES.push() throws in strict mode', () => {
+  it('ALL_MODULES.push() throws in strict mode', () => {
     // TypeScript compile-time already blocks this for `readonly` tuples, but a
     // non-TS consumer could still try to mutate. Object.freeze enforces the
     // guard at runtime.
@@ -782,29 +782,29 @@ describe('Wave-13 Track M — module-scoped immutability', () => {
     }).toThrow(TypeError);
   });
 
-  it('Wave-13 M-1: ALL_MODULES element assignment is refused by freeze', () => {
+  it('ALL_MODULES element assignment is refused by freeze', () => {
     expect(() => {
       (ALL_MODULES as unknown as string[])[0] = 'hacked';
     }).toThrow(TypeError);
   });
 
-  it('Wave-13 M-1: MODULE_DESCRIPTIONS is frozen at runtime', () => {
+  it('MODULE_DESCRIPTIONS is frozen at runtime', () => {
     expect(Object.isFrozen(MODULE_DESCRIPTIONS)).toBe(true);
   });
 
-  it('Wave-13 M-1: MODULE_DESCRIPTIONS property assignment is refused', () => {
+  it('MODULE_DESCRIPTIONS property assignment is refused', () => {
     expect(() => {
       (MODULE_DESCRIPTIONS as unknown as Record<string, string>).core = 'hacked';
     }).toThrow(TypeError);
   });
 
-  it('Wave-13 M-1: MODULE_DESCRIPTIONS property deletion is refused', () => {
+  it('MODULE_DESCRIPTIONS property deletion is refused', () => {
     expect(() => {
       delete (MODULE_DESCRIPTIONS as unknown as Record<string, string>).core;
     }).toThrow(TypeError);
   });
 
-  it('Wave-13 M-1: spread of frozen ALL_MODULES still produces a mutable copy', () => {
+  it('spread of frozen ALL_MODULES still produces a mutable copy', () => {
     const copy = [...ALL_MODULES];
     expect(() => copy.push('new-module')).not.toThrow();
     expect(copy).toContain('new-module');

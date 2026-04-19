@@ -224,7 +224,7 @@ describe('createMiddlewareChain', () => {
     expect(seenType).toBe('tool_call');
   });
 
-  describe('CQ-016: unsubscribe and clear', () => {
+  describe('unsubscribe and clear', () => {
     it('use() returns an unsubscribe function that removes the middleware', async () => {
       const chain = createMiddlewareChain();
       const order: string[] = [];
@@ -310,9 +310,8 @@ describe('createMiddlewareChain', () => {
       }
     });
 
-    it('wraps HarnessError thrown from middleware with CORE_MIDDLEWARE_ERROR (Wave-13 D-1)', async () => {
-      // Wave-13 D-1: previously the middleware chain re-threw a HarnessError
-      // verbatim. The new contract wraps every middleware boundary failure
+    it('wraps HarnessError thrown from middleware with CORE_MIDDLEWARE_ERROR', async () => {
+      // The middleware chain wraps every middleware boundary failure
       // with `CORE_MIDDLEWARE_ERROR` so observers can trace the boundary in
       // the cause chain. The original HarnessError is preserved as `.cause`
       // so consumers that switch on the inner code can still inspect it via
@@ -431,7 +430,7 @@ describe('createMiddlewareChain', () => {
     });
   });
 
-  describe('PERF-026: Set-backed storage', () => {
+  describe('Set-backed storage', () => {
     it('deduplicates the same function reference registered twice', async () => {
       const chain = createMiddlewareChain();
       const calls: string[] = [];

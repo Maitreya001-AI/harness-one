@@ -125,9 +125,9 @@ export function createEvalRunner(config: EvalConfig): EvalRunner {
       // Pre-compute batch results for scorers that support it
       const batchResults = new Map<string, Array<{ score: number; explanation: string }>>();
 
-      // CQ-021: Removed the single-item probe that doubled the cost of the
-      // first case. The post-batch length check below is sufficient to catch
-      // scorers that return the wrong number of results.
+      // The single-item probe that doubled the cost of the first case has
+      // been removed. The post-batch length check below is sufficient to
+      // catch scorers that return the wrong number of results.
       const batchScorers = scorers.filter(s => s.scoreBatch);
       for (const scorer of batchScorers) {
         try {
@@ -138,7 +138,7 @@ export function createEvalRunner(config: EvalConfig): EvalRunner {
           }));
           const batchScoreResults = await (scorer.scoreBatch as NonNullable<typeof scorer.scoreBatch>)(batchInput);
 
-          // Validate batch results (single post-batch check; trusted from CQ-021)
+          // Validate batch results (single post-batch check)
           if (batchScoreResults.length !== cases.length) {
             throw new HarnessError(
               `Scorer "${scorer.name}" scoreBatch() returned ${batchScoreResults.length} results but expected ${cases.length}`,

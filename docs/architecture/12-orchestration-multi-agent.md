@@ -70,7 +70,7 @@ function createAgentPool(config: PoolConfig): AgentPool
 - **懒预热** —— `min` 数量的 Agent 在首次 `acquire()` 时才创建，而非构造时
 - **空闲定时器 unref** —— `setTimeout().unref()` 确保空闲定时器不阻止 Node.js 进程退出
 - **超龄回收** —— `acquire()` 和 `release()` 时检查 `maxAge`，超龄 Agent 自动销毁并替换
-- **单调时钟（Wave-10 F2）** —— `monotonicCreatedAt` 和 `drain()` 使用 `performance.now()` 而非 `Date.now()`，避免 NTP/DST 时钟偏移导致 Agent 过期异常
+- **单调时钟** —— `monotonicCreatedAt` 和 `drain()` 使用 `performance.now()` 而非 `Date.now()`，避免 NTP/DST 时钟偏移导致 Agent 过期异常
 
 ## Handoff Protocol
 
@@ -323,9 +323,9 @@ const boundary = createContextBoundary(orch.context, [
 - **依赖**: `core/agent-loop.ts`（AgentLoop 类型）、`core/errors.ts`（HarnessError）、`orchestration/orchestrator.ts`（AgentOrchestrator 接口；Handoff 仅需 MessageTransport）
 - **被依赖**: 无直接模块依赖
 
-## Wave-8 Production Hardening
+## Production Hardening
 
-1. **Orchestrator 优雅排空与关闭**：新增 `drainAndDispose(timeoutMs?)` 方法，等待所有进行中的委派完成后再执行 dispose，实现优雅关闭。
+1. **Orchestrator 优雅排空与关闭**：`drainAndDispose(timeoutMs?)` 方法等待所有进行中的委派完成后再执行 dispose，实现优雅关闭。
 2. **关闭后拒绝委派**：调用 `drainAndDispose()` 后，后续的 `delegate()` 调用将抛出 `CORE_INVALID_STATE` 错误，防止在关闭过程中接受新的委派请求。
 
 ## 已知限制
@@ -333,6 +333,6 @@ const boundary = createContextBoundary(orch.context, [
 - Agent Pool 不支持 Agent 状态持久化（重启后池为空）
 - Handoff 的 inbox 和 receipt 存储在内存中，不支持持久化
 - Context Boundary 是 advisory 的——直接引用底层 SharedContext 可绕过访问控制
-- SharedContext 键通过 NFKC+casefold 规范化存储（Wave-7），`entries()` 返回的键为规范化后的形式
-- PoolStats 新增 `disposeErrors` 计数器追踪 dispose 过程中被静默丢弃的错误数（Wave-7 OBS-010）
+- SharedContext 键通过 NFKC+casefold 规范化存储，`entries()` 返回的键为规范化后的形式
+- PoolStats 提供 `disposeErrors` 计数器追踪 dispose 过程中被静默丢弃的错误数
 - Handoff 的 verify() 需要用户提供 verifier 回调，不内置语义验证

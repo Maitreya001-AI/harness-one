@@ -165,22 +165,19 @@ await harness.shutdown();
 
 详细架构说明在 [`docs/architecture/`](./docs/architecture/)。
 
-## Wave-5 关键变化（Wave-5C / 5D / 5E / 5F）
+## 核心设计决策
 
-> 项目仍为 pre-release（所有包 `0.1.0`，未发 npm），以下是 Wave-5 系列落地
-> 的关键里程碑。完整逐项映射见 [MIGRATION.md](./MIGRATION.md) 的 Unreleased 段。
+> 项目仍为 pre-release（所有包 `0.1.0`，未发 npm）。完整破坏性变更见
+> [`MIGRATION.md`](./MIGRATION.md) 的 Unreleased 段与 `git log`。
 
-### Wave-27 — `harness-one/testing` 子路径
+### 包边界与 API 收口
 
-- **mock adapter 工厂迁出 `/advanced`**：`createMockAdapter` / `createFailingAdapter` / `createStreamingMockAdapter` / `createErrorStreamingMockAdapter` 搬到新的 `harness-one/testing` 子路径。`/advanced` 现在只导出生产代码可以直接组合的扩展原语（middleware / resilient-loop / fallback-adapter / SSE / 执行策略 / validators / backoff / output parser / trusted system-message）。详见 [`docs/architecture/17-testing.md`](./docs/architecture/17-testing.md)。
+- **根桶 18 个值导出**（UJ-1..UJ-5 主路径）。其余工厂走子路径（`harness-one/core`、`harness-one/tools`、`harness-one/observe`、`harness-one/infra` 等）或兄弟包。**`createSecurePreset` 不从根桶导出**（避免三角循环）——直接从 `@harness-one/preset` 导入。
+- **`HarnessErrorCode` 封闭枚举 + 模块前缀**：成员如 `CORE_UNKNOWN`、`CORE_MAX_ITERATIONS`、`GUARD_VIOLATION`。`HarnessError.code` 不做 `(string & {})` widening，`switch` 可穷举校验。**必须值导入** `import { HarnessErrorCode }`——`import type` 会静默丢失 `Object.values()`，自定义 lint 规则 `harness-one/no-type-only-harness-error-code` 在 lint 时拦截。
+- **`@harness-one/cli` 与 `@harness-one/devkit` 独立包**：CLI 位于 [`@harness-one/cli`](./packages/cli)（`pnpm dlx @harness-one/cli init`）；eval + evolve 开发工具位于 [`@harness-one/devkit`](./packages/devkit)；运行时架构规则保留在 core 的 `harness-one/evolve-check` 子路径。
+- **`harness-one/testing` 子路径**：mock `AgentAdapter` 工厂（`createMockAdapter` / `createFailingAdapter` / `createStreamingMockAdapter` / `createErrorStreamingMockAdapter`）独立于 `/advanced`。`/advanced` 只导出生产代码可以直接组合的扩展原语（middleware / resilient-loop / fallback-adapter / SSE / 执行策略 / validators / backoff / output parser / trusted system-message）。详见 [`docs/architecture/17-testing.md`](./docs/architecture/17-testing.md)。
 
-### Wave-5C — 包边界与 API 收口
-
-- **根桶收紧到 18 个值导出**（UJ-1..UJ-5 主路径；原 ADR 19 槽位中 slot 11 `createSecurePreset` 被下放到 `@harness-one/preset` 以避免三角循环，剩 18 个）。其余工厂走子路径（`harness-one/core`、`harness-one/tools`、`harness-one/observe`、`harness-one/infra` 等）或兄弟包。**`createSecurePreset` 不再从根桶导出**——直接从 `@harness-one/preset` 导入。
-- **`HarnessErrorCode` 收口 + 模块前缀**：`UNKNOWN` → `CORE_UNKNOWN`、`MAX_ITERATIONS` → `CORE_MAX_ITERATIONS`、`GUARDRAIL_VIOLATION` → `GUARD_VIOLATION` 等。`HarnessError.code` 不再 `(string & {})` widening；switch 现在可以穷举校验。**必须值导入** `import { HarnessErrorCode }`——`import type` 会静默丢失 `Object.values()`，自定义 lint 规则 `harness-one/no-type-only-harness-error-code` 在 lint 时拦截。
-- **`@harness-one/cli` 与 `@harness-one/devkit` 抽离**：`harness-one/cli` 子路径迁移到 [`@harness-one/cli`](./packages/cli)（`pnpm dlx @harness-one/cli init`）。`harness-one/eval` 与 `harness-one/evolve` 迁移到 [`@harness-one/devkit`](./packages/devkit)；运行时架构规则保留在 core 的 `harness-one/evolve-check` 子路径。
-
-### Wave-5D（首批，可观测性 + 生命周期）
+### 可观测性 + 生命周期
 
 ```ts
 import {
@@ -194,74 +191,55 @@ const admission = createAdmissionController({ maxInflight: 64, defaultTimeoutMs:
 await admission.withPermit('tenant-123', () => harness.run(messages));
 ```
 
-四项较大改造延后到 **5D.1**（需 PRD + ADR）：CostTracker 单一账本、conversation reconciler、Redis 跨进程 TokenBucket、Langfuse 降级为辅 TraceExporter。
+- **iteration span 属性富化**：每次迭代 span 携带 `iteration` / `adapter` / `conversationLength` / `streaming` / `toolCount` / `inputTokens` / `outputTokens`。
+- **adapter retry 可见**：rate-limit / network 重试作为 `adapter_retry` span 事件记录 `attempt` / `errorCategory` / `error`。
+- **tool span 归因**：`toolName` / `toolCallId` 作为**属性**写入 span，trace 后端可按 toolName 聚合失败率。
+- **guardrail 判决进 trace**：`harness.run()` 每次守卫检查生成 `guardrail:input` / `guardrail:output` / `guardrail:tool-args` / `guardrail:tool-result` 子 span。
+- **CostTracker `strictMode` / `warnUnpricedModels`**：`recordUsage()` 可选严格模式；未注册定价的 model 首次出现时打一次警告。
 
-### Wave-5E — 信任边界类型化
+### 信任边界与多租户
 
 - **`createTrustedSystemMessage` brand**：`SystemMessage._trust` 标记 host-only system message；恢复路径无 brand 的 system 消息降级为 `user`。
 - **`@harness-one/redis` 多租户键**：`RedisStoreConfig.tenantId` 必填（默认 `'default'` 一次性 warn）；键格式 `prefix:{tenantId}:id`。
 - **memory 字节上限 + 保留键**：1 MiB content / 16 KiB metadata；`_version` / `_trust` 是保留键。
 - **`createContextBoundary` segment 边界**：策略前缀必须以 `.` 或 `/` 结尾，否则构造抛 `CORE_INVALID_CONFIG`。
 - **`HandoffManager.createSendHandle(from)` sealed 句柄** + payload 64 KiB / depth 16 上限。
-- **`additionalProperties: false` 真正 enforce**（之前是声明而忽略）。
+- **`additionalProperties: false` 运行时 enforce**。
 - **`runRagContext`** 逐 chunk 跑入 input pipeline；任一 chunk 命中污染整个检索集。
-
-### Wave-5F — 清扫批
-
-- 5 个 adapter 默认 logger 改走 core 的 `createDefaultLogger()` / `safeWarn`（不再裸 `console.warn`）。
-- `checkpoint` ID 改 crypto.randomBytes；trace 采样改 `crypto.randomInt`。
-- 新 `harness-one/infra` 暴露 `unrefTimeout` / `unrefInterval`，长生命周期 timer 默认不持有事件循环。
-- preset pricing 校验拒绝 NaN / Infinity。
-
-## 早期审查批次（Wave 1–4）
-
-以下是早期 50 条架构审查修复带来的关键能力提升（完整清单见 git log 及 [MIGRATION.md](./MIGRATION.md)）：
 
 ### 契约与实现对齐
 
-- **TraceExporter 生命周期钩子**：`initialize?()` / `isHealthy?()` / `shouldExport?(trace)` 此前声明却未被调用，现已由 TraceManager 真正调用。第三方 exporter 写的 lazy-init、采样、健康检查终于生效。
-- **Anthropic tool_use 输入守卫**：LLM 返回非 JSON 对象的工具参数时，不再把字符串强转成 `Record<string, unknown>`——改为替换为空对象并 `console.warn`。静默腐化被消灭。
-- **持久化边界 schema 校验**：`memory/fs-io`、`memory/relay`、`@harness-one/redis` 里每一处 `JSON.parse(...) as T` 都换成了 `validateMemoryEntry` / `validateIndex` / `validateRelayState`，坏数据会立刻抛 `HarnessError('STORE_CORRUPTION')` 而不是被下游当成合法对象继续处理。
-
-### 可观测性升级
-
-- **iteration span 属性富化**：每次迭代 span 现在携带 `iteration` / `adapter` / `conversationLength` / `streaming` / `toolCount` / `inputTokens` / `outputTokens`（此前只有后两项）。
-- **adapter retry 可见**：rate-limit / network 重试现在作为 `adapter_retry` span 事件记录 `attempt` / `errorCategory` / `error`。
-- **tool span 归因**：`toolName` / `toolCallId` 作为**属性**写入 span（而不只在 span 名字里），trace 后端可按 toolName 聚合失败率。
-- **guardrail 判决进 trace**：`harness.run()` 每次守卫检查都生成 `guardrail:input` / `guardrail:output` / `guardrail:tool-args` / `guardrail:tool-result` 子 span，判决和延迟均可审计。
-- **CostTracker strictMode / warnUnpricedModels**：`recordUsage()` 可选严格模式；未注册定价的 model 首次出现时打一次警告。
+- **TraceExporter 生命周期钩子** `initialize?()` / `isHealthy?()` / `shouldExport?(trace)` 由 TraceManager 真正调用。第三方 exporter 写的 lazy-init、采样、健康检查都生效。
+- **Anthropic tool_use 输入守卫**：LLM 返回非 JSON 对象的工具参数时，替换为空对象并 `console.warn`，不做静默强转。
+- **持久化边界 schema 校验**：`memory/fs-io`、`memory/relay`、`@harness-one/redis` 每处反序列化都走 `validateMemoryEntry` / `validateIndex` / `validateRelayState`；坏数据抛 `HarnessError('STORE_CORRUPTION')`。
+- **Adapter 默认 logger 统一**：5 个 adapter 默认 logger 走 core 的 `createDefaultLogger()` / `safeWarn`（不直接 `console.warn`）。
+- **crypto-backed ID**：`checkpoint` ID 使用 `crypto.randomBytes`；trace 采样使用 `crypto.randomInt`。
+- **`unrefTimeout` / `unrefInterval`**：`harness-one/infra` 提供的工具函数，长生命周期 timer 默认不持有事件循环。
+- **preset pricing 校验**：拒绝 NaN / Infinity。
 
 ### 扩展点契约
 
 - **Tool middleware**：`ToolDefinition.middleware` 支持洋葱式包装，做 retry / auth / circuit-breaker 无需改写 `execute`。
 - **MemoryStore 能力声明 + writeBatch**：`capabilities` 字段让后端显式声明原子性、TTL、批量能力；`writeBatch()` 为批量写入保留原子性语义。
 - **ConversationStore 能力声明**：`atomicAppend` / `atomicSave` / `atomicDelete` / `distributed` 四个字段。
-- **createAgentLoop 工厂**：和 `new AgentLoop(...)` 等价但对齐 `createX()` 风格，便于 wrap / decorator。
+- **`createAgentLoop` 工厂**：和 `new AgentLoop(...)` 等价但对齐 `createX()` 风格，便于 wrap / decorator。
 - **Provider 规范文档**：`docs/provider-spec.md` 是新 adapter 作者的权威参考（required vs optional、cache token、error 分类映射、PR 清单）。
 - **MemoryStore 合规测试套件**：`runMemoryStoreConformance(runner, factory)` 让新后端（Postgres / DynamoDB / Vespa）跑同一套契约测试。
 
 ### 发布管线
 
-- 引入 `@changesets/cli`；`pnpm changeset` → `pnpm changeset version` → `pnpm changeset publish`。
-- CI 现在强制 per-package 覆盖率阈值（lines/statements 80%、branches 75%）。
-- CI 新增 sourcemap/declaration map 产物校验，防止静默删除 sourcemap 后 ship 出不可 debug 的代码。
-- CI 新增 changeset-check job，触碰 `packages/` 的 PR 必须带 changeset。
+- `@changesets/cli`：`pnpm changeset` → `pnpm changeset version` → `pnpm changeset publish`。
+- CI 强制 per-package 覆盖率阈值（lines/statements 80%、branches 75%）。
+- CI 校验 sourcemap / declaration map 产物，防止静默丢 sourcemap。
+- CI 包含 changeset-check job，触碰 `packages/` 的 PR 必须带 changeset。
 
-### 性能优化
+### 破坏性契约
 
-- token 估算合并为单次 O(n) 扫（此前两次 `text.match`）
-- Session 管理器 LRU 分拆为 `unlockedOrder` + `lockedIds`，驱逐 O(1)
-- PII / injection 检测加入"无数字 → 跳过"等早期剪枝
-- 大 payload 的 injection 从滑动窗口改为前后缀扫
-- 会话裁剪从 3–5 次 `Array.slice` 改为索引化单分配
-
-### 破坏性变化
-
-三处行为契约现在会响亮失败（此前静默降级）：
+三处行为契约会响亮失败（不静默降级）：
 
 1. **`HarnessConfig.langfuse`** 必须是带 `.trace()` 方法的对象——`{}` 之类的占位对象构造时抛 `INVALID_CONFIG`。
-2. **Memory 持久化读取路径** 遇到 shape 错误的数据会抛 `STORE_CORRUPTION`。
-3. **`AgentLoop.run()`** 在同实例上并发调用抛 `INVALID_STATE`。
+2. **Memory 持久化读取路径** 遇到 shape 错误的数据抛 `STORE_CORRUPTION`。
+3. **`AgentLoop.run()`** 同实例并发调用抛 `INVALID_STATE`。
 
 ## 子模块速查
 
@@ -275,8 +253,8 @@ await admission.withPermit('tenant-123', () => harness.run(messages));
 - **observe** · `harness-one/observe` — createTraceManager / createCostTracker / createLogger / FailureTaxonomy / CacheMonitor / HarnessLifecycle / MetricsPort
 - **session** · `harness-one/session` — createSessionManager / createInMemoryConversationStore / AuthContext
 - **memory** · `harness-one/memory` — createInMemoryStore / createFileSystemStore / createRelay / runMemoryStoreConformance / validate\* guards
-- **eval** · `harness-one/eval` — createEvalRunner / createRelevanceScorer / Generator-Evaluator
-- **evolve** · `harness-one/evolve` — createComponentRegistry / 漂移检测
+- **devkit** · `@harness-one/devkit` — createEvalRunner / createRelevanceScorer / Generator-Evaluator / createComponentRegistry / 漂移检测
+- **evolve-check** · `harness-one/evolve-check` — 运行时架构规则引擎（循环依赖 + 层级边界 + 自定义规则）
 - **orchestration** · `harness-one/orchestration` — createOrchestrator / createAgentPool / createHandoff / createContextBoundary / MessageQueue
 - **rag** · `harness-one/rag` — createRAGPipeline（文档加载、分块、嵌入、检索、token 估算、多租户隔离）
 - **preset** · `@harness-one/preset` — createSecurePreset（含 lifecycle + metrics 自动装配）/ createShutdownHandler / validateHarnessConfig
@@ -302,7 +280,7 @@ await admission.withPermit('tenant-123', () => harness.run(messages));
 | 多 Agent 编排 | [12-orchestration-multi-agent.md](./docs/architecture/12-orchestration-multi-agent.md) |
 | RAG 流水线 | [13-rag.md](./docs/architecture/13-rag.md) |
 | Provider 适配器规范 | [provider-spec.md](./docs/provider-spec.md) |
-| 历史审查修复记录 | [docs/forge-fix/](./docs/forge-fix/) |
+| 迁移记录 | [MIGRATION.md](./MIGRATION.md) |
 
 示例代码在 [`examples/`](./examples/)，每个主题一个可直接运行的脚本。
 

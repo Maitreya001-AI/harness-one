@@ -1,8 +1,7 @@
 /**
- * Tests for `createLangfuseCostTracker` — split out of the monolith by
- * Wave-16 M3. Covers KahanSum drift, Map-backed per-key totals, budget
- * checks, F18c budget snapshotting, OBS-003 event emission, OBS-015
- * flush error routing, and Wave-12 P1-8 dispose() drain.
+ * Tests for `createLangfuseCostTracker`. Covers KahanSum drift,
+ * Map-backed per-key totals, budget checks, budget snapshotting, event
+ * emission, flush error routing, and dispose() drain.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -454,7 +453,7 @@ describe('createLangfuseCostTracker', () => {
     expect(tracker.getTotalCost()).toBeCloseTo(0.001);
   });
 
-  // FIX 5: Empty pricing map warns once per model
+  // Empty pricing map warns once per model
   it('warns once per unknown model when no pricing is configured', () => {
     const warnSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const tracker = createLangfuseCostTracker({ client: mock.client });
@@ -471,7 +470,7 @@ describe('createLangfuseCostTracker', () => {
     warnSpy.mockRestore();
   });
 
-  // FIX 6: Flush errors are logged, not silently swallowed
+  // Flush errors are logged, not silently swallowed
   it('logs flush errors via console.warn instead of silently swallowing', () => {
     const flushError = new Error('flush network error');
     mock.mocks.flushAsync.mockRejectedValue(flushError);
@@ -494,8 +493,8 @@ describe('createLangfuseCostTracker', () => {
     }, 20));
   });
 
-  // FIX 7: maxRecords validation. Wave-16 m3 routes through the shared
-  // `requirePositiveInt` helper; message normalised to match.
+  // maxRecords validation routes through the shared `requirePositiveInt`
+  // helper; message normalised to match.
   it('throws when maxRecords is less than 1', () => {
     expect(() => createLangfuseCostTracker({ client: mock.client, maxRecords: 0 }))
       .toThrow('maxRecords must be a positive integer');
@@ -515,7 +514,7 @@ describe('createLangfuseCostTracker', () => {
       .not.toThrow();
   });
 
-  it('TEST-008: does not throw when maxRecords is explicitly undefined', () => {
+  it('does not throw when maxRecords is explicitly undefined', () => {
     // Explicit-undefined is distinct from key-omitted because some validators
     // treat them differently. Confirm both call-shapes default cleanly.
     expect(() =>
@@ -560,10 +559,10 @@ describe('createLangfuseCostTracker', () => {
   });
 
   // -------------------------------------------------------------------------
-  // CQ-010: Kahan summation + Map-backed per-key totals + exceeded branch
+  // Kahan summation + Map-backed per-key totals + exceeded branch
   // -------------------------------------------------------------------------
 
-  describe('CQ-010: KahanSum running total', () => {
+  describe('KahanSum running total', () => {
     it('accumulates many tiny costs without drifting from exact sum', () => {
       const tracker = createLangfuseCostTracker({
         client: mock.client,
@@ -613,7 +612,7 @@ describe('createLangfuseCostTracker', () => {
     });
   });
 
-  describe('CQ-010: Map-backed per-key totals', () => {
+  describe('Map-backed per-key totals', () => {
     it('getCostByModel uses maintained map (not array scan)', () => {
       // After eviction, the map-backed total should still exclude evicted rows.
       const tracker = createLangfuseCostTracker({
@@ -677,7 +676,7 @@ describe('createLangfuseCostTracker', () => {
     });
   });
 
-  describe('CQ-010: exceeded branch in checkBudget / isBudgetExceeded', () => {
+  describe('exceeded branch in checkBudget / isBudgetExceeded', () => {
     it('checkBudget returns an exceeded alert when actual >= hard budget', () => {
       const tracker = createLangfuseCostTracker({
         client: mock.client,
@@ -764,10 +763,10 @@ describe('createLangfuseCostTracker', () => {
   });
 
   // -------------------------------------------------------------------------
-  // F18c: Budget race condition — snapshot-based budget check
+  // Budget race condition — snapshot-based budget check
   // -------------------------------------------------------------------------
 
-  describe('F18c: budget snapshot prevents mid-check mutation', () => {
+  describe('budget snapshot prevents mid-check mutation', () => {
     it('uses a consistent budget snapshot throughout recordUsage', async () => {
       const tracker = createLangfuseCostTracker({
         client: mock.client,
@@ -797,10 +796,10 @@ describe('createLangfuseCostTracker', () => {
   });
 
   // -------------------------------------------------------------------------
-  // OBS-003: Budget-exceeded Langfuse event emission (with dedupe)
+  // Budget-exceeded Langfuse event emission (with dedupe)
   // -------------------------------------------------------------------------
 
-  describe('OBS-003: budget_exceeded event emission', () => {
+  describe('budget_exceeded event emission', () => {
     it('emits a Langfuse event named "budget_exceeded" when shouldStop() flips true', () => {
       const tracker = createLangfuseCostTracker({
         client: mock.client,
@@ -921,10 +920,10 @@ describe('createLangfuseCostTracker', () => {
   });
 
   // -------------------------------------------------------------------------
-  // OBS-015: Flush errors route through onExportError / logger / fallback
+  // Flush errors route through onExportError / logger / fallback
   // -------------------------------------------------------------------------
 
-  describe('OBS-015: flush error handling', () => {
+  describe('flush error handling', () => {
     it('calls onExportError with op="flush" when provided', async () => {
       const flushError = new Error('boom');
       mock.mocks.flushAsync.mockRejectedValue(flushError);
@@ -1155,11 +1154,11 @@ describe('createLangfuseCostTracker', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Wave-12 P1-8: Track in-flight flushAsync promises so dispose() can drain
+  // Track in-flight flushAsync promises so dispose() can drain
   // them before returning. Previously these were fire-and-forget.
   // -------------------------------------------------------------------------
 
-  describe('Wave-12 P1-8: dispose() drains pending flushAsync promises', () => {
+  describe('dispose() drains pending flushAsync promises', () => {
     it('resolves immediately when no flushes are in flight', async () => {
       const tracker = createLangfuseCostTracker({ client: mock.client });
       await expect(tracker.dispose()).resolves.toBeUndefined();

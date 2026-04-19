@@ -12,9 +12,9 @@ import type { ModelPricing, TokenUsageRecord } from '../core/pricing.js';
 /**
  * Pricing configuration for a model.
  *
- * Wave-15: the canonical definition lives in `core/pricing.ts`;
- * this is a re-export so existing `import { ModelPricing } from
- * 'harness-one/observe'` keeps working. Prefer the `harness-one/core`
+ * The canonical definition lives in `core/pricing.ts`; this is a re-export
+ * so existing `import { ModelPricing } from 'harness-one/observe'` keeps
+ * working. Prefer the `harness-one/core`
  * import for new code — pricing is a cross-cutting primitive, not an
  * observe-only concern.
  */

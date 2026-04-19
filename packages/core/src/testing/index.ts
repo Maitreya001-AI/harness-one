@@ -8,7 +8,7 @@
  *     alongside production extension primitives (middleware, resilient-loop,
  *     etc.). The naming misled adapter authors into thinking `createMockAdapter`
  *     was a production-ready fallback factory rather than a test double.
- *   - Wave-27 split them onto `harness-one/testing` so that `harness-one/advanced`
+ *   - split them onto `harness-one/testing` so that `harness-one/advanced`
  *     carries only composable production surface, and test consumers have a
  *     clearly-named import path.
  *

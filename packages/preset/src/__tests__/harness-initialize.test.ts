@@ -1,7 +1,7 @@
 /**
- * Wave 4e fixes for the preset package:
+ * Preset Harness.initialize() tests:
  *  - ARCH-007: Harness.initialize() eager boot hook.
- *  - ARCH-010: Harness.eventBus deprecation (dead stub) — REMOVED in Wave-5C.
+ *  - ARCH-010: Harness.eventBus deprecation (dead stub) has been removed.
  *    The eventBus property is no longer part of the Harness surface; the
  *    earlier deprecation-warning and DEPRECATED_EVENT_BUS tests were deleted
  *    along with the stub.
@@ -52,7 +52,7 @@ describe('Harness.initialize() (ARCH-007)', () => {
   });
 });
 
-// Wave-5C T-1.6: Harness.eventBus deprecation (ARCH-010) — the dead-stub
-// Proxy, DEPRECATED_EVENT_BUS error code, and all associated tests were
-// removed. Preset no longer exposes an `eventBus` field. Per-module
-// `onEvent()` subscriptions replace the global bus.
+// Harness.eventBus deprecation (ARCH-010) — the dead-stub Proxy,
+// DEPRECATED_EVENT_BUS error code, and all associated tests were removed.
+// Preset no longer exposes an `eventBus` field. Per-module `onEvent()`
+// subscriptions replace the global bus.

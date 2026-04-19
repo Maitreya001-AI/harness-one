@@ -96,7 +96,7 @@ describe('AgentPool', () => {
     pool.release(a1);
     pool.release(a2);
 
-    // LM-014: dispose is now async — await so loop.dispose() settles before
+    // dispose is now async — await so loop.dispose() settles before
     // the assertion runs.
     await pool.dispose();
     expect(a1.loop.status).toBe('disposed');
@@ -288,8 +288,8 @@ describe('AgentPool', () => {
     });
   });
 
-  // CQ-017: AbortSignal support for acquireAsync
-  describe('CQ-017: acquireAsync AbortSignal', () => {
+  // AbortSignal support for acquireAsync
+  describe('acquireAsync AbortSignal', () => {
     it('rejects synchronously when signal is already aborted', async () => {
       pool = makePool();
       const ac = new AbortController();
@@ -334,8 +334,8 @@ describe('AgentPool', () => {
     });
   });
 
-  // P0-1 (Wave-12): pending-queue cap prevents unbounded memory growth.
-  describe('P0-1 (Wave-12): maxPendingQueueSize', () => {
+  // pending-queue cap prevents unbounded memory growth.
+  describe('maxPendingQueueSize', () => {
     it('rejects acquireAsync with POOL_QUEUE_FULL when queue is at cap', async () => {
       pool = makePool({ max: 1, maxPendingQueueSize: 2 });
       pool.acquire(); // exhaust the pool
@@ -412,8 +412,8 @@ describe('AgentPool', () => {
     });
   });
 
-  // P2-4 (Wave-12): jitter clamp on idle timer.
-  describe('P2-4 (Wave-12): idle-timer jitter clamp', () => {
+  // jitter clamp on idle timer.
+  describe('idle-timer jitter clamp', () => {
     it('never fires before idleTimeout even with a misbehaving random source', () => {
       // We can't inject the random source directly, but we can exercise the
       // math: jitter must be <= idleTimeout * 0.1 for all valid inputs, so the
@@ -440,8 +440,8 @@ describe('AgentPool', () => {
     });
   });
 
-  // LM-014: async idempotent dispose that awaits loop.dispose
-  describe('LM-014: async idempotent dispose', () => {
+  // async idempotent dispose that awaits loop.dispose
+  describe('async idempotent dispose', () => {
     it('awaits every loop.dispose() so all loops report disposed', async () => {
       pool = makePool({ max: 3 });
       const a = pool.acquire();

@@ -1,6 +1,6 @@
 /**
  * Direct tests for the bounded record buffer extracted from cost-tracker.ts
- * in Wave-21. The cost-tracker integration tests already cover the buffer's
+ * . The cost-tracker integration tests already cover the buffer's
  * happy path; this suite locks in the branded raw/effective index translation,
  * eviction-time index surgery, and bias compaction so a future change to one
  * cannot silently change the others.

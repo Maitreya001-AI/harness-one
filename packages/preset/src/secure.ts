@@ -1,5 +1,5 @@
 /**
- * T14 (Wave-5A): createSecurePreset — fail-closed production entry.
+ * createSecurePreset — fail-closed production entry.
  *
  * Wraps {@link createHarness} with production-grade defaults:
  * - Guardrail pipeline is non-empty by default (injection + contentFilter + pii)
@@ -60,8 +60,8 @@ type HarnessGuardrails = NonNullable<HarnessConfig['guardrails']>;
  *    configuration later in the process lifetime.
  *
  * Tool registry security (default `allowedCapabilities: ['readonly']`) and
- * logger/trace-manager redaction defaults are inherited from Wave-5A's
- * core-level flips (T02/T03/T08/T09) — no extra wiring needed here.
+ * logger/trace-manager redaction defaults are inherited from core-level
+ * secure defaults — no extra wiring needed here.
  *
  * @example
  * ```ts

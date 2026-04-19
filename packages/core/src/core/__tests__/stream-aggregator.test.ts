@@ -1,5 +1,5 @@
 /**
- * Direct unit tests for StreamAggregator (ARCH-001).
+ * Direct unit tests for StreamAggregator.
  *
  * Behavioural parity with the historical inline `handleStream` is covered
  * indirectly by the existing `agent-loop.test.ts` and `streaming-errors.test.ts`
@@ -152,9 +152,9 @@ describe('StreamAggregator', () => {
   });
 
   // ---------------------------------------------------------------------
-  // Wave-12 P0-3 regression: string[] buffer for text + tool-call args.
+  // Regression: string[] buffer for text + tool-call args.
   // ---------------------------------------------------------------------
-  describe('Wave-12 P0-3: string[] buffer avoids O(n²) concatenation', () => {
+  describe('string[] buffer avoids O(n²) concatenation', () => {
     it('correctly reassembles N text chunks without dropping content', () => {
       const agg = new StreamAggregator(DEFAULT_OPTS);
       // Pick N such that naive string concatenation would be visible in
@@ -201,7 +201,7 @@ describe('StreamAggregator', () => {
     });
   });
 
-  describe('F6: maxToolCalls limit', () => {
+  describe('maxToolCalls limit', () => {
     it('errors when distinct tool calls exceed maxToolCalls', () => {
       const agg = new StreamAggregator({ ...DEFAULT_OPTS, maxToolCalls: 2 });
       const chunks: StreamAggregatorChunk[] = [
@@ -240,7 +240,7 @@ describe('StreamAggregator', () => {
       expect(errEvent).toBeUndefined();
     });
 
-    it('Wave-12 P1-12: count limit fires BEFORE allocating the new entry', () => {
+    it('count limit fires BEFORE allocating the new entry', () => {
       // After the error the set size must equal the cap (the rejected
       // tool call MUST NOT have been added to the map/array). Previously
       // the check fired after allocation, briefly exposing a (cap+1)-sized
@@ -324,7 +324,7 @@ describe('StreamAggregator', () => {
       expect(err).toBeDefined();
     });
 
-    describe('cross-chunk surrogate-pair handling (Wave-27)', () => {
+    describe('cross-chunk surrogate-pair handling', () => {
       // A single emoji like '🎉' (U+1F389) is 4 UTF-8 bytes AND two UTF-16
       // code units — a high surrogate (0xd83c) + low surrogate (0xdf89).
       // An adapter that splits streaming text at arbitrary JS string

@@ -142,7 +142,7 @@ describe('createTraceExporterCoordinator', () => {
   });
 
   it('flushAll tolerates an exporter that sync-throws from flush()', async () => {
-    // Regression for Wave-16 m1: `Array.map` evaluates callbacks eagerly, so a
+    // Regression: `Array.map` evaluates callbacks eagerly, so a
     // sync throw inside the map would unwind past `Promise.allSettled`.
     // `invokeAsync` forces the call into the promise chain so the throw lands
     // as a rejection we can catch.
@@ -168,7 +168,7 @@ describe('createTraceExporterCoordinator', () => {
   });
 
   it('shutdownAll tolerates an exporter that sync-throws from flush() and shutdown()', async () => {
-    // Regression for Wave-16 m1 in the shutdown path.
+    // Regression: same as flushAll but in the shutdown path.
     const errs: unknown[] = [];
     const throwing: TraceExporter = {
       name: 'throws-sync',

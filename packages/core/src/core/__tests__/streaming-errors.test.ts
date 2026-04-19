@@ -256,7 +256,7 @@ describe('AgentLoop streaming error scenarios', () => {
       expect(errorEvent).toBeDefined();
       expect((errorEvent.error as Error).message).toContain('arguments exceeded maximum size');
       expect((errorEvent.error as Error).message).toContain('bigTool');
-      // Wave-18: per-call wire-size limits MUST classify as ADAPTER_PAYLOAD_OVERSIZED
+      // Per-call wire-size limits MUST classify as ADAPTER_PAYLOAD_OVERSIZED
       // so downstream retry/alert heuristics can distinguish them from cumulative budget.
       expect(errorEvent.error).toBeInstanceOf(HarnessError);
       expect((errorEvent.error as HarnessError).code).toBe(HarnessErrorCode.ADAPTER_PAYLOAD_OVERSIZED);
@@ -285,7 +285,7 @@ describe('AgentLoop streaming error scenarios', () => {
       const errorEvent = events.find((e) => e.type === 'error') as Extract<AgentEvent, { type: 'error' }>;
       expect(errorEvent).toBeDefined();
       expect((errorEvent.error as Error).message).toContain('arguments exceeded maximum size');
-      // Wave-18: NO-ID path must match WITH-ID path — both are ADAPTER_PAYLOAD_OVERSIZED.
+      // NO-ID path must match WITH-ID path — both are ADAPTER_PAYLOAD_OVERSIZED.
       expect(errorEvent.error).toBeInstanceOf(HarnessError);
       expect((errorEvent.error as HarnessError).code).toBe(HarnessErrorCode.ADAPTER_PAYLOAD_OVERSIZED);
     });
@@ -454,7 +454,7 @@ describe('AgentLoop streaming error scenarios', () => {
     });
   });
 
-  // Wave-5B MF-1 regression guard (wave-5b-review-redteam.md §M-1):
+  // Regression guard:
   //
   // Consumer-initiated `.return()` on the run() generator must forward
   // iterator-close through AdapterCaller's manual pump into
@@ -462,12 +462,7 @@ describe('AgentLoop streaming error scenarios', () => {
   // `adapter.stream()` generator. Without the `try/finally` around
   // AdapterCaller's pump this chain breaks and the adapter generator
   // leaks until the abort signal fires (which the test adapter ignores).
-  //
-  // Verification: this test was confirmed to FAIL before the try/finally
-  // fix (streamReturnCalled stayed false — only abort-propagation could
-  // close the generator, which the test adapter does not honour). It
-  // PASSES with the fix.
-  describe('adapter stream cleanup on consumer .return() (MF-1 regression)', () => {
+  describe('adapter stream cleanup on consumer .return()', () => {
     it('closes adapter stream when consumer breaks mid-chunk', async () => {
       let streamReturnCalled = false;
       const adapter: AgentAdapter = {
@@ -512,16 +507,14 @@ describe('AgentLoop streaming error scenarios', () => {
     });
   });
 
-  // Wave-5B Step 2 gating test (ADR §7 Step 2 / §9 R1):
-  //
   // After the StreamHandler / AdapterCaller split, failures on the stream
   // path have TWO candidate yield sites — StreamHandler yields the event
-  // inside `handle()` (ADR §2.2 JSDoc), and agent-loop's post-`call()`
-  // bail could yield again. The contract is: the consumer must see
-  // EXACTLY ONE `{type:'error'}` event per failed stream regardless of
-  // retries. A double-emit here would be a silent regression (consumers
-  // typically only assert the presence of an error, not the count).
-  describe('stream error yield-order asymmetry (ADR §9 R1)', () => {
+  // inside `handle()`, and agent-loop's post-`call()` bail could yield
+  // again. The contract is: the consumer must see EXACTLY ONE
+  // `{type:'error'}` event per failed stream regardless of retries. A
+  // double-emit here would be a silent regression (consumers typically
+  // only assert the presence of an error, not the count).
+  describe('stream error yield-order asymmetry', () => {
     it('emits exactly ONE {type:\"error\"} event per failed stream across all retries', async () => {
       // Streaming adapter that always fails with a retryable category.
       // `HTTP 429` routes through categorizeAdapterError to ADAPTER_RATE_LIMIT

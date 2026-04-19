@@ -1,8 +1,7 @@
 /**
  * Shared fixtures for the Langfuse adapter test suites.
  *
- * Wave-16 M3 extraction. The 2531-LOC `langfuse.test.ts` monolith has
- * been split into three focused files (`cost-tracker.test.ts`,
+ * The suite is split into three focused files (`cost-tracker.test.ts`,
  * `prompt-backend.test.ts`, `exporter.test.ts`); this module holds the
  * mock Langfuse client they all reach for, so the split adds no
  * duplicated setup.

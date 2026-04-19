@@ -1,10 +1,9 @@
 /**
  * Adapter-retry integration tests for {@link AgentLoop}.
  *
- * Wave-16 M1 extraction from `agent-loop.test.ts`. Covers rate-limit
- * retry, non-retryable auth errors, network-error opt-in via
- * `retryableErrors`, abort-during-backoff, iteration-counter invariants
- * across retries, and the streaming-path equivalent.
+ * Covers rate-limit retry, non-retryable auth errors, network-error
+ * opt-in via `retryableErrors`, abort-during-backoff, iteration-counter
+ * invariants across retries, and the streaming-path equivalent.
  */
 
 import { describe, it, expect } from 'vitest';

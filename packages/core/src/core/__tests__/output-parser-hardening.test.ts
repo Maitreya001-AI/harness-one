@@ -1,15 +1,15 @@
 /**
- * Wave-13 Track D — output parser fix
+ * Output parser hardening:
  *
- *   D-12: regex literals that were previously recompiled per `parse()` call
- *         (CRLF normaliser, code-block matcher, unclosed-block probes) are
- *         now module-level constants. Behaviour must be byte-identical.
+ *   - regex literals that were previously recompiled per `parse()` call
+ *     (CRLF normaliser, code-block matcher, unclosed-block probes) are
+ *     now module-level constants. Behaviour must be byte-identical.
  */
 
 import { describe, it, expect } from 'vitest';
 import { createJsonOutputParser } from '../output-parser.js';
 
-describe('createJsonOutputParser — Wave-13 D-12 behaviour preserved after regex hoisting', () => {
+describe('createJsonOutputParser — behaviour preserved after regex hoisting', () => {
   it('parses a plain JSON string (no code block)', () => {
     const parser = createJsonOutputParser<{ name: string }>();
     expect(parser.parse('{"name":"Alice"}')).toEqual({ name: 'Alice' });

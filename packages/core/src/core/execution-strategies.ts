@@ -2,12 +2,12 @@ import type { ToolCallRequest, ExecutionStrategy, ToolExecutionResult } from './
 import { requirePositiveInt } from '../infra/validate.js';
 
 /**
- * Wave-13 D-10: declaration merging adds an optional `dispose` member to the
- * structural `ExecutionStrategy` contract so long-running strategies (e.g.
- * worker pools, persistent queues) can release resources at AgentLoop
- * shutdown. The merge lives in this file — alongside the built-in strategy
- * factories — rather than in `types.ts` to avoid a cross-file behavioural
- * change; the semantics are identical for the TypeScript compiler either way.
+ * Declaration merging adds an optional `dispose` member to the structural
+ * `ExecutionStrategy` contract so long-running strategies (e.g. worker pools,
+ * persistent queues) can release resources at AgentLoop shutdown. The merge
+ * lives in this file — alongside the built-in strategy factories — rather
+ * than in `types.ts` to avoid a cross-file behavioural change; the semantics
+ * are identical for the TypeScript compiler either way.
  *
  * Existing built-in strategies (`createSequentialStrategy`, `createParallelStrategy`)
  * do not need `dispose` because they hold no per-instance resources; the

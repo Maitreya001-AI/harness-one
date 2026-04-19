@@ -297,9 +297,9 @@ describe('createAjvValidator', () => {
   });
 
   // ------------------------------------------------------------------------
-  // CQ-020: bounded LRU schema cache
+  // bounded LRU schema cache
   // ------------------------------------------------------------------------
-  describe('bounded schema cache (CQ-020)', () => {
+  describe('bounded schema cache', () => {
     it('reuses compiled validator for structurally identical schemas', async () => {
       const validator = createAjvValidator({ formats: false });
       const schema: JsonSchema = { type: 'object', properties: { x: { type: 'string' } } };
@@ -379,7 +379,7 @@ describe('createAjvValidator', () => {
       expect(rB.valid).toBe(true);
     });
 
-    it('routes compile failures through injected logger (CQ-027)', async () => {
+    it('routes compile failures through injected logger', async () => {
       const fakeLogger = { warn: vi.fn(), error: vi.fn() };
       const validator = createAjvValidator({
         formats: false,
@@ -396,11 +396,11 @@ describe('createAjvValidator', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Wave-13 — Track L (Ajv) fixes
+  // Ajv fixes
   // -------------------------------------------------------------------------
 
-  describe('Wave-13 Track L — Ajv fixes', () => {
-    it('Wave-13 L-1: does not mutate the caller\'s schema when tagging $id', async () => {
+  describe('Ajv fixes', () => {
+    it('does not mutate the caller\'s schema when tagging $id', async () => {
       const validator = createAjvValidator({ formats: false });
       const schema: JsonSchema & { $id?: string } = {
         type: 'object', properties: { x: { type: 'number' } }, required: ['x'],
@@ -410,7 +410,7 @@ describe('createAjvValidator', () => {
       expect(schema.$id).toBeUndefined();
     });
 
-    it('Wave-13 L-1: cache hits are stable under Object.assign tagging', async () => {
+    it('cache hits are stable under Object.assign tagging', async () => {
       const validator = createAjvValidator({ formats: false });
       const schema: JsonSchema = {
         type: 'object', properties: { v: { type: 'number' } }, required: ['v'],
@@ -422,7 +422,7 @@ describe('createAjvValidator', () => {
       expect(b.valid).toBe(true);
     });
 
-    it('Wave-13 A-6: throws CORE_INVALID_CONFIG on maxCacheSize=0', async () => {
+    it('throws CORE_INVALID_CONFIG on maxCacheSize=0', async () => {
       const { HarnessError } = await import('harness-one/core');
       expect(() => createAjvValidator({ maxCacheSize: 0 })).toThrow(HarnessError);
       try {
@@ -432,31 +432,31 @@ describe('createAjvValidator', () => {
       }
     });
 
-    it('Wave-13 A-6: throws CORE_INVALID_CONFIG on negative maxCacheSize', () => {
+    it('throws CORE_INVALID_CONFIG on negative maxCacheSize', () => {
       expect(() => createAjvValidator({ maxCacheSize: -5 })).toThrow(/maxCacheSize/);
     });
 
-    it('Wave-13 A-6: throws on non-integer maxCacheSize', () => {
+    it('throws on non-integer maxCacheSize', () => {
       expect(() => createAjvValidator({ maxCacheSize: 1.5 })).toThrow(/maxCacheSize/);
     });
 
-    it('Wave-13 A-6: throws on NaN maxCacheSize', () => {
+    it('throws on NaN maxCacheSize', () => {
       expect(() => createAjvValidator({ maxCacheSize: Number.NaN })).toThrow(/maxCacheSize/);
     });
 
-    it('Wave-13 A-6: default (256) works when option omitted', async () => {
+    it('default (256) works when option omitted', async () => {
       const v = createAjvValidator({ formats: false });
       const r = await v.validate({ type: 'number' } as JsonSchema, 42);
       expect(r.valid).toBe(true);
     });
 
-    it('Wave-13 A-6: accepts any valid positive integer maxCacheSize', async () => {
+    it('accepts any valid positive integer maxCacheSize', async () => {
       const v = createAjvValidator({ formats: false, maxCacheSize: 1 });
       const r = await v.validate({ type: 'string' } as JsonSchema, 'hi');
       expect(r.valid).toBe(true);
     });
 
-    it('Wave-13 A-5: format loader failure does not poison the cache (retry works)', async () => {
+    it('format loader failure does not poison the cache (retry works)', async () => {
       // Smoke test: creating the validator must not hang indefinitely even
       // when ajv-formats resolution fails. We can't easily stub the dynamic
       // import from here, so we simply assert the validator remains usable

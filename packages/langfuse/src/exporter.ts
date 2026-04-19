@@ -44,7 +44,7 @@ export interface LangfuseExporterConfig {
   /**
    * Sanitize span attributes before export (e.g., strip PII).
    *
-   * SEC-A01 (Wave-5A · T04): When omitted, a built-in default sanitizer is
+   * When omitted, a built-in default sanitizer is
    * applied — it redacts keys matching the standard secret pattern
    * (`api_key`, `authorization`, `token`, `password`, `cookie`, …) and
    * drops prototype-polluting keys (`__proto__`, `constructor`, `prototype`).
@@ -55,7 +55,7 @@ export interface LangfuseExporterConfig {
   /** Maximum number of trace entries to retain in the LRU map. Defaults to 1000. */
   readonly maxTraceMapSize?: number;
   /**
-   * Wave-13 I-2: Optional instrumentation port used to tag the offending span
+   * Optional instrumentation port used to tag the offending span
    * with an `exporter_error` event before an export failure is re-thrown.
    * Typically this is the same `TraceManager` that owns the span — it
    * structurally satisfies `InstrumentationPort` without extra wiring. When
@@ -63,14 +63,14 @@ export interface LangfuseExporterConfig {
    */
   readonly instrumentation?: InstrumentationPort;
   /**
-   * Wave-13 I-3: Optional metrics port for flush-batch failure counters.
+   * Optional metrics port for flush-batch failure counters.
    * When provided, the exporter emits
    * `harness.langfuse.flush_failures` (counter, incremented on each
    * `flush()` rejection). Defaults to no-op.
    */
   readonly metrics?: MetricsPort;
   /**
-   * Wave-13 I-3: Optional logger. When supplied, flush failures are surfaced
+   * Optional logger. When supplied, flush failures are surfaced
    * via `logger.warn` in addition to the metric counter, so operators can see
    * batch failures without wiring a metrics backend.
    */
@@ -92,13 +92,13 @@ export function createLangfuseExporter(config: LangfuseExporterConfig): TraceExp
   const traceMap = new Map<string, ReturnType<typeof client.trace>>();
   const traceTimestamps = new Map<string, number>();
 
-  // Wave-13 I-3: Lazy metric handles — only materialised if a metrics port
-  // was supplied, so the no-op path stays allocation-free.
+  // Lazy metric handles — only materialised if a metrics port was
+  // supplied, so the no-op path stays allocation-free.
   const flushFailureCounter = metrics?.counter('harness.langfuse.flush_failures', {
     description: 'Count of Langfuse flush() rejections',
   });
 
-  // Wave-13 I-2: Tag the currently-exporting span with an `exporter_error`
+  // Tag the currently-exporting span with an `exporter_error`
   // event before the error propagates. `addSpanEvent` in the core
   // TraceManager throws if the span is already ended; we catch so the
   // observability path never shadows the real export error.
@@ -177,7 +177,7 @@ export function createLangfuseExporter(config: LangfuseExporterConfig): TraceExp
           traceMap.delete(trace.id);
           traceTimestamps.delete(trace.id);
         }
-        // Wave-13 I-2: Tag the *root* trace span (trace.id acts as spanId when
+        // Tag the *root* trace span (trace.id acts as spanId when
         // harness emits a trace-level diagnostic) before re-throw. Failure
         // paths inside trace export are rare but should be observable.
         tagSpanExportError(trace.id, err);
@@ -197,14 +197,13 @@ export function createLangfuseExporter(config: LangfuseExporterConfig): TraceExp
         touchTrace(span.traceId);
       }
 
-      // SEC-A01 (T04): secure-by-default sanitize. `config.sanitize` overrides,
-      // undefined falls back to the built-in default redactor. There is no
-      // opt-out — the exporter always applies some scrubber.
+      // Secure-by-default sanitize. `config.sanitize` overrides, undefined
+      // falls back to the built-in default redactor. There is no opt-out —
+      // the exporter always applies some scrubber.
       const sanitize = config.sanitize ?? defaultLangfuseSanitize;
       const attrs = sanitize(span.attributes);
 
-      // Wave-12 P1-26: events[].attributes were previously shipped raw even
-      // when the top-level attribute bag had been sanitized. Apply the same
+      // `events[].attributes` are sanitized with the same sanitizer as
       // sanitizer to each event's attribute record so secrets injected via
       // span.addEvent(name, { api_key: '...' }) are redacted in the same
       // way as span.attributes. Events without attributes are passed
@@ -257,7 +256,7 @@ export function createLangfuseExporter(config: LangfuseExporterConfig): TraceExp
         });
       }
       } catch (err) {
-        // Wave-13 I-2: Annotate the offending span so downstream tools can
+        // Annotate the offending span so downstream tools can
         // surface *which* span caused the export failure. We deliberately
         // tag before re-throwing so the trace-manager still sees the error.
         tagSpanExportError(span.id, err);
@@ -267,17 +266,16 @@ export function createLangfuseExporter(config: LangfuseExporterConfig): TraceExp
 
     /**
      * Flush any events buffered by the Langfuse client. Awaits
-     * `client.flushAsync()` (Wave-13 I-1) so callers reliably see drained
-     * state. Wave-13 I-3 emits a counter + log on rejection.
+     * `client.flushAsync()` so callers reliably see drained state.
+     * Rejections emit a counter + log.
      */
     async flush(): Promise<void> {
       try {
-        // Wave-13 I-1: Previously this was fire-and-forget, so callers of
-        // `flush()` could proceed while events were still in-flight. Returning
-        // the promise makes the contract match the name.
+        // Await flushAsync so callers of `flush()` see drained state
+        // rather than fire-and-forget.
         await client.flushAsync();
       } catch (err) {
-        // Wave-13 I-3: Surface flush failures via metric + optional log.
+        // Surface flush failures via metric + optional log.
         flushFailureCounter?.add(1, { exporter: 'langfuse' });
         if (logger) {
           logger.warn('[harness-one/langfuse] flush failed', {

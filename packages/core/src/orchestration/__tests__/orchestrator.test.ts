@@ -893,12 +893,12 @@ describe('delegation cycle detection (Fix 23)', () => {
     expect(result).toBe('a3');
   });
 
-  // A1-1 (Wave 4b): concurrent delegations from the same source agent used to
+  // concurrent delegations from the same source agent used to
   // race between the cycle-detection read and the delegationChain write. The
   // per-source-agent AsyncLock serialises the inspect+mutate window so that
   // two concurrent `delegate({ delegatedFrom: 'a1' })` calls against a chain
   // that would form a cycle cannot both sneak past the cycle check.
-  it('A1-1: concurrent delegations against a pre-existing chain both reject with CYCLE_DETECTED', async () => {
+  it('concurrent delegations against a pre-existing chain both reject with CYCLE_DETECTED', async () => {
     // Pre-existing chain a2 -> a1: recorded via a single synchronous
     // delegation. Then fire two concurrent delegations a1 -> a2 — both must
     // be rejected because either one committing would create a cycle, and
@@ -995,8 +995,8 @@ describe('onHandlerError wrapping (Fix 34)', () => {
     });
   });
 
-  // CQ-026: `since` uses strict greater-than semantics
-  describe('getMessages since semantics (CQ-026)', () => {
+  // `since` uses strict greater-than semantics
+  describe('getMessages since semantics', () => {
     it('does NOT return the boundary message (strict >)', () => {
       const orch = createOrchestrator();
       orch.register('a1', 'Sender');
@@ -1015,8 +1015,8 @@ describe('onHandlerError wrapping (Fix 34)', () => {
     });
   });
 
-  // OBS-009: droppedMessages counter exposed via getMetrics
-  describe('getMetrics droppedMessages (OBS-009)', () => {
+  // droppedMessages counter exposed via getMetrics
+  describe('getMetrics droppedMessages', () => {
     it('increments per drop and is reachable via getMetrics', () => {
       const orch = createOrchestrator({ maxQueueSize: 1 });
       orch.register('a1', 'Sender');
@@ -1045,8 +1045,8 @@ describe('onHandlerError wrapping (Fix 34)', () => {
     });
   });
 
-  // CQ-028: Handler error routes to logger.warn when no onHandlerError
-  describe('event handler error routing (CQ-028)', () => {
+  // Handler error routes to logger.warn when no onHandlerError
+  describe('event handler error routing', () => {
     it('routes to logger.warn when onHandlerError absent', () => {
       const warn = vi.fn();
       const logger = {
@@ -1060,8 +1060,8 @@ describe('onHandlerError wrapping (Fix 34)', () => {
     });
   });
 
-  // PERF-017: eventHandlers Set allows O(1) unsubscribe
-  describe('eventHandlers Set (PERF-017)', () => {
+  // eventHandlers Set allows O(1) unsubscribe
+  describe('eventHandlers Set', () => {
     it('unsubscribe removes exactly one handler', () => {
       const orch = createOrchestrator();
       const received: unknown[] = [];

@@ -52,10 +52,10 @@ export default tseslint.config(
       'no-console': ['warn', { allow: ['warn', 'debug'] }],
     },
   },
-  // Wave-5C F-2 / ADR §3.e: forbid reaching into harness-one's infra/
-  // internals from outside packages/core/src/. Tests inside packages/core
-  // are allowed to import infra (they own it); other packages must go
-  // through the public subpaths.
+  // Forbid reaching into harness-one's infra/ internals from outside
+  // packages/core/src/. Tests inside packages/core are allowed to
+  // import infra (they own it); other packages must go through the
+  // public subpaths.
   {
     files: ['packages/*/src/**/*.{ts,tsx}'],
     ignores: [
@@ -74,9 +74,9 @@ export default tseslint.config(
           'harness-one/infra/**',
           'harness-one/dist/infra',
           'harness-one/dist/infra/**',
-          // Wave-14 ARCHITECTURE.md: sibling packages must go through the
-          // published subpath exports, not through the source tree. These
-          // patterns catch mistyped imports like `harness-one/src/core/...`.
+          // Sibling packages must go through the published subpath
+          // exports, not through the source tree. These patterns catch
+          // mistyped imports like `harness-one/src/core/...`.
           'harness-one/src',
           'harness-one/src/**',
           'harness-one/dist/src',
@@ -85,11 +85,11 @@ export default tseslint.config(
       }],
     },
   },
-  // Wave-15 ARCHITECTURE.md: layering contract. `core/src/infra/**` sits
-  // at L1 and must not import from any higher layer — including L2
-  // (`core/core/**`). Error primitives (`errors-base.ts`) and branded-id
-  // types (`brands.ts`) now live inside infra itself, so the Wave-14
-  // carve-out for `core/errors.js` / `core/types.js` is no longer needed.
+  // Layering contract. `core/src/infra/**` sits at L1 and must not
+  // import from any higher layer — including L2 (`core/core/**`).
+  // Error primitives (`errors-base.ts`) and branded-id types
+  // (`brands.ts`) live inside infra itself, so no carve-out is needed
+  // for `core/errors.js` / `core/types.js`.
   {
     files: ['packages/core/src/infra/**/*.{ts,tsx}'],
     ignores: ['**/__tests__/**', '**/*.test.ts'],
@@ -117,12 +117,11 @@ export default tseslint.config(
       }],
     },
   },
-  // Wave-23 ARCHITECTURE.md: L3 subsystems must not import each other at
-  // runtime OR type-only. Shared abstractions belong in L2 (`core/core/**`).
-  // Previously enforced only by review discipline; now pinned in lint so new
-  // cross-subsystem edges fail CI. Each L3 subsystem gets its own block so
-  // the "you can't import your own subsystem" case is not accidentally
-  // blocked — a file inside `observe/` can still reach for `./foo.js`.
+  // L3 subsystems must not import each other at runtime OR type-only.
+  // Shared abstractions belong in L2 (`core/core/**`). Each L3
+  // subsystem gets its own block so the "you can't import your own
+  // subsystem" case is not accidentally blocked — a file inside
+  // `observe/` can still reach for `./foo.js`.
   //
   // Note: `advanced/` is intentionally NOT in this list. It is a
   // re-export-only barrel (`packages/core/src/advanced/index.ts`) that
@@ -192,9 +191,9 @@ export default tseslint.config(
       }],
     },
   })),
-  // Wave-5C PR-3 T-3.3: HarnessErrorCode must be a value import (it is a
-  // string enum with runtime introspection — `import type` silently breaks
-  // Object.values(). ADR §3.f + §7 PR-3 step 4.
+  // HarnessErrorCode must be a value import — it is a string enum
+  // with runtime introspection and `import type` silently breaks
+  // `Object.values()`.
   {
     files: ['packages/**/*.{ts,tsx}'],
     plugins: {

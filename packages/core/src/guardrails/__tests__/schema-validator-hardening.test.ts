@@ -1,12 +1,12 @@
 /**
- * Wave-13 E-7: utf8ByteLength fast-path — avoid TextEncoder allocation when
+ * utf8ByteLength fast-path — avoid TextEncoder allocation when
  * the string length is guaranteed to exceed the cap (upper-bound s.length*4).
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createSchemaValidator } from '../schema-validator.js';
 
-describe('createSchemaValidator Wave-13 E-7: utf8 fast-path', () => {
+describe('createSchemaValidator E-7: utf8 fast-path', () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });

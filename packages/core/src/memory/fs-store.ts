@@ -86,7 +86,7 @@ export function createFileSystemStore(config: {
   const logger = config.logger;
 
   /**
-   * Wave-12 P1-5: log a `warn` when a batched unlink produced any failures.
+   * log a `warn` when a batched unlink produced any failures.
    * We only sample the first three errors so the log line stays bounded,
    * regardless of how many deletes failed.
    */
@@ -166,7 +166,7 @@ export function createFileSystemStore(config: {
 
     async query(filter, opts) {
       await io.ensureDir();
-      // Wave-13 E-5: honor AbortSignal between batches.
+      // honor AbortSignal between batches.
       const signal = opts?.signal;
       const throwIfAborted = (): void => {
         if (signal?.aborted) {
@@ -192,7 +192,7 @@ export function createFileSystemStore(config: {
         const searchTerm = filter.search?.toLowerCase();
         const batchSize = 50;
         for (let i = 0; i < allFiles.length; i += batchSize) {
-          // Wave-13 E-5: abort-check between each 50-entry batch.
+          // abort-check between each 50-entry batch.
           throwIfAborted();
           const batch = allFiles.slice(i, i + batchSize);
           const entries = await Promise.all(
@@ -310,7 +310,7 @@ export function createFileSystemStore(config: {
               }
             }
           }
-          // Wave-12 P1-5: surface partial-failure to the logger so operators
+          // surface partial-failure to the logger so operators
           // notice silent stale-entry accumulation.
           logBatchUnlinkFailures('compact.maxAge', result.failed);
           all = survivors;
@@ -346,7 +346,7 @@ export function createFileSystemStore(config: {
               freed.push(entryId);
             }
           }
-          // Wave-12 P1-5: warn operators about partial-failure drift.
+          // warn operators about partial-failure drift.
           logBatchUnlinkFailures('compact.maxEntries', result.failed);
           // Fix 20: Keep failed entries in the list (they were not deleted)
           all = all.filter((e) => !actuallyRemoved.has(e.id));
@@ -416,7 +416,7 @@ export function createFileSystemStore(config: {
             }
           }
         }
-        // Wave-12 P1-5: surface partial-failure to the logger — `clear()` is a
+        // surface partial-failure to the logger — `clear()` is a
         // blunt operation and a silent partial-success is especially hazardous.
         logBatchUnlinkFailures('clear', result.failed);
         try {

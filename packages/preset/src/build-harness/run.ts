@@ -131,8 +131,8 @@ export function buildHarness(config: HarnessConfig): Harness {
         onSessionId?: (sessionId: string) => void;
       },
     ): AsyncGenerator<AgentEvent> {
-      // F14: Auto-generate a unique session ID when none is provided,
-      // preventing accidental message interleaving across concurrent requests.
+      // Auto-generate a unique session ID when none is provided, preventing
+      // accidental message interleaving across concurrent requests.
       let sessionId: string;
       if (options?.sessionId) {
         sessionId = options.sessionId;
@@ -141,11 +141,10 @@ export function buildHarness(config: HarnessConfig): Harness {
         warnDefaultSessionOnce();
       }
 
-      // P1-20 (Wave-12): surface the effective session id via callback so
-      // callers can persist / log / resume the auto-generated value. The
-      // callback is invoked before any event is yielded and exceptions are
-      // logged-and-swallowed so a misbehaving observer cannot abort the
-      // generator.
+      // Surface the effective session id via callback so callers can persist /
+      // log / resume the auto-generated value. The callback is invoked before
+      // any event is yielded and exceptions are logged-and-swallowed so a
+      // misbehaving observer cannot abort the generator.
       if (options?.onSessionId) {
         try {
           options.onSessionId(sessionId);
@@ -192,9 +191,9 @@ export function buildHarness(config: HarnessConfig): Harness {
 
       try {
         // Run input guardrails on user messages before passing to agent loop.
-        // F18d: Guardrail checks run first; persistence is batched after all
-        // checks pass so a mid-batch guardrail failure doesn't leave partial
-        // state in the conversation store.
+        // Guardrail checks run first; persistence is batched after all checks
+        // pass so a mid-batch guardrail failure doesn't leave partial state in
+        // the conversation store.
         for (const msg of messages) {
           if (msg.role === 'user') {
             const inputResult = await traceGuardrail('guardrail:input', () =>
@@ -215,7 +214,7 @@ export function buildHarness(config: HarnessConfig): Harness {
             }
           }
         }
-        // F18d: Atomic batch persist — all input messages in one save() call.
+        // Atomic batch persist — all input messages in one save() call.
         try {
           const existing = await conversations.load(sessionId);
           await conversations.save(sessionId, [...existing, ...messages]);

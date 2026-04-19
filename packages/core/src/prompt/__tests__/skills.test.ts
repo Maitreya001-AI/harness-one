@@ -435,7 +435,7 @@ describe('createSkillEngine', () => {
       engine.startSkill('onboarding');
       engine.advanceTo('setup');
       expect(engine.isComplete()).toBe(true);
-      // processTurn on a complete stage should not advance
+      // ProcessTurn on a complete stage should not advance
       const result = engine.processTurn('anything');
       expect(result.advanced).toBe(false);
       expect(result.currentStage).toBe('setup');
@@ -628,13 +628,13 @@ describe('createSkillEngine', () => {
       engine.startSkill('many-stages');
 
       expect(engine.currentStage.id).toBe('stage-0');
-      // advanceTo a stage near the end
+      // AdvanceTo a stage near the end
       engine.advanceTo('stage-49');
       expect(engine.currentStage.id).toBe('stage-49');
       expect(engine.getCurrentPrompt()).toBe('Prompt for stage 49');
       expect(engine.isComplete()).toBe(true);
 
-      // advanceTo a middle stage
+      // AdvanceTo a middle stage
       engine.advanceTo('stage-25');
       expect(engine.currentStage.id).toBe('stage-25');
       expect(engine.getCurrentPrompt()).toBe('Prompt for stage 25');

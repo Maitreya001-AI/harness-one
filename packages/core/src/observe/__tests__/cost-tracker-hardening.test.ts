@@ -25,8 +25,8 @@ function makeRecordingMetricsPort(): {
   return { port, counters, gauges };
 }
 
-describe('Wave-13 cost-tracker fixes', () => {
-  describe('Wave-13 P0-6: O(1) amortised eviction bookkeeping', () => {
+describe('cost-tracker fixes', () => {
+  describe('O(1) amortised eviction bookkeeping', () => {
     it('keeps updateUsage() correct across many evictions', () => {
       const tracker = createCostTracker({
         pricing: [{ model: 'm', inputPer1kTokens: 0.001, outputPer1kTokens: 0.001 }],
@@ -84,7 +84,7 @@ describe('Wave-13 cost-tracker fixes', () => {
     });
   });
 
-  describe('Wave-13 C-1: concurrency-safe updatePricing / updateBudget', () => {
+  describe('concurrency-safe updatePricing / updateBudget', () => {
     it('updatePricing() serialises concurrent writes via the internal lock', async () => {
       const tracker = createCostTracker({});
       await Promise.all([
@@ -107,7 +107,7 @@ describe('Wave-13 cost-tracker fixes', () => {
     });
   });
 
-  describe('Wave-13 C-2: updateUsage avoids conditional-spread allocation', () => {
+  describe('updateUsage avoids conditional-spread allocation', () => {
     it('preserves cache token fields via explicit assignment', () => {
       const tracker = createCostTracker({
         pricing: [{
@@ -164,7 +164,7 @@ describe('Wave-13 cost-tracker fixes', () => {
     });
   });
 
-  describe('Wave-13 C-3: alerts emit log + metrics', () => {
+  describe('alerts emit log + metrics', () => {
     it('emits logger.warn on every budget alert', () => {
       const lines: string[] = [];
       const logger = createLogger({ output: (line) => lines.push(line), redact: false });

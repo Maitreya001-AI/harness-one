@@ -36,10 +36,10 @@
 | Backoff | `infra/backoff.ts` | `computeBackoffMs`, `computeJitterMs`, `createBackoffSchedule`, 两个 jitter 常量 |
 | 可信系统消息 | `core/trusted-system-message.ts` | `createTrustedSystemMessage`, `isTrustedSystemMessage`, `sanitizeRestoredMessage` |
 
-> Wave-27 拆分：以前 `/advanced` 里还挂着 `createMockAdapter` / `createFailingAdapter`
-> / `createStreamingMockAdapter` / `createErrorStreamingMockAdapter` 这组 mock
-> adapter 工厂，会让 adapter 作者误以为是"生产级 fallback"。这些工厂已搬到
-> 独立的 `harness-one/testing` 子路径，见 [`17-testing.md`](./17-testing.md)。
+> Mock `AgentAdapter` 工厂（`createMockAdapter` / `createFailingAdapter`
+> / `createStreamingMockAdapter` / `createErrorStreamingMockAdapter`）
+> 不在此路径——它们是 test doubles，住在独立的 `harness-one/testing`
+> 子路径，见 [`17-testing.md`](./17-testing.md)。
 
 ## 为什么要单独一个子路径
 
@@ -48,10 +48,10 @@
 2. **弱化契约承诺**：`/advanced` 的符号稳定性弱于 `/core`——重构时允许
    优先收紧内部 API。`MIGRATION.md` 会记录 `/advanced` 的 break change。
 3. **tree-shake 友好**：只用 `/core` 的用户不会被 `/advanced` 的原语拖累。
-4. **避免根桶爆炸**：`createResilientLoop` / `createMiddlewareChain` 在根
-   桶保留了 value 导出（UJ-1），其余扩展原语统一从 `/advanced` 获取，
-   让根桶停留在 18 个精选值符号（原 ADR 排布 19 个槽位，slot 11
-   `createSecurePreset` 因循环风险下放到 `@harness-one/preset`）。
+4. **避免根桶爆炸**：`createResilientLoop` / `createMiddlewareChain` 在
+   根桶保留 value 导出，其余扩展原语统一从 `/advanced` 获取，让根桶
+   停留在 18 个精选值符号。`createSecurePreset` 因循环风险不放在根桶，
+   从 `@harness-one/preset` 导入。
 
 ## 公共 API 快速索引
 
@@ -110,10 +110,10 @@ preset 的配置校验、circuit-breaker / execution-strategies 的内部检查
 system 消息会被降级为 `user`，防止 memory/session 回填被提权为 prompt
 指令。
 
-### Test utilities（已迁出 /advanced）
-Wave-27 起，mock `AgentAdapter` 工厂从 `/advanced` 迁移到独立的
-`harness-one/testing` 子路径。详见 [`17-testing.md`](./17-testing.md) —
-这些是测试 double，不应出现在生产 import 图里。
+### Test utilities（不在此路径）
+Mock `AgentAdapter` 工厂住在独立的 `harness-one/testing` 子路径——
+它们是测试 double，不应出现在生产 import 图里。详见
+[`17-testing.md`](./17-testing.md)。
 
 ## 依赖关系
 
@@ -129,7 +129,7 @@ Wave-27 起，mock `AgentAdapter` 工厂从 `/advanced` 迁移到独立的
    实现负担。
 2. **`/advanced` 契约弱于 `/core`**：`MIGRATION.md` 记录 break change，但
    不保证 0.x / 1.x 跨版本兼容。
-3. **Test utilities 不在这里**（Wave-27 拆分）：mock adapter 工厂搬到
+3. **Test utilities 不在这里**：mock adapter 工厂住在
    `harness-one/testing` 子路径。理由：`/advanced` 的其他导出都是生产
    代码能安全组合的原语（middleware、resilient-loop、fallback、SSE），
    而 mock 工厂是 test doubles — 混在一起让 adapter 作者误读为"生产
