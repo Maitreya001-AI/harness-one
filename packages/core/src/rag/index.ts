@@ -24,9 +24,9 @@ export { createTextLoader, createDocumentArrayLoader } from './loaders.js';
 
 // Chunking
 export {
-  createFixedSizeChunking,
-  createParagraphChunking,
-  createSlidingWindowChunking,
+  createBasicFixedSizeChunking,
+  createBasicParagraphChunking,
+  createBasicSlidingWindowChunking,
 } from './chunking.js';
 
 // Retriever

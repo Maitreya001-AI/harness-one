@@ -1,5 +1,5 @@
 /**
- * Self-healing retry wrapper for guardrail pipelines.
+ * Guardrail retry wrapper for guardrail pipelines.
  *
  * @module
  */
@@ -22,7 +22,7 @@ import { computeBackoffMs } from '../infra/backoff.js';
 function sleepWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     if (signal?.aborted) {
-      reject(new HarnessError('Self-healing aborted', HarnessErrorCode.GUARD_SELF_HEALING_ABORTED, 'Abort fired before sleep started'));
+      reject(new HarnessError('Guardrail retry aborted', HarnessErrorCode.GUARD_SELF_HEALING_ABORTED, 'Abort fired before sleep started'));
       return;
     }
     let onAbort: (() => void) | undefined;
@@ -37,7 +37,7 @@ function sleepWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
         clearTimeout(timeoutId);
         // removeEventListener is idempotent + safe if `once: true` already fired.
         try { signal.removeEventListener('abort', onAbort as () => void); } catch { /* non-fatal */ }
-        reject(new HarnessError('Self-healing aborted', HarnessErrorCode.GUARD_SELF_HEALING_ABORTED, 'Abort fired during backoff sleep'));
+        reject(new HarnessError('Guardrail retry aborted', HarnessErrorCode.GUARD_SELF_HEALING_ABORTED, 'Abort fired during backoff sleep'));
       };
       signal.addEventListener('abort', onAbort, { once: true });
     }
@@ -47,7 +47,7 @@ function sleepWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
 /**
  * Run content through guardrails with automatic retry and regeneration.
  *
- * **Early break behavior:** Self-healing breaks on the first guardrail failure
+ * **Early break behavior:** Guardrail retry breaks on the first guardrail failure
  * in each attempt and does not run remaining guardrails. This is intentional for
  * efficiency -- the retry prompt addresses the first failure, and subsequent
  * guardrails are re-evaluated on the next attempt. Users should be aware that
@@ -55,7 +55,7 @@ function sleepWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
  *
  * @example
  * ```ts
- * const result = await withSelfHealing({
+ * const result = await withGuardrailRetry({
  *   maxRetries: 3,
  *   guardrails: [{ name: 'filter', guard: myGuard }],
  *   buildRetryPrompt: (content, failures) => `Fix: ${failures[0].reason}`,
@@ -63,7 +63,7 @@ function sleepWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
  * }, 'initial content');
  * ```
  */
-export async function withSelfHealing(
+export async function withGuardrailRetry(
   config: {
     maxRetries?: number;
     guardrails: Array<{ name: string; guard: Guardrail }>;

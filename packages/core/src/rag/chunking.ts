@@ -51,11 +51,11 @@ function findWordBoundary(text: string, position: number): number {
  *
  * @example
  * ```ts
- * const chunking = createFixedSizeChunking({ chunkSize: 100, overlap: 20 });
+ * const chunking = createBasicFixedSizeChunking({ chunkSize: 100, overlap: 20 });
  * const chunks = chunking.chunk({ id: 'd1', content: 'Hello world...' });
  * ```
  */
-export function createFixedSizeChunking(config: {
+export function createBasicFixedSizeChunking(config: {
   chunkSize: number;
   overlap?: number;
 }): ChunkingStrategy {
@@ -133,11 +133,11 @@ export function createFixedSizeChunking(config: {
  *
  * @example
  * ```ts
- * const chunking = createParagraphChunking({ maxChunkSize: 500 });
+ * const chunking = createBasicParagraphChunking({ maxChunkSize: 500 });
  * const chunks = chunking.chunk({ id: 'd1', content: 'Para 1\n\nPara 2' });
  * ```
  */
-export function createParagraphChunking(config?: {
+export function createBasicParagraphChunking(config?: {
   maxChunkSize?: number;
   /** Fix 21: When true, split on single newlines instead of double newlines. Default false. */
   splitOnSingleNewline?: boolean;
@@ -213,11 +213,11 @@ export function createParagraphChunking(config?: {
  *
  * @example
  * ```ts
- * const chunking = createSlidingWindowChunking({ windowSize: 200, stepSize: 100 });
+ * const chunking = createBasicSlidingWindowChunking({ windowSize: 200, stepSize: 100 });
  * const chunks = chunking.chunk({ id: 'd1', content: 'Long text...' });
  * ```
  */
-export function createSlidingWindowChunking(config: {
+export function createBasicSlidingWindowChunking(config: {
   windowSize: number;
   stepSize: number;
 }): ChunkingStrategy {

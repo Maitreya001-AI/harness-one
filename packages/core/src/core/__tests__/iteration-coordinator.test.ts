@@ -16,7 +16,13 @@ import {
 } from '../iteration-coordinator.js';
 import type { IterationContext } from '../iteration-runner.js';
 import type { AgentEvent } from '../events.js';
-import { AbortedError, MaxIterationsError, TokenBudgetExceededError } from '../errors.js';
+import {
+  AbortedError,
+  HarnessError,
+  HarnessErrorCode,
+  MaxIterationsError,
+  TokenBudgetExceededError,
+} from '../errors.js';
 
 function freshState(): CoordinatorState {
   return {
@@ -154,6 +160,25 @@ describe('iteration-coordinator', () => {
       const { events, done } = await drain(gen);
       expect(done).toBe(true);
       expect((events[0] as { error: unknown }).error).toBeInstanceOf(TokenBudgetExceededError);
+    });
+
+    it('trips the duration budget when wall-clock runtime exceeds maxDurationMs', async () => {
+      const state = freshState();
+      const deps = freshDeps({ maxDurationMs: 50 });
+      const { ctx } = startRun(deps, state, []);
+      (ctx as { runStartTimeMs: number }).runStartTimeMs = Date.now() - 100;
+      let iteration = 0;
+      const gen = checkPreIteration(
+        deps, state, ctx, undefined,
+        () => iteration, (n) => { iteration = n; },
+        { inputTokens: 0, outputTokens: 0 },
+      );
+      const { events, done } = await drain(gen);
+      expect(done).toBe(true);
+      expect((events[0] as { error: HarnessError }).error.code).toBe(
+        HarnessErrorCode.CORE_DURATION_BUDGET_EXCEEDED,
+      );
+      expect(events[1]).toMatchObject({ type: 'done', reason: 'aborted' });
     });
   });
 

@@ -118,7 +118,7 @@ function createTimeoutDetector(): FailureDetector {
 }
 
 /** Detect ≥2 tool-related spans with error status. */
-function createHallucinationDetector(): FailureDetector {
+function createRepeatedToolFailureDetector(): FailureDetector {
   return {
     detect(trace: Trace) {
       const toolPattern = /tool/i;
@@ -158,7 +158,7 @@ export function createFailureTaxonomy(config?: FailureTaxonomyConfig): FailureTa
   detectors.set('early_stop', createEarlyStopDetector(thresholds?.earlyStopMaxSpans));
   detectors.set('budget_exceeded', createBudgetExceededDetector(thresholds?.budgetExceededConfidence));
   detectors.set('timeout', createTimeoutDetector());
-  detectors.set('hallucination', createHallucinationDetector());
+  detectors.set('repeated_tool_failure', createRepeatedToolFailureDetector());
 
   // Apply user-provided detectors (override by key)
   if (config?.detectors) {

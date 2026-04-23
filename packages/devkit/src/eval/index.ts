@@ -20,9 +20,9 @@ export { createEvalRunner } from './runner.js';
 
 // Scorers
 export {
-  createRelevanceScorer,
-  createFaithfulnessScorer,
-  createLengthScorer,
+  createBasicRelevanceScorer,
+  createBasicFaithfulnessScorer,
+  createBasicLengthScorer,
   createCustomScorer,
 } from './scorers.js';
 

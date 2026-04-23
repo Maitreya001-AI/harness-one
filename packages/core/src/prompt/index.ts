@@ -4,14 +4,18 @@
 export type {
   PromptLayer,
   PromptTemplate,
-  SkillDefinition,
-  SkillStage,
-  StageTransition,
-  TransitionCondition,
-  TransitionContext,
   AssembledPrompt,
   PromptBackend,
 } from './types.js';
+export type {
+  SkillDefinition,
+  SkillRegistry,
+  AsyncSkillRegistry,
+  SkillBackend,
+  SkillValidationResult,
+  RenderedSkills,
+} from './skill-types.js';
+export { DEFAULT_SKILL_VERSION } from './skill-types.js';
 
 // Builder
 export type { PromptBuilder } from './builder.js';
@@ -22,8 +26,7 @@ export type { PromptRegistry, AsyncPromptRegistry, RegisterOptions } from './reg
 export { createPromptRegistry, createAsyncPromptRegistry } from './registry.js';
 
 // Skills
-export type { SkillEngine } from './skills.js';
-export { createSkillEngine } from './skills.js';
+export { createSkillRegistry, createAsyncSkillRegistry } from './skill-registry.js';
 
 // Disclosure
 export type { DisclosureLevel, DisclosureManager } from './disclosure.js';

@@ -208,7 +208,7 @@ describe('Template generation', () => {
     observe: ['createTraceManager', 'createConsoleExporter', 'createCostTracker'],
     session: ['createSessionManager'],
     memory: ['createInMemoryStore', 'createRelay'],
-    eval: ['createEvalRunner', 'createRelevanceScorer', 'createLengthScorer', 'createCustomScorer'],
+    eval: ['createEvalRunner', 'createBasicRelevanceScorer', 'createBasicLengthScorer', 'createCustomScorer'],
     evolve: ['createComponentRegistry', 'createDriftDetector', 'createArchitectureChecker'],
     orchestration: ['createOrchestrator', 'createAgentPool', 'createHandoff', 'createContextBoundary'],
     rag: ['createRAGPipeline', 'createTextLoader', 'createInMemoryRetriever'],

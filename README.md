@@ -30,12 +30,12 @@ one that matches how much control you need:
 
 | Entry point | Package | What it gives you | Pick when |
 |---|---|---|---|
-| **`createSecurePreset`** | `@harness-one/preset` | Everything in `createHarness` **plus** fail-closed guardrail pipeline, default redaction, tool capability allow-list (`['readonly']`), sealed provider registry | Production. You want secure defaults without thinking about each knob. |
+| **`createSecurePreset`** | `@harness-one/preset` | Everything in `createHarness` **plus** fail-closed guardrail pipeline, default redaction, tool capability allow-list (`['readonly']`), sealed provider registry | You want opinionated reference wiring with secure defaults and minimal setup. |
 | **`createHarness`** | `@harness-one/preset` | Core + all subsystems pre-wired (adapter, logger, traceManager, sessionManager, memory, cost tracker, lifecycle). No mandatory security posture. | Development / prototypes where you want everything connected but will flip security flags explicitly. |
 | **`createAgentLoop`** | `harness-one` | Just the loop + whatever ports you pass in. Nothing else is wired. | À la carte. You only want the loop; you'll compose other primitives yourself. |
 
-**Not sure? Start with `createSecurePreset`.** Swap down a level only when a
-concrete need forces you to.
+`createSecurePreset` is not the only production path. Use it when its defaults
+match your deployment; drop to `createHarness` or raw primitives when they do not.
 
 All packages are pre-release (`0.1.0`, not yet on npm); pin by SHA if you
 need stability.
@@ -131,12 +131,12 @@ liberally from the root (zero runtime cost).
 | `harness-one/core` | `AgentLoop`, `AgentAdapter`, `Message`, `ChatParams`, `ChatResponse`, `AgentEvent`, `createTrustedSystemMessage` |
 | `harness-one/advanced` | **`createMiddlewareChain`**, **`createResilientLoop`**, **`createFallbackAdapter`**, **`toSSEStream`**, **`categorizeAdapterError`**, **`StreamAggregator`**, `createJsonOutputParser`, `createSequentialStrategy`, `createParallelStrategy`, `pruneConversation`, `computeBackoffMs` |
 | `harness-one/tools` | **`defineTool`**, **`createRegistry`**, **`toolSuccess`**, **`toolError`**, `ToolMiddleware` |
-| `harness-one/guardrails` | **`createPipeline`**, **`createInjectionDetector`**, **`createContentFilter`**, **`createRateLimiter`**, **`createSchemaValidator`**, **`createPIIDetector`**, **`withSelfHealing`**, **`runRagContext`**, `runInput`, `runOutput` |
+| `harness-one/guardrails` | **`createPipeline`**, **`createInjectionDetector`**, **`createContentFilter`**, **`createRateLimiter`**, **`createSchemaValidator`**, **`createPIIDetector`**, **`withGuardrailRetry`**, **`runRagContext`**, `runInput`, `runOutput` |
 | `harness-one/observe` | **`createTraceManager`**, **`createCostTracker`**, **`createLogger`**, **`createFailureTaxonomy`**, **`createCacheMonitor`**, **`createHarnessLifecycle`**, **`createNoopMetricsPort`**, `MetricsPort`, `InstrumentationPort`, `TraceExporter` |
 | `harness-one/session` | **`createSessionManager`**, **`createInMemoryConversationStore`**, `AuthContext` |
 | `harness-one/memory` | **`createInMemoryStore`**, **`createFsMemoryStore`**, **`createRelay`**, **`runMemoryStoreConformance`** |
 | `harness-one/context` | **`createBudget`**, **`packContext`**, **`compress`**, **`compactIfNeeded`**, **`registerTokenizer`**, **`countTokens`** |
-| `harness-one/prompt` | **`createPromptBuilder`**, **`createPromptRegistry`**, **`createSkillEngine`**, **`createDisclosureManager`** |
+| `harness-one/prompt` | **`createPromptBuilder`**, **`createPromptRegistry`**, **`createSkillRegistry`**, **`createAsyncSkillRegistry`**, **`createDisclosureManager`** |
 | `harness-one/orchestration` | **`createOrchestrator`**, **`createAgentPool`**, **`createHandoff`**, **`createContextBoundary`**, **`createMessageQueue`** |
 | `harness-one/rag` | **`createRAGPipeline`**, **`createInMemoryRetriever`** |
 | `harness-one/redact` | **`createRedactor`**, **`redactValue`**, **`sanitizeAttributes`**, `REDACTED_VALUE`, `DEFAULT_SECRET_PATTERN` |
@@ -144,7 +144,7 @@ liberally from the root (zero runtime cost).
 | `harness-one/evolve-check` | **`createArchitectureChecker`**, `noCircularDepsRule`, `layerDependencyRule` |
 | `harness-one/testing` | **`createMockAdapter`**, **`createFailingAdapter`**, **`createStreamingMockAdapter`**, **`createErrorStreamingMockAdapter`** — **test-only**, never import from production code |
 | `@harness-one/preset` | **`createSecurePreset`**, **`createHarness`**, **`createShutdownHandler`** |
-| `@harness-one/devkit` | **`createEvalRunner`**, **`createRelevanceScorer`**, **`createComponentRegistry`**, **`createDriftDetector`** |
+| `@harness-one/devkit` | **`createEvalRunner`**, **`createBasicRelevanceScorer`**, **`createComponentRegistry`**, **`createDriftDetector`** |
 | `@harness-one/cli` | **`parseInitArgs`**, **`renderTemplates`** (library form of the `harness-one` binary) |
 | `@harness-one/anthropic` / `@harness-one/openai` | Provider `AgentAdapter` factories |
 | `@harness-one/ajv` / `@harness-one/tiktoken` | `SchemaValidator` / `Tokenizer` providers |
@@ -262,12 +262,12 @@ for await (const event of loop.run(messages)) {
 
 ### harness-one/prompt -- Prompt Engineering
 
-Multi-layer prompt assembly optimized for KV-cache stability, template registry with versioning, multi-stage skill workflows, and progressive disclosure.
+Multi-layer prompt assembly optimized for KV-cache stability, template registry with versioning, stateless skill registries, and progressive disclosure.
 
-Template variable substitution sanitizes values by default (`sanitize: true`) to prevent injection through variable content. The prompt registry validates semver on `register()` and rejects malformed version strings. `SkillEngine` exposes an `onTransition` hook for observing state machine transitions.
+Template variable substitution sanitizes values by default (`sanitize: true`) to prevent injection through variable content. The prompt registry validates semver on `register()` and rejects malformed version strings. `SkillRegistry` stores immutable skill definitions, renders cacheable skills first, and validates declared tool requirements before runtime.
 
 ```typescript
-import { createPromptBuilder, createPromptRegistry, createSkillEngine } from 'harness-one/prompt';
+import { createPromptBuilder, createSkillRegistry } from 'harness-one/prompt';
 
 const builder = createPromptBuilder({ separator: '\n\n' });
 
@@ -292,12 +292,17 @@ builder.setVariable('project', 'my-app');
 const result = builder.build();
 // result.systemPrompt, result.stablePrefixHash, result.metadata
 
-// SkillEngine: observe state transitions for debugging / tracing
-const engine = createSkillEngine({
-  onTransition: ({ from, to, skill, context }) => {
-    console.log(`skill ${skill}: ${from} → ${to}`);
-  },
+const skills = createSkillRegistry();
+skills.register({
+  id: 'planner',
+  description: 'Planning instructions',
+  content: 'Plan before acting. Use search before drafting.',
+  requiredTools: ['search'],
 });
+
+const rendered = skills.render(['planner']);
+const validation = skills.validate(['planner'], ['search']);
+// rendered.content, rendered.stableHash, validation.valid
 ```
 
 ### harness-one/context -- Context Engineering
@@ -363,7 +368,7 @@ const loop = new AgentLoop({
 
 Pipeline of input/output guardrails with fail-closed semantics, built-in detectors for injection and content filtering, rate limiting, and self-healing retry loops.
 
-The injection detector at `sensitivity: 'medium'` includes base64 payload detection. The Unicode homoglyph scanner covers mathematical alphanumeric lookalikes (U+1D400–U+1D467) in addition to standard confusables. Content analysis on payloads larger than 100 KB uses sliding window analysis rather than truncation so no content is silently skipped. User-supplied regex patterns in `createContentFilter` are validated against ReDoS at construction time. `createPipeline` accepts a `maxResults` option (default **1000**) to cap the number of events retained for bounded memory use. `withSelfHealing` uses optimized token estimation internally.
+The injection detector at `sensitivity: 'medium'` includes base64 payload detection. The Unicode homoglyph scanner covers mathematical alphanumeric lookalikes (U+1D400–U+1D467) in addition to standard confusables. Content analysis on payloads larger than 100 KB uses sliding window analysis rather than truncation so no content is silently skipped. User-supplied regex patterns in `createContentFilter` are validated against ReDoS at construction time. `createPipeline` accepts a `maxResults` option (default **1000**) to cap the number of events retained for bounded memory use. `withGuardrailRetry` uses optimized token estimation internally.
 
 ```typescript
 import {
@@ -372,7 +377,7 @@ import {
   createContentFilter,
   createRateLimiter,
   runInput,
-  withSelfHealing,
+  withGuardrailRetry,
 } from 'harness-one/guardrails';
 
 // Pipeline entries are {name, guard, timeoutMs?} objects. Built-in factories
@@ -396,8 +401,8 @@ if (!result.passed) {
   console.log('Blocked:', result.verdict);
 }
 
-// Self-healing: retry with LLM when guardrails block
-const healed = await withSelfHealing({
+// Guardrail retry: regenerate when guardrails block
+const healed = await withGuardrailRetry({
   guardrails: [createContentFilter({ blocked: ['secret'] })],
   buildRetryPrompt: (content, failures) => `Rewrite: ${failures[0].reason}`,
   regenerate: async (prompt) => callLLM(prompt),
@@ -543,13 +548,13 @@ Evaluation runner with built-in scorers (relevance, faithfulness, length), custo
 ```typescript
 import {
   createEvalRunner,
-  createRelevanceScorer,
-  createLengthScorer,
+  createBasicRelevanceScorer,
+  createBasicLengthScorer,
   runGeneratorEvaluator,
 } from 'harness-one/eval';
 
 const runner = createEvalRunner({
-  scorers: [createRelevanceScorer(), createLengthScorer({ minTokens: 10, maxTokens: 200 })],
+  scorers: [createBasicRelevanceScorer(), createBasicLengthScorer({ minTokens: 10, maxTokens: 200 })],
   passThreshold: 0.7,
   overallPassRate: 0.8,
 });
@@ -621,7 +626,7 @@ Manage multiple agents with hierarchical or peer-to-peer communication, shared c
 ```typescript
 import {
   createOrchestrator,
-  createRoundRobinStrategy,
+  createBasicRoundRobinStrategy,
   createAgentPool,
   createHandoff,
   createContextBoundary,
@@ -631,7 +636,7 @@ import { AgentLoop } from 'harness-one/core';
 // Orchestrator — agent registration, routing, delegation
 const orch = createOrchestrator({
   mode: 'hierarchical',
-  strategy: createRoundRobinStrategy(),
+  strategy: createBasicRoundRobinStrategy(),
   maxAgents: 10,
 });
 
@@ -711,19 +716,19 @@ const loader2 = createDocumentArrayLoader([
 
 ```typescript
 import {
-  createFixedSizeChunking,
-  createParagraphChunking,
-  createSlidingWindowChunking,
+  createBasicFixedSizeChunking,
+  createBasicParagraphChunking,
+  createBasicSlidingWindowChunking,
 } from 'harness-one/rag';
 
 // Fixed character size with optional overlap
-const fixedChunking = createFixedSizeChunking({ chunkSize: 512, overlap: 64 });
+const fixedChunking = createBasicFixedSizeChunking({ chunkSize: 512, overlap: 64 });
 
 // Split on double newlines; sub-split oversized paragraphs
-const paraChunking = createParagraphChunking({ maxChunkSize: 500 });
+const paraChunking = createBasicParagraphChunking({ maxChunkSize: 500 });
 
 // Overlapping sliding windows
-const slidingChunking = createSlidingWindowChunking({ windowSize: 300, stepSize: 150 });
+const slidingChunking = createBasicSlidingWindowChunking({ windowSize: 300, stepSize: 150 });
 ```
 
 **Full pipeline** — wire all stages together:
@@ -731,7 +736,7 @@ const slidingChunking = createSlidingWindowChunking({ windowSize: 300, stepSize:
 ```typescript
 import {
   createTextLoader,
-  createParagraphChunking,
+  createBasicParagraphChunking,
   createInMemoryRetriever,
   createRAGPipeline,
 } from 'harness-one/rag';
@@ -741,7 +746,7 @@ const pipeline = createRAGPipeline({
     'TypeScript is a typed superset of JavaScript.',
     'Harness engineering builds infrastructure around LLMs.',
   ]),
-  chunking: createParagraphChunking({ maxChunkSize: 500 }),
+  chunking: createBasicParagraphChunking({ maxChunkSize: 500 }),
   embedding: myEmbeddingModel,     // implement EmbeddingModel interface
   retriever: createInMemoryRetriever({ embedding: myEmbeddingModel }),
   maxChunks: 10_000,               // optional capacity cap

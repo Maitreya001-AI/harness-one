@@ -11,7 +11,7 @@
  * @module
  */
 
-import type { Message, TokenUsage } from './types.js';
+import type { Message, MessageMeta, TokenUsage } from './types.js';
 import type { AgentEvent } from './events.js';
 import { HarnessError, HarnessErrorCode } from './errors.js';
 import { createAdapterCaller, type AdapterCaller } from './adapter-caller.js';
@@ -22,7 +22,11 @@ import {
   type IterationRunner,
 } from './iteration-runner.js';
 import type { AgentLoopConfig } from './agent-loop-types.js';
-import { createHookDispatcher } from './hook-dispatcher.js';
+import {
+  createBeforeChatHookDispatcher,
+  createBeforeToolCallHookDispatcher,
+  createHookDispatcher,
+} from './hook-dispatcher.js';
 import {
   resolveAgentLoopConfig,
   type ResolvedAgentLoopConfig,
@@ -60,6 +64,8 @@ export class AgentLoop {
   private readonly adapterCaller: AdapterCaller;
   private readonly iterationRunner: IterationRunner;
   private readonly runHook: ReturnType<typeof createHookDispatcher>;
+  private readonly runBeforeChatHook: ReturnType<typeof createBeforeChatHookDispatcher>;
+  private readonly runBeforeToolCallHook: ReturnType<typeof createBeforeToolCallHookDispatcher>;
   private readonly abortController: AbortController;
   private readonly state: CoordinatorState;
   /** Frozen deps bag shared with `./iteration-coordinator.ts`. */
@@ -79,6 +85,16 @@ export class AgentLoop {
     const { hooks, observability, limits, pipelines, streaming } = this.resolved;
 
     this.runHook = createHookDispatcher({
+      hooks: hooks.registered,
+      strictHooks: hooks.strict,
+      ...(observability.logger !== undefined && { logger: observability.logger }),
+    });
+    this.runBeforeChatHook = createBeforeChatHookDispatcher({
+      hooks: hooks.registered,
+      strictHooks: hooks.strict,
+      ...(observability.logger !== undefined && { logger: observability.logger }),
+    });
+    this.runBeforeToolCallHook = createBeforeToolCallHookDispatcher({
       hooks: hooks.registered,
       strictHooks: hooks.strict,
       ...(observability.logger !== undefined && { logger: observability.logger }),
@@ -103,6 +119,7 @@ export class AgentLoop {
       ...(observability.logger !== undefined && { logger: observability.logger }),
       maxIterations: limits.maxIterations,
       maxTotalTokens: limits.maxTotalTokens,
+      ...(limits.maxDurationMs !== undefined && { maxDurationMs: limits.maxDurationMs }),
       ...(limits.maxConversationMessages !== undefined && {
         maxConversationMessages: limits.maxConversationMessages,
       }),
@@ -164,6 +181,8 @@ export class AgentLoop {
       // Share the single dispatcher so both the coordinator and the runner
       // fire the same hook instances with the same strictness/logger bundle.
       runHook: this.runHook,
+      runBeforeChatHook: this.runBeforeChatHook,
+      runBeforeToolCallHook: this.runBeforeToolCallHook,
       ...(this.resolved.onToolCall !== undefined && { onToolCall: this.resolved.onToolCall }),
       ...(limits.toolTimeoutMs !== undefined && { toolTimeoutMs: limits.toolTimeoutMs }),
       ...(pipelines.input !== undefined && { inputPipeline: pipelines.input }),
@@ -269,7 +288,8 @@ export class AgentLoop {
       );
     }
 
-    const { ctx, tm, traceId } = startRun(this.coordDeps, this.state, messages);
+    const normalizedMessages = messages.map((message) => defaultMessageProvenance(message));
+    const { ctx, tm, traceId } = startRun(this.coordDeps, this.state, normalizedMessages);
     let iteration = 0;
     let totalToolCalls = 0;
     let finalEventEmitted = false;
@@ -326,6 +346,23 @@ export class AgentLoop {
 
   /** Maximum accumulated stream content size to prevent memory exhaustion. */
   static readonly MAX_STREAM_BYTES = MAX_STREAM_BYTES;
+}
+
+function defaultMessageProvenance(message: Message): Message {
+  const nextMeta: MessageMeta = {
+    ...(message.meta ?? {}),
+    provenance:
+      message.meta?.provenance
+      ?? (message.role === 'system'
+        ? (message._trust ? 'trusted_system' : 'unknown')
+        : message.role === 'user'
+          ? 'user_input'
+          : 'unknown'),
+  };
+  return {
+    ...message,
+    meta: nextMeta,
+  };
 }
 
 /**

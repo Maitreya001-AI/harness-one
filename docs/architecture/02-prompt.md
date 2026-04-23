@@ -1,131 +1,148 @@
 # Prompt
 
-> Prompt 工程：多层组装、模板注册、多阶段工作流、渐进披露。
+> PromptBuilder、PromptRegistry、SkillRegistry、DisclosureManager 四个独立原语。
 
 ## 概述
 
-prompt 模块提供四个独立的 Prompt 工程原语：PromptBuilder（多层组装 + KV-cache 优化）、PromptRegistry（版本化模板存储）、SkillEngine（多阶段引导式工作流状态机）、DisclosureManager（按需逐级展开知识）。四者互不依赖，可单独使用。
+prompt 模块只提供**内容装配机制**，不替用户做工作流决策：
+
+- `createPromptBuilder()` 负责多层 prompt 组装和 KV-cache 稳定前缀
+- `createPromptRegistry()` 负责版本化模板存储和变量解析
+- `createSkillRegistry()` 负责无状态 skill 内容存储、渲染和静态校验
+- `createDisclosureManager()` 负责按 level 渐进展开知识
+
+`SkillRegistry` 是这次架构修正的关键：它只存 markdown / text skill 内容，不跟踪 turn、stage、transition，也不切换工具集。流程判断交给模型，强约束交给 guardrails。
 
 ## 文件结构
 
-| 文件 | 职责 | 约行数 |
-|------|------|--------|
-| `src/prompt/types.ts` | 类型定义：PromptLayer、PromptTemplate、SkillDefinition 等 | 87 |
-| `src/prompt/builder.ts` | `createPromptBuilder` 工厂——多层 prompt 组装 | 209 |
-| `src/prompt/registry.ts` | `createPromptRegistry` + `createAsyncPromptRegistry` 工厂——模板版本化存储与异步后端桥接 | 373 |
-| `src/prompt/skills.ts` | `createSkillEngine` 工厂——多阶段工作流状态机 | 382 |
-| `src/prompt/disclosure.ts` | `createDisclosureManager` 工厂——渐进披露 | 112 |
-| `src/prompt/index.ts` | 公共导出桶文件 | 30 |
+| 文件 | 职责 |
+|---|---|
+| `src/prompt/builder.ts` | `createPromptBuilder` |
+| `src/prompt/registry.ts` | `createPromptRegistry` / `createAsyncPromptRegistry` |
+| `src/prompt/skill-types.ts` | `SkillDefinition` / `RenderedSkills` / `SkillValidationResult` / `SkillBackend` |
+| `src/prompt/skill-registry.ts` | `createSkillRegistry` / `createAsyncSkillRegistry` |
+| `src/prompt/disclosure.ts` | `createDisclosureManager` |
+| `src/prompt/index.ts` | 子路径导出桶 |
 
 ## 公共 API
 
-### 类型定义
+### PromptBuilder
 
-| 类型 | 说明 |
-|------|------|
-| `PromptLayer` | 一个 prompt 层：name、content、priority、cacheable |
-| `PromptTemplate` | 版本化模板：id、version、content、variables |
-| `SkillDefinition` | 多阶段技能定义：stages + initialStage |
-| `SkillStage` | 单个阶段：prompt、tools、transitions、maxTurns |
-| `StageTransition` | 阶段转换规则：目标 + 条件 |
-| `TransitionCondition` | 条件联合：turn_count / keyword / manual / custom |
-| `TransitionContext` | 自定义条件的上下文 |
-| `AssembledPrompt` | 组装结果：systemPrompt、layers、stablePrefixHash、metadata |
-| `PromptBackend` | 远程模板源接口：fetch(id, version?)、list?()、push?() |
-| `DisclosureLevel` | 单个披露级别：level、content、trigger |
-
-### 工厂函数
-
-**createPromptBuilder(config?)**
 ```ts
-function createPromptBuilder(config?: {
-  separator?: string;    // 默认 '\n\n'
-  maxTokens?: number;    // 超限时裁剪非 cacheable 层
-  model?: string;
-}): PromptBuilder
+const builder = createPromptBuilder({ separator: '\n\n' });
+builder.addLayer({ name: 'system', content: 'You are precise.', priority: 0, cacheable: true });
+builder.addLayer({ name: 'task', content: 'Task: {{task}}', priority: 10, cacheable: false });
+builder.setVariable('task', 'review this diff');
+const assembled = builder.build();
 ```
-返回的 PromptBuilder 接口：`addLayer()`, `removeLayer()`, `setVariable()`, `build()`, `getStablePrefixHash()`。
 
-**createPromptRegistry()**
+### PromptRegistry
+
 ```ts
-function createPromptRegistry(): PromptRegistry
+const prompts = createPromptRegistry();
+prompts.register({
+  id: 'review',
+  version: '1.0.0',
+  content: 'Review {{snippet}} for {{concern}}',
+  variables: ['snippet', 'concern'],
+});
+const rendered = prompts.resolve('review', {
+  snippet: 'function leak() {}',
+  concern: 'resource cleanup',
+});
 ```
-返回：`register()`, `get(id, version?)`, `resolve(id, variables, version?)`, `list()`, `has()`.
 
-`register()` 支持 `sanitize` 选项：启用后，模板内容在存储前经过 HTML/脚本注入清理，防止用户提供的模板内容通过变量注入引入恶意标记。`register()` 同时校验 `version` 字段格式——版本号必须符合 semver（`major.minor.patch`），非法格式抛出 HarnessError。
+### SkillRegistry
 
-**createSkillEngine()**
 ```ts
-function createSkillEngine(): SkillEngine
+const skills = createSkillRegistry();
+
+skills.register({
+  id: 'customer_support',
+  description: 'Customer support workflow',
+  content: `
+1. Greet the user.
+2. Clarify intent when needed.
+3. Use lookup_order for order state and search_kb for policy answers.
+4. Escalate to a human if policy requires it.
+`.trim(),
+  requiredTools: ['lookup_order', 'search_kb', 'escalate_human'],
+});
+
+const { content, stableHash } = skills.render(['customer_support']);
+const validation = skills.validate(
+  ['customer_support'],
+  ['lookup_order', 'search_kb', 'escalate_human'],
+);
 ```
-返回：`registerSkill()`, `startSkill()`, `getCurrentPrompt()`, `getAvailableTools()`, `processTurn()`, `advanceTo()`, `reset()`, `isComplete()` + 只读属性 `currentStage`, `turnCount`, `stageHistory`.
 
-SkillEngine 支持 `onTransition` 回调（在 `startSkill()` 或 `createSkillEngine()` 的 config 中注册）：每次阶段转换成功后调用，入参为 `{ from: string; to: string; reason: TransitionCondition['type'] }`。用于日志记录、埋点或触发副作用（如通知上层 AgentLoop 切换工具集）。
+`render()` 特性：
 
-**createAsyncPromptRegistry(backend)**
+- 传入顺序决定基础顺序
+- `cacheable: true` 的 skill 会先渲染，方便 system message 前缀命中 KV-cache
+- 返回 `stableHash` 便于观测 cache 命中稳定性
+
+`createAsyncSkillRegistry()` 和 PromptRegistry 的 async 版本一致，先查本地缓存，miss 时走 `SkillBackend.fetch()`。
+
+### DisclosureManager
+
 ```ts
-function createAsyncPromptRegistry(backend: PromptBackend): AsyncPromptRegistry
+const disclosure = createDisclosureManager();
+disclosure.register('auth', [
+  { level: 0, content: 'JWT bearer tokens.' },
+  { level: 1, content: 'Refresh via /auth/refresh.' },
+]);
 ```
-异步注册表，本地缓存优先、远程 `PromptBackend` 兜底。返回：`register()`, `get(id, version?)`, `resolve(id, variables, version?)`, `list()`, `has()`, `prefetch(ids)`.
-
-`PromptBackend` 接口允许对接 Langfuse 等远程 prompt 管理服务。本地通过 `register()` 注册的模板始终优先于远程结果。`prefetch()` 可在启动时批量预热缓存。
-
-**createDisclosureManager()**
-```ts
-function createDisclosureManager(): DisclosureManager
-```
-返回：`register()`, `getContent(topic, maxLevel?)`, `expand()`, `getCurrentLevel()`, `reset()`, `listTopics()`.
-
-## 内部实现
-
-### KV-Cache 优化排序
-
-PromptBuilder.build() 排序规则：cacheable 层排在前面（稳定前缀），然后按 priority 升序。这确保 LLM 的 KV-cache 前缀尽可能稳定。
-
-超出 maxTokens 时，从最高 priority 数值（最不重要）的非 cacheable 层开始裁剪。
-
-### 变量替换
-
-`{{variable}}` 占位符通过正则 `/\{\{(\w+)\}\}/g` 替换。未提供的变量保留原样。PromptRegistry.resolve() 则对缺失变量抛出 HarnessError。
-
-### 状态机转换
-
-SkillEngine.processTurn() 按 transitions 数组顺序检查条件，首个匹配即触发转换。`manual` 类型仅通过 `advanceTo()` 触发。maxTurns 是安全兜底：超限时自动跳到第一个非 manual 转换目标。
-
-### 注册时条件验证
-
-`registerSkill()` 在注册时验证所有转换条件的合法性：`turn_count` 要求 `count` 为数值，`keyword` 要求 `keywords` 为非空数组，`custom` 要求提供 `check` 函数。未知的条件类型抛出 INVALID_TRANSITION 错误。
-
-### 哈希算法
-
-stablePrefixHash 使用 SHA-256 截断，输出 16 位十六进制字符串（64-bit）。哈希在变量替换之前基于原始模板计算，确保 KV-cache 稳定性。用于追踪 KV-cache 命中率，非密码学用途。
-
-## 依赖关系
-
-- **依赖**: `core/errors.ts`（HarnessError）
-- **被依赖**: 无直接模块依赖（用户代码导入使用）
-
-## 扩展点
-
-- 实现 `PromptBackend` 接口对接远程模板服务（如 Langfuse），通过 `createAsyncPromptRegistry(backend)` 注入
-- 自定义 `TransitionCondition.custom` 实现任意转换逻辑
-- 通过 PromptLayer.metadata 附加自定义元数据
-- DisclosureLevel.trigger 字段预留自动触发扩展
 
 ## 设计决策
 
-1. **四个独立原语**——Builder、Registry、Skills、Disclosure 互不依赖，避免"上帝对象"
-2. **cacheable 层优先排序**——对齐 Anthropic/OpenAI 的 prompt caching 策略
-3. **变量替换不抛错（Builder）vs 强制抛错（Registry）**——Builder 面向动态组装场景容忍缺失，Registry 面向模板精确解析
+1. `SkillRegistry` 无状态。没有 `currentStage` / `processTurn()` / `advanceTo()`。
+2. skill 是内容，不是工作流引擎。模型读完整 skill 内容，自行决定下一步。
+3. `requiredTools` 只用于静态校验，不影响运行时工具调度。
+4. 需要强制前置条件时，用 guardrail 卡在 tool 边界，不用 prompt 状态机“假装强制”。
 
-## 生产强化
+## 观察模式
 
-1. **Layer 名称验证**：`addLayer()` 现在验证 layer 名称必须为非空字符串，传入空字符串或非字符串值将被拒绝。
-2. **变量注入防泄漏**：注入值中的 `{{...}}` 模式现在被替换为空字符串（而非变量名），防止通过精心构造的输入值泄漏模板变量名称。
-3. **技能引擎环检测**：`registerSkill()` 在注册时使用 DFS 验证阶段转换图是否存在环，防止运行时因循环转换导致的无限状态机循环。
+如果你还想知道模型当前认为自己处于哪个阶段，不需要 engine 事件回调。直接给模型一个 reporting tool：
+
+```ts
+const reportStage = defineTool({
+  name: 'report_stage',
+  description: 'Report the current stage you are in.',
+  parameters: {
+    type: 'object',
+    properties: {
+      stage: { type: 'string' },
+      reason: { type: 'string' },
+    },
+    required: ['stage'],
+  },
+  execute: async ({ stage, reason }) => ({ ok: true, stage, reason }),
+});
+```
+
+然后在 skill content 里写清楚：“每进入新阶段时，先调用 `report_stage`。”
+
+## 合规约束
+
+硬约束不要放在 skill 内容里实现“阶段切换”。应该放在 guardrail 或 tool policy 上：
+
+```ts
+const approvalPrereq = createPipeline({
+  input: [{
+    name: 'approval_prereq',
+    guard: async (ctx) => {
+      if (ctx.content.includes('"tool":"approve_loan"') && !sessionState.kycCompleted) {
+        return { action: 'block', reason: 'KYC must be completed before approve_loan.' };
+      }
+      return { action: 'allow' };
+    },
+  }],
+});
+```
 
 ## 已知限制
 
-- token 估算默认使用 ~4 chars/token 启发式，用户可通过 `registerTokenizer()` 注册精确计数器（如 tiktoken）
-- SkillEngine 一次只能运行一个技能（单活跃技能）
-- PromptRegistry 不支持模板删除或更新（注册即不可变）
+- `SkillRegistry` 不负责 skill 选择。选哪个 skill 仍由调用方或模型决定。
+- `validate()` 只做静态检查，不会确认工具描述是否足够让模型正确调用。
+- `AsyncSkillRegistry.list()` 只反映本地缓存；远端权威列表需要调用方自己预热或单独拉取。

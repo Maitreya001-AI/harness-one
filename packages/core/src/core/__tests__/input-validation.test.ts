@@ -13,7 +13,7 @@ import { compress } from '../../context/compress.js';
 import { createSessionManager } from '../../session/manager.js';
 import { createTraceManager } from '../../observe/trace-manager.js';
 import { createMessageQueue } from '../../orchestration/message-queue.js';
-import { withSelfHealing } from '../../guardrails/self-healing.js';
+import { withGuardrailRetry } from '../../guardrails/self-healing.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -286,10 +286,10 @@ describe('MessageQueue input validation', () => {
 });
 
 // ---------------------------------------------------------------------------
-// withSelfHealing validation
+// withGuardrailRetry validation
 // ---------------------------------------------------------------------------
 
-describe('withSelfHealing input validation', () => {
+describe('withGuardrailRetry input validation', () => {
   const baseConfig = {
     guardrails: [{ name: 'test', guard: () => ({ action: 'allow' as const }) }],
     buildRetryPrompt: () => 'retry',
@@ -298,18 +298,18 @@ describe('withSelfHealing input validation', () => {
 
   it('throws INVALID_CONFIG when maxRetries is 0', async () => {
     await expectInvalidConfigAsync(
-      () => withSelfHealing({ ...baseConfig, maxRetries: 0 }, 'content'),
+      () => withGuardrailRetry({ ...baseConfig, maxRetries: 0 }, 'content'),
       'maxRetries must be >= 1',
     );
   });
 
   it('accepts positive maxRetries', async () => {
-    const result = await withSelfHealing({ ...baseConfig, maxRetries: 1 }, 'content');
+    const result = await withGuardrailRetry({ ...baseConfig, maxRetries: 1 }, 'content');
     expect(result.passed).toBe(true);
   });
 
   it('accepts default maxRetries', async () => {
-    const result = await withSelfHealing({ ...baseConfig }, 'content');
+    const result = await withGuardrailRetry({ ...baseConfig }, 'content');
     expect(result.passed).toBe(true);
   });
 });

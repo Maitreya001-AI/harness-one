@@ -1,7 +1,7 @@
 /**
- * Example: createSecurePreset — production-grade Harness with fail-closed defaults.
+ * Example: createSecurePreset — opinionated Harness wiring with fail-closed defaults.
  *
- * This is the recommended production entry point (see docs/architecture/00-overview.md).
+ * Use this when you want reference wiring with secure defaults and low setup overhead.
  * Differences from `createHarness`:
  *   - Guardrail pipeline is non-empty by default (injection + contentFilter + PII).
  *   - Logger defaults to `createDefaultLogger` (redaction on).

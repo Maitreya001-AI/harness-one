@@ -64,6 +64,7 @@ export interface ResolvedAgentLoopConfig {
   readonly limits: {
     readonly maxIterations: number;
     readonly maxTotalTokens: number;
+    readonly maxDurationMs?: number;
     readonly maxConversationMessages: number;
     readonly maxStreamBytes: number;
     readonly maxToolArgBytes: number;
@@ -107,6 +108,7 @@ export function resolveAgentLoopConfig(
   const limits = {
     maxIterations: raw.maxIterations ?? 25,
     maxTotalTokens: raw.maxTotalTokens ?? Infinity,
+    ...(raw.maxDurationMs !== undefined && { maxDurationMs: raw.maxDurationMs }),
     maxConversationMessages: raw.maxConversationMessages ?? 200,
     maxStreamBytes: raw.maxStreamBytes ?? MAX_STREAM_BYTES,
     maxToolArgBytes: raw.maxToolArgBytes ?? MAX_TOOL_ARG_BYTES,
@@ -119,6 +121,7 @@ export function resolveAgentLoopConfig(
   validateAgentLoopConfig({
     maxIterations: limits.maxIterations,
     maxTotalTokens: limits.maxTotalTokens,
+    ...(limits.maxDurationMs !== undefined && { maxDurationMs: limits.maxDurationMs }),
     maxStreamBytes: limits.maxStreamBytes,
     maxToolArgBytes: limits.maxToolArgBytes,
     ...(limits.toolTimeoutMs !== undefined && { toolTimeoutMs: limits.toolTimeoutMs }),

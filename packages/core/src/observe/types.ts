@@ -162,7 +162,7 @@ export type FailureMode =
   | 'early_stop'
   | 'tool_loop'
   | 'context_forgetting'
-  | 'hallucination'
+  | 'repeated_tool_failure'
   | 'budget_exceeded'
   | 'timeout'
   | 'unrecoverable_error'

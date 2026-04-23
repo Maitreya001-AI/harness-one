@@ -2,6 +2,10 @@
 
 Batteries-included preset wiring core + anthropic + openai + ajv defaults into a single `createHarness()`.
 
+`createSecurePreset()` is an opinionated reference preset, not a mandatory top-level entry point.
+Use it when its fail-closed defaults match your deployment posture; otherwise call `createHarness()`
+or wire subsystems directly.
+
 ## Install
 
 ```bash

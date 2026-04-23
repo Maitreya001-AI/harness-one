@@ -18,7 +18,8 @@ describe('MemoryStore in-memory capabilities flags', () => {
     expect(store.capabilities?.atomicBatch).toBe(true);
     expect(store.capabilities?.vectorSearch).toBe(true);
     expect(store.capabilities?.batchWrites).toBe(true);
-    expect(store.capabilities?.ttl).toBe(false);
+    expect(store.capabilities?.supportsTtl).toBe(true);
+    expect(store.capabilities?.supportsOptimisticLock).toBe(true);
   });
 
   it('writeBatch commits all entries atomically', async () => {

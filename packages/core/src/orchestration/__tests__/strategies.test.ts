@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
-  createRoundRobinStrategy,
-  createRandomStrategy,
-  createFirstAvailableStrategy,
+  createBasicRoundRobinStrategy,
+  createBasicRandomStrategy,
+  createBasicFirstAvailableStrategy,
 } from '../strategies.js';
 import type { AgentRegistration, DelegationTask } from '../types.js';
 
@@ -23,12 +23,12 @@ afterEach(() => {
 });
 
 // ===========================================================================
-// createRoundRobinStrategy
+// createBasicRoundRobinStrategy
 // ===========================================================================
 
-describe('createRoundRobinStrategy', () => {
+describe('createBasicRoundRobinStrategy', () => {
   it('cycles through idle agents in order', () => {
-    const strategy = createRoundRobinStrategy();
+    const strategy = createBasicRoundRobinStrategy();
     const agents = [agent('a1'), agent('a2'), agent('a3')];
 
     expect(strategy.select(agents, task)).toBe('a1');
@@ -39,12 +39,12 @@ describe('createRoundRobinStrategy', () => {
   });
 
   it('returns undefined for empty agent list', () => {
-    const strategy = createRoundRobinStrategy();
+    const strategy = createBasicRoundRobinStrategy();
     expect(strategy.select([], task)).toBeUndefined();
   });
 
   it('filters by idle status only', () => {
-    const strategy = createRoundRobinStrategy();
+    const strategy = createBasicRoundRobinStrategy();
     const agents = [
       agent('a1', 'running'),
       agent('a2', 'idle'),
@@ -59,7 +59,7 @@ describe('createRoundRobinStrategy', () => {
   });
 
   it('returns undefined when all agents are non-idle', () => {
-    const strategy = createRoundRobinStrategy();
+    const strategy = createBasicRoundRobinStrategy();
     const agents = [
       agent('a1', 'running'),
       agent('a2', 'completed'),
@@ -70,7 +70,7 @@ describe('createRoundRobinStrategy', () => {
   });
 
   it('handles single idle agent', () => {
-    const strategy = createRoundRobinStrategy();
+    const strategy = createBasicRoundRobinStrategy();
     const agents = [agent('a1')];
 
     expect(strategy.select(agents, task)).toBe('a1');
@@ -79,7 +79,7 @@ describe('createRoundRobinStrategy', () => {
   });
 
   it('adapts when idle set changes between calls', () => {
-    const strategy = createRoundRobinStrategy();
+    const strategy = createBasicRoundRobinStrategy();
 
     // First call: 3 idle agents
     const agents1 = [agent('a1'), agent('a2'), agent('a3')];
@@ -95,7 +95,7 @@ describe('createRoundRobinStrategy', () => {
   });
 
   it('maintains round-robin state across many calls', () => {
-    const strategy = createRoundRobinStrategy();
+    const strategy = createBasicRoundRobinStrategy();
     const agents = [agent('a1'), agent('a2')];
 
     const selections: string[] = [];
@@ -109,7 +109,7 @@ describe('createRoundRobinStrategy', () => {
   });
 
   it('handles agents with metadata', () => {
-    const strategy = createRoundRobinStrategy();
+    const strategy = createBasicRoundRobinStrategy();
     const agents = [
       { ...agent('a1'), metadata: { role: 'coder' } },
       { ...agent('a2'), metadata: { role: 'reviewer' } },
@@ -120,7 +120,7 @@ describe('createRoundRobinStrategy', () => {
   });
 
   it('handles task with requirements', () => {
-    const strategy = createRoundRobinStrategy();
+    const strategy = createBasicRoundRobinStrategy();
     const agents = [agent('a1'), agent('a2')];
     const taskWithReqs: DelegationTask = {
       description: 'complex task',
@@ -133,12 +133,12 @@ describe('createRoundRobinStrategy', () => {
 });
 
 // ===========================================================================
-// createRandomStrategy
+// createBasicRandomStrategy
 // ===========================================================================
 
-describe('createRandomStrategy', () => {
+describe('createBasicRandomStrategy', () => {
   it('selects from available idle agents', () => {
-    const strategy = createRandomStrategy();
+    const strategy = createBasicRandomStrategy();
     const agents = [agent('a1'), agent('a2'), agent('a3')];
 
     const selected = strategy.select(agents, task);
@@ -146,12 +146,12 @@ describe('createRandomStrategy', () => {
   });
 
   it('returns undefined for empty agent list', () => {
-    const strategy = createRandomStrategy();
+    const strategy = createBasicRandomStrategy();
     expect(strategy.select([], task)).toBeUndefined();
   });
 
   it('filters by idle status only', () => {
-    const strategy = createRandomStrategy();
+    const strategy = createBasicRandomStrategy();
     const agents = [
       agent('a1', 'running'),
       agent('a2', 'idle'),
@@ -163,7 +163,7 @@ describe('createRandomStrategy', () => {
   });
 
   it('returns undefined when all agents are non-idle', () => {
-    const strategy = createRandomStrategy();
+    const strategy = createBasicRandomStrategy();
     const agents = [
       agent('a1', 'running'),
       agent('a2', 'completed'),
@@ -173,14 +173,14 @@ describe('createRandomStrategy', () => {
   });
 
   it('returns the only idle agent when there is exactly one', () => {
-    const strategy = createRandomStrategy();
+    const strategy = createBasicRandomStrategy();
     const agents = [agent('a1')];
 
     expect(strategy.select(agents, task)).toBe('a1');
   });
 
   it('selects randomly (statistical distribution over many calls)', () => {
-    const strategy = createRandomStrategy();
+    const strategy = createBasicRandomStrategy();
     const agents = [agent('a1'), agent('a2'), agent('a3')];
 
     const counts: Record<string, number> = { a1: 0, a2: 0, a3: 0 };
@@ -196,7 +196,7 @@ describe('createRandomStrategy', () => {
   });
 
   it('uses Math.random for selection', () => {
-    const strategy = createRandomStrategy();
+    const strategy = createBasicRandomStrategy();
     const agents = [agent('a1'), agent('a2'), agent('a3')];
 
     // Mock Math.random to return 0 -> selects first
@@ -211,7 +211,7 @@ describe('createRandomStrategy', () => {
   });
 
   it('handles agents with parentId', () => {
-    const strategy = createRandomStrategy();
+    const strategy = createBasicRandomStrategy();
     const agents = [
       { ...agent('a1'), parentId: 'root' },
       { ...agent('a2'), parentId: 'root' },
@@ -222,7 +222,7 @@ describe('createRandomStrategy', () => {
   });
 
   it('handles task with metadata', () => {
-    const strategy = createRandomStrategy();
+    const strategy = createBasicRandomStrategy();
     const agents = [agent('a1'), agent('a2')];
     const taskWithMeta: DelegationTask = {
       description: 'meta task',
@@ -235,19 +235,19 @@ describe('createRandomStrategy', () => {
 });
 
 // ===========================================================================
-// createFirstAvailableStrategy
+// createBasicFirstAvailableStrategy
 // ===========================================================================
 
-describe('createFirstAvailableStrategy', () => {
+describe('createBasicFirstAvailableStrategy', () => {
   it('picks the first idle agent', () => {
-    const strategy = createFirstAvailableStrategy();
+    const strategy = createBasicFirstAvailableStrategy();
     const agents = [agent('a1'), agent('a2'), agent('a3')];
 
     expect(strategy.select(agents, task)).toBe('a1');
   });
 
   it('consistently returns the first idle agent', () => {
-    const strategy = createFirstAvailableStrategy();
+    const strategy = createBasicFirstAvailableStrategy();
     const agents = [agent('a1'), agent('a2')];
 
     // Always picks a1
@@ -257,12 +257,12 @@ describe('createFirstAvailableStrategy', () => {
   });
 
   it('returns undefined for empty agent list', () => {
-    const strategy = createFirstAvailableStrategy();
+    const strategy = createBasicFirstAvailableStrategy();
     expect(strategy.select([], task)).toBeUndefined();
   });
 
   it('filters by idle status only', () => {
-    const strategy = createFirstAvailableStrategy();
+    const strategy = createBasicFirstAvailableStrategy();
     const agents = [
       agent('a1', 'running'),
       agent('a2', 'failed'),
@@ -275,7 +275,7 @@ describe('createFirstAvailableStrategy', () => {
   });
 
   it('returns undefined when all agents are non-idle', () => {
-    const strategy = createFirstAvailableStrategy();
+    const strategy = createBasicFirstAvailableStrategy();
     const agents = [
       agent('a1', 'running'),
       agent('a2', 'completed'),
@@ -286,14 +286,14 @@ describe('createFirstAvailableStrategy', () => {
   });
 
   it('handles single idle agent', () => {
-    const strategy = createFirstAvailableStrategy();
+    const strategy = createBasicFirstAvailableStrategy();
     const agents = [agent('a1')];
 
     expect(strategy.select(agents, task)).toBe('a1');
   });
 
   it('picks the new first idle when agents change', () => {
-    const strategy = createFirstAvailableStrategy();
+    const strategy = createBasicFirstAvailableStrategy();
 
     // First call: a1 is first idle
     const agents1 = [agent('a1'), agent('a2')];
@@ -305,7 +305,7 @@ describe('createFirstAvailableStrategy', () => {
   });
 
   it('preserves insertion order for tie-breaking', () => {
-    const strategy = createFirstAvailableStrategy();
+    const strategy = createBasicFirstAvailableStrategy();
     const agents = [
       agent('z_last_alphabetically'),
       agent('a_first_alphabetically'),
@@ -316,7 +316,7 @@ describe('createFirstAvailableStrategy', () => {
   });
 
   it('handles agents with all status types mixed', () => {
-    const strategy = createFirstAvailableStrategy();
+    const strategy = createBasicFirstAvailableStrategy();
     const agents = [
       agent('a1', 'completed'),
       agent('a2', 'running'),
@@ -329,7 +329,7 @@ describe('createFirstAvailableStrategy', () => {
   });
 
   it('handles task with requirements and metadata', () => {
-    const strategy = createFirstAvailableStrategy();
+    const strategy = createBasicFirstAvailableStrategy();
     const agents = [agent('a1'), agent('a2')];
     const complexTask: DelegationTask = {
       description: 'complex',
@@ -348,9 +348,9 @@ describe('createFirstAvailableStrategy', () => {
 
 describe('all strategies: shared behavior', () => {
   const strategies = [
-    { name: 'round-robin', create: createRoundRobinStrategy },
-    { name: 'random', create: createRandomStrategy },
-    { name: 'first-available', create: createFirstAvailableStrategy },
+    { name: 'round-robin', create: createBasicRoundRobinStrategy },
+    { name: 'random', create: createBasicRandomStrategy },
+    { name: 'first-available', create: createBasicFirstAvailableStrategy },
   ];
 
   for (const { name, create } of strategies) {
@@ -423,7 +423,7 @@ describe('AgentRegistration sessionId field', () => {
   });
 
   it('strategies work with agents that have sessionId set', () => {
-    const strategy = createRoundRobinStrategy();
+    const strategy = createBasicRoundRobinStrategy();
     const agents: AgentRegistration[] = [
       { id: 'a1', name: 'W1', status: 'idle', sessionId: 'sess-1' },
       { id: 'a2', name: 'W2', status: 'idle', sessionId: 'sess-2' },

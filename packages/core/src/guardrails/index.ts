@@ -1,5 +1,5 @@
 /**
- * Guardrails module — pipeline, self-healing, and built-in guardrails.
+ * Guardrails module — pipeline, guardrail retry, and built-in guardrails.
  *
  * @module
  */
@@ -18,8 +18,8 @@ export type {
 export { createPipeline, runInput, runOutput, runToolOutput, runRagContext } from './pipeline.js';
 export type { GuardrailPipeline } from './pipeline.js';
 
-// Self-healing
-export { withSelfHealing } from './self-healing.js';
+// Guardrail retry
+export { withGuardrailRetry } from './self-healing.js';
 
 // Built-in guardrails
 export { createRateLimiter } from './rate-limiter.js';

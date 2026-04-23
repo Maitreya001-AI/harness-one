@@ -247,17 +247,17 @@ await admission.withPermit('tenant-123', () => harness.run(messages));
 
 - **core** · `harness-one/core` — AgentLoop / createAgentLoop / Message / HarnessError / FallbackAdapter
 - **context** · `harness-one/context` — packContext / compress / compactIfNeeded / registerTokenizer
-- **prompt** · `harness-one/prompt` — PromptBuilder / Registry / SkillEngine / DisclosureManager
+- **prompt** · `harness-one/prompt` — PromptBuilder / Registry / SkillRegistry / DisclosureManager
 - **tools** · `harness-one/tools` — defineTool / createRegistry / ToolMiddleware / toolSuccess/toolError
-- **guardrails** · `harness-one/guardrails` — createPipeline / injection/pii/contentFilter/rateLimiter/schemaValidator / withSelfHealing
+- **guardrails** · `harness-one/guardrails` — createPipeline / injection/pii/contentFilter/rateLimiter/schemaValidator / withGuardrailRetry
 - **observe** · `harness-one/observe` — createTraceManager / createCostTracker / createLogger / FailureTaxonomy / CacheMonitor / HarnessLifecycle / MetricsPort
 - **session** · `harness-one/session` — createSessionManager / createInMemoryConversationStore / AuthContext
 - **memory** · `harness-one/memory` — createInMemoryStore / createFileSystemStore / createRelay / runMemoryStoreConformance / validate\* guards
-- **devkit** · `@harness-one/devkit` — createEvalRunner / createRelevanceScorer / Generator-Evaluator / createComponentRegistry / 漂移检测
+- **devkit** · `@harness-one/devkit` — createEvalRunner / createBasicRelevanceScorer / Generator-Evaluator / createComponentRegistry / 漂移检测
 - **evolve-check** · `harness-one/evolve-check` — 运行时架构规则引擎（循环依赖 + 层级边界 + 自定义规则）
 - **orchestration** · `harness-one/orchestration` — createOrchestrator / createAgentPool / createHandoff / createContextBoundary / MessageQueue
 - **rag** · `harness-one/rag` — createRAGPipeline（文档加载、分块、嵌入、检索、token 估算、多租户隔离）
-- **preset** · `@harness-one/preset` — createSecurePreset（含 lifecycle + metrics 自动装配）/ createShutdownHandler / validateHarnessConfig
+- **preset** · `@harness-one/preset` — createSecurePreset（有偏好的参考装配，含 lifecycle + metrics 自动装配）/ createShutdownHandler / validateHarnessConfig
 
 ## 文档
 

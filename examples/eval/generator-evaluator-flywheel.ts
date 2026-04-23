@@ -13,8 +13,8 @@
 import {
   runGeneratorEvaluator,
   createEvalRunner,
-  createRelevanceScorer,
-  createLengthScorer,
+  createBasicRelevanceScorer,
+  createBasicLengthScorer,
   extractNewCases,
 } from '@harness-one/devkit';
 import type { EvalCase, EvalReport } from '@harness-one/devkit';
@@ -50,8 +50,8 @@ async function main(): Promise<void> {
   // ── 2. Batch evaluation with multiple scorers ───────────────────────────
   const runner = createEvalRunner({
     scorers: [
-      createRelevanceScorer(),
-      createLengthScorer({ minTokens: 20, maxTokens: 150 }),
+      createBasicRelevanceScorer(),
+      createBasicLengthScorer({ minTokens: 20, maxTokens: 150 }),
     ],
     passThreshold: 0.6,
     overallPassRate: 0.8,

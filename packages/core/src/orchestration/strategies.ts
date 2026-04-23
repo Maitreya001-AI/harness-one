@@ -18,11 +18,11 @@ import type { AgentRegistration, DelegationStrategy } from './types.js';
  *
  * @example
  * ```ts
- * const strategy = createRoundRobinStrategy();
+ * const strategy = createBasicRoundRobinStrategy();
  * const orch = createOrchestrator({ strategy });
  * ```
  */
-export function createRoundRobinStrategy(): DelegationStrategy {
+export function createBasicRoundRobinStrategy(): DelegationStrategy {
   let lastIndex = -1;
 
   return {
@@ -50,11 +50,11 @@ export function createRoundRobinStrategy(): DelegationStrategy {
  *
  * @example
  * ```ts
- * const strategy = createRandomStrategy();
+ * const strategy = createBasicRandomStrategy();
  * const orch = createOrchestrator({ strategy });
  * ```
  */
-export function createRandomStrategy(): DelegationStrategy {
+export function createBasicRandomStrategy(): DelegationStrategy {
   return {
     select(agents: readonly AgentRegistration[]): string | undefined {
       const idle = agents.filter((a) => a.status === 'idle');
@@ -74,11 +74,11 @@ export function createRandomStrategy(): DelegationStrategy {
  *
  * @example
  * ```ts
- * const strategy = createFirstAvailableStrategy();
+ * const strategy = createBasicFirstAvailableStrategy();
  * const orch = createOrchestrator({ strategy });
  * ```
  */
-export function createFirstAvailableStrategy(): DelegationStrategy {
+export function createBasicFirstAvailableStrategy(): DelegationStrategy {
   return {
     select(agents: readonly AgentRegistration[]): string | undefined {
       const idle = agents.filter((a) => a.status === 'idle');

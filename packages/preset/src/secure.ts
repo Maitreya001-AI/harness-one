@@ -1,7 +1,7 @@
 /**
- * createSecurePreset — fail-closed production entry.
+ * createSecurePreset — opinionated fail-closed preset wiring.
  *
- * Wraps {@link createHarness} with production-grade defaults:
+ * Wraps {@link createHarness} with opinionated secure defaults:
  * - Guardrail pipeline is non-empty by default (injection + contentFilter + pii)
  * - Logger defaults to {@link createDefaultLogger} (redaction on)
  * - OpenAI provider registry is sealed after construction
@@ -50,7 +50,7 @@ export interface SecurePresetOptions {
 type HarnessGuardrails = NonNullable<HarnessConfig['guardrails']>;
 
 /**
- * Create a production-grade Harness with fail-closed security defaults.
+ * Create a Harness with fail-closed security defaults and opinionated wiring.
  *
  * Differences from {@link createHarness}:
  * 1. `guardrails` pipeline is non-empty — at minimum an injection detector.

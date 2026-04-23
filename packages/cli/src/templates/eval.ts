@@ -10,15 +10,15 @@
 
 export const template = `import {
   createEvalRunner,
-  createRelevanceScorer,
-  createLengthScorer,
+  createBasicRelevanceScorer,
+  createBasicLengthScorer,
   createCustomScorer,
   runGeneratorEvaluator,
 } from '@harness-one/devkit';
 
 // 1. Set up scorers
-const relevance = createRelevanceScorer();
-const length = createLengthScorer({ minTokens: 5, maxTokens: 100 });
+const relevance = createBasicRelevanceScorer();
+const length = createBasicLengthScorer({ minTokens: 5, maxTokens: 100 });
 const politeness = createCustomScorer({
   name: 'politeness',
   description: 'Checks if output is polite',

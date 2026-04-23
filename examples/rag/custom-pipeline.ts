@@ -15,7 +15,7 @@
  */
 import {
   createTextLoader,
-  createParagraphChunking,
+  createBasicParagraphChunking,
   createInMemoryRetriever,
   createRAGPipeline,
 } from 'harness-one/rag';
@@ -48,7 +48,7 @@ async function main(): Promise<void> {
   // ── Wire the pipeline ─────────────────────────────────────────────────────
   const pipeline = createRAGPipeline({
     loader: createTextLoader(corpus, { source: 'harness-docs' }),
-    chunking: createParagraphChunking({ maxChunkSize: 500 }),
+    chunking: createBasicParagraphChunking({ maxChunkSize: 500 }),
     embedding: toyEmbedding,
     retriever: createInMemoryRetriever({
       embedding: toyEmbedding,

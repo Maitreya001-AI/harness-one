@@ -18,6 +18,15 @@ export type { Brand, TraceId, SpanId, SessionId };
 /** Message role in the conversation. */
 export type Role = 'system' | 'user' | 'assistant' | 'tool';
 
+/** Origin marker for content entering the conversation history. */
+export type MessageProvenance =
+  | 'user_input'
+  | 'tool_result'
+  | 'memory_restore'
+  | 'rag_retrieved'
+  | 'trusted_system'
+  | 'unknown';
+
 /** Base properties shared by all message types. */
 interface BaseMessage {
   readonly content: string;
@@ -81,6 +90,8 @@ export interface MessageMeta {
   readonly isFailureTrace?: boolean;
   readonly timestamp?: number;
   readonly tokens?: number;
+  readonly provenance?: MessageProvenance;
+  readonly provenanceDetail?: string;
 }
 
 /** A tool call request from the LLM. */

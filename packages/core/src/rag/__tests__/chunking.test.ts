@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
-  createFixedSizeChunking,
-  createParagraphChunking,
-  createSlidingWindowChunking,
+  createBasicFixedSizeChunking,
+  createBasicParagraphChunking,
+  createBasicSlidingWindowChunking,
 } from '../chunking.js';
 import { HarnessError, HarnessErrorCode} from '../../core/errors.js';
 import type { Document } from '../types.js';
@@ -16,12 +16,12 @@ function doc(content: string, id = 'd1', metadata?: Record<string, unknown>): Do
 }
 
 // ===========================================================================
-// createFixedSizeChunking
+// createBasicFixedSizeChunking
 // ===========================================================================
 
-describe('createFixedSizeChunking', () => {
+describe('createBasicFixedSizeChunking', () => {
   it('chunks text at the configured character count', () => {
-    const chunking = createFixedSizeChunking({ chunkSize: 5 });
+    const chunking = createBasicFixedSizeChunking({ chunkSize: 5 });
     const chunks = chunking.chunk(doc('abcdefghij'));
 
     expect(chunks).toHaveLength(2);
@@ -30,7 +30,7 @@ describe('createFixedSizeChunking', () => {
   });
 
   it('produces overlap between consecutive chunks', () => {
-    const chunking = createFixedSizeChunking({ chunkSize: 6, overlap: 2 });
+    const chunking = createBasicFixedSizeChunking({ chunkSize: 6, overlap: 2 });
     // step = 6 - 2 = 4
     const chunks = chunking.chunk(doc('abcdefghijkl'));
 
@@ -41,12 +41,12 @@ describe('createFixedSizeChunking', () => {
   });
 
   it('returns empty array for empty input', () => {
-    const chunking = createFixedSizeChunking({ chunkSize: 10 });
+    const chunking = createBasicFixedSizeChunking({ chunkSize: 10 });
     expect(chunking.chunk(doc(''))).toEqual([]);
   });
 
   it('returns a single chunk when content fits within chunkSize', () => {
-    const chunking = createFixedSizeChunking({ chunkSize: 100 });
+    const chunking = createBasicFixedSizeChunking({ chunkSize: 100 });
     const chunks = chunking.chunk(doc('short'));
 
     expect(chunks).toHaveLength(1);
@@ -54,7 +54,7 @@ describe('createFixedSizeChunking', () => {
   });
 
   it('handles content length exactly equal to chunkSize', () => {
-    const chunking = createFixedSizeChunking({ chunkSize: 5 });
+    const chunking = createBasicFixedSizeChunking({ chunkSize: 5 });
     const chunks = chunking.chunk(doc('abcde'));
 
     expect(chunks).toHaveLength(1);
@@ -62,7 +62,7 @@ describe('createFixedSizeChunking', () => {
   });
 
   it('handles content length one more than chunkSize (boundary)', () => {
-    const chunking = createFixedSizeChunking({ chunkSize: 5 });
+    const chunking = createBasicFixedSizeChunking({ chunkSize: 5 });
     const chunks = chunking.chunk(doc('abcdef'));
 
     expect(chunks).toHaveLength(2);
@@ -71,7 +71,7 @@ describe('createFixedSizeChunking', () => {
   });
 
   it('generates correct chunk ids, documentId, and sequential indices', () => {
-    const chunking = createFixedSizeChunking({ chunkSize: 3 });
+    const chunking = createBasicFixedSizeChunking({ chunkSize: 3 });
     const chunks = chunking.chunk(doc('abcdef', 'myDoc'));
 
     expect(chunks[0].id).toBe('myDoc_chunk_0');
@@ -82,7 +82,7 @@ describe('createFixedSizeChunking', () => {
   });
 
   it('copies document metadata into each chunk', () => {
-    const chunking = createFixedSizeChunking({ chunkSize: 100 });
+    const chunking = createBasicFixedSizeChunking({ chunkSize: 100 });
     const chunks = chunking.chunk(doc('hello', 'd1', { source: 'api', version: 2 }));
 
     expect(chunks[0].metadata).toEqual({ source: 'api', version: 2 });
@@ -90,7 +90,7 @@ describe('createFixedSizeChunking', () => {
 
   it('produces independent metadata copies (mutation safe)', () => {
     const meta = { key: 'original' };
-    const chunking = createFixedSizeChunking({ chunkSize: 3 });
+    const chunking = createBasicFixedSizeChunking({ chunkSize: 3 });
     const chunks = chunking.chunk(doc('abcdef', 'd1', meta));
 
     // Mutating the original metadata should not affect chunk metadata
@@ -99,38 +99,38 @@ describe('createFixedSizeChunking', () => {
   });
 
   it('has name "fixed-size"', () => {
-    expect(createFixedSizeChunking({ chunkSize: 10 }).name).toBe('fixed-size');
+    expect(createBasicFixedSizeChunking({ chunkSize: 10 }).name).toBe('fixed-size');
   });
 
   it('returns a frozen (immutable) strategy object', () => {
-    const chunking = createFixedSizeChunking({ chunkSize: 10 });
+    const chunking = createBasicFixedSizeChunking({ chunkSize: 10 });
     expect(Object.isFrozen(chunking)).toBe(true);
   });
 
   // --- Error validation ---
 
   it('throws HarnessError with RAG_INVALID_CONFIG for chunkSize <= 0', () => {
-    expect(() => createFixedSizeChunking({ chunkSize: 0 })).toThrow(HarnessError);
-    expect(() => createFixedSizeChunking({ chunkSize: -5 })).toThrow(HarnessError);
+    expect(() => createBasicFixedSizeChunking({ chunkSize: 0 })).toThrow(HarnessError);
+    expect(() => createBasicFixedSizeChunking({ chunkSize: -5 })).toThrow(HarnessError);
 
     try {
-      createFixedSizeChunking({ chunkSize: 0 });
+      createBasicFixedSizeChunking({ chunkSize: 0 });
     } catch (e) {
       expect((e as HarnessError).code).toBe(HarnessErrorCode.RAG_INVALID_CONFIG);
     }
   });
 
   it('throws HarnessError for negative overlap', () => {
-    expect(() => createFixedSizeChunking({ chunkSize: 10, overlap: -1 })).toThrow(HarnessError);
+    expect(() => createBasicFixedSizeChunking({ chunkSize: 10, overlap: -1 })).toThrow(HarnessError);
   });
 
   it('throws HarnessError when overlap >= chunkSize', () => {
-    expect(() => createFixedSizeChunking({ chunkSize: 10, overlap: 10 })).toThrow(HarnessError);
-    expect(() => createFixedSizeChunking({ chunkSize: 5, overlap: 8 })).toThrow(HarnessError);
+    expect(() => createBasicFixedSizeChunking({ chunkSize: 10, overlap: 10 })).toThrow(HarnessError);
+    expect(() => createBasicFixedSizeChunking({ chunkSize: 5, overlap: 8 })).toThrow(HarnessError);
   });
 
   it('defaults overlap to 0 when not specified', () => {
-    const chunking = createFixedSizeChunking({ chunkSize: 5 });
+    const chunking = createBasicFixedSizeChunking({ chunkSize: 5 });
     // No overlap means step = chunkSize, chunks are non-overlapping
     const chunks = chunking.chunk(doc('abcdefghij'));
     expect(chunks[0].content).toBe('abcde');
@@ -140,7 +140,7 @@ describe('createFixedSizeChunking', () => {
   });
 
   it('handles very large overlap (chunkSize - 1)', () => {
-    const chunking = createFixedSizeChunking({ chunkSize: 5, overlap: 4 });
+    const chunking = createBasicFixedSizeChunking({ chunkSize: 5, overlap: 4 });
     // step = 5 - 4 = 1, so each chunk advances by 1 character
     const chunks = chunking.chunk(doc('abcdefg'));
 
@@ -152,12 +152,12 @@ describe('createFixedSizeChunking', () => {
 });
 
 // ===========================================================================
-// createParagraphChunking
+// createBasicParagraphChunking
 // ===========================================================================
 
-describe('createParagraphChunking', () => {
+describe('createBasicParagraphChunking', () => {
   it('splits text on double newlines (\\n\\n)', () => {
-    const chunking = createParagraphChunking();
+    const chunking = createBasicParagraphChunking();
     const chunks = chunking.chunk(doc('Para one.\n\nPara two.\n\nPara three.'));
 
     expect(chunks).toHaveLength(3);
@@ -167,17 +167,17 @@ describe('createParagraphChunking', () => {
   });
 
   it('returns empty array for empty input', () => {
-    const chunking = createParagraphChunking();
+    const chunking = createBasicParagraphChunking();
     expect(chunking.chunk(doc(''))).toEqual([]);
   });
 
   it('returns empty array for whitespace-only paragraphs', () => {
-    const chunking = createParagraphChunking();
+    const chunking = createBasicParagraphChunking();
     expect(chunking.chunk(doc('   \n\n   \n\n   '))).toEqual([]);
   });
 
   it('handles single paragraph (no double newline)', () => {
-    const chunking = createParagraphChunking();
+    const chunking = createBasicParagraphChunking();
     const chunks = chunking.chunk(doc('Single paragraph text.'));
 
     expect(chunks).toHaveLength(1);
@@ -185,7 +185,7 @@ describe('createParagraphChunking', () => {
   });
 
   it('filters out empty paragraphs between separators', () => {
-    const chunking = createParagraphChunking();
+    const chunking = createBasicParagraphChunking();
     // Triple double-newlines create an empty middle paragraph
     const chunks = chunking.chunk(doc('A\n\n\n\nB'));
 
@@ -197,7 +197,7 @@ describe('createParagraphChunking', () => {
   });
 
   it('handles paragraphs separated by whitespace variations (\\n  \\n)', () => {
-    const chunking = createParagraphChunking();
+    const chunking = createBasicParagraphChunking();
     const chunks = chunking.chunk(doc('Hello\n  \nWorld\n\t\nEnd'));
 
     expect(chunks).toHaveLength(3);
@@ -207,7 +207,7 @@ describe('createParagraphChunking', () => {
   });
 
   it('sub-splits paragraphs exceeding maxChunkSize', () => {
-    const chunking = createParagraphChunking({ maxChunkSize: 10 });
+    const chunking = createBasicParagraphChunking({ maxChunkSize: 10 });
     const chunks = chunking.chunk(doc('This is a very long paragraph that exceeds max.'));
 
     for (const chunk of chunks) {
@@ -220,7 +220,7 @@ describe('createParagraphChunking', () => {
   });
 
   it('generates sequential indices across sub-split chunks', () => {
-    const chunking = createParagraphChunking({ maxChunkSize: 5 });
+    const chunking = createBasicParagraphChunking({ maxChunkSize: 5 });
     const chunks = chunking.chunk(doc('ABCDEFGHIJ\n\nXY'));
 
     // First paragraph: 10 chars -> 2 sub-chunks (0, 1)
@@ -232,7 +232,7 @@ describe('createParagraphChunking', () => {
   });
 
   it('trims whitespace from paragraph content', () => {
-    const chunking = createParagraphChunking();
+    const chunking = createBasicParagraphChunking();
     const chunks = chunking.chunk(doc('  leading spaces  \n\n  trailing spaces  '));
 
     expect(chunks[0].content).toBe('leading spaces');
@@ -240,16 +240,16 @@ describe('createParagraphChunking', () => {
   });
 
   it('has name "paragraph"', () => {
-    expect(createParagraphChunking().name).toBe('paragraph');
+    expect(createBasicParagraphChunking().name).toBe('paragraph');
   });
 
   it('throws HarnessError for maxChunkSize <= 0', () => {
-    expect(() => createParagraphChunking({ maxChunkSize: 0 })).toThrow(HarnessError);
-    expect(() => createParagraphChunking({ maxChunkSize: -1 })).toThrow(HarnessError);
+    expect(() => createBasicParagraphChunking({ maxChunkSize: 0 })).toThrow(HarnessError);
+    expect(() => createBasicParagraphChunking({ maxChunkSize: -1 })).toThrow(HarnessError);
   });
 
   it('works without any config (maxChunkSize undefined)', () => {
-    const chunking = createParagraphChunking();
+    const chunking = createBasicParagraphChunking();
     const longParagraph = 'x'.repeat(10000);
     const chunks = chunking.chunk(doc(longParagraph));
 
@@ -258,17 +258,17 @@ describe('createParagraphChunking', () => {
   });
 
   it('returns a frozen strategy object', () => {
-    expect(Object.isFrozen(createParagraphChunking())).toBe(true);
+    expect(Object.isFrozen(createBasicParagraphChunking())).toBe(true);
   });
 });
 
 // ===========================================================================
-// createSlidingWindowChunking
+// createBasicSlidingWindowChunking
 // ===========================================================================
 
-describe('createSlidingWindowChunking', () => {
+describe('createBasicSlidingWindowChunking', () => {
   it('produces overlapping windows with the configured step', () => {
-    const chunking = createSlidingWindowChunking({ windowSize: 6, stepSize: 3 });
+    const chunking = createBasicSlidingWindowChunking({ windowSize: 6, stepSize: 3 });
     const chunks = chunking.chunk(doc('abcdefghijkl'));
 
     expect(chunks).toHaveLength(3);
@@ -278,7 +278,7 @@ describe('createSlidingWindowChunking', () => {
   });
 
   it('handles trailing partial window when content does not align', () => {
-    const chunking = createSlidingWindowChunking({ windowSize: 6, stepSize: 4 });
+    const chunking = createBasicSlidingWindowChunking({ windowSize: 6, stepSize: 4 });
     const chunks = chunking.chunk(doc('abcdefghijklm'));
 
     expect(chunks).toHaveLength(3);
@@ -286,12 +286,12 @@ describe('createSlidingWindowChunking', () => {
   });
 
   it('returns empty array for empty input', () => {
-    const chunking = createSlidingWindowChunking({ windowSize: 10, stepSize: 5 });
+    const chunking = createBasicSlidingWindowChunking({ windowSize: 10, stepSize: 5 });
     expect(chunking.chunk(doc(''))).toEqual([]);
   });
 
   it('returns single chunk when content fits in one window', () => {
-    const chunking = createSlidingWindowChunking({ windowSize: 100, stepSize: 50 });
+    const chunking = createBasicSlidingWindowChunking({ windowSize: 100, stepSize: 50 });
     const chunks = chunking.chunk(doc('short'));
 
     expect(chunks).toHaveLength(1);
@@ -299,7 +299,7 @@ describe('createSlidingWindowChunking', () => {
   });
 
   it('handles stepSize > windowSize (gaps between windows)', () => {
-    const chunking = createSlidingWindowChunking({ windowSize: 3, stepSize: 5 });
+    const chunking = createBasicSlidingWindowChunking({ windowSize: 3, stepSize: 5 });
     const chunks = chunking.chunk(doc('abcdefghij'));
 
     expect(chunks).toHaveLength(2);
@@ -308,7 +308,7 @@ describe('createSlidingWindowChunking', () => {
   });
 
   it('handles non-overlapping windows (stepSize == windowSize)', () => {
-    const chunking = createSlidingWindowChunking({ windowSize: 5, stepSize: 5 });
+    const chunking = createBasicSlidingWindowChunking({ windowSize: 5, stepSize: 5 });
     const chunks = chunking.chunk(doc('abcdefghij'));
 
     expect(chunks).toHaveLength(2);
@@ -317,7 +317,7 @@ describe('createSlidingWindowChunking', () => {
   });
 
   it('handles highly overlapping windows (stepSize = 1)', () => {
-    const chunking = createSlidingWindowChunking({ windowSize: 3, stepSize: 1 });
+    const chunking = createBasicSlidingWindowChunking({ windowSize: 3, stepSize: 1 });
     const chunks = chunking.chunk(doc('abcde'));
 
     expect(chunks).toHaveLength(3);
@@ -327,7 +327,7 @@ describe('createSlidingWindowChunking', () => {
   });
 
   it('generates correct ids and documentId', () => {
-    const chunking = createSlidingWindowChunking({ windowSize: 5, stepSize: 5 });
+    const chunking = createBasicSlidingWindowChunking({ windowSize: 5, stepSize: 5 });
     const chunks = chunking.chunk(doc('abcdefghij', 'myDoc'));
 
     expect(chunks[0].id).toBe('myDoc_chunk_0');
@@ -336,35 +336,35 @@ describe('createSlidingWindowChunking', () => {
   });
 
   it('preserves document metadata', () => {
-    const chunking = createSlidingWindowChunking({ windowSize: 100, stepSize: 50 });
+    const chunking = createBasicSlidingWindowChunking({ windowSize: 100, stepSize: 50 });
     const chunks = chunking.chunk(doc('hello', 'd1', { tag: 'test' }));
 
     expect(chunks[0].metadata).toEqual({ tag: 'test' });
   });
 
   it('has name "sliding-window"', () => {
-    expect(createSlidingWindowChunking({ windowSize: 10, stepSize: 5 }).name).toBe('sliding-window');
+    expect(createBasicSlidingWindowChunking({ windowSize: 10, stepSize: 5 }).name).toBe('sliding-window');
   });
 
   it('returns a frozen strategy object', () => {
-    expect(Object.isFrozen(createSlidingWindowChunking({ windowSize: 10, stepSize: 5 }))).toBe(true);
+    expect(Object.isFrozen(createBasicSlidingWindowChunking({ windowSize: 10, stepSize: 5 }))).toBe(true);
   });
 
   // --- Error validation ---
 
   it('throws HarnessError for windowSize <= 0', () => {
-    expect(() => createSlidingWindowChunking({ windowSize: 0, stepSize: 5 })).toThrow(HarnessError);
-    expect(() => createSlidingWindowChunking({ windowSize: -1, stepSize: 5 })).toThrow(HarnessError);
+    expect(() => createBasicSlidingWindowChunking({ windowSize: 0, stepSize: 5 })).toThrow(HarnessError);
+    expect(() => createBasicSlidingWindowChunking({ windowSize: -1, stepSize: 5 })).toThrow(HarnessError);
   });
 
   it('throws HarnessError for stepSize <= 0', () => {
-    expect(() => createSlidingWindowChunking({ windowSize: 10, stepSize: 0 })).toThrow(HarnessError);
-    expect(() => createSlidingWindowChunking({ windowSize: 10, stepSize: -3 })).toThrow(HarnessError);
+    expect(() => createBasicSlidingWindowChunking({ windowSize: 10, stepSize: 0 })).toThrow(HarnessError);
+    expect(() => createBasicSlidingWindowChunking({ windowSize: 10, stepSize: -3 })).toThrow(HarnessError);
   });
 
   it('error code is RAG_INVALID_CONFIG', () => {
     try {
-      createSlidingWindowChunking({ windowSize: 0, stepSize: 5 });
+      createBasicSlidingWindowChunking({ windowSize: 0, stepSize: 5 });
     } catch (e) {
       expect(e).toBeInstanceOf(HarnessError);
       expect((e as HarnessError).code).toBe(HarnessErrorCode.RAG_INVALID_CONFIG);
@@ -378,7 +378,7 @@ describe('createSlidingWindowChunking', () => {
 
 describe('word boundary awareness (Fix 20)', () => {
   it('fixed-size: chunk boundaries prefer word boundaries', () => {
-    const chunking = createFixedSizeChunking({ chunkSize: 8 });
+    const chunking = createBasicFixedSizeChunking({ chunkSize: 8 });
     // "hello world foo bar" - at position 8 we're in "world" at 'o'
     // The boundary adjusts back to nearest whitespace
     const chunks = chunking.chunk(doc('hello world foo bar'));
@@ -391,7 +391,7 @@ describe('word boundary awareness (Fix 20)', () => {
   });
 
   it('sliding-window: adjusts window end to word boundary', () => {
-    const chunking = createSlidingWindowChunking({ windowSize: 8, stepSize: 5 });
+    const chunking = createBasicSlidingWindowChunking({ windowSize: 8, stepSize: 5 });
     const chunks = chunking.chunk(doc('hello world foo bar baz'));
 
     expect(chunks.length).toBeGreaterThan(0);
@@ -401,7 +401,7 @@ describe('word boundary awareness (Fix 20)', () => {
   });
 
   it('fixed-size: preserves content when no whitespace found', () => {
-    const chunking = createFixedSizeChunking({ chunkSize: 5 });
+    const chunking = createBasicFixedSizeChunking({ chunkSize: 5 });
     // "abcdefghij" has no spaces, so word boundary adjustment falls back to original position
     const chunks = chunking.chunk(doc('abcdefghij'));
     expect(chunks).toHaveLength(2);
@@ -411,7 +411,7 @@ describe('word boundary awareness (Fix 20)', () => {
 
   it('fixed-size: word boundary adjustment does not split words', () => {
     // With overlap, word boundary adjustment creates better chunks
-    const chunking = createFixedSizeChunking({ chunkSize: 10, overlap: 3 });
+    const chunking = createBasicFixedSizeChunking({ chunkSize: 10, overlap: 3 });
     const chunks = chunking.chunk(doc('the quick brown fox jumps'));
 
     for (const c of chunks) {
@@ -427,7 +427,7 @@ describe('word boundary awareness (Fix 20)', () => {
 
 describe('paragraph chunking splitOnSingleNewline (Fix 21)', () => {
   it('splits on single newline when enabled', () => {
-    const chunking = createParagraphChunking({ splitOnSingleNewline: true });
+    const chunking = createBasicParagraphChunking({ splitOnSingleNewline: true });
     const chunks = chunking.chunk(doc('Line 1\nLine 2\nLine 3'));
 
     expect(chunks).toHaveLength(3);
@@ -437,14 +437,14 @@ describe('paragraph chunking splitOnSingleNewline (Fix 21)', () => {
   });
 
   it('still requires double newlines by default', () => {
-    const chunking = createParagraphChunking();
+    const chunking = createBasicParagraphChunking();
     const chunks = chunking.chunk(doc('Line 1\nLine 2\n\nLine 3'));
 
     expect(chunks).toHaveLength(2);
   });
 
   it('defaults to false for backward compatibility', () => {
-    const chunking = createParagraphChunking({ splitOnSingleNewline: false });
+    const chunking = createBasicParagraphChunking({ splitOnSingleNewline: false });
     const chunks = chunking.chunk(doc('Line 1\nLine 2'));
 
     // Single newline should NOT split
@@ -464,7 +464,7 @@ describe('Unicode boundary handling', () => {
       // boundary can fall in the middle of a surrogate pair.
       // This test documents the current behavior — not a bug, but a known
       // limitation of char-index-based chunking.
-      const chunking = createFixedSizeChunking({ chunkSize: 3 });
+      const chunking = createBasicFixedSizeChunking({ chunkSize: 3 });
       const emoji = '😀😀😀'; // 6 JS chars (3 surrogate pairs)
       const chunks = chunking.chunk(doc(emoji));
 
@@ -478,7 +478,7 @@ describe('Unicode boundary handling', () => {
 
     it('fixed-size: emoji-safe chunking when chunkSize aligns with surrogate pairs', () => {
       // When chunkSize is even, emoji (2 JS chars each) are not split
-      const chunking = createFixedSizeChunking({ chunkSize: 4 });
+      const chunking = createBasicFixedSizeChunking({ chunkSize: 4 });
       const emoji = '😀😀😀😀'; // 8 JS chars (4 surrogate pairs)
       const chunks = chunking.chunk(doc(emoji));
 
@@ -488,7 +488,7 @@ describe('Unicode boundary handling', () => {
     });
 
     it('paragraph: preserves emoji in paragraph content', () => {
-      const chunking = createParagraphChunking();
+      const chunking = createBasicParagraphChunking();
       const chunks = chunking.chunk(doc('Hello 🌍\n\nWorld 🚀'));
 
       expect(chunks).toHaveLength(2);
@@ -497,7 +497,7 @@ describe('Unicode boundary handling', () => {
     });
 
     it('sliding-window: preserves emoji sequences', () => {
-      const chunking = createSlidingWindowChunking({ windowSize: 4, stepSize: 2 });
+      const chunking = createBasicSlidingWindowChunking({ windowSize: 4, stepSize: 2 });
       const emoji = '🎉🎊🎈'; // 6 JS chars
       const chunks = chunking.chunk(doc(emoji));
 
@@ -510,7 +510,7 @@ describe('Unicode boundary handling', () => {
 
   describe('CJK characters', () => {
     it('fixed-size: correctly chunks CJK text', () => {
-      const chunking = createFixedSizeChunking({ chunkSize: 3 });
+      const chunking = createBasicFixedSizeChunking({ chunkSize: 3 });
       const cjk = '你好世界测试'; // 6 BMP chars, 1 char each
       const chunks = chunking.chunk(doc(cjk));
 
@@ -523,7 +523,7 @@ describe('Unicode boundary handling', () => {
     });
 
     it('paragraph: preserves CJK characters across paragraphs', () => {
-      const chunking = createParagraphChunking();
+      const chunking = createBasicParagraphChunking();
       const chunks = chunking.chunk(doc('第一段落\n\n第二段落'));
 
       expect(chunks).toHaveLength(2);
@@ -532,7 +532,7 @@ describe('Unicode boundary handling', () => {
     });
 
     it('sliding-window: handles CJK with overlap', () => {
-      const chunking = createSlidingWindowChunking({ windowSize: 4, stepSize: 2 });
+      const chunking = createBasicSlidingWindowChunking({ windowSize: 4, stepSize: 2 });
       const cjk = '甲乙丙丁戊己';
       const chunks = chunking.chunk(doc(cjk));
 
@@ -548,7 +548,7 @@ describe('Unicode boundary handling', () => {
       // This documents the current behavior: char-index slicing does not
       // understand grapheme clusters, so the combiner may end up in a
       // separate chunk from its base character.
-      const chunking = createFixedSizeChunking({ chunkSize: 2 });
+      const chunking = createBasicFixedSizeChunking({ chunkSize: 2 });
       const text = 'e\u0301abc'; // "é" (2 chars) + "abc" (3 chars) = 5 chars
       const chunks = chunking.chunk(doc(text));
 
@@ -558,7 +558,7 @@ describe('Unicode boundary handling', () => {
     });
 
     it('paragraph: preserves combining diacritics within paragraphs', () => {
-      const chunking = createParagraphChunking();
+      const chunking = createBasicParagraphChunking();
       // "café" using combining accent: "cafe\u0301"
       const chunks = chunking.chunk(doc('cafe\u0301\n\nru\u0301sume\u0301'));
 
@@ -568,7 +568,7 @@ describe('Unicode boundary handling', () => {
     });
 
     it('fixed-size: reassembly preserves full multibyte content with mixed scripts', () => {
-      const chunking = createFixedSizeChunking({ chunkSize: 4 });
+      const chunking = createBasicFixedSizeChunking({ chunkSize: 4 });
       // Mix of ASCII, CJK, emoji, and combining diacritics
       const mixed = 'Ab你😀e\u0301'; // A(1) b(1) 你(1) 😀(2) e(1) \u0301(1) = 7 chars
       const chunks = chunking.chunk(doc(mixed));

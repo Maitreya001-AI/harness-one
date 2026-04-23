@@ -106,7 +106,7 @@ describe('createFailureTaxonomy', () => {
     });
   });
 
-  describe('hallucination detector', () => {
+  describe('repeated_tool_failure detector', () => {
     it('detects >=2 tool-related spans with error status', () => {
       const spans = Array.from({ length: 3 }, (_, i) =>
         makeSpan({ id: `s${i}`, name: `tool_call_${i}`, status: 'error' }),
@@ -114,7 +114,7 @@ describe('createFailureTaxonomy', () => {
       const trace = makeTrace({ spans });
       const taxonomy = createFailureTaxonomy();
       const results = taxonomy.classify(trace);
-      const result = results.find((r) => r.mode === 'hallucination');
+      const result = results.find((r) => r.mode === 'repeated_tool_failure');
       expect(result).toBeDefined();
       expect(result!.confidence).toBeCloseTo(0.8); // 0.5 + 3*0.1 = 0.8
     });
@@ -225,7 +225,7 @@ describe('createFailureTaxonomy', () => {
       expect(results.find(r => r.mode === 'timeout')!.confidence).toBeCloseTo(0.8);
     });
 
-    it('hallucination confidence follows formula: 0.5 + count*0.1, max 0.8', () => {
+    it('repeated_tool_failure confidence follows formula: 0.5 + count*0.1, max 0.8', () => {
       const taxonomy = createFailureTaxonomy();
       const spans = Array.from({ length: 4 }, (_, i) =>
         makeSpan({ id: `s${i}`, name: `tool_call_${i}`, status: 'error' }),
@@ -233,7 +233,7 @@ describe('createFailureTaxonomy', () => {
       const trace = makeTrace({ spans });
       const results = taxonomy.classify(trace);
       // 4 errors => 0.5 + 4*0.1 = 0.9, capped at 0.8
-      expect(results.find(r => r.mode === 'hallucination')!.confidence).toBeCloseTo(0.8);
+      expect(results.find(r => r.mode === 'repeated_tool_failure')!.confidence).toBeCloseTo(0.8);
     });
   });
 

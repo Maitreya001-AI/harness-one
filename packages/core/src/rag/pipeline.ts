@@ -26,7 +26,7 @@ export interface IngestResult {
  * ```ts
  * const pipeline = createRAGPipeline({
  *   loader: createTextLoader(['Hello world']),
- *   chunking: createFixedSizeChunking({ chunkSize: 100 }),
+ *   chunking: createBasicFixedSizeChunking({ chunkSize: 100 }),
  *   embedding: myEmbeddingModel,
  *   retriever: createInMemoryRetriever({ embedding: myEmbeddingModel }),
  * });

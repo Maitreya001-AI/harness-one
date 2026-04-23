@@ -12,7 +12,7 @@
 import {
   createRAGPipeline,
   createInMemoryRetriever,
-  createFixedSizeChunking,
+  createBasicFixedSizeChunking,
   createDocumentArrayLoader,
 } from 'harness-one/rag';
 import type { EmbeddingModel } from 'harness-one/rag';
@@ -41,7 +41,7 @@ async function main(): Promise<void> {
       { id: 'b', content: 'KV-cache reuses attention computation across prompt prefixes.' },
       { id: 'c', content: 'Anthropic prompt caching charges a lower rate for cache reads than full input.' },
     ]),
-    chunking: createFixedSizeChunking({ chunkSize: 120, overlap: 0 }),
+    chunking: createBasicFixedSizeChunking({ chunkSize: 120, overlap: 0 }),
     embedding,
     retriever: createInMemoryRetriever({ embedding }),
   });

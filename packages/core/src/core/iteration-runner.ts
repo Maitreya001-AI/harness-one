@@ -30,6 +30,7 @@ import {
 } from './guardrail-runner.js';
 import { safeStringifyToolResult } from './tool-serialization.js';
 import { createIterationLifecycle } from './iteration-lifecycle.js';
+import type { BeforeChatHookDispatcher, BeforeToolCallHookDispatcher } from './hook-dispatcher.js';
 
 // ---------------------------------------------------------------------------
 // Public surface
@@ -76,6 +77,8 @@ export interface IterationContext {
   readonly cumulativeUsage: { inputTokens: number; outputTokens: number };
   /** Tool-call counter across iterations; runIteration increments per tool_result yielded. */
   readonly toolCallCounter: { value: number };
+  /** Wall-clock start of the run for duration-budget enforcement. */
+  readonly runStartTimeMs: number;
   /**
    * Once-fired flag for `onIterationEnd`.
    *
@@ -117,6 +120,9 @@ export interface IterationRunnerConfig {
    * potentially-divergent strictHooks / logger config.
    */
   readonly runHook: AgentLoopHookDispatcher;
+  /** Shared async interceptors for pre-chat and pre-tool governance hooks. */
+  readonly runBeforeChatHook: BeforeChatHookDispatcher;
+  readonly runBeforeToolCallHook: BeforeToolCallHookDispatcher;
 }
 
 /** Public surface of the iteration runner. */
@@ -171,13 +177,34 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
       }
     }
 
+    let adapterMessages = await config.runBeforeChatHook({
+      messages: ctx.conversation,
+      iteration: ctx.iteration,
+    });
+    if (adapterMessages !== ctx.conversation) {
+      adapterMessages = [...adapterMessages];
+      if (ctx.iterationSpanId && tm) {
+        tm.addSpanEvent(ctx.iterationSpanId, {
+          name: 'before_chat_modified',
+          attributes: { messageCount: adapterMessages.length },
+        });
+      }
+    }
+    if (ctx.iterationSpanId && tm) {
+      const provenance = adapterMessages.map((message) => message.meta?.provenance ?? 'unknown');
+      tm.setSpanAttributes(ctx.iterationSpanId, {
+        messageRoles: adapterMessages.map((message) => message.role),
+        messageProvenances: provenance,
+      });
+    }
+
     // [2] Adapter call (delegated to AdapterCaller; per-call onRetry binds
     //     to the current iteration span so adapter_retry events land on the
     //     right span without a side-channel). The adapter_retry span event
     //     carries `backoff_ms` and `retry_number` so operators can correlate
     //     retry latency with backoff strategy tuning.
     const result = yield* config.adapterCaller.call(
-      ctx.conversation,
+      adapterMessages,
       ctx.cumulativeStreamBytes.value,
       (info) => {
         const spanId = ctx.iterationSpanId;
@@ -328,21 +355,49 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
     const executionResults = await config.executionStrategy.execute(
       toolCalls,
       async (call) => {
+        const interceptedCall = await config.runBeforeToolCallHook({
+          call,
+          iteration: ctx.iteration,
+        });
+        if ('abort' in interceptedCall && interceptedCall.abort) {
+          if (ctx.iterationSpanId && tm) {
+            tm.addSpanEvent(ctx.iterationSpanId, {
+              name: 'before_tool_call_aborted',
+              attributes: {
+                toolName: call.name,
+                toolCallId: call.id,
+                reason: interceptedCall.reason,
+              },
+            });
+          }
+          return { error: interceptedCall.reason };
+        }
+        const actualCall = interceptedCall as ToolCallRequest;
+        if (interceptedCall !== call && ctx.iterationSpanId && tm) {
+          tm.addSpanEvent(ctx.iterationSpanId, {
+            name: 'before_tool_call_modified',
+            attributes: {
+              toolName: call.name,
+              toolCallId: call.id,
+              modifiedToolName: actualCall.name,
+            },
+          });
+        }
         const toolSpanId =
           tm && ctx.traceId && ctx.iterationSpanId
-            ? tm.startSpan(ctx.traceId, `tool:${call.name}`, ctx.iterationSpanId)
+            ? tm.startSpan(ctx.traceId, `tool:${actualCall.name}`, ctx.iterationSpanId)
             : undefined;
         if (toolSpanId && tm) {
           tm.setSpanAttributes(toolSpanId, {
-            toolName: call.name,
-            toolCallId: call.id,
+            toolName: actualCall.name,
+            toolCallId: actualCall.id,
           });
         }
         try {
           const toolPromise = config.onToolCall
-            ? config.onToolCall(call)
+            ? config.onToolCall(actualCall)
             : Promise.resolve({
-                error: `No onToolCall handler registered for tool "${call.name}"`,
+                error: `No onToolCall handler registered for tool "${actualCall.name}"`,
               });
 
           let result: unknown;
@@ -356,7 +411,7 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
                   if (settled) return;
                   settled = true;
                   resolve({
-                    error: `Tool "${call.name}" timed out after ${timeoutMs}ms`,
+                    error: `Tool "${actualCall.name}" timed out after ${timeoutMs}ms`,
                   });
                 }, timeoutMs);
                 if (typeof timer === 'object' && 'unref' in timer) {
@@ -439,6 +494,10 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
         role: 'tool',
         content: resultContent,
         toolCallId: execResult.toolCallId,
+        meta: {
+          provenance: 'tool_result',
+          ...(originTool?.name !== undefined && { provenanceDetail: originTool.name }),
+        },
       };
       ctx.conversation.push(toolResultMsg);
     }

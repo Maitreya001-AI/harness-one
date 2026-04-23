@@ -15,6 +15,7 @@
  */
 
 import type { MemoryStore } from './store.js';
+import { HarnessErrorCode } from '../core/errors.js';
 
 /** Minimal test-runner shape accepted by the conformance kit. */
 export interface TestKitRunner {
@@ -27,6 +28,7 @@ export interface TestKitRunner {
     toBeDefined: () => void;
     toBeGreaterThanOrEqual: (n: number) => void;
     toContain: (v: unknown) => void;
+    toHaveLength: (n: number) => void;
   };
   beforeEach?: (fn: () => void | Promise<void>) => void;
 }
@@ -184,6 +186,58 @@ export function runMemoryStoreConformance(
       expect(written.length).toBe(2);
       const count = await store.count();
       expect(count).toBeGreaterThanOrEqual(2);
+    });
+
+    it('supportsTtl stores expire when the backend declares TTL support', async () => {
+      const store = await createStore();
+      if (!store.capabilities?.supportsTtl || !store.setWithTtl) return;
+      await store.setWithTtl('ttl-key', { ok: true }, 10);
+      const before = await store.query({});
+      expect(before.some((entry) => entry.key === 'ttl-key')).toBe(true);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const after = await store.query({});
+      expect(after.some((entry) => entry.key === 'ttl-key')).toBe(false);
+    });
+
+    it('supportsTenantScope isolates tenant views', async () => {
+      const store = await createStore();
+      if (!store.capabilities?.supportsTenantScope || !store.scopedView) return;
+      const tenantA = store.scopedView('tenant-a');
+      const tenantB = store.scopedView('tenant-b');
+      await tenantA.write({ key: 'shared', content: 'a', grade: 'useful' });
+      await tenantB.write({ key: 'shared', content: 'b', grade: 'useful' });
+
+      const aResults = await tenantA.query({});
+      const bResults = await tenantB.query({});
+      expect(aResults).toHaveLength(1);
+      expect(bResults).toHaveLength(1);
+      expect(aResults[0].content).toBe('a');
+      expect(bResults[0].content).toBe('b');
+    });
+
+    it('supportsOptimisticLock enforces compare-and-swap updates', async () => {
+      const store = await createStore();
+      if (!store.capabilities?.supportsOptimisticLock || !store.updateWithVersion) return;
+      const created = await store.updateWithVersion<{ count: number }>(
+        'cas-key',
+        0,
+        () => ({ count: 1 }),
+      );
+      expect(created.newVersion).toBe(1);
+
+      const updated = await store.updateWithVersion<{ count: number }>(
+        'cas-key',
+        1,
+        (value) => ({ count: (value?.count ?? 0) + 1 }),
+      );
+      expect(updated.newVersion).toBe(2);
+
+      try {
+        await store.updateWithVersion('cas-key', 1, () => ({ count: 999 }));
+        throw new Error('expected version conflict');
+      } catch (err) {
+        expect((err as { code?: string }).code).toBe(HarnessErrorCode.STORE_VERSION_CONFLICT);
+      }
     });
   });
 }

@@ -65,16 +65,16 @@ export function createDriftDetector(config?: DriftDetectorConfig): DriftDetector
 export function createEvalRunner(config: EvalConfig): EvalRunner;
 
 // @public
-export function createFaithfulnessScorer(): Scorer;
+export function createBasicFaithfulnessScorer(): Scorer;
 
 // @public
-export function createLengthScorer(config: {
+export function createBasicLengthScorer(config: {
     minTokens?: number;
     maxTokens?: number;
 }): Scorer;
 
 // @public
-export function createRelevanceScorer(): Scorer;
+export function createBasicRelevanceScorer(): Scorer;
 
 // @public
 export function createTasteCodingRegistry(): TasteCodingRegistry;

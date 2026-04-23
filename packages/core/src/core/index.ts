@@ -27,6 +27,7 @@ export type {
   AssistantMessage,
   ToolMessage,
   MessageMeta,
+  MessageProvenance,
   ToolCallRequest,
   TokenUsage,
   AgentAdapter,

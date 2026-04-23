@@ -19,7 +19,7 @@ export interface EvalRunner {
  *
  * @example
  * ```ts
- * const runner = createEvalRunner({ scorers: [createRelevanceScorer()], passThreshold: 0.7 });
+ * const runner = createEvalRunner({ scorers: [createBasicRelevanceScorer()], passThreshold: 0.7 });
  * const report = await runner.run(cases, async (input) => `Answer: ${input}`);
  * ```
  */

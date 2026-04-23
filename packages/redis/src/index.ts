@@ -25,7 +25,6 @@ import type {
   CompactionPolicy,
 } from 'harness-one/memory';
 import { HarnessError, HarnessErrorCode } from 'harness-one/core';
-import { requireFinitePositive } from 'harness-one/advanced';
 import { createDefaultLogger } from 'harness-one/observe';
 
 import { createRedisKeyspace } from './keys.js';
@@ -75,6 +74,16 @@ export interface RedisMemoryStore extends MemoryStore {
   repair(): Promise<{ repaired: number }>;
 }
 
+function assertFinitePositive(value: number | undefined, name: string): void {
+  if (value === undefined) return;
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new HarnessError(
+      `${name} must be a positive finite number`,
+      HarnessErrorCode.CORE_INVALID_CONFIG,
+    );
+  }
+}
+
 /**
  * Create a Redis-backed memory store. The returned handle is a plain
  * object; ioredis ownership (connect/disconnect) stays with the caller.
@@ -95,15 +104,45 @@ export function createRedisStore(config: RedisStoreConfig): RedisMemoryStore {
       'Provide a valid ioredis client instance',
     );
   }
-  requireFinitePositive(defaultTTL, 'defaultTTL');
+  assertFinitePositive(defaultTTL, 'defaultTTL');
 
   const keyspace = createRedisKeyspace(prefix, config.tenantId, logger);
+  const versionKey = (key: string): string =>
+    `${prefix}:${keyspace.tenantId}:__version__:${encodeURIComponent(key)}`;
+
+  function serializeMemoryValue(value: unknown): string {
+    return typeof value === 'string' ? value : JSON.stringify(value);
+  }
+
+  function parseMemoryValue<T>(content: string): T | undefined {
+    try {
+      return JSON.parse(content) as T;
+    } catch {
+      return content as T;
+    }
+  }
+
+  async function findLatestByKey(key: string): Promise<MemoryEntry | null> {
+    const entries = await queryEntries({ client, keyspace, logger, partialOk }, {});
+    const matches = entries
+      .filter((entry) => entry.key === key)
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+    return matches[0] ?? null;
+  }
 
   function generateId(): string {
     return `mem_${randomUUID()}`;
   }
 
   return {
+    capabilities: {
+      atomicWrite: true,
+      atomicUpdate: true,
+      supportsTtl: true,
+      supportsTenantScope: true,
+      supportsOptimisticLock: true,
+    },
+
     async write(input) {
       const now = Date.now();
       const entry: MemoryEntry = {
@@ -156,6 +195,95 @@ export function createRedisStore(config: RedisStoreConfig): RedisMemoryStore {
 
     async repair() {
       return repairEntries({ client, keyspace, logger });
+    },
+
+    async setWithTtl(key: string, value: unknown, ttlMs: number) {
+      assertFinitePositive(ttlMs, 'ttlMs');
+      const existing = await findLatestByKey(key);
+      const now = Date.now();
+      const entry: MemoryEntry = existing
+        ? {
+            ...existing,
+            content: serializeMemoryValue(value),
+            updatedAt: now,
+          }
+        : {
+            id: generateId(),
+            key,
+            content: serializeMemoryValue(value),
+            grade: 'ephemeral',
+            createdAt: now,
+            updatedAt: now,
+          };
+
+      const pipeline = client.multi();
+      pipeline.set(keyspace.entryKey(entry.id), JSON.stringify(entry), 'PX', ttlMs);
+      pipeline.sadd(keyspace.indexKey, entry.id);
+      await pipeline.exec();
+    },
+
+    scopedView(tenantId: string) {
+      return createRedisStore({ ...config, tenantId });
+    },
+
+    async updateWithVersion<T>(
+      key: string,
+      expectedVersion: number,
+      updater: (value: T | undefined) => T,
+    ) {
+      if (!Number.isInteger(expectedVersion) || expectedVersion < 0) {
+        throw new HarnessError(
+          'expectedVersion must be a non-negative integer',
+          HarnessErrorCode.CORE_INVALID_CONFIG,
+        );
+      }
+
+      const vKey = versionKey(key);
+      for (;;) {
+        await client.watch(vKey);
+        const currentVersion = Number(await client.get(vKey) ?? '0');
+        if (currentVersion !== expectedVersion) {
+          await client.unwatch();
+          throw new HarnessError(
+            `Version conflict for key "${key}": expected ${expectedVersion}, found ${currentVersion}`,
+            HarnessErrorCode.STORE_VERSION_CONFLICT,
+          );
+        }
+
+        const existing = await findLatestByKey(key);
+        const existingTtlMs = existing ? await client.pttl(keyspace.entryKey(existing.id)) : -1;
+        const nextValue = updater(existing ? parseMemoryValue<T>(existing.content) : undefined);
+        const now = Date.now();
+        const entry: MemoryEntry = existing
+          ? {
+              ...existing,
+              content: serializeMemoryValue(nextValue),
+              updatedAt: now,
+            }
+          : {
+              id: generateId(),
+              key,
+              content: serializeMemoryValue(nextValue),
+              grade: 'useful',
+              createdAt: now,
+              updatedAt: now,
+            };
+
+        const multi = client.multi();
+        if (existingTtlMs > 0) {
+          multi.set(keyspace.entryKey(entry.id), JSON.stringify(entry), 'PX', existingTtlMs);
+        } else if (defaultTTL !== undefined) {
+          multi.set(keyspace.entryKey(entry.id), JSON.stringify(entry), 'EX', defaultTTL);
+        } else {
+          multi.set(keyspace.entryKey(entry.id), JSON.stringify(entry));
+        }
+        multi.sadd(keyspace.indexKey, entry.id);
+        multi.set(vKey, String(currentVersion + 1));
+        const result = await multi.exec();
+        if (result) {
+          return { newVersion: currentVersion + 1 };
+        }
+      }
     },
   };
 }

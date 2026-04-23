@@ -2,6 +2,11 @@
 
 > Document loading, chunking, embedding, and retrieval pipeline. Zero external dependencies.
 
+`createBasicFixedSizeChunking` / `createBasicParagraphChunking` /
+`createBasicSlidingWindowChunking` 和 `createInMemoryRetriever()` 都是 baseline
+实现，适合小规模或参考实现；生产检索通常需要领域化 chunking、外部向量库和
+更严格的召回/延迟权衡。
+
 ## 概述
 
 rag 模块提供将文档转化为可检索上下文的完整流水线：加载 → 分块 → 嵌入 → 索引 → 查询。每个阶段都定义了接口（`DocumentLoader`、`ChunkingStrategy`、`EmbeddingModel`、`Retriever`），内置实现开箱即用，用户可在任意阶段注入自定义实现。
@@ -57,21 +62,21 @@ const loader2 = createDocumentArrayLoader([
 **FixedSize** — 按字符数切分，支持重叠：
 
 ```ts
-const chunking = createFixedSizeChunking({ chunkSize: 512, overlap: 64 });
+const chunking = createBasicFixedSizeChunking({ chunkSize: 512, overlap: 64 });
 // overlap < chunkSize，否则抛出 RAG_INVALID_CONFIG
 ```
 
 **Paragraph** — 按双换行切分，超长段落自动子切分：
 
 ```ts
-const chunking = createParagraphChunking({ maxChunkSize: 500 });
+const chunking = createBasicParagraphChunking({ maxChunkSize: 500 });
 // 无 maxChunkSize 时保留原始段落长度
 ```
 
 **SlidingWindow** — 固定窗口大小 + 固定步长：
 
 ```ts
-const chunking = createSlidingWindowChunking({ windowSize: 300, stepSize: 150 });
+const chunking = createBasicSlidingWindowChunking({ windowSize: 300, stepSize: 150 });
 // 步长 150 → 相邻窗口重叠 150 字符
 ```
 
@@ -96,14 +101,14 @@ const results = await retriever.retrieve('query text', { limit: 5, minScore: 0.5
 ```ts
 import {
   createTextLoader,
-  createParagraphChunking,
+  createBasicParagraphChunking,
   createInMemoryRetriever,
   createRAGPipeline,
 } from 'harness-one/rag';
 
 const pipeline = createRAGPipeline({
   loader: createTextLoader(['Doc A content', 'Doc B content']),
-  chunking: createParagraphChunking({ maxChunkSize: 500 }),
+  chunking: createBasicParagraphChunking({ maxChunkSize: 500 }),
   embedding: myEmbeddingModel,           // 实现 EmbeddingModel 接口
   retriever: createInMemoryRetriever({ embedding: myEmbeddingModel }),
   maxChunks: 10_000,                     // 可选容量上限

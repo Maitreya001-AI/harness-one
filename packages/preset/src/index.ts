@@ -59,7 +59,7 @@ export function createHarness(config: HarnessConfig): Harness {
 export { createConfigFromEnv } from './env.js';
 
 // ---------------------------------------------------------------------------
-// Fail-closed production entry
+// Opinionated fail-closed preset wiring
 // ---------------------------------------------------------------------------
 
 export { createSecurePreset } from './secure.js';

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createRAGPipeline } from '../pipeline.js';
 import { createTextLoader, createDocumentArrayLoader } from '../loaders.js';
-import { createFixedSizeChunking, createParagraphChunking } from '../chunking.js';
+import { createBasicFixedSizeChunking, createBasicParagraphChunking } from '../chunking.js';
 import { createInMemoryRetriever } from '../retriever.js';
 import { HarnessError } from '../../core/errors.js';
 import { createTraceManager } from '../../observe/trace-manager.js';
@@ -45,7 +45,7 @@ describe('createRAGPipeline', () => {
     it('load -> chunk -> embed -> retrieve produces scored results', async () => {
       const pipeline = createRAGPipeline({
         loader: createTextLoader(['The cat sat on the mat', 'Dogs play in the park']),
-        chunking: createFixedSizeChunking({ chunkSize: 100 }),
+        chunking: createBasicFixedSizeChunking({ chunkSize: 100 }),
         embedding,
         retriever: createInMemoryRetriever({ embedding }),
       });
@@ -65,7 +65,7 @@ describe('createRAGPipeline', () => {
         loader: createTextLoader([
           'Introduction to RAG.\n\nRAG combines retrieval and generation.\n\nIt is powerful.',
         ]),
-        chunking: createParagraphChunking(),
+        chunking: createBasicParagraphChunking(),
         embedding,
         retriever: createInMemoryRetriever({ embedding }),
       });
@@ -85,7 +85,7 @@ describe('createRAGPipeline', () => {
 
       const pipeline = createRAGPipeline({
         loader: createDocumentArrayLoader(docs),
-        chunking: createFixedSizeChunking({ chunkSize: 100 }),
+        chunking: createBasicFixedSizeChunking({ chunkSize: 100 }),
         embedding,
         retriever: createInMemoryRetriever({ embedding }),
       });
@@ -98,7 +98,7 @@ describe('createRAGPipeline', () => {
     it('embeds all chunks and attaches embedding vectors', async () => {
       const pipeline = createRAGPipeline({
         loader: createTextLoader(['Hello world']),
-        chunking: createFixedSizeChunking({ chunkSize: 5 }),
+        chunking: createBasicFixedSizeChunking({ chunkSize: 5 }),
         embedding,
         retriever: createInMemoryRetriever({ embedding }),
       });
@@ -115,7 +115,7 @@ describe('createRAGPipeline', () => {
     it('query returns empty results before ingest', async () => {
       const pipeline = createRAGPipeline({
         loader: createTextLoader(['hello']),
-        chunking: createFixedSizeChunking({ chunkSize: 100 }),
+        chunking: createBasicFixedSizeChunking({ chunkSize: 100 }),
         embedding,
         retriever: createInMemoryRetriever({ embedding }),
       });
@@ -160,7 +160,7 @@ describe('createRAGPipeline', () => {
 
     it('uses chunking strategy when provided', async () => {
       const pipeline = createRAGPipeline({
-        chunking: createFixedSizeChunking({ chunkSize: 5 }),
+        chunking: createBasicFixedSizeChunking({ chunkSize: 5 }),
         embedding,
         retriever: createInMemoryRetriever({ embedding }),
       });
@@ -214,7 +214,7 @@ describe('createRAGPipeline', () => {
 
       const pipeline = createRAGPipeline({
         loader: createTextLoader(['Hello world', 'Another doc']),
-        chunking: createFixedSizeChunking({ chunkSize: 100 }),
+        chunking: createBasicFixedSizeChunking({ chunkSize: 100 }),
         embedding: brokenEmbedding,
         retriever: createInMemoryRetriever({ embedding }),
       });
@@ -399,7 +399,7 @@ describe('createRAGPipeline', () => {
     it('removes all indexed chunks', async () => {
       const pipeline = createRAGPipeline({
         loader: createTextLoader(['hello']),
-        chunking: createFixedSizeChunking({ chunkSize: 100 }),
+        chunking: createBasicFixedSizeChunking({ chunkSize: 100 }),
         embedding,
         retriever: createInMemoryRetriever({ embedding }),
       });
@@ -414,7 +414,7 @@ describe('createRAGPipeline', () => {
     it('allows re-ingestion from empty state after clear', async () => {
       const pipeline = createRAGPipeline({
         loader: createTextLoader(['doc one']),
-        chunking: createFixedSizeChunking({ chunkSize: 100 }),
+        chunking: createBasicFixedSizeChunking({ chunkSize: 100 }),
         embedding,
         retriever: createInMemoryRetriever({ embedding }),
       });
@@ -433,7 +433,7 @@ describe('createRAGPipeline', () => {
     it('passes limit option to retriever', async () => {
       const pipeline = createRAGPipeline({
         loader: createTextLoader(['aaa', 'bbb', 'ccc']),
-        chunking: createFixedSizeChunking({ chunkSize: 100 }),
+        chunking: createBasicFixedSizeChunking({ chunkSize: 100 }),
         embedding,
         retriever: createInMemoryRetriever({ embedding }),
       });
@@ -447,7 +447,7 @@ describe('createRAGPipeline', () => {
     it('passes minScore option to retriever', async () => {
       const pipeline = createRAGPipeline({
         loader: createTextLoader(['aaa', 'bbb']),
-        chunking: createFixedSizeChunking({ chunkSize: 100 }),
+        chunking: createBasicFixedSizeChunking({ chunkSize: 100 }),
         embedding,
         retriever: createInMemoryRetriever({ embedding }),
       });
@@ -467,7 +467,7 @@ describe('createRAGPipeline', () => {
     it('query results include estimated token count (content.length / 4, rounded up)', async () => {
       const pipeline = createRAGPipeline({
         loader: createTextLoader(['Hello world!']), // 12 chars -> ceil(12/4) = 3 tokens
-        chunking: createFixedSizeChunking({ chunkSize: 100 }),
+        chunking: createBasicFixedSizeChunking({ chunkSize: 100 }),
         embedding,
         retriever: createInMemoryRetriever({ embedding }),
       });
@@ -485,7 +485,7 @@ describe('createRAGPipeline', () => {
     it('token estimate is 1 for very short content', async () => {
       const pipeline = createRAGPipeline({
         loader: createTextLoader(['Hi']), // 2 chars -> ceil(2/4) = 1
-        chunking: createFixedSizeChunking({ chunkSize: 100 }),
+        chunking: createBasicFixedSizeChunking({ chunkSize: 100 }),
         embedding,
         retriever: createInMemoryRetriever({ embedding }),
       });
@@ -786,7 +786,7 @@ describe('createRAGPipeline', () => {
             return [{ id: 'd1', content: 'Hello' }];
           },
         },
-        chunking: createFixedSizeChunking({ chunkSize: 100 }),
+        chunking: createBasicFixedSizeChunking({ chunkSize: 100 }),
         embedding,
         retriever: createInMemoryRetriever({ embedding }),
         traceManager: tm,
@@ -820,7 +820,7 @@ describe('createRAGPipeline', () => {
           { id: 'd1', content: composed },
           { id: 'd2', content: decomposed },
         ]),
-        chunking: createFixedSizeChunking({ chunkSize: 1_000 }),
+        chunking: createBasicFixedSizeChunking({ chunkSize: 1_000 }),
         embedding,
         retriever: createInMemoryRetriever({ embedding }),
         onWarning: (w) => warnings.push(w.message),

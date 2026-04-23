@@ -521,7 +521,7 @@ export interface FailureClassification {
 }
 
 // @public
-export type FailureMode = 'early_stop' | 'tool_loop' | 'context_forgetting' | 'hallucination' | 'budget_exceeded' | 'timeout' | 'unrecoverable_error' | 'unknown';
+export type FailureMode = 'early_stop' | 'tool_loop' | 'context_forgetting' | 'repeated_tool_failure' | 'budget_exceeded' | 'timeout' | 'unrecoverable_error' | 'unknown';
 
 // @public
 export interface FallbackAdapterConfig {

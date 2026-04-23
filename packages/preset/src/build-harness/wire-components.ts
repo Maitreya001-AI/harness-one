@@ -32,7 +32,7 @@ import type { GuardrailPipeline } from 'harness-one/guardrails';
 import { createSessionManager, createInMemoryConversationStore } from 'harness-one/session';
 import type { SessionManager, ConversationStore } from 'harness-one/session';
 import type { MemoryStore } from 'harness-one/memory';
-import { createEvalRunner, createRelevanceScorer } from '@harness-one/devkit';
+import { createEvalRunner, createBasicRelevanceScorer } from '@harness-one/devkit';
 import type { EvalRunner } from '@harness-one/devkit';
 
 import { createAjvValidator } from '@harness-one/ajv';
@@ -180,7 +180,7 @@ export function wireComponents(config: HarnessConfig): WiredComponents {
   const prompts = createPromptBuilder();
 
   // 12. Eval runner (default relevance scorer)
-  const evalRunner = createEvalRunner({ scorers: [createRelevanceScorer()] });
+  const evalRunner = createEvalRunner({ scorers: [createBasicRelevanceScorer()] });
 
   // 13. Logger — no longer depends on the deleted eventBus stub.
   const logger = config.logger ?? createLogger();

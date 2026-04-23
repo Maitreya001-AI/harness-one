@@ -18,7 +18,7 @@ import {
   createContentFilter,
   createPipeline,
   runInput,
-  withSelfHealing,
+  withGuardrailRetry,
 } from '../guardrails/index.js';
 
 // Context
@@ -185,7 +185,7 @@ describe('Integration: all modules compose', () => {
   it('self-healing retries on output failure', async () => {
     let regenerateCount = 0;
 
-    const result = await withSelfHealing(
+    const result = await withGuardrailRetry(
       {
         maxRetries: 3,
         guardrails: [
@@ -288,7 +288,7 @@ describe('Integration: all modules compose', () => {
     expect(createContentFilter).toBeDefined();
     expect(createPipeline).toBeDefined();
     expect(runInput).toBeDefined();
-    expect(withSelfHealing).toBeDefined();
+    expect(withGuardrailRetry).toBeDefined();
 
     // Context exports
     expect(countTokens).toBeDefined();

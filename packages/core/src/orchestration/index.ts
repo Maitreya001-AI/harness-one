@@ -46,9 +46,9 @@ export { createOrchestrator } from './orchestrator.js';
 
 // Strategies
 export {
-  createRoundRobinStrategy,
-  createRandomStrategy,
-  createFirstAvailableStrategy,
+  createBasicRoundRobinStrategy,
+  createBasicRandomStrategy,
+  createBasicFirstAvailableStrategy,
 } from './strategies.js';
 
 // Agent Pool

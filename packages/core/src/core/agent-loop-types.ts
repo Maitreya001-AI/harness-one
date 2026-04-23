@@ -10,7 +10,14 @@
  * @module
  */
 
-import type { AgentAdapter, ExecutionStrategy, ToolCallRequest, ToolSchema, TokenUsage } from './types.js';
+import type {
+  AgentAdapter,
+  ExecutionStrategy,
+  Message,
+  ToolCallRequest,
+  ToolSchema,
+  TokenUsage,
+} from './types.js';
 import type { AgentLoopTraceManager } from './trace-interface.js';
 import type { GuardrailPipeline } from './guardrail-port.js';
 
@@ -71,6 +78,29 @@ export interface AgentLoopHook {
    */
   onTokenUsage?(info: { iteration: number; usage: TokenUsage }): void;
   /**
+   * Fires immediately before the adapter chat/stream call. May return a
+   * replacement message array. Returning `undefined` keeps the current array.
+   * MUST NOT throw unless `strictHooks` is enabled.
+   */
+  onBeforeChat?(
+    info: { messages: readonly Message[]; iteration: number },
+  ): Promise<readonly Message[] | undefined> | readonly Message[] | undefined;
+  /**
+   * Fires immediately before a tool handler is invoked. May return:
+   * - `undefined` to keep the original call
+   * - a replacement `ToolCallRequest`
+   * - `{ abort: true, reason }` to skip execution and feed the reason back
+   *   to the model as tool-result feedback
+   *
+   * MUST NOT throw unless `strictHooks` is enabled.
+   */
+  onBeforeToolCall?(
+    info: { call: ToolCallRequest; iteration: number },
+  ): Promise<ToolCallRequest | { abort: true; reason: string } | undefined>
+    | ToolCallRequest
+    | { abort: true; reason: string }
+    | undefined;
+  /**
    * Fires at the end of the iteration. `done` indicates whether the loop is
    * terminating. MUST NOT throw — exceptions are logged and swallowed.
    */
@@ -82,6 +112,8 @@ export interface AgentLoopConfig {
   readonly adapter: AgentAdapter;
   readonly maxIterations?: number;
   readonly maxTotalTokens?: number;
+  /** Hard wall-clock cap for a single run() in milliseconds. */
+  readonly maxDurationMs?: number;
   readonly signal?: AbortSignal;
   /**
    * Callback invoked when the LLM requests a tool call.

@@ -44,11 +44,13 @@ Each file stands alone — no external SDK needed.
 
 | File | Covers |
 |------|--------|
-| [`preset/secure-preset.ts`](preset/secure-preset.ts) | `createSecurePreset` — production entry with fail-closed defaults |
+| [`preset/secure-preset.ts`](preset/secure-preset.ts) | `createSecurePreset` — opinionated preset wiring with fail-closed defaults |
 | [`session/session-manager.ts`](session/session-manager.ts) | `createSessionManager` + `ConversationStore` + lock/TTL/GC |
 | [`rag/custom-pipeline.ts`](rag/custom-pipeline.ts) | `createRAGPipeline` — loader → chunking → embedding → retrieve |
 | [`evolve-check/architecture-rules.ts`](evolve-check/architecture-rules.ts) | `createArchitectureChecker` + cycle + layer + custom rule |
-| [`prompt/builder-skills-disclosure.ts`](prompt/builder-skills-disclosure.ts) | `PromptBuilder` + `PromptRegistry` + `SkillEngine` + `DisclosureManager` |
+| [`prompt/builder-skills-disclosure.ts`](prompt/builder-skills-disclosure.ts) | `PromptBuilder` + `PromptRegistry` + `SkillRegistry` + `DisclosureManager` |
+| [`prompt/skill-registry-multi.ts`](prompt/skill-registry-multi.ts) | `SkillRegistry` — render multiple immutable skills with stable ordering |
+| [`prompt/skill-registry-report-stage.ts`](prompt/skill-registry-report-stage.ts) | `SkillRegistry` — replace staged flows with explicit report-mode skill sets |
 | [`context/budget-pack-compress.ts`](context/budget-pack-compress.ts) | `createBudget` + `packContext` + `compress` + `compactIfNeeded` |
 | [`redact/redactor.ts`](redact/redactor.ts) | `createRedactor` + `redactValue` + `sanitizeAttributes` |
 | [`advanced/middleware-chain.ts`](advanced/middleware-chain.ts) | `createMiddlewareChain` — onion retry / timing / logging |
@@ -57,7 +59,8 @@ Each file stands alone — no external SDK needed.
 | [`resilience/fallback-adapter.ts`](resilience/fallback-adapter.ts) | `createFallbackAdapter` — cross-provider circuit breaker |
 | [`resilience/checkpoint-manager.ts`](resilience/checkpoint-manager.ts) | `createCheckpointManager` — snapshot / restore conversation state |
 | [`guardrails/pii-detector.ts`](guardrails/pii-detector.ts) | `createPIIDetector` — built-in PII detection |
-| [`guardrails/self-healing.ts`](guardrails/self-healing.ts) | `withSelfHealing` — block → retry-with-feedback |
+| [`guardrails/self-healing.ts`](guardrails/self-healing.ts) | `withGuardrailRetry` — block → retry-with-feedback |
+| [`guardrails/tool-prereq-guardrail.ts`](guardrails/tool-prereq-guardrail.ts) | `createPipeline` — enforce tool prerequisites with a guardrail instead of a skill state machine |
 | [`observe/cache-monitor.ts`](observe/cache-monitor.ts) | `createCacheMonitor` — KV-cache hit rate tracking |
 | [`observe/cache-monitor-integration.ts`](observe/cache-monitor-integration.ts) | Cache monitor wired around a RAG query cache |
 | [`observe/failure-taxonomy.ts`](observe/failure-taxonomy.ts) | `createFailureTaxonomy` — classify failures from Trace |

@@ -22,7 +22,7 @@ Node 18+.
 import {
   createEvalRunner,
   createGeneratorEvaluator,
-  createRelevanceScorer,
+  createBasicRelevanceScorer,
   createGroundednessScorer,
   createCoherenceScorer,
 } from '@harness-one/devkit';

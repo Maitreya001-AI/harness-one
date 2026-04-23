@@ -1,36 +1,31 @@
 /**
  * Example: the four independent `harness-one/prompt` primitives.
  *
- * Each primitive is standalone — use one without importing the others:
+ * Each primitive is standalone:
  *
  *   1. `createPromptBuilder`      — multi-layer assembly with KV-cache prefix
  *   2. `createPromptRegistry`     — versioned template storage
- *   3. `createSkillEngine`        — multi-stage guided workflows (state machine)
+ *   3. `createSkillRegistry`      — stateless skill content registry
  *   4. `createDisclosureManager`  — progressive knowledge disclosure by level
- *
- * The Langfuse async-registry example (`prompt/langfuse-prompt-backend.ts`)
- * shows how to plug (2) into a remote template store; this file is the
- * local-first quickstart for all four.
  */
 import {
   createPromptBuilder,
   createPromptRegistry,
-  createSkillEngine,
+  createSkillRegistry,
   createDisclosureManager,
 } from 'harness-one/prompt';
 
 function main(): void {
-  // ── 1. PromptBuilder — cacheable prefix + per-turn variables ────────────
   const builder = createPromptBuilder({ separator: '\n\n', maxTokens: 2000 });
   builder.addLayer({
     name: 'system',
     content: 'You are a precise software architect.',
     priority: 0,
-    cacheable: true, // goes into the stable prefix (KV-cache friendly)
+    cacheable: true,
   });
   builder.addLayer({
     name: 'style',
-    content: 'Respond in bullet points. Cite file paths with file:line when applicable.',
+    content: 'Respond in bullet points. Cite file paths when applicable.',
     priority: 5,
     cacheable: true,
   });
@@ -38,82 +33,43 @@ function main(): void {
     name: 'task',
     content: 'Current task: {{task}}',
     priority: 10,
-    cacheable: false, // varies per turn — NOT in the stable prefix
+    cacheable: false,
   });
   builder.setVariable('task', 'audit cache invalidation');
 
   const assembled = builder.build();
   console.log('systemPrompt:\n', assembled.systemPrompt);
   console.log('stablePrefixHash:', assembled.stablePrefixHash);
-  // Feed assembled.systemPrompt into the first `{role:'system', content:...}`
-  // message on the AgentLoop.
 
-  // ── 2. PromptRegistry — versioned template store ────────────────────────
   const registry = createPromptRegistry();
   registry.register({
     id: 'code-review',
-    version: '1.0.0', // semver-validated at register time
+    version: '1.0.0',
     content: 'Review the following code for {{concern}}:\n\n{{snippet}}',
     variables: ['concern', 'snippet'],
   });
-  // `resolve()` interpolates and returns the final string; missing vars throw.
   const rendered = registry.resolve('code-review', {
     concern: 'memory leaks',
     snippet: 'function leak() { ... }',
   });
   console.log('Rendered template:\n', rendered);
 
-  // ── 3. SkillEngine — multi-stage state machine ──────────────────────────
-  const skills = createSkillEngine();
-  skills.registerSkill({
-    id: 'onboarding',
-    name: 'User onboarding',
-    description: 'Greet, clarify goals, execute.',
-    initialStage: 'greet',
-    stages: [
-      {
-        id: 'greet',
-        name: 'Greeting',
-        prompt: 'Greet the user and ask their goal.',
-        tools: [], // allowed tools at this stage
-        transitions: [
-          { to: 'clarify', condition: { type: 'keyword', keywords: ['goal', 'want', 'need'] } },
-        ],
-      },
-      {
-        id: 'clarify',
-        name: 'Clarification',
-        prompt: 'Ask 2–3 clarifying questions.',
-        tools: ['search_docs'],
-        maxTurns: 3,
-        transitions: [
-          { to: 'execute', condition: { type: 'turn_count', count: 3 } },
-        ],
-      },
-      {
-        id: 'execute',
-        name: 'Execution',
-        prompt: 'Execute the task using available tools.',
-        tools: ['search_docs', 'run_command'],
-        transitions: [{ to: 'greet', condition: { type: 'manual' } }],
-      },
-    ],
+  const skills = createSkillRegistry();
+  skills.register({
+    id: 'customer_support',
+    description: 'Customer support workflow',
+    content: `
+1. Start with a short greeting.
+2. Ask clarifying questions when the request is ambiguous.
+3. Use \`lookup_order\` for order state and \`search_kb\` for policy answers.
+4. Escalate to a human when the user asks for it or policy requires it.
+`.trim(),
+    requiredTools: ['lookup_order', 'search_kb', 'escalate_human'],
   });
-  skills.startSkill('onboarding');
-  console.log('Initial prompt:', skills.getCurrentPrompt());
-  console.log('Tools at stage:', skills.getAvailableTools());
+  const skillPrompt = skills.render(['customer_support']);
+  console.log('Skill prompt:\n', skillPrompt.content);
+  console.log('Rendered skill hash:', skillPrompt.stableHash);
 
-  // Each turn: feed user text; engine checks transitions in order.
-  const transition = skills.processTurn('I want to learn about RAG pipelines');
-  if (transition.advanced) {
-    console.log(`Advanced: ${transition.previousStage} → ${transition.currentStage}`);
-  }
-
-  // Manual advance:
-  skills.advanceTo('execute');
-  console.log('After manual advance, stage:', skills.currentStage.id);
-
-  // ── 4. DisclosureManager — progressive knowledge loading ────────────────
   const disclosure = createDisclosureManager();
   disclosure.register('auth', [
     { level: 0, content: 'Authentication uses JWT bearer tokens.' },

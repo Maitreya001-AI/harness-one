@@ -170,4 +170,98 @@ describe('AgentLoopHook', () => {
       expect(events.some((e) => e.type === 'done')).toBe(true);
     });
   });
+
+  describe('interceptable hooks', () => {
+    it('onBeforeChat can rewrite the message array before the adapter call', async () => {
+      const chatSpy = vi.fn(async ({ messages }: { messages: readonly { content: string }[] }) => ({
+        message: { role: 'assistant' as const, content: messages[0]?.content ?? 'missing' },
+        usage: USAGE,
+      }));
+      const adapter: AgentAdapter = { chat: chatSpy };
+      const loop = createAgentLoop({
+        adapter,
+        hooks: [{
+          onBeforeChat: ({ messages }) => [
+            { role: 'system' as const, content: `policy:${messages.length}` },
+            ...messages,
+          ],
+        }],
+      });
+
+      const events = await drain(loop.run([{ role: 'user', content: 'hello' }]));
+      const message = events.find((event) => event.type === 'message');
+
+      expect(chatSpy).toHaveBeenCalledTimes(1);
+      expect(chatSpy.mock.calls[0]?.[0].messages[0]).toMatchObject({ content: 'policy:1' });
+      expect(message).toMatchObject({ type: 'message', message: { content: 'policy:1' } });
+    });
+
+    it('onBeforeToolCall can rewrite tool arguments before execution', async () => {
+      const tc: ToolCallRequest = { id: 't1', name: 'echo', arguments: '{"path":"./tmp"}' };
+      const adapter = adapterFromResponses([
+        { message: { role: 'assistant', content: '', toolCalls: [tc] }, usage: USAGE },
+        { message: { role: 'assistant', content: 'done' }, usage: USAGE },
+      ]);
+      const onToolCall = vi.fn(async (call: ToolCallRequest) => call.arguments);
+      const loop = createAgentLoop({
+        adapter,
+        onToolCall,
+        hooks: [{
+          onBeforeToolCall: ({ call }) => ({
+            ...call,
+            arguments: '{"path":"/abs/tmp"}',
+          }),
+        }],
+      });
+
+      await drain(loop.run([{ role: 'user', content: 'go' }]));
+      expect(onToolCall).toHaveBeenCalledWith(
+        expect.objectContaining({ arguments: '{"path":"/abs/tmp"}' }),
+      );
+    });
+
+    it('onBeforeToolCall can abort a tool call and feed the reason back as tool feedback', async () => {
+      const tc: ToolCallRequest = { id: 't1', name: 'dangerous_tool', arguments: '{}' };
+      const adapter = adapterFromResponses([
+        { message: { role: 'assistant', content: '', toolCalls: [tc] }, usage: USAGE },
+        { message: { role: 'assistant', content: 'done' }, usage: USAGE },
+      ]);
+      const onToolCall = vi.fn(async () => 'should-not-run');
+      const loop = createAgentLoop({
+        adapter,
+        onToolCall,
+        hooks: [{
+          onBeforeToolCall: () => ({ abort: true, reason: 'Blocked by weekend policy' }),
+        }],
+      });
+
+      const events = await drain(loop.run([{ role: 'user', content: 'go' }]));
+      const toolResult = events.find((event) => event.type === 'tool_result') as Extract<
+        AgentEvent,
+        { type: 'tool_result' }
+      >;
+
+      expect(onToolCall).not.toHaveBeenCalled();
+      expect(toolResult.result).toEqual({ error: 'Blocked by weekend policy' });
+    });
+
+    it('strictHooks applies to onBeforeChat and onBeforeToolCall as well', async () => {
+      const adapter = adapterFromResponses([
+        { message: { role: 'assistant', content: 'done' }, usage: USAGE },
+      ]);
+      const loop = createAgentLoop({
+        adapter,
+        strictHooks: true,
+        hooks: [{
+          onBeforeChat: () => {
+            throw new Error('interceptor-boom');
+          },
+        }],
+      });
+
+      await expect(
+        drain(loop.run([{ role: 'user', content: 'go' }])),
+      ).rejects.toThrow('interceptor-boom');
+    });
+  });
 });

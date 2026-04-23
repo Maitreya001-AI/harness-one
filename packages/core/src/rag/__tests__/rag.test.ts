@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { createTextLoader, createDocumentArrayLoader } from '../loaders.js';
 import {
-  createFixedSizeChunking,
-  createParagraphChunking,
-  createSlidingWindowChunking,
+  createBasicFixedSizeChunking,
+  createBasicParagraphChunking,
+  createBasicSlidingWindowChunking,
 } from '../chunking.js';
 import { createInMemoryRetriever } from '../retriever.js';
 import { createRAGPipeline } from '../pipeline.js';
@@ -92,9 +92,9 @@ describe('createDocumentArrayLoader', () => {
 // Chunking — Fixed Size
 // ===========================================================================
 
-describe('createFixedSizeChunking', () => {
+describe('createBasicFixedSizeChunking', () => {
   it('splits content into correct number of chunks', () => {
-    const chunking = createFixedSizeChunking({ chunkSize: 5 });
+    const chunking = createBasicFixedSizeChunking({ chunkSize: 5 });
     const doc: Document = { id: 'd1', content: 'abcdefghij' }; // 10 chars
 
     const chunks = chunking.chunk(doc);
@@ -105,7 +105,7 @@ describe('createFixedSizeChunking', () => {
   });
 
   it('generates correct ids and indices', () => {
-    const chunking = createFixedSizeChunking({ chunkSize: 5 });
+    const chunking = createBasicFixedSizeChunking({ chunkSize: 5 });
     const doc: Document = { id: 'd1', content: 'abcdefghij' };
 
     const chunks = chunking.chunk(doc);
@@ -118,7 +118,7 @@ describe('createFixedSizeChunking', () => {
   });
 
   it('handles overlap correctly', () => {
-    const chunking = createFixedSizeChunking({ chunkSize: 6, overlap: 2 });
+    const chunking = createBasicFixedSizeChunking({ chunkSize: 6, overlap: 2 });
     // step = 6 - 2 = 4
     const doc: Document = { id: 'd1', content: 'abcdefghijkl' }; // 12 chars
 
@@ -132,7 +132,7 @@ describe('createFixedSizeChunking', () => {
   });
 
   it('returns single chunk when content is shorter than chunkSize', () => {
-    const chunking = createFixedSizeChunking({ chunkSize: 100 });
+    const chunking = createBasicFixedSizeChunking({ chunkSize: 100 });
     const doc: Document = { id: 'd1', content: 'short' };
 
     const chunks = chunking.chunk(doc);
@@ -142,7 +142,7 @@ describe('createFixedSizeChunking', () => {
   });
 
   it('returns empty array for empty content', () => {
-    const chunking = createFixedSizeChunking({ chunkSize: 10 });
+    const chunking = createBasicFixedSizeChunking({ chunkSize: 10 });
     const doc: Document = { id: 'd1', content: '' };
 
     const chunks = chunking.chunk(doc);
@@ -151,7 +151,7 @@ describe('createFixedSizeChunking', () => {
   });
 
   it('preserves document metadata in chunks', () => {
-    const chunking = createFixedSizeChunking({ chunkSize: 100 });
+    const chunking = createBasicFixedSizeChunking({ chunkSize: 100 });
     const doc: Document = { id: 'd1', content: 'hello', metadata: { key: 'val' } };
 
     const chunks = chunking.chunk(doc);
@@ -160,27 +160,27 @@ describe('createFixedSizeChunking', () => {
   });
 
   it('has name "fixed-size"', () => {
-    const chunking = createFixedSizeChunking({ chunkSize: 10 });
+    const chunking = createBasicFixedSizeChunking({ chunkSize: 10 });
     expect(chunking.name).toBe('fixed-size');
   });
 
   it('throws HarnessError for chunkSize <= 0', () => {
-    expect(() => createFixedSizeChunking({ chunkSize: 0 })).toThrow(HarnessError);
-    expect(() => createFixedSizeChunking({ chunkSize: -5 })).toThrow(HarnessError);
+    expect(() => createBasicFixedSizeChunking({ chunkSize: 0 })).toThrow(HarnessError);
+    expect(() => createBasicFixedSizeChunking({ chunkSize: -5 })).toThrow(HarnessError);
   });
 
   it('throws HarnessError for negative overlap', () => {
-    expect(() => createFixedSizeChunking({ chunkSize: 10, overlap: -1 })).toThrow(HarnessError);
+    expect(() => createBasicFixedSizeChunking({ chunkSize: 10, overlap: -1 })).toThrow(HarnessError);
   });
 
   it('throws HarnessError when overlap >= chunkSize', () => {
-    expect(() => createFixedSizeChunking({ chunkSize: 10, overlap: 10 })).toThrow(HarnessError);
-    expect(() => createFixedSizeChunking({ chunkSize: 10, overlap: 15 })).toThrow(HarnessError);
+    expect(() => createBasicFixedSizeChunking({ chunkSize: 10, overlap: 10 })).toThrow(HarnessError);
+    expect(() => createBasicFixedSizeChunking({ chunkSize: 10, overlap: 15 })).toThrow(HarnessError);
   });
 
   it('includes error code RAG_INVALID_CONFIG', () => {
     try {
-      createFixedSizeChunking({ chunkSize: 0 });
+      createBasicFixedSizeChunking({ chunkSize: 0 });
     } catch (e) {
       expect(e).toBeInstanceOf(HarnessError);
       expect((e as HarnessError).code).toBe(HarnessErrorCode.RAG_INVALID_CONFIG);
@@ -188,7 +188,7 @@ describe('createFixedSizeChunking', () => {
   });
 
   it('handles content exactly equal to chunkSize', () => {
-    const chunking = createFixedSizeChunking({ chunkSize: 5 });
+    const chunking = createBasicFixedSizeChunking({ chunkSize: 5 });
     const doc: Document = { id: 'd1', content: 'abcde' };
 
     const chunks = chunking.chunk(doc);
@@ -202,9 +202,9 @@ describe('createFixedSizeChunking', () => {
 // Chunking — Paragraph
 // ===========================================================================
 
-describe('createParagraphChunking', () => {
+describe('createBasicParagraphChunking', () => {
   it('splits on double newlines', () => {
-    const chunking = createParagraphChunking();
+    const chunking = createBasicParagraphChunking();
     const doc: Document = { id: 'd1', content: 'Para one.\n\nPara two.\n\nPara three.' };
 
     const chunks = chunking.chunk(doc);
@@ -216,7 +216,7 @@ describe('createParagraphChunking', () => {
   });
 
   it('returns single chunk for single paragraph', () => {
-    const chunking = createParagraphChunking();
+    const chunking = createBasicParagraphChunking();
     const doc: Document = { id: 'd1', content: 'Just one paragraph here.' };
 
     const chunks = chunking.chunk(doc);
@@ -226,7 +226,7 @@ describe('createParagraphChunking', () => {
   });
 
   it('respects maxChunkSize by sub-splitting long paragraphs', () => {
-    const chunking = createParagraphChunking({ maxChunkSize: 10 });
+    const chunking = createBasicParagraphChunking({ maxChunkSize: 10 });
     const doc: Document = { id: 'd1', content: 'This is a very long paragraph that exceeds max.' };
 
     const chunks = chunking.chunk(doc);
@@ -242,7 +242,7 @@ describe('createParagraphChunking', () => {
   });
 
   it('returns empty array for empty content', () => {
-    const chunking = createParagraphChunking();
+    const chunking = createBasicParagraphChunking();
     const doc: Document = { id: 'd1', content: '' };
 
     const chunks = chunking.chunk(doc);
@@ -251,7 +251,7 @@ describe('createParagraphChunking', () => {
   });
 
   it('returns empty array for whitespace-only content', () => {
-    const chunking = createParagraphChunking();
+    const chunking = createBasicParagraphChunking();
     const doc: Document = { id: 'd1', content: '   \n\n   \n\n   ' };
 
     const chunks = chunking.chunk(doc);
@@ -260,7 +260,7 @@ describe('createParagraphChunking', () => {
   });
 
   it('handles paragraphs separated by varied whitespace', () => {
-    const chunking = createParagraphChunking();
+    const chunking = createBasicParagraphChunking();
     const doc: Document = { id: 'd1', content: 'A\n  \nB\n\t\nC' };
 
     const chunks = chunking.chunk(doc);
@@ -272,17 +272,17 @@ describe('createParagraphChunking', () => {
   });
 
   it('has name "paragraph"', () => {
-    const chunking = createParagraphChunking();
+    const chunking = createBasicParagraphChunking();
     expect(chunking.name).toBe('paragraph');
   });
 
   it('throws HarnessError for maxChunkSize <= 0', () => {
-    expect(() => createParagraphChunking({ maxChunkSize: 0 })).toThrow(HarnessError);
-    expect(() => createParagraphChunking({ maxChunkSize: -1 })).toThrow(HarnessError);
+    expect(() => createBasicParagraphChunking({ maxChunkSize: 0 })).toThrow(HarnessError);
+    expect(() => createBasicParagraphChunking({ maxChunkSize: -1 })).toThrow(HarnessError);
   });
 
   it('generates sequential ids', () => {
-    const chunking = createParagraphChunking();
+    const chunking = createBasicParagraphChunking();
     const doc: Document = { id: 'd1', content: 'A\n\nB\n\nC' };
 
     const chunks = chunking.chunk(doc);
@@ -293,7 +293,7 @@ describe('createParagraphChunking', () => {
   });
 
   it('increments index across sub-split chunks', () => {
-    const chunking = createParagraphChunking({ maxChunkSize: 5 });
+    const chunking = createBasicParagraphChunking({ maxChunkSize: 5 });
     const doc: Document = { id: 'd1', content: 'ABCDEFGHIJ\n\nXY' };
     // First paragraph is 10 chars -> 2 sub-chunks (indices 0, 1)
     // Second paragraph is 2 chars -> 1 chunk (index 2)
@@ -311,9 +311,9 @@ describe('createParagraphChunking', () => {
 // Chunking — Sliding Window
 // ===========================================================================
 
-describe('createSlidingWindowChunking', () => {
+describe('createBasicSlidingWindowChunking', () => {
   it('produces overlapping windows with correct step', () => {
-    const chunking = createSlidingWindowChunking({ windowSize: 6, stepSize: 3 });
+    const chunking = createBasicSlidingWindowChunking({ windowSize: 6, stepSize: 3 });
     // 'abcdefghijkl' = 12 chars
     // start=0: abcdef, start=3: defghi, start=6: ghijkl (reaches end, stop)
     const doc: Document = { id: 'd1', content: 'abcdefghijkl' };
@@ -327,7 +327,7 @@ describe('createSlidingWindowChunking', () => {
   });
 
   it('produces trailing partial window when content does not align', () => {
-    const chunking = createSlidingWindowChunking({ windowSize: 6, stepSize: 4 });
+    const chunking = createBasicSlidingWindowChunking({ windowSize: 6, stepSize: 4 });
     // 'abcdefghijklm' = 13 chars
     // start=0: abcdef, start=4: efghij, start=8: ijklm (partial, reaches end)
     const doc: Document = { id: 'd1', content: 'abcdefghijklm' };
@@ -341,7 +341,7 @@ describe('createSlidingWindowChunking', () => {
   });
 
   it('returns single chunk when content fits in one window', () => {
-    const chunking = createSlidingWindowChunking({ windowSize: 100, stepSize: 50 });
+    const chunking = createBasicSlidingWindowChunking({ windowSize: 100, stepSize: 50 });
     const doc: Document = { id: 'd1', content: 'short' };
 
     const chunks = chunking.chunk(doc);
@@ -351,7 +351,7 @@ describe('createSlidingWindowChunking', () => {
   });
 
   it('returns empty array for empty content', () => {
-    const chunking = createSlidingWindowChunking({ windowSize: 10, stepSize: 5 });
+    const chunking = createBasicSlidingWindowChunking({ windowSize: 10, stepSize: 5 });
     const doc: Document = { id: 'd1', content: '' };
 
     const chunks = chunking.chunk(doc);
@@ -360,30 +360,30 @@ describe('createSlidingWindowChunking', () => {
   });
 
   it('has name "sliding-window"', () => {
-    const chunking = createSlidingWindowChunking({ windowSize: 10, stepSize: 5 });
+    const chunking = createBasicSlidingWindowChunking({ windowSize: 10, stepSize: 5 });
     expect(chunking.name).toBe('sliding-window');
   });
 
   it('throws HarnessError for windowSize <= 0', () => {
-    expect(() => createSlidingWindowChunking({ windowSize: 0, stepSize: 5 })).toThrow(
+    expect(() => createBasicSlidingWindowChunking({ windowSize: 0, stepSize: 5 })).toThrow(
       HarnessError,
     );
-    expect(() => createSlidingWindowChunking({ windowSize: -1, stepSize: 5 })).toThrow(
+    expect(() => createBasicSlidingWindowChunking({ windowSize: -1, stepSize: 5 })).toThrow(
       HarnessError,
     );
   });
 
   it('throws HarnessError for stepSize <= 0', () => {
-    expect(() => createSlidingWindowChunking({ windowSize: 10, stepSize: 0 })).toThrow(
+    expect(() => createBasicSlidingWindowChunking({ windowSize: 10, stepSize: 0 })).toThrow(
       HarnessError,
     );
-    expect(() => createSlidingWindowChunking({ windowSize: 10, stepSize: -3 })).toThrow(
+    expect(() => createBasicSlidingWindowChunking({ windowSize: 10, stepSize: -3 })).toThrow(
       HarnessError,
     );
   });
 
   it('generates correct ids and documentId', () => {
-    const chunking = createSlidingWindowChunking({ windowSize: 5, stepSize: 5 });
+    const chunking = createBasicSlidingWindowChunking({ windowSize: 5, stepSize: 5 });
     const doc: Document = { id: 'myDoc', content: 'abcdefghij' };
 
     const chunks = chunking.chunk(doc);
@@ -394,7 +394,7 @@ describe('createSlidingWindowChunking', () => {
   });
 
   it('handles non-overlapping windows (stepSize == windowSize)', () => {
-    const chunking = createSlidingWindowChunking({ windowSize: 5, stepSize: 5 });
+    const chunking = createBasicSlidingWindowChunking({ windowSize: 5, stepSize: 5 });
     const doc: Document = { id: 'd1', content: 'abcdefghij' };
 
     const chunks = chunking.chunk(doc);
@@ -405,7 +405,7 @@ describe('createSlidingWindowChunking', () => {
   });
 
   it('handles stepSize larger than windowSize', () => {
-    const chunking = createSlidingWindowChunking({ windowSize: 3, stepSize: 5 });
+    const chunking = createBasicSlidingWindowChunking({ windowSize: 3, stepSize: 5 });
     const doc: Document = { id: 'd1', content: 'abcdefghij' };
 
     const chunks = chunking.chunk(doc);
@@ -707,7 +707,7 @@ describe('createRAGPipeline', () => {
   it('ingest returns correct document and chunk counts', async () => {
     const pipeline = createRAGPipeline({
       loader: createTextLoader(['Hello world', 'Another doc']),
-      chunking: createFixedSizeChunking({ chunkSize: 100 }),
+      chunking: createBasicFixedSizeChunking({ chunkSize: 100 }),
       embedding,
       retriever: createInMemoryRetriever({ embedding }),
     });
@@ -721,7 +721,7 @@ describe('createRAGPipeline', () => {
   it('getChunks returns all indexed chunks with embeddings', async () => {
     const pipeline = createRAGPipeline({
       loader: createTextLoader(['Hello world']),
-      chunking: createFixedSizeChunking({ chunkSize: 5 }),
+      chunking: createBasicFixedSizeChunking({ chunkSize: 5 }),
       embedding,
       retriever: createInMemoryRetriever({ embedding }),
     });
@@ -740,7 +740,7 @@ describe('createRAGPipeline', () => {
   it('query returns scored results after ingest', async () => {
     const pipeline = createRAGPipeline({
       loader: createTextLoader(['The cat sat on the mat.', 'Dogs play in the park.']),
-      chunking: createFixedSizeChunking({ chunkSize: 100 }),
+      chunking: createBasicFixedSizeChunking({ chunkSize: 100 }),
       embedding,
       retriever: createInMemoryRetriever({ embedding }),
     });
@@ -756,7 +756,7 @@ describe('createRAGPipeline', () => {
   it('query returns empty results before ingest', async () => {
     const pipeline = createRAGPipeline({
       loader: createTextLoader(['hello']),
-      chunking: createFixedSizeChunking({ chunkSize: 100 }),
+      chunking: createBasicFixedSizeChunking({ chunkSize: 100 }),
       embedding,
       retriever: createInMemoryRetriever({ embedding }),
     });
@@ -775,7 +775,7 @@ describe('createRAGPipeline', () => {
           return [{ id: `doc-${callCount}`, content: `doc content ${callCount}` }];
         },
       },
-      chunking: createFixedSizeChunking({ chunkSize: 100 }),
+      chunking: createBasicFixedSizeChunking({ chunkSize: 100 }),
       embedding,
       retriever: createInMemoryRetriever({ embedding }),
     });
@@ -792,7 +792,7 @@ describe('createRAGPipeline', () => {
   it('deduplicates identical content across multiple ingest calls', async () => {
     const pipeline = createRAGPipeline({
       loader: createTextLoader(['first doc']),
-      chunking: createFixedSizeChunking({ chunkSize: 100 }),
+      chunking: createBasicFixedSizeChunking({ chunkSize: 100 }),
       embedding,
       retriever: createInMemoryRetriever({ embedding }),
     });
@@ -812,7 +812,7 @@ describe('createRAGPipeline', () => {
   it('query passes options through to retriever', async () => {
     const pipeline = createRAGPipeline({
       loader: createTextLoader(['aaa', 'bbb', 'ccc']),
-      chunking: createFixedSizeChunking({ chunkSize: 100 }),
+      chunking: createBasicFixedSizeChunking({ chunkSize: 100 }),
       embedding,
       retriever: createInMemoryRetriever({ embedding }),
     });
@@ -828,7 +828,7 @@ describe('createRAGPipeline', () => {
       loader: createTextLoader([
         'Introduction to RAG.\n\nRAG combines retrieval and generation.\n\nIt is powerful.',
       ]),
-      chunking: createParagraphChunking(),
+      chunking: createBasicParagraphChunking(),
       embedding,
       retriever: createInMemoryRetriever({ embedding }),
     });
@@ -849,7 +849,7 @@ describe('createRAGPipeline', () => {
   it('full end-to-end with sliding window chunking', async () => {
     const pipeline = createRAGPipeline({
       loader: createTextLoader(['abcdefghijklmnopqrstuvwxyz']),
-      chunking: createSlidingWindowChunking({ windowSize: 10, stepSize: 5 }),
+      chunking: createBasicSlidingWindowChunking({ windowSize: 10, stepSize: 5 }),
       embedding,
       retriever: createInMemoryRetriever({ embedding }),
     });
@@ -872,7 +872,7 @@ describe('createRAGPipeline', () => {
 
     const pipeline = createRAGPipeline({
       loader: createDocumentArrayLoader(docs),
-      chunking: createFixedSizeChunking({ chunkSize: 100 }),
+      chunking: createBasicFixedSizeChunking({ chunkSize: 100 }),
       embedding,
       retriever: createInMemoryRetriever({ embedding }),
     });
@@ -907,7 +907,7 @@ describe('createRAGPipeline', () => {
 
     it('uses chunking strategy when provided', async () => {
       const pipeline = createRAGPipeline({
-        chunking: createFixedSizeChunking({ chunkSize: 5 }),
+        chunking: createBasicFixedSizeChunking({ chunkSize: 5 }),
         embedding,
         retriever: createInMemoryRetriever({ embedding }),
       });
@@ -975,7 +975,7 @@ describe('createRAGPipeline', () => {
 
     const pipeline = createRAGPipeline({
       loader: createTextLoader(['Hello world', 'Another doc']),
-      chunking: createFixedSizeChunking({ chunkSize: 100 }),
+      chunking: createBasicFixedSizeChunking({ chunkSize: 100 }),
       embedding: brokenEmbedding,
       retriever: createInMemoryRetriever({ embedding }),
     });
@@ -987,7 +987,7 @@ describe('createRAGPipeline', () => {
   it('clear() removes all indexed chunks', async () => {
     const pipeline = createRAGPipeline({
       loader: createTextLoader(['Hello world']),
-      chunking: createFixedSizeChunking({ chunkSize: 100 }),
+      chunking: createBasicFixedSizeChunking({ chunkSize: 100 }),
       embedding,
       retriever: createInMemoryRetriever({ embedding }),
     });
@@ -1002,7 +1002,7 @@ describe('createRAGPipeline', () => {
   it('clear() allows re-ingestion from empty state', async () => {
     const pipeline = createRAGPipeline({
       loader: createTextLoader(['doc one']),
-      chunking: createFixedSizeChunking({ chunkSize: 100 }),
+      chunking: createBasicFixedSizeChunking({ chunkSize: 100 }),
       embedding,
       retriever: createInMemoryRetriever({ embedding }),
     });

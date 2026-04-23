@@ -15,6 +15,8 @@ import type { AgentEvent, DoneReason } from './events.js';
 import {
   AbortedError,
   MaxIterationsError,
+  HarnessError,
+  HarnessErrorCode,
   TokenBudgetExceededError,
 } from './errors.js';
 import type { Message, TokenUsage } from './types.js';
@@ -38,6 +40,8 @@ export interface CoordinatorDeps {
   readonly maxIterations: number;
   /** Cumulative token budget (strictly greater-than triggers terminal). */
   readonly maxTotalTokens: number;
+  /** Optional wall-clock budget for a single run. */
+  readonly maxDurationMs?: number;
   /** Optional hard cap on messages carried between turns. */
   readonly maxConversationMessages?: number;
   /** Adapter name, attached as a span attribute for filtering. */
@@ -136,6 +140,7 @@ export function startRun(
     traceId,
     cumulativeUsage: { inputTokens: 0, outputTokens: 0 },
     toolCallCounter: { value: 0 },
+    runStartTimeMs: Date.now(),
     iterationEndFired: { value: false },
   };
 
@@ -191,6 +196,27 @@ export function* checkPreIteration(
     yield* emitTerminal(state, ctx, tm, 'aborted',
       { type: 'error', error: new AbortedError() }, usage);
     return true;
+  }
+
+  if (deps.maxDurationMs !== undefined) {
+    const durationSoFarMs = Date.now() - ctx.runStartTimeMs;
+    if (ctx.iterationSpanId && tm) {
+      tm.setSpanAttributes(ctx.iterationSpanId, { durationSoFarMs });
+    }
+    if (durationSoFarMs > deps.maxDurationMs) {
+      yield* emitTerminal(state, ctx, tm, 'aborted',
+        {
+          type: 'error',
+          error: new HarnessError(
+            `Agent loop exceeded maxDurationMs (${durationSoFarMs}ms > ${deps.maxDurationMs}ms)`,
+            HarnessErrorCode.CORE_DURATION_BUDGET_EXCEEDED,
+            'Increase maxDurationMs or reduce loop/tool latency',
+          ),
+        },
+        usage,
+      );
+      return true;
+    }
   }
 
   // 2. Max iterations (post-increment).
@@ -256,6 +282,7 @@ export function* startIteration(
       adapter: deps.adapterName,
       conversationLength: ctx.conversation.length,
       streaming: deps.streaming,
+      durationSoFarMs: Date.now() - ctx.runStartTimeMs,
     });
   }
 

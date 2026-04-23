@@ -25,7 +25,7 @@ function main(): void {
   components.register({
     id: 'system-prompt-v1',
     name: 'Legacy system prompt',
-    description: 'Mitigates model hallucination for GPT-4-turbo',
+    description: 'Mitigates model repeated_tool_failure for GPT-4-turbo',
     modelAssumption: 'gpt-4-turbo behavior, pre-2024-08',
     retirementCondition: 'accuracy >= 0.95', // string DSL: key op value
     createdAt: '2024-03-01',

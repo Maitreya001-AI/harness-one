@@ -30,12 +30,16 @@ export interface MemoryStoreCapabilities {
   readonly atomicBatch?: boolean;
   /** `update()` uses compare-and-swap semantics at the store level. */
   readonly atomicUpdate?: boolean;
-  /** Per-entry TTL via `MemoryEntry.metadata.ttlMs` (auto-expiry on query/read). */
-  readonly ttl?: boolean;
+  /** Per-entry TTL via `setWithTtl()` or backend-native expiry. */
+  readonly supportsTtl?: boolean;
   /** Vector similarity via `searchByVector()`. */
   readonly vectorSearch?: boolean;
   /** Batch writes via `writeBatch()`. */
   readonly batchWrites?: boolean;
+  /** Isolated tenant-scoped views via `scopedView()`. */
+  readonly supportsTenantScope?: boolean;
+  /** Optimistic concurrency via `updateWithVersion()`. */
+  readonly supportsOptimisticLock?: boolean;
 }
 
 /**
@@ -82,6 +86,16 @@ export interface MemoryStore {
 
   /** Optional: Vector similarity search for embedding-backed stores. */
   searchByVector?(options: VectorSearchOptions): Promise<Array<MemoryEntry & { score: number }>>;
+  /** Optional: write a logical key with a per-entry TTL. */
+  setWithTtl?(key: string, value: unknown, ttlMs: number): Promise<void>;
+  /** Optional: return a tenant-isolated view of the store. */
+  scopedView?(tenantId: string): MemoryStore;
+  /** Optional: compare-and-swap update on a logical key. */
+  updateWithVersion?<T>(
+    key: string,
+    expectedVersion: number,
+    updater: (value: T | undefined) => T,
+  ): Promise<{ newVersion: number }>;
 }
 
 /**
@@ -99,6 +113,9 @@ export interface MemoryStore {
 export function createInMemoryStore(config?: { maxEntries?: number }): MemoryStore {
   const maxEntries = config?.maxEntries;
   const entries = new Map<string, MemoryEntry>();
+  const keyIndex = new Map<string, string>();
+  const versionIndex = new Map<string, number>();
+  const expiryIndex = new Map<string, number>();
   /** Secondary index: tag -> set of entry IDs that have that tag. */
   const tagIndex = new Map<string, Set<string>>();
   /** Secondary index: grade -> set of entry IDs with that grade. */
@@ -156,6 +173,7 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
 
   /** Add an entry to the secondary indexes. */
   function addToIndexes(entry: MemoryEntry): void {
+    keyIndex.set(entry.key, entry.id);
     // Grade index
     let gradeSet = gradeIndex.get(entry.grade);
     if (!gradeSet) {
@@ -179,6 +197,8 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
 
   /** Remove an entry from the secondary indexes. */
   function removeFromIndexes(entry: MemoryEntry): void {
+    if (keyIndex.get(entry.key) === entry.id) keyIndex.delete(entry.key);
+    expiryIndex.delete(entry.id);
     // Grade index
     const gradeSet = gradeIndex.get(entry.grade);
     if (gradeSet) {
@@ -198,14 +218,45 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
     }
   }
 
+  function purgeExpiredEntry(id: string): void {
+    const expiresAt = expiryIndex.get(id);
+    if (expiresAt === undefined || Date.now() < expiresAt) return;
+    const entry = entries.get(id);
+    if (entry) removeFromIndexes(entry);
+    entries.delete(id);
+  }
+
+  function purgeExpiredEntries(): void {
+    for (const [id, expiresAt] of expiryIndex) {
+      if (Date.now() >= expiresAt) {
+        const entry = entries.get(id);
+        if (entry) removeFromIndexes(entry);
+        entries.delete(id);
+      }
+    }
+  }
+
+  function serializeMemoryValue(value: unknown): string {
+    return typeof value === 'string' ? value : JSON.stringify(value);
+  }
+
+  function parseMemoryValue<T>(content: string): T | undefined {
+    try {
+      return JSON.parse(content) as T;
+    } catch {
+      return content as T;
+    }
+  }
+
   return {
     capabilities: {
       atomicWrite: true,
       atomicUpdate: true,
       atomicBatch: true, // in-memory is single-threaded, so batch is atomic
       batchWrites: true,
-      ttl: false,
+      supportsTtl: true,
       vectorSearch: true,
+      supportsOptimisticLock: true,
     },
 
     async write(input) {
@@ -319,10 +370,12 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
     },
 
     async read(id) {
+      purgeExpiredEntry(id);
       return entries.get(id) ?? null;
     },
 
     async query(filter, opts) {
+      purgeExpiredEntries();
       // honor AbortSignal. Check at entry and again after each
       // filter stage so long-running queries over large stores can be
       // interrupted promptly.
@@ -387,6 +440,7 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
     },
 
     async update(id, updates) {
+      purgeExpiredEntry(id);
       const existing = entries.get(id);
       if (!existing) {
         throw new HarnessError(
@@ -409,6 +463,7 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
     },
 
     async delete(id) {
+      purgeExpiredEntry(id);
       const entry = entries.get(id);
       if (entry) {
         removeFromIndexes(entry);
@@ -419,6 +474,7 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
     },
 
     async compact(policy) {
+      purgeExpiredEntries();
       if (policy.maxEntries !== undefined && policy.maxEntries < 0) {
         throw new HarnessError(
           'CompactionPolicy.maxEntries must be non-negative',
@@ -480,16 +536,21 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
     },
 
     async count() {
+      purgeExpiredEntries();
       return entries.size;
     },
 
     async clear() {
       entries.clear();
+      keyIndex.clear();
+      versionIndex.clear();
+      expiryIndex.clear();
       tagIndex.clear();
       gradeIndex.clear();
     },
 
     async searchByVector(options: VectorSearchOptions) {
+      purgeExpiredEntries();
       const { embedding, limit = 10, minScore = 0 } = options;
       // Binary min-heap of size <= limit. Insert/replace is O(log k),
       // versus the previous O(k) double-scan on every replacement.
@@ -533,6 +594,61 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
       }
 
       return heap.sort((a, b) => b.score - a.score);
+    },
+
+    async setWithTtl(key: string, value: unknown, ttlMs: number) {
+      if (!Number.isFinite(ttlMs) || ttlMs <= 0) {
+        throw new HarnessError(
+          'ttlMs must be a positive finite number',
+          HarnessErrorCode.CORE_INVALID_CONFIG,
+          'Provide a positive TTL in milliseconds',
+        );
+      }
+      const existingId = keyIndex.get(key);
+      const content = serializeMemoryValue(value);
+      if (existingId) {
+        const updated = await this.update(existingId, { content, grade: 'ephemeral' });
+        expiryIndex.set(updated.id, Date.now() + ttlMs);
+        versionIndex.set(key, (versionIndex.get(key) ?? 0) + 1);
+        return;
+      }
+      const entry = await this.write({ key, content, grade: 'ephemeral' });
+      expiryIndex.set(entry.id, Date.now() + ttlMs);
+      versionIndex.set(key, 1);
+    },
+
+    async updateWithVersion<T>(
+      key: string,
+      expectedVersion: number,
+      updater: (value: T | undefined) => T,
+    ) {
+      if (!Number.isInteger(expectedVersion) || expectedVersion < 0) {
+        throw new HarnessError(
+          'expectedVersion must be a non-negative integer',
+          HarnessErrorCode.CORE_INVALID_CONFIG,
+        );
+      }
+      const currentVersion = versionIndex.get(key) ?? 0;
+      if (currentVersion !== expectedVersion) {
+        throw new HarnessError(
+          `Version conflict for key "${key}": expected ${expectedVersion}, found ${currentVersion}`,
+          HarnessErrorCode.STORE_VERSION_CONFLICT,
+        );
+      }
+
+      const existingId = keyIndex.get(key);
+      const existing = existingId ? await this.read(existingId) : null;
+      const nextValue = updater(existing ? parseMemoryValue<T>(existing.content) : undefined);
+      const nextContent = serializeMemoryValue(nextValue);
+      const newVersion = currentVersion + 1;
+
+      if (existing) {
+        await this.update(existing.id, { content: nextContent });
+      } else {
+        await this.write({ key, content: nextContent, grade: 'useful' });
+      }
+      versionIndex.set(key, newVersion);
+      return { newVersion };
     },
   };
 }

@@ -15,6 +15,55 @@ Until then, read the source.
 Breaking + observable changes that downstream consumers on a SHA-pinned
 build should know about:
 
+- Prompt module: `SkillEngine` has been removed. Use `createSkillRegistry()`
+  or `createAsyncSkillRegistry()` instead. The new registries are stateless:
+  they store immutable skill definitions, render prompt text, and validate
+  declared tool requirements, but they do not model staged transitions.
+  Migration:
+  ```diff
+  -import { createSkillEngine } from 'harness-one/prompt';
+  +import { createSkillRegistry } from 'harness-one/prompt';
+  +
+  +const skills = createSkillRegistry();
+  +skills.register({
+  +  id: 'planner',
+  +  description: 'Planning instructions',
+  +  content: 'Plan before acting.',
+  +  requiredTools: ['search'],
+  +});
+  +const rendered = skills.render(['planner']);
+  +const validation = skills.validate(['planner'], ['search']);
+  +```
+- Naming cleanup across starter and recovery surfaces:
+  - `createRoundRobinStrategy` -> `createBasicRoundRobinStrategy`
+  - `createRandomStrategy` -> `createBasicRandomStrategy`
+  - `createFirstAvailableStrategy` -> `createBasicFirstAvailableStrategy`
+  - `createFixedSizeChunking` -> `createBasicFixedSizeChunking`
+  - `createParagraphChunking` -> `createBasicParagraphChunking`
+  - `createSlidingWindowChunking` -> `createBasicSlidingWindowChunking`
+  - `createRelevanceScorer` -> `createBasicRelevanceScorer`
+  - `createFaithfulnessScorer` -> `createBasicFaithfulnessScorer`
+  - `createLengthScorer` -> `createBasicLengthScorer`
+  - `withSelfHealing` -> `withGuardrailRetry`
+  - failure mode `hallucination` -> `repeated_tool_failure`
+- `AgentLoop` now accepts `maxDurationMs` in addition to iteration and token
+  budgets. The limit is wall-clock based and aborts the run with
+  `CORE_DURATION_BUDGET_EXCEEDED` once elapsed time exceeds the configured cap.
+- `AgentLoopHook` adds two interceptable pre-flight hooks:
+  `onBeforeChat(messages)` and `onBeforeToolCall(call)`. They can modify the
+  outgoing payload or abort tool execution before dispatch.
+- Message metadata now supports provenance fields:
+  `meta.provenance` and `meta.provenanceDetail`. User input defaults to
+  `user_input`, trusted system messages to `trusted_system`, tool replies to
+  `tool_result`, and other legacy messages to `unknown` unless callers supply
+  a more specific value.
+- `MemoryStoreCapabilities` and `MemoryStore` were extended for explicit TTL,
+  tenant scoping, and optimistic locking:
+  - capability flags: `supportsTtl`, `supportsTenantScope`,
+    `supportsOptimisticLock`
+  - optional methods: `setWithTtl()`, `scopedView()`, `updateWithVersion()`
+  Existing stores can remain partial implementations, but should advertise
+  unsupported features honestly through the new capability flags.
 - `harness-one/testing` subpath added; mock `AgentAdapter` factories moved
   off `harness-one/advanced`. `createMockAdapter` /
   `createFailingAdapter` / `createStreamingMockAdapter` /

@@ -12,8 +12,8 @@ export const template = `import {
   createRAGPipeline,
   createTextLoader,
   createDocumentArrayLoader,
-  createFixedSizeChunking,
-  createParagraphChunking,
+  createBasicFixedSizeChunking,
+  createBasicParagraphChunking,
   createInMemoryRetriever,
 } from 'harness-one/rag';
 import type { EmbeddingModel } from 'harness-one/rag';
@@ -33,7 +33,7 @@ const pipeline = createRAGPipeline({
     'Retrieval-Augmented Generation combines retrieval with generation.',
     'It grounds LLM answers in your documents.',
   ]),
-  chunking: createFixedSizeChunking({ chunkSize: 200, overlap: 20 }),
+  chunking: createBasicFixedSizeChunking({ chunkSize: 200, overlap: 20 }),
   embedding,
   retriever: createInMemoryRetriever({ embedding }),
   maxChunks: 10_000,
@@ -65,7 +65,7 @@ const paragraphPipeline = createRAGPipeline({
   loader: createDocumentArrayLoader([
     { id: 'multi', content: 'Paragraph one.\\n\\nParagraph two.' },
   ]),
-  chunking: createParagraphChunking(),
+  chunking: createBasicParagraphChunking(),
   embedding,
   retriever: createInMemoryRetriever({ embedding }),
 });

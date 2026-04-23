@@ -3,6 +3,10 @@
 > 评估验证：Runner、Scorer、Generator-Evaluator 分离模式、数据飞轮。
 > 所在包：`@harness-one/devkit`（**非** core）。
 
+`createBasicRelevanceScorer` / `createBasicFaithfulnessScorer` / `createBasicLengthScorer`
+是 starter baseline，不是生产最优评估器。生产场景通常应按领域数据、模型特性和
+成本预算替换成更强的 scorer 组合。
+
 ## 概述
 
 eval / evolve surface 位于 `@harness-one/devkit`（非核心包 `harness-one`），
@@ -17,7 +21,7 @@ faithfulness、length、custom）；`runGeneratorEvaluator` 实现"生成-评估
 ```ts
 import {
   createEvalRunner,
-  createRelevanceScorer,
+  createBasicRelevanceScorer,
   runGeneratorEvaluator,
   extractNewCases,
 } from '@harness-one/devkit';
@@ -68,9 +72,9 @@ EvalRunner 接口：
 **内置 Scorer 工厂**
 
 ```ts
-function createRelevanceScorer(): Scorer      // 输入-输出关键词重叠度
-function createFaithfulnessScorer(): Scorer    // 输出在上下文中的扎根率
-function createLengthScorer(config: { minTokens?: number; maxTokens?: number }): Scorer
+function createBasicRelevanceScorer(): Scorer      // 输入-输出关键词重叠度
+function createBasicFaithfulnessScorer(): Scorer    // 输出在上下文中的扎根率
+function createBasicLengthScorer(config: { minTokens?: number; maxTokens?: number }): Scorer
 function createCustomScorer(config: { name; description; scoreFn }): Scorer
 ```
 

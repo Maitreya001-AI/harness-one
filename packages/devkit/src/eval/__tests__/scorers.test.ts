@@ -1,13 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import {
-  createRelevanceScorer,
-  createFaithfulnessScorer,
-  createLengthScorer,
+  createBasicRelevanceScorer,
+  createBasicFaithfulnessScorer,
+  createBasicLengthScorer,
   createCustomScorer,
 } from '../scorers.js';
 
-describe('createRelevanceScorer', () => {
-  const scorer = createRelevanceScorer();
+describe('createBasicRelevanceScorer', () => {
+  const scorer = createBasicRelevanceScorer();
 
   it('scores high when output contains input keywords', async () => {
     const { score } = await scorer.score(
@@ -31,8 +31,8 @@ describe('createRelevanceScorer', () => {
   });
 });
 
-describe('createFaithfulnessScorer', () => {
-  const scorer = createFaithfulnessScorer();
+describe('createBasicFaithfulnessScorer', () => {
+  const scorer = createBasicFaithfulnessScorer();
 
   it('scores high when output is grounded in context', async () => {
     const { score } = await scorer.score(
@@ -63,28 +63,28 @@ describe('createFaithfulnessScorer', () => {
   });
 });
 
-describe('createLengthScorer', () => {
+describe('createBasicLengthScorer', () => {
   it('scores 1.0 when within bounds', async () => {
-    const scorer = createLengthScorer({ minTokens: 2, maxTokens: 100 });
+    const scorer = createBasicLengthScorer({ minTokens: 2, maxTokens: 100 });
     const { score } = await scorer.score('input', 'hello world this is a test sentence');
     expect(score).toBe(1.0);
   });
 
   it('scores low when below minimum', async () => {
-    const scorer = createLengthScorer({ minTokens: 100 });
+    const scorer = createBasicLengthScorer({ minTokens: 100 });
     const { score } = await scorer.score('input', 'short');
     expect(score).toBeLessThan(1.0);
   });
 
   it('scores low when above maximum', async () => {
-    const scorer = createLengthScorer({ maxTokens: 1 });
+    const scorer = createBasicLengthScorer({ maxTokens: 1 });
     const { score } = await scorer.score('input', 'this has many words');
     expect(score).toBeLessThan(1.0);
   });
 });
 
-describe('createRelevanceScorer edge cases', () => {
-  const scorer = createRelevanceScorer();
+describe('createBasicRelevanceScorer edge cases', () => {
+  const scorer = createBasicRelevanceScorer();
 
   it('returns 1.0 when input and output are identical', async () => {
     const text = 'artificial intelligence machine learning';
@@ -101,24 +101,24 @@ describe('createRelevanceScorer edge cases', () => {
   });
 });
 
-describe('createLengthScorer boundary cases', () => {
+describe('createBasicLengthScorer boundary cases', () => {
   it('scores 1.0 at exactly minTokens boundary', async () => {
     // "hello world" tokenizes to ["hello", "world"] after stopword removal (2 tokens)
-    const scorer = createLengthScorer({ minTokens: 2, maxTokens: 100 });
+    const scorer = createBasicLengthScorer({ minTokens: 2, maxTokens: 100 });
     const { score } = await scorer.score('input', 'hello world');
     expect(score).toBe(1.0);
   });
 
   it('scores 1.0 at exactly maxTokens boundary', async () => {
     // "hello world" tokenizes to ["hello", "world"] — 2 tokens
-    const scorer = createLengthScorer({ minTokens: 0, maxTokens: 2 });
+    const scorer = createBasicLengthScorer({ minTokens: 0, maxTokens: 2 });
     const { score } = await scorer.score('input', 'hello world');
     expect(score).toBe(1.0);
   });
 
   it('scores < 1.0 when one token below minTokens', async () => {
     // "hello" tokenizes to ["hello"] — 1 token, minTokens = 2
-    const scorer = createLengthScorer({ minTokens: 2, maxTokens: 100 });
+    const scorer = createBasicLengthScorer({ minTokens: 2, maxTokens: 100 });
     const { score } = await scorer.score('input', 'hello');
     expect(score).toBeLessThan(1.0);
     expect(score).toBe(0.5); // 1/2 = 0.5
@@ -126,7 +126,7 @@ describe('createLengthScorer boundary cases', () => {
 
   it('scores < 1.0 when one token above maxTokens', async () => {
     // "hello world test" tokenizes to ["hello", "world", "test"] — 3 tokens, maxTokens = 2
-    const scorer = createLengthScorer({ minTokens: 0, maxTokens: 2 });
+    const scorer = createBasicLengthScorer({ minTokens: 0, maxTokens: 2 });
     const { score } = await scorer.score('input', 'hello world test');
     expect(score).toBeLessThan(1.0);
     expect(score).toBeCloseTo(2 / 3, 4); // maxTokens/tokens = 2/3

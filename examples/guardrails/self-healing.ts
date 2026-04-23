@@ -7,19 +7,19 @@
  */
 import {
   createContentFilter,
-  withSelfHealing,
+  withGuardrailRetry,
 } from 'harness-one/guardrails';
 
 async function main() {
   // Create a content filter that blocks profanity
   const filter = createContentFilter({ blocked: ['badword', 'offensive'] });
 
-  // Run a single piece of content through self-healing. `withSelfHealing`
+  // Run a single piece of content through self-healing. `withGuardrailRetry`
   // accepts a flat config bag: the guardrail list, a retry-prompt builder,
   // and a regenerate() hook that re-queries the LLM.
   const initialContent = 'This is perfectly fine content.';
 
-  const result = await withSelfHealing(
+  const result = await withGuardrailRetry(
     {
       maxRetries: 3,
       guardrails: [{ name: filter.name, guard: filter.guard }],

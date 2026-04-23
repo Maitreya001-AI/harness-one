@@ -11,6 +11,7 @@
  */
 
 import type { AgentLoopHook } from './agent-loop-types.js';
+import type { Message, ToolCallRequest } from './types.js';
 
 /** Config accepted by {@link createHookDispatcher}. */
 export interface HookDispatcherConfig {
@@ -31,6 +32,16 @@ export type AgentLoopHookDispatcher = <E extends keyof AgentLoopHook>(
   event: E,
   info: Parameters<NonNullable<AgentLoopHook[E]>>[0],
 ) => void;
+
+/** Async message interceptor dispatcher for `onBeforeChat`. */
+export type BeforeChatHookDispatcher = (
+  info: { messages: readonly Message[]; iteration: number },
+) => Promise<readonly Message[]>;
+
+/** Async tool interceptor dispatcher for `onBeforeToolCall`. */
+export type BeforeToolCallHookDispatcher = (
+  info: { call: ToolCallRequest; iteration: number },
+) => Promise<ToolCallRequest | { abort: true; reason: string }>;
 
 /**
  * Build a `(event, info) => void` dispatcher over the registered hooks.
@@ -76,5 +87,71 @@ export function createHookDispatcher(
         }
       }
     }
+  };
+}
+
+function logHookError(
+  err: unknown,
+  event: string,
+  strictHooks: boolean,
+  logger?: HookDispatcherConfig['logger'],
+): void {
+  if (strictHooks) throw err;
+  if (logger) {
+    try {
+      logger.warn('[harness-one/agent-loop] hook threw', {
+        event,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return;
+    } catch {
+      // Logger itself threw — fall back to console below.
+    }
+  }
+  try {
+    console.error('[harness-one/agent-loop] hook threw:', err);
+  } catch {
+    // Truly unreachable — even console is missing.
+  }
+}
+
+/** Build a sequential async interceptor over registered `onBeforeChat` hooks. */
+export function createBeforeChatHookDispatcher(
+  config: HookDispatcherConfig,
+): BeforeChatHookDispatcher {
+  const { hooks, strictHooks = false, logger } = config;
+  return async ({ messages, iteration }) => {
+    let current = messages;
+    for (const hook of hooks) {
+      if (typeof hook.onBeforeChat !== 'function') continue;
+      try {
+        const next = await hook.onBeforeChat({ messages: current, iteration });
+        if (next !== undefined) current = next;
+      } catch (err) {
+        logHookError(err, 'onBeforeChat', strictHooks, logger);
+      }
+    }
+    return current;
+  };
+}
+
+/** Build a sequential async interceptor over registered `onBeforeToolCall` hooks. */
+export function createBeforeToolCallHookDispatcher(
+  config: HookDispatcherConfig,
+): BeforeToolCallHookDispatcher {
+  const { hooks, strictHooks = false, logger } = config;
+  return async ({ call, iteration }) => {
+    let current: ToolCallRequest | { abort: true; reason: string } = call;
+    for (const hook of hooks) {
+      if (typeof hook.onBeforeToolCall !== 'function') continue;
+      try {
+        if ('abort' in current && current.abort) return current;
+        const next = await hook.onBeforeToolCall({ call: current as ToolCallRequest, iteration });
+        if (next !== undefined) current = next;
+      } catch (err) {
+        logHookError(err, 'onBeforeToolCall', strictHooks, logger);
+      }
+    }
+    return current;
   };
 }

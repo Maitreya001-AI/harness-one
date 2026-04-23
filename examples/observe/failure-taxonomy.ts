@@ -2,7 +2,7 @@
  * Example: Failure Taxonomy for post-mortem analysis
  *
  * Classifies agent failures into categories (tool loop, early stop,
- * budget exceeded, timeout, hallucination) from trace structure.
+ * budget exceeded, timeout, repeated_tool_failure) from trace structure.
  */
 import { createFailureTaxonomy } from 'harness-one/observe';
 import type { Trace } from 'harness-one/observe';

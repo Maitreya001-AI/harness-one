@@ -1,12 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
-import { withSelfHealing } from '../self-healing.js';
+import { withGuardrailRetry } from '../self-healing.js';
 import type { Guardrail } from '../types.js';
 
-describe('withSelfHealing', () => {
+describe('withGuardrailRetry', () => {
   it('passes on first try when all guardrails allow', async () => {
     const guard: Guardrail = () => ({ action: 'allow' });
     const regenerate = vi.fn();
-    const result = await withSelfHealing(
+    const result = await withGuardrailRetry(
       {
         guardrails: [{ name: 'g1', guard }],
         buildRetryPrompt: () => '',
@@ -30,7 +30,7 @@ describe('withSelfHealing', () => {
     const regenerate = vi.fn().mockResolvedValue('fixed content');
     const buildRetryPrompt = vi.fn().mockReturnValue('fix it');
 
-    const result = await withSelfHealing(
+    const result = await withGuardrailRetry(
       {
         guardrails: [{ name: 'g1', guard }],
         buildRetryPrompt,
@@ -50,7 +50,7 @@ describe('withSelfHealing', () => {
     const guard: Guardrail = () => ({ action: 'block', reason: 'always bad' });
     const regenerate = vi.fn().mockResolvedValue('still bad');
 
-    const result = await withSelfHealing(
+    const result = await withGuardrailRetry(
       {
         maxRetries: 2,
         guardrails: [{ name: 'g1', guard }],
@@ -80,7 +80,7 @@ describe('withSelfHealing', () => {
     const buildRetryPrompt = vi.fn().mockReturnValue('fix both');
     const regenerate = vi.fn().mockResolvedValue('better');
 
-    const result = await withSelfHealing(
+    const result = await withGuardrailRetry(
       {
         maxRetries: 3,
         guardrails: [
@@ -104,7 +104,7 @@ describe('withSelfHealing', () => {
     const guard: Guardrail = () => ({ action: 'block', reason: 'bad' });
     const regenerate = vi.fn().mockResolvedValue('still bad');
 
-    const result = await withSelfHealing(
+    const result = await withGuardrailRetry(
       {
         guardrails: [{ name: 'g1', guard }],
         buildRetryPrompt: () => 'fix',
@@ -132,7 +132,7 @@ describe('withSelfHealing', () => {
         };
         const regenerate = vi.fn().mockResolvedValue('still bad');
 
-        const promise = withSelfHealing(
+        const promise = withGuardrailRetry(
           {
             maxRetries: 3,
             guardrails: [{ name: 'g1', guard }],
@@ -176,7 +176,7 @@ describe('withSelfHealing', () => {
         () => new Promise((resolve) => setTimeout(resolve, 60_000)),
       );
 
-      const result = await withSelfHealing(
+      const result = await withGuardrailRetry(
         {
           maxRetries: 2,
           guardrails: [{ name: 'g1', guard }],
@@ -200,7 +200,7 @@ describe('withSelfHealing', () => {
       };
       const regenerate = vi.fn().mockResolvedValue('fixed');
 
-      const result = await withSelfHealing(
+      const result = await withGuardrailRetry(
         {
           maxRetries: 2,
           guardrails: [{ name: 'g1', guard }],
@@ -221,7 +221,7 @@ describe('withSelfHealing', () => {
       const regenerate = vi.fn().mockResolvedValue('still bad');
 
       // Use only 2 retries to keep the real backoff short (1s total backoff)
-      const result = await withSelfHealing(
+      const result = await withGuardrailRetry(
         {
           maxRetries: 2,
           guardrails: [{ name: 'g1', guard }],
@@ -252,7 +252,7 @@ describe('withSelfHealing', () => {
       const guard: Guardrail = () => ({ action: 'block', reason: 'bad' });
       const regenerate = vi.fn().mockResolvedValue('still bad');
 
-      await withSelfHealing(
+      await withGuardrailRetry(
         {
           maxRetries: 4,
           guardrails: [{ name: 'g1', guard }],
@@ -285,7 +285,7 @@ describe('withSelfHealing', () => {
         () => new Promise(() => {}), // never resolves
       );
 
-      const result = await withSelfHealing(
+      const result = await withGuardrailRetry(
         {
           maxRetries: 3,
           guardrails: [{ name: 'g1', guard }],
@@ -308,7 +308,7 @@ describe('withSelfHealing', () => {
       const regenerate = vi.fn();
       const buildRetryPrompt = vi.fn();
 
-      const result = await withSelfHealing(
+      const result = await withGuardrailRetry(
         {
           maxRetries: 5,
           guardrails: [
@@ -336,7 +336,7 @@ describe('withSelfHealing', () => {
       // estimateTokens returns string length as token count
       const estimateTokens = (text: string) => text.length;
 
-      const result = await withSelfHealing(
+      const result = await withGuardrailRetry(
         {
           maxRetries: 5,
           guardrails: [{ name: 'g1', guard }],
@@ -366,7 +366,7 @@ describe('withSelfHealing', () => {
       const regenerate = vi.fn().mockResolvedValue('fixed');
       const estimateTokens = (text: string) => text.length;
 
-      const result = await withSelfHealing(
+      const result = await withGuardrailRetry(
         {
           maxRetries: 5,
           guardrails: [{ name: 'g1', guard }],
@@ -386,7 +386,7 @@ describe('withSelfHealing', () => {
 
     it('returns totalTokens as undefined when estimateTokens is not provided', async () => {
       const guard: Guardrail = () => ({ action: 'allow' });
-      const result = await withSelfHealing(
+      const result = await withGuardrailRetry(
         {
           guardrails: [{ name: 'g1', guard }],
           buildRetryPrompt: () => '',
@@ -407,7 +407,7 @@ describe('withSelfHealing', () => {
     };
     const regenerate = vi.fn().mockResolvedValue('fixed');
 
-    const result = await withSelfHealing(
+    const result = await withGuardrailRetry(
       {
         guardrails: [{ name: 'g1', guard }],
         buildRetryPrompt: () => 'fix',
@@ -421,7 +421,7 @@ describe('withSelfHealing', () => {
   });
 
   // ===========================================================================
-  // Fix 6: Self-healing improvements
+  // Fix 6: guardrail retry improvements
   // ===========================================================================
 
   describe('Fix 6: jitter in exponential backoff', () => {
@@ -439,7 +439,7 @@ describe('withSelfHealing', () => {
       const guard: Guardrail = () => ({ action: 'block', reason: 'bad' });
       const regenerate = vi.fn().mockResolvedValue('still bad');
 
-      await withSelfHealing(
+      await withGuardrailRetry(
         {
           maxRetries: 2,
           guardrails: [{ name: 'g1', guard }],
@@ -466,7 +466,7 @@ describe('withSelfHealing', () => {
       const controller = new AbortController();
       controller.abort();
 
-      const result = await withSelfHealing(
+      const result = await withGuardrailRetry(
         {
           maxRetries: 5,
           guardrails: [{ name: 'g1', guard }],
@@ -499,7 +499,7 @@ describe('withSelfHealing', () => {
 
       const regenerate = vi.fn().mockResolvedValue('still bad');
 
-      const result = await withSelfHealing(
+      const result = await withGuardrailRetry(
         {
           maxRetries: 10,
           guardrails: [{ name: 'g1', guard }],
@@ -519,7 +519,7 @@ describe('withSelfHealing', () => {
 
     it('passes without signal (backward compatibility)', async () => {
       const guard: Guardrail = () => ({ action: 'allow' });
-      const result = await withSelfHealing(
+      const result = await withGuardrailRetry(
         {
           guardrails: [{ name: 'g1', guard }],
           buildRetryPrompt: () => '',
@@ -549,7 +549,7 @@ describe('withSelfHealing', () => {
         return realClearTimeout(id as ReturnType<typeof setTimeout>);
       });
 
-      const promise = withSelfHealing(
+      const promise = withGuardrailRetry(
         {
           maxRetries: 3,
           guardrails: [{ name: 'g1', guard }],
@@ -597,7 +597,7 @@ describe('withSelfHealing', () => {
         return realSetTimeout(fn as () => void, 0, ...args);
       });
       const controller = new AbortController();
-      const result = await withSelfHealing(
+      const result = await withGuardrailRetry(
         {
           maxRetries: 3,
           guardrails: [{ name: 'g1', guard: cb }],
@@ -634,7 +634,7 @@ describe('withSelfHealing', () => {
       const buildRetryPrompt = vi.fn().mockReturnValue('fix');
       const regenerate = vi.fn().mockResolvedValue('still bad');
 
-      await withSelfHealing(
+      await withGuardrailRetry(
         {
           maxRetries: 2,
           guardrails: [
@@ -672,7 +672,7 @@ describe('withSelfHealing', () => {
       const buildRetryPrompt = vi.fn().mockReturnValue('fix');
       const regenerate = vi.fn().mockResolvedValue('fixed');
 
-      const result = await withSelfHealing(
+      const result = await withGuardrailRetry(
         {
           maxRetries: 3,
           guardrails: [
@@ -703,7 +703,7 @@ describe('withSelfHealing', () => {
         return realSetTimeout(fn as () => void, 0, ...args);
       });
 
-      const result = await withSelfHealing(
+      const result = await withGuardrailRetry(
         {
           maxRetries: 3,
           guardrails: [{ name: 'g1', guard }],
@@ -733,7 +733,7 @@ describe('withSelfHealing', () => {
       );
       const estimateTokens = (text: string) => text.length;
 
-      const result = await withSelfHealing(
+      const result = await withGuardrailRetry(
         {
           maxRetries: 2,
           guardrails: [{ name: 'g1', guard }],
@@ -764,7 +764,7 @@ describe('withSelfHealing', () => {
         return realSetTimeout(fn as () => void, 0, ...args);
       });
 
-      const result = await withSelfHealing(
+      const result = await withGuardrailRetry(
         {
           maxRetries: 3,
           guardrails: [{ name: 'g1', guard }],
@@ -815,7 +815,7 @@ describe('withSelfHealing', () => {
       };
       const regenerate = vi.fn().mockResolvedValue('fixed');
 
-      await withSelfHealing(
+      await withGuardrailRetry(
         {
           maxRetries: 2,
           guardrails: [{ name: 'g1', guard }],
@@ -871,7 +871,7 @@ describe('withSelfHealing', () => {
       const guard: Guardrail = () => ({ action: 'block', reason: 'bad' });
       const regenerate = vi.fn().mockRejectedValue(new Error('API down'));
 
-      const result = await withSelfHealing(
+      const result = await withGuardrailRetry(
         {
           maxRetries: 2,
           guardrails: [{ name: 'g1', guard }],
@@ -911,7 +911,7 @@ describe('withSelfHealing', () => {
         return realSetTimeout(fn as () => void, 0, ...args);
       });
 
-      await withSelfHealing(
+      await withGuardrailRetry(
         {
           maxRetries: 2,
           guardrails: [{ name: 'g1', guard }],
@@ -947,7 +947,7 @@ describe('withSelfHealing', () => {
         return realSetTimeout(fn as () => void, 0, ...args);
       });
 
-      const result = await withSelfHealing(
+      const result = await withGuardrailRetry(
         {
           maxRetries: 2,
           guardrails: [{ name: 'g1', guard }],

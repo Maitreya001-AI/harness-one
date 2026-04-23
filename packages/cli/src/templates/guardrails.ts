@@ -15,7 +15,7 @@ export const template = `import {
   createRateLimiter,
   runInput,
   runOutput,
-  withSelfHealing,
+  withGuardrailRetry,
 } from 'harness-one/guardrails';
 
 // 1. Create guardrails
@@ -41,8 +41,8 @@ console.log('Input passed:', inputResult.passed);
 const outputResult = await runOutput(pipeline, { content: 'Sure, here is your answer.' });
 console.log('Output passed:', outputResult.passed);
 
-// 5. Self-healing: auto-retry when guardrails block
-const healed = await withSelfHealing({
+// 5. Guardrail retry: auto-retry when guardrails block
+const healed = await withGuardrailRetry({
   maxRetries: 3,
   guardrails: [filter],
   buildRetryPrompt: (content, failures) =>

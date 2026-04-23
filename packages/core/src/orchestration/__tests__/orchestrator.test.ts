@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createOrchestrator } from '../orchestrator.js';
 import {
-  createRoundRobinStrategy,
-  createRandomStrategy,
-  createFirstAvailableStrategy,
+  createBasicRoundRobinStrategy,
+  createBasicRandomStrategy,
+  createBasicFirstAvailableStrategy,
 } from '../strategies.js';
 import { HarnessError, HarnessErrorCode} from '../../core/errors.js';
 import type { OrchestratorEvent, DelegationStrategy, AgentRegistration, DelegationTask } from '../types.js';
@@ -690,9 +690,9 @@ describe('createOrchestrator', () => {
   });
 });
 
-describe('createRoundRobinStrategy', () => {
+describe('createBasicRoundRobinStrategy', () => {
   it('cycles through idle agents', () => {
-    const strategy = createRoundRobinStrategy();
+    const strategy = createBasicRoundRobinStrategy();
     const agents: AgentRegistration[] = [
       { id: 'a1', name: 'W1', status: 'idle' },
       { id: 'a2', name: 'W2', status: 'idle' },
@@ -707,7 +707,7 @@ describe('createRoundRobinStrategy', () => {
   });
 
   it('skips non-idle agents', () => {
-    const strategy = createRoundRobinStrategy();
+    const strategy = createBasicRoundRobinStrategy();
     const agents: AgentRegistration[] = [
       { id: 'a1', name: 'W1', status: 'running' },
       { id: 'a2', name: 'W2', status: 'idle' },
@@ -720,7 +720,7 @@ describe('createRoundRobinStrategy', () => {
   });
 
   it('returns undefined when no idle agents', () => {
-    const strategy = createRoundRobinStrategy();
+    const strategy = createBasicRoundRobinStrategy();
     const agents: AgentRegistration[] = [
       { id: 'a1', name: 'W1', status: 'running' },
       { id: 'a2', name: 'W2', status: 'completed' },
@@ -729,12 +729,12 @@ describe('createRoundRobinStrategy', () => {
   });
 
   it('returns undefined for empty agent list', () => {
-    const strategy = createRoundRobinStrategy();
+    const strategy = createBasicRoundRobinStrategy();
     expect(strategy.select([], { description: 'task' })).toBeUndefined();
   });
 
   it('integrates with orchestrator', async () => {
-    const orch = createOrchestrator({ strategy: createRoundRobinStrategy() });
+    const orch = createOrchestrator({ strategy: createBasicRoundRobinStrategy() });
     orch.register('a1', 'Worker1');
     orch.register('a2', 'Worker2');
     expect(await orch.delegate({ description: 'task1' })).toBe('a1');
@@ -743,14 +743,14 @@ describe('createRoundRobinStrategy', () => {
   });
 });
 
-describe('createRandomStrategy', () => {
+describe('createBasicRandomStrategy', () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
   it('picks a random idle agent', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0);
-    const strategy = createRandomStrategy();
+    const strategy = createBasicRandomStrategy();
     const agents: AgentRegistration[] = [
       { id: 'a1', name: 'W1', status: 'idle' },
       { id: 'a2', name: 'W2', status: 'idle' },
@@ -760,7 +760,7 @@ describe('createRandomStrategy', () => {
 
   it('skips non-idle agents', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0);
-    const strategy = createRandomStrategy();
+    const strategy = createBasicRandomStrategy();
     const agents: AgentRegistration[] = [
       { id: 'a1', name: 'W1', status: 'running' },
       { id: 'a2', name: 'W2', status: 'idle' },
@@ -769,7 +769,7 @@ describe('createRandomStrategy', () => {
   });
 
   it('returns undefined when no idle agents', () => {
-    const strategy = createRandomStrategy();
+    const strategy = createBasicRandomStrategy();
     const agents: AgentRegistration[] = [
       { id: 'a1', name: 'W1', status: 'running' },
     ];
@@ -777,13 +777,13 @@ describe('createRandomStrategy', () => {
   });
 
   it('returns undefined for empty agent list', () => {
-    const strategy = createRandomStrategy();
+    const strategy = createBasicRandomStrategy();
     expect(strategy.select([], { description: 'task' })).toBeUndefined();
   });
 
   it('picks last agent when random is close to 1', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.99);
-    const strategy = createRandomStrategy();
+    const strategy = createBasicRandomStrategy();
     const agents: AgentRegistration[] = [
       { id: 'a1', name: 'W1', status: 'idle' },
       { id: 'a2', name: 'W2', status: 'idle' },
@@ -793,7 +793,7 @@ describe('createRandomStrategy', () => {
 
   it('integrates with orchestrator', async () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.5);
-    const orch = createOrchestrator({ strategy: createRandomStrategy() });
+    const orch = createOrchestrator({ strategy: createBasicRandomStrategy() });
     orch.register('a1', 'Worker1');
     orch.register('a2', 'Worker2');
     const result = await orch.delegate({ description: 'task' });
@@ -802,9 +802,9 @@ describe('createRandomStrategy', () => {
   });
 });
 
-describe('createFirstAvailableStrategy', () => {
+describe('createBasicFirstAvailableStrategy', () => {
   it('picks the first idle agent', () => {
-    const strategy = createFirstAvailableStrategy();
+    const strategy = createBasicFirstAvailableStrategy();
     const agents: AgentRegistration[] = [
       { id: 'a1', name: 'W1', status: 'running' },
       { id: 'a2', name: 'W2', status: 'idle' },
@@ -814,7 +814,7 @@ describe('createFirstAvailableStrategy', () => {
   });
 
   it('returns undefined when no idle agents', () => {
-    const strategy = createFirstAvailableStrategy();
+    const strategy = createBasicFirstAvailableStrategy();
     const agents: AgentRegistration[] = [
       { id: 'a1', name: 'W1', status: 'running' },
       { id: 'a2', name: 'W2', status: 'failed' },
@@ -823,12 +823,12 @@ describe('createFirstAvailableStrategy', () => {
   });
 
   it('returns undefined for empty agent list', () => {
-    const strategy = createFirstAvailableStrategy();
+    const strategy = createBasicFirstAvailableStrategy();
     expect(strategy.select([], { description: 'task' })).toBeUndefined();
   });
 
   it('always returns the same first idle agent', () => {
-    const strategy = createFirstAvailableStrategy();
+    const strategy = createBasicFirstAvailableStrategy();
     const agents: AgentRegistration[] = [
       { id: 'a1', name: 'W1', status: 'idle' },
       { id: 'a2', name: 'W2', status: 'idle' },
@@ -838,7 +838,7 @@ describe('createFirstAvailableStrategy', () => {
   });
 
   it('integrates with orchestrator', async () => {
-    const orch = createOrchestrator({ strategy: createFirstAvailableStrategy() });
+    const orch = createOrchestrator({ strategy: createBasicFirstAvailableStrategy() });
     orch.register('a1', 'Worker1');
     orch.register('a2', 'Worker2');
     expect(await orch.delegate({ description: 'task' })).toBe('a1');

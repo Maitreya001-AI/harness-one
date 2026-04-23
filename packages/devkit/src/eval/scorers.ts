@@ -22,11 +22,11 @@ import type { Scorer } from './types.js';
  *
  * @example
  * ```ts
- * const scorer = createRelevanceScorer();
+ * const scorer = createBasicRelevanceScorer();
  * const { score } = await scorer.score('What is AI?', 'AI is artificial intelligence.');
  * ```
  */
-export function createRelevanceScorer(): Scorer {
+export function createBasicRelevanceScorer(): Scorer {
   return {
     name: 'relevance',
     description: 'Measures keyword overlap between input and output',
@@ -60,15 +60,15 @@ export function createRelevanceScorer(): Scorer {
  *   which may mask unfaithful outputs.
  *
  * For production use, consider an LLM-based faithfulness scorer that can detect
- * paraphrased claims, hallucinations, and nuanced grounding issues.
+ * paraphrased claims, unsupported assertions, and nuanced grounding issues.
  *
  * @example
  * ```ts
- * const scorer = createFaithfulnessScorer();
+ * const scorer = createBasicFaithfulnessScorer();
  * const { score } = await scorer.score('question', 'answer based on context', 'the context');
  * ```
  */
-export function createFaithfulnessScorer(): Scorer {
+export function createBasicFaithfulnessScorer(): Scorer {
   return {
     name: 'faithfulness',
     description: 'Measures how well output claims are grounded in provided context',
@@ -110,10 +110,10 @@ export function createFaithfulnessScorer(): Scorer {
  *
  * @example
  * ```ts
- * const scorer = createLengthScorer({ minTokens: 10, maxTokens: 200 });
+ * const scorer = createBasicLengthScorer({ minTokens: 10, maxTokens: 200 });
  * ```
  */
-export function createLengthScorer(config: {
+export function createBasicLengthScorer(config: {
   minTokens?: number;
   maxTokens?: number;
 }): Scorer {

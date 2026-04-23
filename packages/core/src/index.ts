@@ -56,6 +56,7 @@ export type {
   Role,
   Message,
   MessageMeta,
+  MessageProvenance,
   SystemMessage,
   TrustedSystemBrand,
   UserMessage,

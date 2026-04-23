@@ -16,6 +16,7 @@ import {
 export interface ResolvedAgentLoopLimits {
   readonly maxIterations: number;
   readonly maxTotalTokens: number;
+  readonly maxDurationMs?: number;
   readonly maxStreamBytes: number;
   readonly maxToolArgBytes: number;
   readonly toolTimeoutMs?: number | undefined;
@@ -49,6 +50,20 @@ export function validateAgentLoopConfig(limits: ResolvedAgentLoopLimits): void {
       'maxTotalTokens must be > 0',
       HarnessErrorCode.CORE_INVALID_CONFIG,
       'Provide a positive maxTotalTokens value',
+    );
+  }
+  if (limits.maxDurationMs !== undefined && !Number.isFinite(limits.maxDurationMs)) {
+    throw new HarnessError(
+      'maxDurationMs must be a finite number',
+      HarnessErrorCode.CORE_INVALID_CONFIG,
+      'Provide a finite maxDurationMs value in milliseconds',
+    );
+  }
+  if (limits.maxDurationMs !== undefined && limits.maxDurationMs <= 0) {
+    throw new HarnessError(
+      'maxDurationMs must be > 0',
+      HarnessErrorCode.CORE_INVALID_CONFIG,
+      'Provide a positive maxDurationMs value',
     );
   }
   if (limits.maxStreamBytes <= 0) {

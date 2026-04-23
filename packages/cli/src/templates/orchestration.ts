@@ -13,13 +13,13 @@ export const template = `import {
   createAgentPool,
   createHandoff,
   createContextBoundary,
-  createRoundRobinStrategy,
+  createBasicRoundRobinStrategy,
   spawnSubAgent,
 } from 'harness-one/orchestration';
 
 // 1. Create an orchestrator with a round-robin delegation strategy
 const orchestrator = createOrchestrator({
-  strategy: createRoundRobinStrategy(),
+  strategy: createBasicRoundRobinStrategy(),
   mode: 'cooperative',
 });
 
