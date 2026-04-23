@@ -1,8 +1,12 @@
 # @harness-one/devkit
 
-Developer-time toolkit for `harness-one`: evaluation runners, scorers, generator-evaluator pipelines, component registry, drift detection, and taste-coding utilities.
+Developer-time toolkit for `harness-one`: evaluation runners, starter scorers,
+generator-evaluator loops, data-flywheel helpers, component registry, drift
+detection, and taste-coding utilities.
 
-Eval + evolve dev-tooling ships from this sibling package — they are not subpaths of `harness-one`. The runtime architecture-checker stays in core under `harness-one/evolve-check`; everything dev-tool-shaped lives here.
+Eval + evolve tooling ships from this sibling package rather than a core
+subpath. The runtime architecture-checker stays in core under
+`harness-one/evolve-check`; everything dev-tool-shaped lives here.
 
 ## Install
 
@@ -10,56 +14,55 @@ Eval + evolve dev-tooling ships from this sibling package — they are not subpa
 pnpm add -D @harness-one/devkit
 ```
 
-`harness-one` is declared as a peer dependency — devkit ships dev-time utilities; the consumer ships the runtime.
+`harness-one` is a peer dependency. Node 18+.
 
-Node 18+.
-
-## What's inside
-
-### Eval
+## Eval
 
 ```ts
 import {
   createEvalRunner,
-  createGeneratorEvaluator,
   createBasicRelevanceScorer,
-  createGroundednessScorer,
-  createCoherenceScorer,
+  createBasicFaithfulnessScorer,
+  createBasicLengthScorer,
+  createCustomScorer,
+  runGeneratorEvaluator,
+  extractNewCases,
 } from '@harness-one/devkit';
 ```
 
-- **`createEvalRunner`** — runs a dataset through any harness-one `AgentLoop` / `createSecurePreset` instance and emits scored results.
-- **`createGeneratorEvaluator`** — pairs a generator (the harness under test) with one or more scorer guardrails for offline benchmarks.
-- **Scorers** — relevance, groundedness, coherence, and a small set of drop-in scorers for common evaluation rubrics.
+- **`createEvalRunner`** runs datasets through scorer pipelines and produces reports.
+- **`createBasicRelevanceScorer` / `createBasicFaithfulnessScorer` / `createBasicLengthScorer`** are baseline starter scorers, not production-optimal judges.
+- **`createCustomScorer`** lets you plug in domain-specific or LLM-as-judge scoring.
+- **`runGeneratorEvaluator`** implements the generate → evaluate → feedback → retry loop.
+- **`extractNewCases`** turns low-scoring results into new regression cases for a data flywheel.
 
-### Evolve
+## Evolve
 
 ```ts
 import {
   createComponentRegistry,
   createDriftDetector,
-  createTasteCoder,
+  createTasteCodingRegistry,
 } from '@harness-one/devkit';
 ```
 
-- **`createComponentRegistry`** — long-lived registry of versioned components (prompts, tool definitions, guardrails) with rollback hooks.
-- **`createDriftDetector`** — periodic comparison of live behavior vs a recorded baseline, emitting drift signals through the harness's `MetricsPort` / logger.
-- **`createTasteCoder`** — lightweight A/B helper for prompt-engineering iterations during dev/staging.
+- **`createComponentRegistry`** tracks versioned prompts, tool definitions, guardrails, and retirement conditions.
+- **`createDriftDetector`** compares live signals against a stored baseline and reports drift severity.
+- **`createTasteCodingRegistry`** stores postmortem-derived engineering rules and can export them as Markdown.
 
-### Architecture rules
+## Architecture Rules
 
-The runtime architecture rule engine (`createArchitectureChecker`, `noCircularDepsRule`, `layerDependencyRule`, …) stays on the core's `harness-one/evolve-check` subpath because it gates production code.
-
-## Imports
+The runtime architecture rule engine lives on the core subpath:
 
 ```ts
-import { createEvalRunner } from '@harness-one/devkit';
-import { createComponentRegistry, createDriftDetector } from '@harness-one/devkit';
 import { createArchitectureChecker } from 'harness-one/evolve-check';
 ```
 
+That split is intentional: architecture rules can gate production code, while
+devkit stays purely developer-time.
+
 ## Related
 
-- [`harness-one`](../core) — runtime the devkit operates on.
-- [`@harness-one/cli`](../cli) — `harness-one init --modules eval` scaffolds a starter project that imports devkit out of the box.
-- Repository [`CHANGELOG.md`](../../CHANGELOG.md).
+- [`harness-one`](../core) is the runtime this package evaluates and evolves.
+- [`@harness-one/cli`](../cli) can scaffold starter projects that already import devkit.
+- Root migration notes live in [MIGRATION.md](../../MIGRATION.md).

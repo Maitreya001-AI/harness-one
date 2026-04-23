@@ -541,20 +541,28 @@ await relay.save({
 
 **File-system store**: `createFileSystemStore` serializes each entry as an individual JSON file. An index file maps keys to IDs. `update()` performs a full read-modify-write cycle inside the index lock for atomicity — partial updates never leave the store in an inconsistent state. Raw I/O is delegated to `fs-io.ts`, keeping the business logic layer testable in isolation.
 
-### harness-one/eval -- Evaluation & Validation
+### @harness-one/devkit -- Evaluation & Validation
 
-Evaluation runner with built-in scorers (relevance, faithfulness, length), custom scorers, quality gates, generator-evaluator loops, and data flywheel extraction.
+Evaluation runner with starter scorers (relevance, faithfulness, length),
+custom scorers, quality gates, generator-evaluator loops, and data-flywheel
+extraction.
 
 ```typescript
 import {
   createEvalRunner,
   createBasicRelevanceScorer,
+  createBasicFaithfulnessScorer,
   createBasicLengthScorer,
   runGeneratorEvaluator,
-} from 'harness-one/eval';
+  extractNewCases,
+} from '@harness-one/devkit';
 
 const runner = createEvalRunner({
-  scorers: [createBasicRelevanceScorer(), createBasicLengthScorer({ minTokens: 10, maxTokens: 200 })],
+  scorers: [
+    createBasicRelevanceScorer(),
+    createBasicFaithfulnessScorer(),
+    createBasicLengthScorer({ minTokens: 10, maxTokens: 200 }),
+  ],
   passThreshold: 0.7,
   overallPassRate: 0.8,
 });
@@ -575,22 +583,36 @@ const result = await runGeneratorEvaluator({
     feedback: 'Too short',
   }),
 }, 'Explain closures');
+
+const newCases = extractNewCases(report, { scoreThreshold: 0.5, maxNewCases: 5 });
 ```
 
-### harness-one/evolve -- Continuous Evolution
+### @harness-one/devkit + harness-one/evolve-check -- Continuous Evolution
 
-Component registry with model assumptions and retirement conditions, drift detection for tracking metric changes, architecture rule enforcement, and taste-coding registries for institutional knowledge.
+Component registry with model assumptions and retirement conditions, drift
+detection for tracking metric changes, architecture rule enforcement, and
+taste-coding registries for institutional knowledge.
 
-The drift detector supports configurable zero-baseline thresholds so metrics that start at zero do not produce false positives. The architecture checker uses exact path-segment matching (not substring matching) to avoid false positive rule violations. `ValidationResult` includes an `unsupportedKeywords` array when a JSON Schema contains keywords the validator does not implement. The data flywheel uses length-prefix encoding in its hashing scheme to prevent hash collisions across different input shapes. Component retirement conditions support AND clauses for multi-condition gates.
+The drift detector supports configurable zero-baseline thresholds so metrics
+that start at zero do not produce false positives. The architecture checker
+uses exact path-segment matching (not substring matching) to avoid false
+positive rule violations. `ValidationResult` includes an
+`unsupportedKeywords` array when a JSON Schema contains keywords the validator
+does not implement. The data flywheel uses length-prefix encoding in its
+hashing scheme to prevent hash collisions across different input shapes.
+Component retirement conditions support AND clauses for multi-condition gates.
 
 ```typescript
 import {
   createComponentRegistry,
   createDriftDetector,
+  createTasteCodingRegistry,
+} from '@harness-one/devkit';
+import {
   createArchitectureChecker,
   noCircularDepsRule,
   layerDependencyRule,
-} from 'harness-one/evolve';
+} from 'harness-one/evolve-check';
 
 // Track components and their model assumptions
 const registry = createComponentRegistry();
@@ -608,6 +630,17 @@ registry.register({
 const detector = createDriftDetector({ zeroThreshold: 0.01 });
 detector.setBaseline('ctx-packer', { latencyP50: 12, cacheHitRate: 0.85 });
 const drift = detector.check('ctx-packer', { latencyP50: 18, cacheHitRate: 0.72 });
+
+// Encode postmortem rules as a reviewable rulebook
+const taste = createTasteCodingRegistry();
+taste.addRule({
+  id: 'validate-json-boundaries',
+  pattern: 'JSON.parse(',
+  rule: 'Validate parsed JSON before narrowing it into domain types.',
+  enforcement: 'lint',
+  createdFrom: 'Corrupt persistence payload incident',
+  createdAt: '2025-01-01',
+});
 
 // Enforce architecture rules (exact path-segment matching)
 const checker = createArchitectureChecker();
