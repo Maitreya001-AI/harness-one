@@ -12,6 +12,8 @@ export function auditProject(cwd: string): {
     used: ModuleName[];
     unused: ModuleName[];
     fileCount: number;
+    moduleCounts: Readonly<Record<ModuleName, number>>;
+    totalImportSites: number;
 };
 
 // @public (undocumented)
@@ -37,14 +39,10 @@ export const EXIT_SUCCESS = 0;
 export const FILE_NAMES: Record<ModuleName, string>;
 
 // @public (undocumented)
-export function getTemplate(mod: ModuleName): string;
+export function formatImportSiteCount(count: number): string;
 
 // @public (undocumented)
-export function maturityLabel(usedCount: number, c: {
-    green: (s: string) => string;
-    yellow: (s: string) => string;
-    red: (s: string) => string;
-}): string;
+export function getTemplate(mod: ModuleName): string;
 
 // @public (undocumented)
 export const MODULE_DESCRIPTIONS: Readonly<Record<ModuleName, string>>;

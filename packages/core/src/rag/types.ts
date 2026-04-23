@@ -44,18 +44,47 @@ export interface ChunkingStrategy {
   chunk(document: Document): DocumentChunk[];
 }
 
+/** Per-call options for embedding operations. */
+export interface EmbedOptions {
+  readonly signal?: AbortSignal;
+}
+
+/** Per-call options for retriever indexing operations. */
+export interface IndexOptions {
+  readonly signal?: AbortSignal;
+}
+
+/** Per-call options for retrieval operations. */
+export interface RetrieveOptions {
+  readonly limit?: number;
+  readonly minScore?: number;
+  readonly filter?: Record<string, unknown>;
+  readonly signal?: AbortSignal;
+  /** Per-tenant cache partition key for retrievers that support it. */
+  readonly tenantId?: string;
+  /** Alternative partition key name (for org/workspace scope). */
+  readonly scope?: string;
+}
+
 /** Interface for generating embeddings for text. */
 export interface EmbeddingModel {
-  embed(texts: readonly string[]): Promise<readonly (readonly number[])[]>;
+  embed(
+    texts: readonly string[],
+    options?: EmbedOptions,
+  ): Promise<readonly (readonly number[])[]>;
   readonly dimensions: number;
+  /** Optional provider-declared batch ceiling that callers should honor. */
+  readonly maxBatchSize?: number;
 }
 
 /** Interface for retrieving relevant chunks given a query. */
 export interface Retriever {
   /** Index chunks for later retrieval. */
-  index(chunks: readonly DocumentChunk[]): Promise<void>;
+  index(chunks: readonly DocumentChunk[], options?: IndexOptions): Promise<void>;
   /** Retrieve the most relevant chunks for a query. */
-  retrieve(query: string, options?: { limit?: number; minScore?: number }): Promise<RetrievalResult[]>;
+  retrieve(query: string, options?: RetrieveOptions): Promise<RetrievalResult[]>;
+  /** Optional reset hook used by in-memory implementations and testkits. */
+  clear?(): void | Promise<void>;
 }
 
 /** Configuration for a RAG pipeline. */
@@ -110,7 +139,7 @@ export interface RAGPipeline {
   /** Ingest pre-loaded documents directly (skips loader). */
   ingestDocuments(documents: Document[]): Promise<number>;
   /** Query: embed query -> retrieve relevant chunks. */
-  query(text: string, options?: { limit?: number; minScore?: number }): Promise<RetrievalResult[]>;
+  query(text: string, options?: RetrieveOptions): Promise<RetrievalResult[]>;
   /** Get all indexed chunks. */
   getChunks(): DocumentChunk[];
   /** Clear all indexed chunks. */

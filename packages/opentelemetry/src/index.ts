@@ -300,6 +300,10 @@ export function createOTelExporter(config?: OTelExporterConfig): OTelTraceExport
         }
 
         attributes.applyAttributes(otelSpan, harnessSpan.attributes);
+        const harnessErrorCode = harnessSpan.attributes['harness.error.code'];
+        if (typeof harnessErrorCode === 'string') {
+          otelSpan.setAttribute('exception.type', harnessErrorCode);
+        }
 
         for (const event of harnessSpan.events) {
           const attrs = attributes.filterEventAttributes(event.attributes);

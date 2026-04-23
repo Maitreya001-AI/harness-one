@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createInMemoryRetriever } from '../retriever.js';
 import type { DocumentChunk, EmbeddingModel } from '../types.js';
+import { HarnessErrorCode } from '../../core/errors.js';
 
 // ---------------------------------------------------------------------------
 // Mock embedding model
@@ -75,6 +76,16 @@ describe('createInMemoryRetriever', () => {
       const results = await retriever.retrieve('test');
       expect(results).toEqual([]);
     });
+
+    it('rejects already-aborted signals before indexing', async () => {
+      const retriever = createInMemoryRetriever({ embedding });
+      const controller = new AbortController();
+      controller.abort();
+
+      await expect(
+        retriever.index([chunk('c1', 'alpha', [1, 0, 0, 0])], { signal: controller.signal }),
+      ).rejects.toMatchObject({ code: HarnessErrorCode.CORE_ABORTED });
+    });
   });
 
   // ---- retrieve() ----
@@ -115,6 +126,33 @@ describe('createInMemoryRetriever', () => {
       expect(results[0]).toHaveProperty('chunk');
       expect(results[0]).toHaveProperty('score');
       expect(typeof results[0].score).toBe('number');
+    });
+
+    it('supports shallow metadata filtering', async () => {
+      const retriever = createInMemoryRetriever({ embedding });
+      await retriever.index([
+        { ...chunk('c1', 'animals', [1, 0, 0, 0]), metadata: { topic: 'animals' } },
+        { ...chunk('c2', 'science', [0, 1, 0, 0]), metadata: { topic: 'science' } },
+      ]);
+
+      const results = await retriever.retrieve('animals', {
+        limit: 10,
+        minScore: -1,
+        filter: { topic: 'animals' },
+      });
+
+      expect(results).toHaveLength(1);
+      expect(results[0].chunk.metadata?.topic).toBe('animals');
+    });
+
+    it('rejects already-aborted signals with CORE_ABORTED', async () => {
+      const retriever = createInMemoryRetriever({ embedding });
+      const controller = new AbortController();
+      controller.abort();
+
+      await expect(
+        retriever.retrieve('query', { signal: controller.signal }),
+      ).rejects.toMatchObject({ code: HarnessErrorCode.CORE_ABORTED });
     });
   });
 

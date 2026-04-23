@@ -123,6 +123,27 @@ describe('createRAGPipeline', () => {
       const results = await pipeline.query('hello');
       expect(results).toEqual([]);
     });
+
+    it('passes filter through pipeline.query()', async () => {
+      const pipeline = createRAGPipeline({
+        embedding,
+        retriever: createInMemoryRetriever({ embedding }),
+      });
+
+      await pipeline.ingestDocuments([
+        { id: 'doc-1', content: 'cats', metadata: { topic: 'animals' } },
+        { id: 'doc-2', content: 'physics', metadata: { topic: 'science' } },
+      ]);
+
+      const results = await pipeline.query('cats', {
+        limit: 10,
+        minScore: -1,
+        filter: { topic: 'animals' },
+      });
+
+      expect(results).toHaveLength(1);
+      expect(results[0].chunk.metadata?.topic).toBe('animals');
+    });
   });
 
   // ---- ingestDocuments ----
@@ -274,6 +295,34 @@ describe('createRAGPipeline', () => {
       const chunks = pipeline.getChunks();
       expect(chunks[0].content).toBe('alpha');
       expect(chunks[1].content).toBe('beta');
+    });
+  });
+
+  describe('embedding maxBatchSize', () => {
+    it('splits ingest batches to honor embedding.maxBatchSize', async () => {
+      const embed = vi.fn(async (texts: readonly string[]) =>
+        texts.map(() => [1, 0, 0, 0] as const),
+      );
+      const boundedEmbedding: EmbeddingModel = {
+        dimensions: 4,
+        maxBatchSize: 2,
+        embed,
+      };
+
+      const pipeline = createRAGPipeline({
+        embedding: boundedEmbedding,
+        retriever: createInMemoryRetriever({ embedding: boundedEmbedding }),
+      });
+
+      await pipeline.ingestDocuments([
+        { id: 'd1', content: 'one' },
+        { id: 'd2', content: 'two' },
+        { id: 'd3', content: 'three' },
+      ]);
+
+      expect(embed).toHaveBeenCalledTimes(2);
+      expect(embed.mock.calls[0][0]).toHaveLength(2);
+      expect(embed.mock.calls[1][0]).toHaveLength(1);
     });
   });
 

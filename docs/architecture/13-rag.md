@@ -9,7 +9,7 @@
 
 ## 概述
 
-rag 模块提供将文档转化为可检索上下文的完整流水线：加载 → 分块 → 嵌入 → 索引 → 查询。每个阶段都定义了接口（`DocumentLoader`、`ChunkingStrategy`、`EmbeddingModel`、`Retriever`），内置实现开箱即用，用户可在任意阶段注入自定义实现。
+rag 模块提供将文档转化为可检索上下文的完整流水线：加载 → 分块 → 嵌入 → 索引 → 查询。每个阶段都定义了接口（`DocumentLoader`、`ChunkingStrategy`、`EmbeddingModel`、`Retriever`），内置实现开箱即用，用户可在任意阶段注入自定义实现。针对外部适配器作者，`harness-one/rag` 现在同时公开合规测试套件与规范文档，方便第三方实现对齐生态契约。
 
 `RetrievalResult` 包含 `tokens` 字段（`content.length / 4` 启发式估算），帮助调用方在 token 预算内精确控制注入到上下文的检索结果数量。
 
@@ -17,12 +17,13 @@ rag 模块提供将文档转化为可检索上下文的完整流水线：加载 
 
 | 文件 | 职责 | 约行数 |
 |------|------|--------|
-| `src/rag/types.ts` | 核心类型：`Document`、`DocumentChunk`、`EmbeddingModel`、`Retriever`、`RetrievalResult`、`IngestMetrics` 等 | 124 |
+| `src/rag/types.ts` | 核心类型：`Document`、`DocumentChunk`、`EmbedOptions`、`RetrieveOptions`、`EmbeddingModel`、`Retriever` 等 | 145 |
 | `src/rag/loaders.ts` | 内置加载器：`createTextLoader`、`createDocumentArrayLoader` | 63 |
 | `src/rag/chunking.ts` | 内置分块策略：`FixedSize`、`Paragraph`、`SlidingWindow`；CJK 字符边界 + emoji surrogate-pair 识别 | 279 |
 | `src/rag/retriever.ts` | 内置检索器：`createInMemoryRetriever`（余弦相似度 + LRU 查询缓存 + 多租户隔离 SEC-010 + `clear()`） | 314 |
-| `src/rag/pipeline.ts` | 流水线编排：`createRAGPipeline`；去重 + 容量上限 + AbortSignal | 380 |
-| `src/rag/index.ts` | 公共导出桶文件 | 36 |
+| `src/rag/pipeline.ts` | 流水线编排：`createRAGPipeline`；去重 + 容量上限 + AbortSignal + `maxBatchSize` 感知 | 380 |
+| `src/rag/conformance.ts` | `runRetrieverConformance` / `runEmbeddingModelConformance` / `runChunkingStrategyConformance` | 220 |
+| `src/rag/index.ts` | 公共导出桶文件 | 44 |
 
 ## 公共 API
 
@@ -35,8 +36,10 @@ rag 模块提供将文档转化为可检索上下文的完整流水线：加载 
 | `RetrievalResult` | 检索结果（chunk、score、tokens?） |
 | `DocumentLoader` | 文档加载接口：`load(): Promise<Document[]>` |
 | `ChunkingStrategy` | 分块策略接口：`name` + `chunk(doc): DocumentChunk[]` |
-| `EmbeddingModel` | 嵌入模型接口：`embed(texts): Promise<readonly number[][]>` + `dimensions` |
-| `Retriever` | 检索器接口：`index(chunks)` + `retrieve(query, options?)` |
+| `EmbedOptions` | 嵌入选项：`signal?` |
+| `RetrieveOptions` | 检索选项：`limit?`、`minScore?`、`filter?`、`signal?`、`tenantId?`、`scope?` |
+| `EmbeddingModel` | 嵌入模型接口：`embed(texts, options?)` + `dimensions` + `maxBatchSize?` |
+| `Retriever` | 检索器接口：`index(chunks, options?)` + `retrieve(query, options?)` + `clear?()` |
 | `RAGPipelineConfig` | 流水线配置：loader?、chunking?、embedding、retriever、maxChunks?、onWarning? |
 | `RAGPipeline` | 完整流水线：ingest()、ingestDocuments()、query()、getChunks()、clear() |
 
@@ -91,10 +94,16 @@ const retriever = createInMemoryRetriever({
 });
 
 await retriever.index(embeddedChunks);
-const results = await retriever.retrieve('query text', { limit: 5, minScore: 0.5 });
+const results = await retriever.retrieve('query text', {
+  limit: 5,
+  minScore: 0.5,
+  filter: { topic: 'animals' },
+});
 ```
 
-未附加嵌入向量的 chunk 会被跳过。检索结果按 score 降序排列。
+未附加嵌入向量的 chunk 会被跳过。`filter` 在内置检索器里按
+`chunk.metadata` 做浅匹配（每个 key 都要全等命中）。检索结果按 score
+降序排列。
 
 ### 流水线编排
 
@@ -122,7 +131,10 @@ const { documents, chunks } = await pipeline.ingest();
 const added = await pipeline.ingestDocuments([{ id: 'd1', content: '...' }]);
 
 // 查询：embed query → cosine similarity → top-k
-const results = await pipeline.query('What is harness engineering?', { limit: 3 });
+const results = await pipeline.query('What is harness engineering?', {
+  limit: 3,
+  filter: { source: 'docs' },
+});
 for (const { chunk, score, tokens } of results) {
   console.log(`[${score.toFixed(3)}] ~${tokens} tokens: ${chunk.content.slice(0, 80)}`);
 }
@@ -145,7 +157,7 @@ const injected = results.filter((r) => {
 
 - **去重**：`createRAGPipeline` 在内部维护已索引内容的哈希集合。同批次内和跨批次的重复 chunk 均会跳过，并触发 `onWarning({ type: 'duplicate' })`。
 - **容量上限**：`maxChunks` 限制流水线的总 chunk 数。达到上限后新 chunk 不被添加，触发 `onWarning({ type: 'capacity' })`。未设置 `maxChunks` 时，默认上限为 100,000 chunks 以防止无限内存增长。
-- **清空**：`pipeline.clear()` 清除所有已索引 chunk 和内容哈希，但不重置检索器的内部状态（需重新创建流水线以彻底重置）。
+- **清空**：`pipeline.clear()` 清除所有已索引 chunk 和内容哈希；若 retriever 实现了 `clear()`，也会一并清空检索器内部索引与缓存。
 
 ## 依赖关系
 
@@ -161,6 +173,17 @@ const injected = results.filter((r) => {
 | `ChunkingStrategy` | `createRAGPipeline({ chunking })` | 自定义语义分块（如按句子、按代码块） |
 | `Retriever` | `createRAGPipeline({ retriever })` | 接入 Pinecone、Weaviate、pgvector 等向量数据库 |
 
+## 合规测试与规范文档
+
+- `runRetrieverConformance(runner, factory)`：检索器契约测试，覆盖排序、`limit`、`minScore`、`filter`、`AbortSignal`、空索引和 `clear()`（若实现）
+- `runEmbeddingModelConformance(runner, factory)`：嵌入模型契约测试，覆盖空输入、向量形状、`dimensions`、`AbortSignal`、`maxBatchSize`
+- `runChunkingStrategyConformance(runner, factory)`：分块策略契约测试，覆盖空文档、chunk 索引和元数据传播
+- [retriever-spec.md](../retriever-spec.md)：外部 Retriever 作者的权威规范
+- [embedding-spec.md](../embedding-spec.md)：外部 EmbeddingModel 作者的权威规范
+
+内置 `createInMemoryRetriever()` 自己跑 `runRetrieverConformance(...)`
+做 dogfooding。
+
 ## 设计决策
 
 1. **无外部依赖** —— 余弦相似度和 LRU 缓存均为内部实现，不引入向量数据库 SDK
@@ -171,12 +194,13 @@ const injected = results.filter((r) => {
 
 ## 生产强化
 
-1. **AbortSignal 支持**：`RAGPipelineConfig.signal` 可选 `AbortSignal` 字段，允许调用方取消进行中的 ingest 操作。
+1. **AbortSignal 支持**：`RAGPipelineConfig.signal`、`EmbedOptions.signal`、`RetrieveOptions.signal` 共同保证 ingest/query 两条链路都能真正取消。
 2. **CJK 词边界检测**：分块策略识别 CJK（中日韩）字符边界，并正确保留 surrogate pair（emoji），避免在 CJK 文本或 emoji 中间截断。
-3. **Retriever clear()**：内存检索器 `createInMemoryRetriever` 提供 `clear()` 方法，可重置所有已索引的 chunk 和缓存。
+3. **Provider batch ceiling**：`EmbeddingModel.maxBatchSize` 会被 pipeline ingestion batching 自动尊重，避免上层调用越过 provider 限额。
+4. **Retriever clear()**：内存检索器 `createInMemoryRetriever` 提供 `clear()` 方法，可重置所有已索引的 chunk 和缓存。
 
 ## 已知限制
 
 - `createInMemoryRetriever` 不支持持久化——进程重启后需重新索引
 - 余弦相似度为精确搜索，数据量大时性能随 chunk 数线性下降（无近似向量搜索）
-- `clear()` 仅清除流水线状态；内存检索器可通过 `retriever.clear()` 单独重置索引和缓存
+- 对不实现 `clear()` 的外部 Retriever，`pipeline.clear()` 无法代替后端侧的持久化删除或测试夹具清理

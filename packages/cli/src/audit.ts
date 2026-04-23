@@ -50,6 +50,8 @@ export function auditProject(cwd: string): {
   used: ModuleName[];
   unused: ModuleName[];
   fileCount: number;
+  moduleCounts: Readonly<Record<ModuleName, number>>;
+  totalImportSites: number;
 } {
   const files = scanFiles(cwd);
   // SPEC-010: accept both the legacy `harness-one/<mod>` subpath imports and
@@ -60,6 +62,9 @@ export function auditProject(cwd: string): {
     /from\s+['"]@harness-one\/core\/(\w+)['"]/g,
   ];
   const found = new Set<ModuleName>();
+  const moduleCounts = Object.fromEntries(
+    ALL_MODULES.map((mod) => [mod, 0]),
+  ) as Record<ModuleName, number>;
 
   for (const file of files) {
     try {
@@ -71,6 +76,7 @@ export function auditProject(cwd: string): {
           const mod = match[1] as ModuleName;
           if (ALL_MODULES.includes(mod)) {
             found.add(mod);
+            moduleCounts[mod]++;
           }
         }
       }
@@ -81,18 +87,10 @@ export function auditProject(cwd: string): {
 
   const used = ALL_MODULES.filter((m) => found.has(m));
   const unused = ALL_MODULES.filter((m) => !found.has(m));
-  return { used, unused, fileCount: files.length };
+  const totalImportSites = Object.values(moduleCounts).reduce((sum, count) => sum + count, 0);
+  return { used, unused, fileCount: files.length, moduleCounts, totalImportSites };
 }
 
-export function maturityLabel(usedCount: number, c: {
-  green: (s: string) => string;
-  yellow: (s: string) => string;
-  red: (s: string) => string;
-}): string {
-  if (usedCount >= 9) return c.green('Comprehensive');
-  if (usedCount >= 7) return c.green('Advanced');
-  if (usedCount >= 5) return c.yellow('Intermediate');
-  if (usedCount >= 3) return c.yellow('Basic');
-  if (usedCount >= 1) return c.red('Starter');
-  return c.red('None');
+export function formatImportSiteCount(count: number): string {
+  return count === 1 ? '1 import site' : `${count} import sites`;
 }

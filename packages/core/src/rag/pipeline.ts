@@ -4,7 +4,14 @@
  * @module
  */
 
-import type { Document, DocumentChunk, IngestMetrics, RAGPipeline, RAGPipelineConfig } from './types.js';
+import type {
+  Document,
+  DocumentChunk,
+  IngestMetrics,
+  RAGPipeline,
+  RAGPipelineConfig,
+  RetrieveOptions,
+} from './types.js';
 import { HarnessError, HarnessErrorCode, AbortedError } from '../core/errors.js';
 
 /** Fix 18: Result of an ingest operation with capacity signaling. */
@@ -64,7 +71,10 @@ export function createRAGPipeline(config: RAGPipelineConfig): RAGPipeline {
   async function validateEmbeddingIfEnabled(): Promise<void> {
     if (!config.validateEmbedding) return;
     try {
-      const probeResult = await config.embedding.embed(['test']);
+      const probeResult = await config.embedding.embed(
+        ['test'],
+        config.signal ? { signal: config.signal } : undefined,
+      );
       if (!probeResult || probeResult.length !== 1) {
         throw new HarnessError(
           'Embedding validation failed: probe did not return exactly 1 embedding',
@@ -187,7 +197,7 @@ export function createRAGPipeline(config: RAGPipelineConfig): RAGPipeline {
     }
 
     // Fix 19: Batched ingestion with checkpoints
-    const BATCH_SIZE = 100;
+    const BATCH_SIZE = Math.max(1, config.embedding.maxBatchSize ?? 100);
     let totalIngested = 0;
     const failedChunks: string[] = [];
 
@@ -220,7 +230,10 @@ export function createRAGPipeline(config: RAGPipelineConfig): RAGPipeline {
       try {
         // Embed batch
         const texts = batch.map((c) => c.content);
-        const embeddings = await config.embedding.embed(texts);
+        const embeddings = await config.embedding.embed(
+          texts,
+          config.signal ? { signal: config.signal } : undefined,
+        );
 
         if (embeddings.length !== batch.length) {
           const mismatchErr = new HarnessError(
@@ -249,7 +262,10 @@ export function createRAGPipeline(config: RAGPipelineConfig): RAGPipeline {
         }));
 
         // Index for retrieval (checkpoint: this batch is now committed)
-        await config.retriever.index(embeddedChunks);
+        await config.retriever.index(
+          embeddedChunks,
+          config.signal ? { signal: config.signal } : undefined,
+        );
 
         // Commit content hashes only after successful embedding+indexing.
         // Normalize to NFC here so future NFD-encoded callers match.
@@ -339,7 +355,7 @@ export function createRAGPipeline(config: RAGPipelineConfig): RAGPipeline {
       }
     },
 
-    async query(text: string, options?: { limit?: number; minScore?: number }) {
+    async query(text: string, options?: RetrieveOptions) {
       const results = await config.retriever.retrieve(text, options);
       // Estimate token count using content length / 4 heuristic (no external tokenizer dependency)
       return results.map((r) => ({

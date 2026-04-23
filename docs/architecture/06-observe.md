@@ -263,7 +263,7 @@ function createFailureTaxonomy(config?: FailureTaxonomyConfig): FailureTaxonomy
 | `minConfidence` | `number` | `0.5` | 低于此阈值的检测结果不报告 |
 | `thresholds.toolLoopMinRun` | `number` | `3` | 触发 `tool_loop` 所需的最小连续同名 Span 数 |
 | `thresholds.earlyStopMaxSpans` | `number` | `2` | `early_stop` 检测的 Span 数上限（超过此值不触发） |
-| `thresholds.budgetExceededConfidence` | `number` | `0.9` | `budget_exceeded` 的基础置信度（0–1） |
+| `thresholds.budgetExceededConfidence` | `number` | `0.95` | `budget_exceeded` 读取结构化 error code 时的置信度（0–1） |
 
 ### 5 个内置检测器
 
@@ -271,7 +271,7 @@ function createFailureTaxonomy(config?: FailureTaxonomyConfig): FailureTaxonomy
 |------|---------|-----------|
 | `tool_loop` | ≥3 个连续同名 Span | 0.5 + (runLength - 3) × 0.1，上限 0.95 |
 | `early_stop` | 已完成 Trace，≤2 Span，<5s | 0.6 |
-| `budget_exceeded` | 最后一个 Span 为 error 且名称/属性含 "budget" | 0.9 |
+| `budget_exceeded` | 优先读取最后一个 error Span 的 `harness.error.code === CORE_TOKEN_BUDGET_EXCEEDED`；否则降级为 `/budget/i` 字符串启发式 | 结构化信号 0.95；字符串 fallback 0.5 |
 | `timeout` | Trace >120s，最后一个 Span 仍为 running | 0.8 |
 | `repeated_tool_failure` | ≥2 个 tool 相关 Span 为 error | 0.5 + errorCount × 0.1，上限 0.8 |
 
@@ -286,7 +286,15 @@ function createFailureTaxonomy(config?: FailureTaxonomyConfig): FailureTaxonomy
 
 ### 扩展
 
-实现 `FailureDetector` 接口（`detect(trace): { confidence, evidence } | null`），通过 config 或 `registerDetector()` 注入。自定义检测器可覆盖同名内置检测器。
+实现 `FailureDetector` 接口（`detect(trace): { confidence, evidence, details? } | null`），通过 config 或 `registerDetector()` 注入。自定义检测器可覆盖同名内置检测器。
+
+### 检测器信号层级
+
+- `harness.error.code` / `harness.error.retryable` 是 harness-one 自己写入的**结构化主信号**
+- span 名、属性文本上的关键字匹配只是**降级备用信号**
+- `budget_exceeded` 的 `details.source` 会标出命中来源：`error_code` 或 `heuristic_string_match`
+
+自定义检测器应优先消费结构化属性，而不是依赖 span 名或自由文本。
 
 ## Cache Monitor
 

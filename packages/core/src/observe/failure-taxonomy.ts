@@ -11,6 +11,7 @@ import type {
   FailureTaxonomy,
   FailureTaxonomyConfig,
 } from './types.js';
+import { HarnessErrorCode } from '../core/errors.js';
 
 // ---------------------------------------------------------------------------
 // Built-in detectors
@@ -69,8 +70,8 @@ function createEarlyStopDetector(maxSpans = 2): FailureDetector {
   };
 }
 
-/** Detect error trace with budget-related last span. */
-function createBudgetExceededDetector(baseConfidence = 0.9): FailureDetector {
+/** Detect budget-exceeded failures, preferring structured error codes. */
+function createBudgetExceededDetector(baseConfidence = 0.95): FailureDetector {
   return {
     detect(trace: Trace) {
       if (trace.spans.length === 0) return null;
@@ -78,18 +79,36 @@ function createBudgetExceededDetector(baseConfidence = 0.9): FailureDetector {
       const lastSpan = trace.spans[trace.spans.length - 1];
       if (lastSpan.status !== 'error') return null;
 
+      const errorCode = lastSpan.attributes['harness.error.code'];
+      if (errorCode === HarnessErrorCode.CORE_TOKEN_BUDGET_EXCEEDED) {
+        return {
+          confidence: baseConfidence,
+          evidence: `Last span "${lastSpan.name}" carried harness.error.code=${String(errorCode)}`,
+          details: {
+            source: 'error_code',
+            code: errorCode,
+          },
+        };
+      }
+
       const budgetPattern = /budget/i;
-      const nameMatch = budgetPattern.test(lastSpan.name);
-      const attrMatch = Object.keys(lastSpan.attributes).some((k) => budgetPattern.test(k));
+      const serializedAttributes = (() => {
+        try {
+          return JSON.stringify(lastSpan.attributes ?? {});
+        } catch {
+          return '';
+        }
+      })();
+      const haystack = `${lastSpan.name} ${serializedAttributes}`;
+      if (!budgetPattern.test(haystack)) return null;
 
-      if (!nameMatch && !attrMatch) return null;
-
-      // Empirically chosen, pending validation against production data.
-      // Calibrate using eval framework. High confidence because both
-      // error status and budget-related naming are strong signals.
       return {
-        confidence: baseConfidence,
-        evidence: `Last span "${lastSpan.name}" has error status with budget-related indicators`,
+        confidence: 0.5,
+        evidence: `Last span "${lastSpan.name}" matched the fallback /budget/i heuristic`,
+        details: {
+          source: 'heuristic_string_match',
+          match: 'budget',
+        },
       };
     },
   };
@@ -178,6 +197,7 @@ export function createFailureTaxonomy(config?: FailureTaxonomyConfig): FailureTa
             mode,
             confidence: detection.confidence,
             evidence: detection.evidence,
+            ...(detection.details !== undefined ? { details: detection.details } : {}),
             traceId: trace.id,
           });
           stats.set(mode, (stats.get(mode) ?? 0) + 1);

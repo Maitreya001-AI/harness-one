@@ -189,13 +189,17 @@ describe('createOTelExporter', () => {
       name: 'failing-op',
       startTime: 1000,
       endTime: 2000,
-      attributes: {},
+      attributes: { 'harness.error.code': 'CORE_TOKEN_BUDGET_EXCEEDED' },
       events: [],
       status: 'error',
     };
 
     await exporter.exportSpan(span);
 
+    expect(mock.mocks.setAttribute).toHaveBeenCalledWith(
+      'exception.type',
+      'CORE_TOKEN_BUDGET_EXCEEDED',
+    );
     expect(mock.mocks.setStatus).toHaveBeenCalledWith({ code: 2 }); // SpanStatusCode.ERROR = 2
   });
 
@@ -1528,4 +1532,3 @@ describe('createOTelExporter', () => {
     });
   });
 });
-

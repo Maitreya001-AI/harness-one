@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest';
 import { AgentLoop } from '../agent-loop.js';
 import { createTraceManager } from '../../observe/trace-manager.js';
 import type { AgentAdapter } from '../types.js';
+import { HarnessError, HarnessErrorCode } from '../errors.js';
 
 function makeAdapter(overrides?: Partial<AgentAdapter>): AgentAdapter {
   return {
@@ -219,6 +220,89 @@ describe('AgentLoop span enrichment', () => {
     expect(toolSpan!.attrs.toolCallId).toBe('tc-1');
     expect(toolSpan!.status).toBe('error');
     expect(String(toolSpan!.attrs.errorMessage)).toContain('tool boom');
+    await tm.dispose();
+  });
+
+  it('iteration span records harness.error.code on token-budget exits', async () => {
+    const spans: Array<{ name: string; attrs: Record<string, unknown>; status: string }> = [];
+    const tm = createTraceManager({
+      exporters: [{
+        name: 'capture',
+        exportTrace: async () => {},
+        exportSpan: async (span) => {
+          spans.push({ name: span.name, attrs: span.attributes, status: span.status });
+        },
+        flush: async () => {},
+      }],
+    });
+    const loop = new AgentLoop({
+      adapter: makeAdapter(),
+      traceManager: tm,
+      maxTotalTokens: 5,
+    });
+
+    await drain(loop.run([{ role: 'user', content: 'hi' }]));
+    await tm.flush();
+
+    const iterSpan = spans.find((span) => span.name === 'iteration-1');
+    expect(iterSpan).toBeDefined();
+    expect(iterSpan!.status).toBe('error');
+    expect(iterSpan!.attrs['harness.error.code']).toBe(HarnessErrorCode.CORE_TOKEN_BUDGET_EXCEEDED);
+    expect(iterSpan!.attrs['harness.error.retryable']).toBe(false);
+    await tm.dispose();
+  });
+
+  it('tool spans record harness.error.code when a tool throws HarnessError', async () => {
+    const adapter: AgentAdapter = {
+      name: 'test-adapter',
+      async chat({ messages }) {
+        if (messages.some((message) => message.role === 'tool')) {
+          return {
+            message: { role: 'assistant', content: 'done' },
+            usage: { inputTokens: 1, outputTokens: 1 },
+          };
+        }
+        return {
+          message: {
+            role: 'assistant',
+            content: '',
+            toolCalls: [{ id: 'tc-2', name: 'budget-tool', arguments: '{}' }],
+          },
+          usage: { inputTokens: 1, outputTokens: 1 },
+        };
+      },
+    };
+    const spans: Array<{ name: string; attrs: Record<string, unknown>; status: string }> = [];
+    const tm = createTraceManager({
+      exporters: [{
+        name: 'capture',
+        exportTrace: async () => {},
+        exportSpan: async (span) => {
+          spans.push({ name: span.name, attrs: span.attributes, status: span.status });
+        },
+        flush: async () => {},
+      }],
+    });
+
+    const loop = new AgentLoop({
+      adapter,
+      traceManager: tm,
+      onToolCall: async () => {
+        throw new HarnessError(
+          'tool exceeded provider budget',
+          HarnessErrorCode.ADAPTER_RATE_LIMIT,
+        );
+      },
+    });
+
+    await drain(loop.run([{ role: 'user', content: 'hi' }]));
+    await tm.flush();
+
+    const toolSpan = spans.find((span) => span.name === 'tool:budget-tool');
+    expect(toolSpan).toBeDefined();
+    expect(toolSpan!.status).toBe('error');
+    expect(toolSpan!.attrs['harness.error.code']).toBe(HarnessErrorCode.ADAPTER_RATE_LIMIT);
+    expect(toolSpan!.attrs['harness.error.retryable']).toBe(true);
     await tm.dispose();
   });
 });

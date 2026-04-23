@@ -173,13 +173,16 @@ export interface FailureClassification {
   readonly mode: FailureMode | string;
   readonly confidence: number;
   readonly evidence: string;
+  readonly details?: Readonly<Record<string, unknown>>;
   readonly traceId: string;
   readonly spanIds?: readonly string[];
 }
 
 /** A pluggable failure detector — analyzes a trace and returns a detection or null. */
 export interface FailureDetector {
-  detect(trace: Trace): { confidence: number; evidence: string } | null;
+  detect(
+    trace: Trace,
+  ): { confidence: number; evidence: string; details?: Readonly<Record<string, unknown>> } | null;
 }
 
 /** Configuration for creating a FailureTaxonomy. */
@@ -194,7 +197,7 @@ export interface FailureTaxonomyConfig {
     readonly toolLoopMinRun?: number;
     /** Maximum span count for early_stop detection (traces with more are not flagged). Default: 2. */
     readonly earlyStopMaxSpans?: number;
-    /** Budget exceeded base confidence (0-1). Default: 0.9. */
+    /** Structured budget-exceeded confidence (0-1). Default: 0.95. */
     readonly budgetExceededConfidence?: number;
   };
 }

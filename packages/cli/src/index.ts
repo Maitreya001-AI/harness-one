@@ -7,7 +7,7 @@
  *   npx harness-one init                    # Interactive -- choose modules
  *   npx harness-one init --all              # Scaffold all modules
  *   npx harness-one init --modules core,guardrails,context
- *   npx harness-one audit                   # Check which modules are in use
+ *   npx harness-one audit                   # Print objective module-usage stats
  */
 
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
@@ -25,14 +25,14 @@ export { ALL_MODULES, parseArgs, MODULE_DESCRIPTIONS } from './parser.js';
 export type { ModuleName, ParsedArgs } from './parser.js';
 export { getTemplate, FILE_NAMES, TEMPLATES, SUBPATH_MAP } from './templates/index.js';
 export type { SubpathRef } from './templates/index.js';
-export { auditProject, scanFiles, maturityLabel } from './audit.js';
+export { auditProject, scanFiles, formatImportSiteCount } from './audit.js';
 export { c, SUPPORTS_COLOR } from './ui.js';
 
 // Internal imports for the main() function
 import { ALL_MODULES, parseArgs, MODULE_DESCRIPTIONS } from './parser.js';
 import type { ModuleName, ParsedArgs } from './parser.js';
 import { getTemplate, FILE_NAMES } from './templates/index.js';
-import { auditProject, maturityLabel } from './audit.js';
+import { auditProject, formatImportSiteCount } from './audit.js';
 import { c } from './ui.js';
 
 // ── Init command ──────────────────────────────────────────────────────────────
@@ -120,30 +120,25 @@ export async function runInit(parsed: ParsedArgs): Promise<void> {
 
 /** @internal Exported for testing only. */
 export function runAudit(): void {
-  console.log(c.bold('\nharness-one audit\n'));
+  console.log(c.bold('\nharness-one usage audit\n'));
   const cwd = process.cwd();
-  const { used, unused, fileCount } = auditProject(cwd);
+  const { used, fileCount, moduleCounts, totalImportSites } = auditProject(cwd);
+  const usedPercentage = (used.length / ALL_MODULES.length) * 100;
 
   console.log(c.dim(`Scanned ${fileCount} source files\n`));
+  console.log(c.bold(`harness-one usage in ${cwd}:\n`));
 
-  if (used.length > 0) {
-    console.log(c.green('Modules in use:'));
-    for (const mod of used) {
-      console.log(`  ${c.green('*')} ${c.bold(mod)} -- ${MODULE_DESCRIPTIONS[mod]}`);
-    }
-  } else {
-    console.log(c.yellow('No harness-one imports found.'));
-  }
-
-  if (unused.length > 0) {
-    console.log(c.yellow('\nModules not used:'));
-    for (const mod of unused) {
-      console.log(`  ${c.dim('-')} ${c.dim(mod)} -- ${MODULE_DESCRIPTIONS[mod]}`);
+  for (const mod of ALL_MODULES) {
+    const count = moduleCounts[mod];
+    if (count > 0) {
+      console.log(`  ${c.green('+')} ${c.bold(mod)} (${formatImportSiteCount(count)})`);
+    } else {
+      console.log(`  ${c.dim('-')} ${c.dim(mod)} (not used)`);
     }
   }
 
-  console.log(`\n${c.bold('Coverage:')} ${used.length}/${ALL_MODULES.length} modules`);
-  console.log(`${c.bold('Maturity:')} ${maturityLabel(used.length, c)}\n`);
+  console.log(`\n${c.bold('Used:')} ${used.length} / ${ALL_MODULES.length} modules (${usedPercentage.toFixed(1)}%)`);
+  console.log(`${c.bold('Import sites:')} ${totalImportSites}\n`);
 }
 
 // ── Help ──────────────────────────────────────────────────────────────────────

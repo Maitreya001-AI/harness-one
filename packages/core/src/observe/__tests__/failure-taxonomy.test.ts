@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { createFailureTaxonomy } from '../failure-taxonomy.js';
 import type { Trace, Span } from '../types.js';
+import { HarnessErrorCode } from '../../core/errors.js';
 
 function makeSpan(overrides: Partial<Span>): Span {
   return {
@@ -22,7 +23,8 @@ function makeTrace(overrides: Partial<Trace>): Trace {
     name: 'test',
     startTime: 0,
     endTime: 1000,
-    metadata: {},
+    userMetadata: {},
+    systemMetadata: {},
     spans: [],
     status: 'completed',
     ...overrides,
@@ -72,19 +74,70 @@ describe('createFailureTaxonomy', () => {
   });
 
   describe('budget_exceeded detector', () => {
-    it('detects error trace with budget-related last span', () => {
+    it('prefers harness.error.code over string heuristics', () => {
       const trace = makeTrace({
         status: 'error',
         spans: [
           makeSpan({ id: 's0', name: 'work' }),
-          makeSpan({ id: 's1', name: 'budget_check', status: 'error', attributes: { budget: true } }),
+          makeSpan({
+            id: 's1',
+            name: 'finalize',
+            status: 'error',
+            attributes: {
+              'harness.error.code': HarnessErrorCode.CORE_TOKEN_BUDGET_EXCEEDED,
+            },
+          }),
         ],
       });
       const taxonomy = createFailureTaxonomy();
       const results = taxonomy.classify(trace);
       const result = results.find((r) => r.mode === 'budget_exceeded');
       expect(result).toBeDefined();
-      expect(result!.confidence).toBeCloseTo(0.9);
+      expect(result!.confidence).toBeCloseTo(0.95);
+      expect(result!.details).toEqual({
+        source: 'error_code',
+        code: HarnessErrorCode.CORE_TOKEN_BUDGET_EXCEEDED,
+      });
+    });
+
+    it('falls back to a low-confidence string heuristic', () => {
+      const trace = makeTrace({
+        status: 'error',
+        spans: [
+          makeSpan({
+            id: 's1',
+            name: 'budget_check_validator',
+            status: 'error',
+            attributes: { note: 'contains budget text only' },
+          }),
+        ],
+      });
+      const taxonomy = createFailureTaxonomy();
+      const results = taxonomy.classify(trace);
+      const result = results.find((r) => r.mode === 'budget_exceeded');
+      expect(result).toBeDefined();
+      expect(result!.confidence).toBeCloseTo(0.5);
+      expect(result!.details).toEqual({
+        source: 'heuristic_string_match',
+        match: 'budget',
+      });
+    });
+
+    it('returns null when neither the error code nor heuristic matches', () => {
+      const trace = makeTrace({
+        status: 'error',
+        spans: [
+          makeSpan({
+            id: 's1',
+            name: 'finalize',
+            status: 'error',
+            attributes: { reason: 'generic failure' },
+          }),
+        ],
+      });
+      const taxonomy = createFailureTaxonomy();
+      const results = taxonomy.classify(trace);
+      expect(results.find((r) => r.mode === 'budget_exceeded')).toBeUndefined();
     });
   });
 
@@ -205,14 +258,23 @@ describe('createFailureTaxonomy', () => {
       expect(results.find(r => r.mode === 'early_stop')!.confidence).toBeCloseTo(0.6);
     });
 
-    it('budget_exceeded confidence is 0.9', () => {
+    it('budget_exceeded structured confidence defaults to 0.95', () => {
       const taxonomy = createFailureTaxonomy();
       const trace = makeTrace({
         status: 'error',
-        spans: [makeSpan({ id: 's1', name: 'budget_check', status: 'error', attributes: { budget: true } })],
+        spans: [
+          makeSpan({
+            id: 's1',
+            name: 'budget_check',
+            status: 'error',
+            attributes: {
+              'harness.error.code': HarnessErrorCode.CORE_TOKEN_BUDGET_EXCEEDED,
+            },
+          }),
+        ],
       });
       const results = taxonomy.classify(trace);
-      expect(results.find(r => r.mode === 'budget_exceeded')!.confidence).toBeCloseTo(0.9);
+      expect(results.find(r => r.mode === 'budget_exceeded')!.confidence).toBeCloseTo(0.95);
     });
 
     it('timeout confidence is 0.8', () => {
@@ -297,7 +359,16 @@ describe('createFailureTaxonomy', () => {
       const taxonomy = createFailureTaxonomy({ thresholds: { budgetExceededConfidence: 0.7 } });
       const trace = makeTrace({
         status: 'error',
-        spans: [makeSpan({ id: 's1', name: 'budget_check', status: 'error', attributes: { budget: true } })],
+        spans: [
+          makeSpan({
+            id: 's1',
+            name: 'budget_check',
+            status: 'error',
+            attributes: {
+              'harness.error.code': HarnessErrorCode.CORE_TOKEN_BUDGET_EXCEEDED,
+            },
+          }),
+        ],
       });
       const results = taxonomy.classify(trace);
       const result = results.find(r => r.mode === 'budget_exceeded');

@@ -138,7 +138,7 @@ liberally from the root (zero runtime cost).
 | `harness-one/context` | **`createBudget`**, **`packContext`**, **`compress`**, **`compactIfNeeded`**, **`registerTokenizer`**, **`countTokens`** |
 | `harness-one/prompt` | **`createPromptBuilder`**, **`createPromptRegistry`**, **`createSkillRegistry`**, **`createAsyncSkillRegistry`**, **`createDisclosureManager`** |
 | `harness-one/orchestration` | **`createOrchestrator`**, **`createAgentPool`**, **`createHandoff`**, **`createContextBoundary`**, **`createMessageQueue`** |
-| `harness-one/rag` | **`createRAGPipeline`**, **`createInMemoryRetriever`** |
+| `harness-one/rag` | **`createRAGPipeline`**, **`createInMemoryRetriever`**, **`runRetrieverConformance`**, **`runEmbeddingModelConformance`**, **`runChunkingStrategyConformance`** |
 | `harness-one/redact` | **`createRedactor`**, **`redactValue`**, **`sanitizeAttributes`**, `REDACTED_VALUE`, `DEFAULT_SECRET_PATTERN` |
 | `harness-one/infra` | **`createAdmissionController`**, **`unrefTimeout`**, **`unrefInterval`** |
 | `harness-one/evolve-check` | **`createArchitectureChecker`**, `noCircularDepsRule`, `layerDependencyRule` |
@@ -1025,10 +1025,10 @@ Scaffold harness-one boilerplate into your project with a single command:
 npx harness-one init          # Interactive -- choose which modules to scaffold
 npx harness-one init --all    # Generate boilerplate for all available modules
 npx harness-one init --modules core,tools,guardrails
-npx harness-one audit         # Scan project for harness-one usage and coverage gaps
+npx harness-one audit         # Print per-module harness-one usage statistics
 ```
 
-The `init` command creates working starter files in a `harness/` directory. The `audit` command scans your codebase for `harness-one/*` imports and reports a maturity assessment.
+The `init` command creates working starter files in a `harness/` directory. The `audit` command scans your codebase for `harness-one/*` imports and reports objective usage statistics (per-module import sites, used/unused counts, and coverage percentage).
 
 ## Architecture
 

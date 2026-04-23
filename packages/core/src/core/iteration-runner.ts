@@ -16,13 +16,19 @@
  * @module
  */
 
-import type { ExecutionStrategy, Message, TokenUsage, ToolCallRequest } from './types.js';
 import type { AgentEvent, DoneReason } from './events.js';
-import { AbortedError, HarnessError, TokenBudgetExceededError, HarnessErrorCode} from './errors.js';
+import {
+  AbortedError,
+  HarnessError,
+  HarnessErrorCode,
+  TokenBudgetExceededError,
+} from './errors.js';
 import type { AgentLoopHookDispatcher } from './hook-dispatcher.js';
 import type { AdapterCaller } from './adapter-caller.js';
 import type { AgentLoopTraceManager } from './trace-interface.js';
 import type { GuardrailPipeline } from './guardrail-port.js';
+import type { ExecutionStrategy, Message, TokenUsage, ToolCallRequest } from './types.js';
+import { annotateHarnessErrorSpan } from './error-span-attributes.js';
 import {
   runInputGuardrail,
   runOutputGuardrail,
@@ -225,6 +231,17 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
 
     if (!result.ok) {
       const { error: err, errorCategory, path } = result;
+      const harnessError =
+        err instanceof HarnessError
+          ? err
+          : path === 'chat'
+            ? new HarnessError(
+                err instanceof Error ? err.message : String(err),
+                errorCategory,
+                'Check adapter configuration and API credentials',
+                err instanceof Error ? err : undefined,
+              )
+            : undefined;
       if (ctx.iterationSpanId && tm) {
         // Attach cumulative retry metrics and (on timeout) the configured
         // budget + adapter name so incident responders can distinguish
@@ -245,6 +262,7 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
           ...(result.timeoutMs !== undefined ? { timeout_ms: result.timeoutMs } : {}),
           ...(result.adapterName !== undefined ? { adapter: result.adapterName } : {}),
         });
+        annotateHarnessErrorSpan(tm, ctx.iterationSpanId, harnessError);
       }
 
       if (errorCategory === HarnessErrorCode.CORE_ABORTED) {
@@ -253,17 +271,12 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
       }
 
       if (path === 'chat') {
+        if (!harnessError) {
+          throw new Error('Invariant violation: chat adapter failures must map to HarnessError');
+        }
         const errorEvent: Extract<AgentEvent, { type: 'error' }> = {
           type: 'error',
-          error:
-            err instanceof HarnessError
-              ? err
-              : new HarnessError(
-                  err instanceof Error ? err.message : String(err),
-                  errorCategory,
-                  'Check adapter configuration and API credentials',
-                  err instanceof Error ? err : undefined,
-                ),
+          error: harnessError,
         };
         return yield* bailError(ctx, errorEvent, false);
       }
@@ -445,6 +458,7 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
               ).slice(0, 500),
               errorName: toolErr instanceof Error ? toolErr.name : 'Unknown',
             });
+            annotateHarnessErrorSpan(tm, toolSpanId, toolErr);
             tm.endSpan(toolSpanId, 'error');
           }
           throw toolErr;

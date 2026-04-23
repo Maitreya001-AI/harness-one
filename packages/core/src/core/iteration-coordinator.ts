@@ -23,6 +23,7 @@ import type { Message, TokenUsage } from './types.js';
 import type { AgentLoopTraceManager } from './trace-interface.js';
 import type { IterationContext } from './iteration-runner.js';
 import { pruneConversation } from './conversation-pruner.js';
+import { annotateHarnessErrorSpan } from './error-span-attributes.js';
 import { safeWarn } from '../infra/safe-log.js';
 import type { AgentLoopLogger } from './agent-loop-config.js';
 
@@ -167,6 +168,7 @@ function* emitTerminal(
   usage: TokenUsage,
 ): Generator<AgentEvent> {
   if (ctx.iterationSpanId && tm) {
+    annotateHarnessErrorSpan(tm, ctx.iterationSpanId, errorEvent.error);
     try { tm.endSpan(ctx.iterationSpanId, 'error'); } catch { /* defensive */ }
     ctx.iterationSpanId = undefined;
   }

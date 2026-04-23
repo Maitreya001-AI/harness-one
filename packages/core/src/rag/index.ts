@@ -12,7 +12,10 @@ export type {
   RetrievalResult,
   DocumentLoader,
   ChunkingStrategy,
+  EmbedOptions,
   EmbeddingModel,
+  IndexOptions,
+  RetrieveOptions,
   Retriever,
   RAGPipelineConfig,
   RAGPipeline,
@@ -31,6 +34,14 @@ export {
 
 // Retriever
 export { createInMemoryRetriever } from './retriever.js';
+
+// Conformance kits
+export {
+  runRetrieverConformance,
+  runEmbeddingModelConformance,
+  runChunkingStrategyConformance,
+} from './conformance.js';
+export type { RAGConformanceRunner } from './conformance.js';
 
 // Pipeline
 export { createRAGPipeline } from './pipeline.js';

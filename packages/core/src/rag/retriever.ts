@@ -4,8 +4,15 @@
  * @module
  */
 
-import type { DocumentChunk, EmbeddingModel, Retriever, RetrievalResult } from './types.js';
-import { HarnessError, HarnessErrorCode} from '../core/errors.js';
+import type {
+  DocumentChunk,
+  EmbeddingModel,
+  IndexOptions,
+  Retriever,
+  RetrievalResult,
+  RetrieveOptions,
+} from './types.js';
+import { AbortedError, HarnessError, HarnessErrorCode } from '../core/errors.js';
 import { createLazyAsync, type LazyAsync } from '../infra/lazy-async.js';
 
 /** Extended retrieval result that includes skipped chunk tracking (Fix 15). */
@@ -13,20 +20,6 @@ export interface ExtendedRetrievalResult {
   readonly results: RetrievalResult[];
   /** Number of chunks skipped due to missing or zero-magnitude embeddings. */
   readonly skippedChunks: number;
-}
-
-/**
- * SEC-010: Per-call options for retrieve(). Callers that serve multiple
- * tenants MUST supply `tenantId` or `scope` so the query-embedding cache
- * never returns an embedding cached under a different tenant/scope.
- */
-export interface RetrieveOptions {
-  readonly limit?: number;
-  readonly minScore?: number;
-  /** SEC-010: Per-tenant cache partition key. */
-  readonly tenantId?: string;
-  /** SEC-010: Alternative name for partition key (e.g. workspace/org scope). */
-  readonly scope?: string;
 }
 
 /** Default maximum query length (characters) accepted by retrieve(). */
@@ -90,6 +83,12 @@ export function createInMemoryRetriever(config: {
   // SEC-010: Maximum query length (reject longer queries)
   const maxQueryLength = config.maxQueryLength ?? DEFAULT_MAX_QUERY_LENGTH;
 
+  function throwIfAborted(signal?: AbortSignal): void {
+    if (signal?.aborted) {
+      throw new AbortedError();
+    }
+  }
+
   function normalizeVector(embedding: readonly number[]): readonly number[] | undefined {
     if (embedding.length === 0) return undefined;
     const norm = Math.sqrt(embedding.reduce((s, v) => s + v * v, 0));
@@ -136,7 +135,12 @@ export function createInMemoryRetriever(config: {
     }
   }
 
-  async function getQueryEmbedding(query: string, tenant?: string, scope?: string): Promise<readonly number[]> {
+  async function getQueryEmbedding(
+    query: string,
+    options?: RetrieveOptions,
+  ): Promise<readonly number[]> {
+    const tenant = options?.tenantId;
+    const scope = options?.scope;
     const cacheKey = buildCacheKey(query, tenant, scope);
     const cached = queryEmbeddingCache.get(cacheKey);
     if (cached) {
@@ -152,7 +156,12 @@ export function createInMemoryRetriever(config: {
     let lazy = inflightEmbeds.get(cacheKey);
     if (!lazy) {
       lazy = createLazyAsync(async () => {
-        const [embedding] = await config.embedding.embed([query]);
+        throwIfAborted(options?.signal);
+        const [embedding] = await config.embedding.embed(
+          [query],
+          options?.signal ? { signal: options.signal } : undefined,
+        );
+        throwIfAborted(options?.signal);
         return embedding;
       });
       inflightEmbeds.set(cacheKey, lazy);
@@ -192,7 +201,21 @@ export function createInMemoryRetriever(config: {
    * globally unscoped chunks) are considered. This prevents cross-tenant
    * data leakage in multi-tenant deployments.
    */
-  function scoreChunks(normalizedQuery: readonly number[] | undefined, minScore: number, tenant?: string): { scored: RetrievalResult[]; skippedChunks: number } {
+  function matchesFilter(
+    metadata: Record<string, unknown> | undefined,
+    filter: Record<string, unknown> | undefined,
+  ): boolean {
+    if (!filter || Object.keys(filter).length === 0) return true;
+    if (!metadata) return false;
+    return Object.entries(filter).every(([key, value]) => metadata[key] === value);
+  }
+
+  function scoreChunks(
+    normalizedQuery: readonly number[] | undefined,
+    minScore: number,
+    tenant?: string,
+    filter?: Record<string, unknown>,
+  ): { scored: RetrievalResult[]; skippedChunks: number } {
     let skippedChunks = 0;
     const scored: RetrievalResult[] = [];
 
@@ -203,6 +226,9 @@ export function createInMemoryRetriever(config: {
         continue;
       }
       const chunk = chunks[i];
+      if (!matchesFilter(chunk.metadata, filter)) {
+        continue;
+      }
       const normEmb = normalizedEmbeddings[i];
       if (!normEmb) {
         // Fix 15: Track skipped chunks
@@ -236,8 +262,10 @@ export function createInMemoryRetriever(config: {
   }
 
   return Object.freeze({
-    async index(newChunks: readonly DocumentChunk[]): Promise<void> {
+    async index(newChunks: readonly DocumentChunk[], options?: IndexOptions): Promise<void> {
+      throwIfAborted(options?.signal);
       for (const chunk of newChunks) {
+        throwIfAborted(options?.signal);
         chunks.push(chunk);
         chunkTenants.push(undefined); // globally visible
         if (chunk.embedding && chunk.embedding.length > 0) {
@@ -264,6 +292,7 @@ export function createInMemoryRetriever(config: {
       query: string,
       options?: RetrieveOptions,
     ): Promise<RetrievalResult[]> {
+      throwIfAborted(options?.signal);
       // SEC-010: Reject oversized queries before touching the cache or the
       // embedding model.
       enforceQueryLength(query);
@@ -272,9 +301,9 @@ export function createInMemoryRetriever(config: {
       const minScore = options?.minScore ?? 0;
 
       const tenant = options?.tenantId ?? options?.scope;
-      const queryEmbedding = await getQueryEmbedding(query, options?.tenantId, options?.scope);
+      const queryEmbedding = await getQueryEmbedding(query, options);
       const normalizedQuery = normalizeVector(queryEmbedding);
-      const { scored } = scoreChunks(normalizedQuery, minScore, tenant);
+      const { scored } = scoreChunks(normalizedQuery, minScore, tenant, options?.filter);
 
       scored.sort((a, b) => b.score - a.score);
       return scored.slice(0, limit);
@@ -285,6 +314,7 @@ export function createInMemoryRetriever(config: {
       query: string,
       options?: RetrieveOptions,
     ): Promise<ExtendedRetrievalResult> {
+      throwIfAborted(options?.signal);
       // SEC-010: Same length guard as retrieve().
       enforceQueryLength(query);
 
@@ -292,9 +322,14 @@ export function createInMemoryRetriever(config: {
       const minScore = options?.minScore ?? 0;
 
       const tenant = options?.tenantId ?? options?.scope;
-      const queryEmbedding = await getQueryEmbedding(query, options?.tenantId, options?.scope);
+      const queryEmbedding = await getQueryEmbedding(query, options);
       const normalizedQuery = normalizeVector(queryEmbedding);
-      const { scored, skippedChunks } = scoreChunks(normalizedQuery, minScore, tenant);
+      const { scored, skippedChunks } = scoreChunks(
+        normalizedQuery,
+        minScore,
+        tenant,
+        options?.filter,
+      );
 
       scored.sort((a, b) => b.score - a.score);
       return {

@@ -19,6 +19,7 @@ import type { AgentEvent, DoneReason } from './events.js';
 import type { TokenUsage } from './types.js';
 import type { AgentLoopHookDispatcher } from './hook-dispatcher.js';
 import type { AgentLoopTraceManager } from './trace-interface.js';
+import { annotateHarnessErrorSpan } from './error-span-attributes.js';
 
 /** See {@link IterationRunner} — re-declared here to avoid a cycle. */
 export interface IterationContextLike {
@@ -136,6 +137,7 @@ export function createIterationLifecycle(
   ): AsyncGenerator<AgentEvent, IterationTerminated> {
     yield messageEvent;
     yield errorEvent;
+    annotateHarnessErrorSpan(tm, ctx.iterationSpanId, errorEvent.error);
     endSpan(ctx, 'error');
     fireIterationEnd(ctx, true);
     return terminated(ctx, 'token_budget');
@@ -146,6 +148,7 @@ export function createIterationLifecycle(
     errorEvent: Extract<AgentEvent, { type: 'error' }>,
   ): AsyncGenerator<AgentEvent, IterationTerminated> {
     yield errorEvent;
+    annotateHarnessErrorSpan(tm, ctx.iterationSpanId, errorEvent.error);
     endSpan(ctx, 'error');
     fireIterationEnd(ctx, true);
     return terminated(ctx, 'aborted');
@@ -157,6 +160,7 @@ export function createIterationLifecycle(
     errorAlreadyYielded: boolean,
   ): AsyncGenerator<AgentEvent, IterationTerminated> {
     if (!errorAlreadyYielded && errorEvent) yield errorEvent;
+    annotateHarnessErrorSpan(tm, ctx.iterationSpanId, errorEvent?.error);
     endSpan(ctx, 'error');
     fireIterationEnd(ctx, true);
     return terminated(ctx, 'error');
@@ -170,6 +174,7 @@ export function createIterationLifecycle(
     config.abortController.abort();
     yield guardrailEvent;
     yield errorEvent;
+    annotateHarnessErrorSpan(tm, ctx.iterationSpanId, errorEvent.error);
     endSpan(ctx, 'error');
     fireIterationEnd(ctx, true);
     return terminated(ctx, 'error');

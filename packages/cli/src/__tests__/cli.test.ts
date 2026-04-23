@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { parseArgs, getTemplate, auditProject, ALL_MODULES, MODULE_DESCRIPTIONS, FILE_NAMES, c, SUPPORTS_COLOR, writeModuleFiles, runInit, runAudit, showHelp, EXIT_SUCCESS, EXIT_ERROR, EXIT_INVALID_ARGS } from '../index.js';
-import { scanFiles, maturityLabel } from '../audit.js';
+import { scanFiles, formatImportSiteCount } from '../audit.js';
 import type { ModuleName, ParsedArgs } from '../index.js';
 import { HarnessError, HarnessErrorCode} from 'harness-one';
 import { mkdirSync, writeFileSync, rmSync, existsSync, symlinkSync, readFileSync } from 'node:fs';
@@ -232,7 +232,7 @@ describe('Audit logic', () => {
     expect(result.fileCount).toBe(0);
   });
 
-  // ── New: audit with no harness-one imports (maturity score 'None') ──
+  // ── Audit with no harness-one imports ──
 
   const AUDIT_TMP_DIR = '/tmp/harness-audit-test-cli';
 
@@ -249,7 +249,7 @@ describe('Audit logic', () => {
     }
   });
 
-  it('returns score "None" (zero used) when scanning files with no harness-one imports', () => {
+  it('returns zero usage stats when scanning files with no harness-one imports', () => {
     // Create .ts files that do NOT import from harness-one
     writeFileSync(join(AUDIT_TMP_DIR, 'app.ts'), `import express from 'express';\nconsole.log('hello');\n`);
     writeFileSync(join(AUDIT_TMP_DIR, 'utils.ts'), `export function add(a: number, b: number) { return a + b; }\n`);
@@ -258,6 +258,7 @@ describe('Audit logic', () => {
     expect(result.used).toEqual([]);
     expect(result.unused).toEqual([...ALL_MODULES]);
     expect(result.fileCount).toBe(2);
+    expect(result.totalImportSites).toBe(0);
   });
 
   it('detects all modules when every harness-one module is imported', () => {
@@ -271,6 +272,7 @@ describe('Audit logic', () => {
     expect(result.used).toEqual([...ALL_MODULES]);
     expect(result.unused).toEqual([]);
     expect(result.fileCount).toBe(1);
+    expect(result.totalImportSites).toBe(ALL_MODULES.length);
   });
 
   it('detects a subset of used modules correctly', () => {
@@ -284,6 +286,9 @@ describe('Audit logic', () => {
     expect(result.unused).toContain('prompt');
     expect(result.unused).toContain('tools');
     expect(result.fileCount).toBe(1);
+    expect(result.moduleCounts.core).toBe(1);
+    expect(result.moduleCounts.guardrails).toBe(1);
+    expect(result.totalImportSites).toBe(2);
   });
 
   it('scans files in subdirectories recursively', () => {
@@ -330,6 +335,17 @@ describe('Audit logic', () => {
     expect(result.used).toEqual(['memory']);
   });
 
+  it('counts repeated imports as separate import sites', () => {
+    writeFileSync(
+      join(AUDIT_TMP_DIR, 'repeated.ts'),
+      `import { AgentLoop } from 'harness-one/core';\nimport { createAgentLoop } from 'harness-one/core';\n`,
+    );
+
+    const result = auditProject(AUDIT_TMP_DIR);
+    expect(result.moduleCounts.core).toBe(2);
+    expect(result.totalImportSites).toBe(2);
+  });
+
   it('handles symlink cycles without infinite recursion', () => {
     // Create a directory structure with a symlink cycle: subdir -> parent
     const subDir = join(AUDIT_TMP_DIR, 'subdir');
@@ -353,59 +369,16 @@ describe('Audit logic', () => {
 });
 
 // ---------------------------------------------------------------------------
-// maturityLabel
+// formatImportSiteCount
 // ---------------------------------------------------------------------------
 
-describe('maturityLabel', () => {
-  // Use plain identity functions to avoid ANSI codes in assertions
-  const plainColors = {
-    green: (s: string) => `[green:${s}]`,
-    yellow: (s: string) => `[yellow:${s}]`,
-    red: (s: string) => `[red:${s}]`,
-  };
-
-  it('returns "None" (red) for 0 used modules', () => {
-    expect(maturityLabel(0, plainColors)).toBe('[red:None]');
+describe('formatImportSiteCount', () => {
+  it('formats the singular case', () => {
+    expect(formatImportSiteCount(1)).toBe('1 import site');
   });
 
-  it('returns "Starter" (red) for 1 used module', () => {
-    expect(maturityLabel(1, plainColors)).toBe('[red:Starter]');
-  });
-
-  it('returns "Starter" (red) for 2 used modules', () => {
-    expect(maturityLabel(2, plainColors)).toBe('[red:Starter]');
-  });
-
-  it('returns "Basic" (yellow) for 3 used modules', () => {
-    expect(maturityLabel(3, plainColors)).toBe('[yellow:Basic]');
-  });
-
-  it('returns "Basic" (yellow) for 4 used modules', () => {
-    expect(maturityLabel(4, plainColors)).toBe('[yellow:Basic]');
-  });
-
-  it('returns "Intermediate" (yellow) for 5 used modules', () => {
-    expect(maturityLabel(5, plainColors)).toBe('[yellow:Intermediate]');
-  });
-
-  it('returns "Intermediate" (yellow) for 6 used modules', () => {
-    expect(maturityLabel(6, plainColors)).toBe('[yellow:Intermediate]');
-  });
-
-  it('returns "Advanced" (green) for 7 used modules', () => {
-    expect(maturityLabel(7, plainColors)).toBe('[green:Advanced]');
-  });
-
-  it('returns "Advanced" (green) for 8 used modules', () => {
-    expect(maturityLabel(8, plainColors)).toBe('[green:Advanced]');
-  });
-
-  it('returns "Comprehensive" (green) for 9 used modules', () => {
-    expect(maturityLabel(9, plainColors)).toBe('[green:Comprehensive]');
-  });
-
-  it('returns "Comprehensive" (green) for 10 used modules', () => {
-    expect(maturityLabel(10, plainColors)).toBe('[green:Comprehensive]');
+  it('formats the plural case', () => {
+    expect(formatImportSiteCount(3)).toBe('3 import sites');
   });
 });
 
@@ -683,10 +656,10 @@ describe('runAudit', () => {
 
     const logSpy = console.log as ReturnType<typeof vi.fn>;
     const logCalls = logSpy.mock.calls.map((c: unknown[]) => String(c[0]));
-    expect(logCalls.some((msg: string) => msg.includes('harness-one audit'))).toBe(true);
-    expect(logCalls.some((msg: string) => msg.includes('No harness-one imports found'))).toBe(true);
-    expect(logCalls.some((msg: string) => msg.includes('Coverage:'))).toBe(true);
-    expect(logCalls.some((msg: string) => msg.includes('Maturity:'))).toBe(true);
+    expect(logCalls.some((msg: string) => msg.includes('harness-one usage audit'))).toBe(true);
+    expect(logCalls.some((msg: string) => msg.includes('core (not used)'))).toBe(true);
+    expect(logCalls.some((msg: string) => msg.includes('Used:'))).toBe(true);
+    expect(logCalls.some((msg: string) => msg.includes('Import sites:'))).toBe(true);
   });
 
   it('reports used and unused modules when some are imported', () => {
@@ -699,8 +672,9 @@ describe('runAudit', () => {
 
     const logSpy = console.log as ReturnType<typeof vi.fn>;
     const logCalls = logSpy.mock.calls.map((c: unknown[]) => String(c[0]));
-    expect(logCalls.some((msg: string) => msg.includes('Modules in use'))).toBe(true);
-    expect(logCalls.some((msg: string) => msg.includes('Modules not used'))).toBe(true);
+    expect(logCalls.some((msg: string) => msg.includes('core (1 import site)'))).toBe(true);
+    expect(logCalls.some((msg: string) => msg.includes('guardrails (1 import site)'))).toBe(true);
+    expect(logCalls.some((msg: string) => msg.includes('prompt (not used)'))).toBe(true);
   });
 
   it('reports all modules when all are imported', () => {
@@ -713,9 +687,9 @@ describe('runAudit', () => {
 
     const logSpy = console.log as ReturnType<typeof vi.fn>;
     const logCalls = logSpy.mock.calls.map((c: unknown[]) => String(c[0]));
-    // When all modules are used, "Modules not used" should NOT appear
-    expect(logCalls.some((msg: string) => msg.includes('Modules in use'))).toBe(true);
-    expect(logCalls.some((msg: string) => msg.includes('Coverage:'))).toBe(true);
+    expect(logCalls.some((msg: string) => msg.includes('Used:'))).toBe(true);
+    expect(logCalls.some((msg: string) => msg.includes('Import sites:'))).toBe(true);
+    expect(logCalls.some((msg: string) => msg.includes('(not used)'))).toBe(false);
   });
 });
 

@@ -511,6 +511,8 @@ export interface FailureClassification {
     // (undocumented)
     readonly confidence: number;
     // (undocumented)
+    readonly details?: Readonly<Record<string, unknown>>;
+    // (undocumented)
     readonly evidence: string;
     // (undocumented)
     readonly mode: FailureMode | string;
@@ -521,7 +523,7 @@ export interface FailureClassification {
 }
 
 // @public
-export type FailureMode = 'early_stop' | 'tool_loop' | 'context_forgetting' | 'repeated_tool_failure' | 'budget_exceeded' | 'timeout' | 'unrecoverable_error' | 'unknown';
+export type FailureMode = 'early_stop' | 'tool_loop' | 'context_forgetting' | 'hallucination' | 'budget_exceeded' | 'timeout' | 'unrecoverable_error' | 'unknown';
 
 // @public
 export interface FallbackAdapterConfig {
@@ -1651,10 +1653,10 @@ export interface VectorSearchOptions {
 
 // Warnings were encountered during analysis:
 //
-// dist/cost-tracker-C_3HuyyV.d.ts:394:5 - (ae-forgotten-export) The symbol "RedactConfig" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-C_3HuyyV.d.ts:401:5 - (ae-forgotten-export) The symbol "Redactor" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-C_3HuyyV.d.ts:734:5 - (ae-forgotten-export) The symbol "EvictionStrategyName" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-C_3HuyyV.d.ts:734:5 - (ae-forgotten-export) The symbol "EvictionStrategy" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-Bnxze39O.d.ts:396:5 - (ae-forgotten-export) The symbol "RedactConfig" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-Bnxze39O.d.ts:403:5 - (ae-forgotten-export) The symbol "Redactor" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-Bnxze39O.d.ts:736:5 - (ae-forgotten-export) The symbol "EvictionStrategyName" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-Bnxze39O.d.ts:736:5 - (ae-forgotten-export) The symbol "EvictionStrategy" needs to be exported by the entry point index.d.ts
 // dist/pipeline-CZkrsTUe.d.ts:45:5 - (ae-forgotten-export) The symbol "GuardrailEvent" needs to be exported by the entry point index.d.ts
 // dist/resilience-Lo5raXh_.d.ts:64:5 - (ae-forgotten-export) The symbol "MiddlewareContext" needs to be exported by the entry point index.d.ts
 // dist/session/index.d.ts:162:5 - (ae-forgotten-export) The symbol "SessionStore" needs to be exported by the entry point index.d.ts

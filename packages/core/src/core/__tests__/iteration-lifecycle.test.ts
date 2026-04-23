@@ -38,6 +38,7 @@ function makeDeps(overrides: Partial<IterationLifecycleConfig> = {}): {
   config: IterationLifecycleConfig;
   runHookCalls: Array<{ event: string; info: unknown }>;
   tmCalls: Array<{ method: string; args: unknown[] }>;
+  setSpanAttributes: ReturnType<typeof vi.fn>;
   abortController: AbortController;
 } {
   const runHookCalls: Array<{ event: string; info: unknown }> = [];
@@ -46,10 +47,11 @@ function makeDeps(overrides: Partial<IterationLifecycleConfig> = {}): {
   }) as AgentLoopHookDispatcher;
 
   const tmCalls: Array<{ method: string; args: unknown[] }> = [];
+  const setSpanAttributes = vi.fn();
   const traceManager: AgentLoopTraceManager = {
     startTrace: vi.fn(() => 'trace-1'),
     startSpan: vi.fn(() => 'span-1'),
-    setSpanAttributes: vi.fn(),
+    setSpanAttributes,
     addSpanEvent: vi.fn(),
     endSpan: (spanId: string, status?: 'completed' | 'error') => {
       tmCalls.push({ method: 'endSpan', args: [spanId, status] });
@@ -65,7 +67,7 @@ function makeDeps(overrides: Partial<IterationLifecycleConfig> = {}): {
     abortController,
     ...overrides,
   };
-  return { config, runHookCalls, tmCalls, abortController };
+  return { config, runHookCalls, tmCalls, setSpanAttributes, abortController };
 }
 
 async function drain(
@@ -165,7 +167,7 @@ describe('bailEndTurn', () => {
 
 describe('bailTokenBudget', () => {
   it('yields message then error, closes span error, terminates token_budget', async () => {
-    const { config, tmCalls } = makeDeps();
+    const { config, tmCalls, setSpanAttributes } = makeDeps();
     const lifecycle = createIterationLifecycle(config);
     const ctx = makeCtx();
     const messageEvent: AgentEvent = {
@@ -180,6 +182,10 @@ describe('bailTokenBudget', () => {
     const { events, outcome } = await drain(lifecycle.bailTokenBudget(ctx, messageEvent, errorEvent));
     expect(events.map((e) => e.type)).toEqual(['message', 'error']);
     expect(events[1]).toBe(errorEvent);
+    expect(setSpanAttributes).toHaveBeenCalledWith('span-1', {
+      'harness.error.code': HarnessErrorCode.CORE_TOKEN_BUDGET_EXCEEDED,
+      'harness.error.retryable': false,
+    });
     expect(tmCalls).toEqual([{ method: 'endSpan', args: ['span-1', 'error'] }]);
     expect(outcome.reason).toBe('token_budget');
   });
@@ -187,7 +193,7 @@ describe('bailTokenBudget', () => {
 
 describe('bailAborted', () => {
   it('yields error event, closes span error, terminates aborted', async () => {
-    const { config, tmCalls } = makeDeps();
+    const { config, tmCalls, setSpanAttributes } = makeDeps();
     const lifecycle = createIterationLifecycle(config);
     const ctx = makeCtx();
     const errorEvent: AgentEvent = {
@@ -196,6 +202,10 @@ describe('bailAborted', () => {
     };
     const { events, outcome } = await drain(lifecycle.bailAborted(ctx, errorEvent));
     expect(events).toEqual([errorEvent]);
+    expect(setSpanAttributes).toHaveBeenCalledWith('span-1', {
+      'harness.error.code': HarnessErrorCode.CORE_ABORTED,
+      'harness.error.retryable': false,
+    });
     expect(tmCalls).toEqual([{ method: 'endSpan', args: ['span-1', 'error'] }]);
     expect(outcome.reason).toBe('aborted');
   });

@@ -251,6 +251,7 @@ await admission.withPermit('tenant-123', () => harness.run(messages));
 - **`createAgentLoop` 工厂**：和 `new AgentLoop(...)` 等价但对齐 `createX()` 风格，便于 wrap / decorator。
 - **Provider 规范文档**：`docs/provider-spec.md` 是新 adapter 作者的权威参考（required vs optional、cache token、error 分类映射、PR 清单）。
 - **MemoryStore 合规测试套件**：`runMemoryStoreConformance(runner, factory)` 让新后端（Postgres / DynamoDB / Vespa）跑同一套契约测试。
+- **RAG 合规测试套件**：`runRetrieverConformance` / `runEmbeddingModelConformance` / `runChunkingStrategyConformance` 让新的 Retriever / EmbeddingModel / ChunkingStrategy 实现对齐同一份公开契约；规范文档见 [`docs/retriever-spec.md`](./docs/retriever-spec.md) 和 [`docs/embedding-spec.md`](./docs/embedding-spec.md)。
 
 ### 发布管线
 
@@ -282,7 +283,7 @@ await admission.withPermit('tenant-123', () => harness.run(messages));
 - **devkit** · `@harness-one/devkit` — createEvalRunner / createBasicRelevanceScorer / runGeneratorEvaluator / extractNewCases / createComponentRegistry / 漂移检测
 - **evolve-check** · `harness-one/evolve-check` — 运行时架构规则引擎（循环依赖 + 层级边界 + 自定义规则）
 - **orchestration** · `harness-one/orchestration` — createOrchestrator / createAgentPool / createHandoff / createContextBoundary / MessageQueue
-- **rag** · `harness-one/rag` — createRAGPipeline（文档加载、分块、嵌入、检索、token 估算、多租户隔离）
+- **rag** · `harness-one/rag` — createRAGPipeline / createInMemoryRetriever / runRetrieverConformance / runEmbeddingModelConformance / runChunkingStrategyConformance（覆盖文档加载、分块、嵌入、检索、token 估算、多租户隔离）
 - **preset** · `@harness-one/preset` — createSecurePreset（有偏好的参考装配，含 lifecycle + metrics 自动装配）/ createShutdownHandler / validateHarnessConfig
 
 ## 文档
