@@ -4,7 +4,7 @@ import {
   runEmbeddingModelConformance,
   runRetrieverConformance,
 } from '../conformance.js';
-import { createFixedSizeChunking } from '../chunking.js';
+import { createBasicFixedSizeChunking } from '../chunking.js';
 import { createInMemoryRetriever } from '../retriever.js';
 import { AbortedError } from '../../core/errors.js';
 import type { EmbedOptions, EmbeddingModel } from '../types.js';
@@ -42,5 +42,5 @@ runEmbeddingModelConformance(
 
 runChunkingStrategyConformance(
   { describe, it, expect },
-  () => createFixedSizeChunking({ chunkSize: 8 }),
+  () => createBasicFixedSizeChunking({ chunkSize: 8 }),
 );
