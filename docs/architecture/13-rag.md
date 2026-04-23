@@ -109,14 +109,17 @@ const results = await retriever.retrieve('query text', {
 
 ```ts
 import {
-  createTextLoader,
+  createDocumentArrayLoader,
   createBasicParagraphChunking,
   createInMemoryRetriever,
   createRAGPipeline,
 } from 'harness-one/rag';
 
 const pipeline = createRAGPipeline({
-  loader: createTextLoader(['Doc A content', 'Doc B content']),
+  loader: createDocumentArrayLoader([
+    { id: 'doc-a', content: 'Doc A content', metadata: { source: 'docs' } },
+    { id: 'doc-b', content: 'Doc B content', metadata: { source: 'notes' } },
+  ]),
   chunking: createBasicParagraphChunking({ maxChunkSize: 500 }),
   embedding: myEmbeddingModel,           // 实现 EmbeddingModel 接口
   retriever: createInMemoryRetriever({ embedding: myEmbeddingModel }),
@@ -139,6 +142,10 @@ for (const { chunk, score, tokens } of results) {
   console.log(`[${score.toFixed(3)}] ~${tokens} tokens: ${chunk.content.slice(0, 80)}`);
 }
 ```
+
+注意：内置 retriever 的 `filter` 只匹配 `chunk.metadata`。`Document.source`
+不会自动映射到 `metadata`，如果要按来源过滤，需要在文档或 chunk 的
+`metadata` 里显式写入该字段。
 
 ## Token 计数集成
 
