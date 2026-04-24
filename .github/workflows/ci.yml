@@ -96,6 +96,34 @@ jobs:
 
       - run: node tools/check-zero-deps.mjs
 
+  examples-smoke:
+    # Execute every example under examples/ via tsx. Catches wiring bugs
+    # that typecheck misses (e.g. invalid policy prefix, wrong ToolResult
+    # shape). Peer-SDK examples and live-API examples are auto-skipped;
+    # see tools/run-examples.mjs for the classification rules.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      - name: Execute examples (mock mode)
+        env:
+          HARNESS_MOCK: '1'
+        run: pnpm examples:smoke
+
+      - name: Check README ts snippets compile
+        run: pnpm check:readme
+
   changeset-check:
     # Every PR that touches packages/ must include a changeset. Prevents
     # ad-hoc version drift across monorepo packages.

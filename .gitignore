@@ -5,6 +5,7 @@ coverage-temp/
 *.tsbuildinfo
 tsup.config.bundled_*.mjs
 .claude/
+tmp/
 
 # api-extractor scratch dir (contents regenerated on each
 # `pnpm api:update`; the committed baseline lives under packages/*/etc/).

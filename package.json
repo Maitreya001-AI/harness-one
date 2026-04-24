@@ -17,6 +17,8 @@
     "lint": "pnpm -r lint",
     "verify:deps": "tsx tools/verify-deps.ts",
     "check:zero-deps": "node tools/check-zero-deps.mjs",
+    "examples:smoke": "node tools/run-examples.mjs",
+    "check:readme": "node tools/check-readme-snippets.mjs",
     "api:update": "pnpm -r --filter \"./packages/*\" exec api-extractor run --local",
     "api:check": "pnpm -r --filter \"./packages/*\" exec api-extractor run",
     "changeset": "changeset",
