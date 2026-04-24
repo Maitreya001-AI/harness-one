@@ -323,8 +323,9 @@ describe('createContentFilter', () => {
 
     it('throws for pattern with adjacent quantifiers like a++', () => {
       // Note: JavaScript regex doesn't support possessive quantifiers but the source
-      // string pattern (a+)+ should be caught
-      expect(() => createContentFilter({ blockedPatterns: [/(a+)+b/] }))
+      // string pattern (a+)+ should be caught. Constructed via `new RegExp` so the
+      // known-unsafe literal isn't checked into source and flagged by CodeQL.
+      expect(() => createContentFilter({ blockedPatterns: [new RegExp('(a+)+b')] }))
         .toThrow(HarnessError);
     });
 

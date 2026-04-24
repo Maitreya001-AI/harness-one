@@ -18,7 +18,7 @@
  *   ANTHROPIC_API_KEY / OPENAI_API_KEY in env or in .env.local. The
  *   loader is the same zero-dep helper used by `tools/smoke-test.mjs`.
  */
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { argv } from 'node:process';
@@ -51,8 +51,8 @@ function parseArgs() {
 }
 
 function ensureDir(path) {
-  const d = dirname(path);
-  if (!existsSync(d)) mkdirSync(d, { recursive: true });
+  // `recursive: true` is idempotent — no existsSync race needed.
+  mkdirSync(dirname(path), { recursive: true });
 }
 
 async function recordAdapter({ label, adapterFactory, cassetteDir }) {
@@ -61,8 +61,9 @@ async function recordAdapter({ label, adapterFactory, cassetteDir }) {
   for (const fx of CONTRACT_FIXTURES) {
     const file = resolve(cassetteDir, cassetteFileName(fx));
     ensureDir(file);
-    // Fresh cassette per run — reset so the FIFO queue starts clean.
-    if (existsSync(file)) unlinkSync(file);
+    // Fresh cassette per run — truncate atomically (default 'w' flag both
+    // creates and truncates, which avoids the exists-then-unlink-then-write
+    // TOCTOU that was here before).
     writeFileSync(file, '', 'utf8');
     const wrapped = recordCassette(raw, file);
     console.log(`  · ${fx.name}`);

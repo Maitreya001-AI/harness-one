@@ -63,7 +63,7 @@ describe('parseVerdict', () => {
       ...VALID,
       duplicates: [{ ...VALID.duplicates[0], url: 'https://evil.example.com/1' }],
     };
-    expect(() => parseVerdict(JSON.stringify(payload))).toThrow(/github\.com/);
+    expect(() => parseVerdict(JSON.stringify(payload))).toThrow('github.com');
   });
 
   it('rejects duplicates with unknown confidence', () => {

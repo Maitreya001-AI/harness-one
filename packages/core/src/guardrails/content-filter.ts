@@ -33,15 +33,67 @@ export function isReDoSCandidate(pattern: string): boolean {
   if (/(\+|\*|\{)\s*\)(\+|\*|\{|\?)/.test(pattern)) return true;
   // 2. Adjacent quantifiers without grouping: e.g. a++ or a*+ or a*?
   if (/(\+|\*)\s*(\+|\*|\?)/.test(pattern)) return true;
-  // 3. Alternation containing an optional atom with a repeat, e.g. (a|a?)+
-  //    This is a classic polynomial-time pathology.
-  if (/\([^)]*\?\s*\)[+*]/.test(pattern)) return true;
+  // 3. Simple group with an optional atom then a repeat, e.g. (a|a?)+.
+  if (hasOptionalAtomInRepeat(pattern)) return true;
   // 4. Alternation whose branches share a literal prefix, wrapped in a repeat.
   //    Examples: (a|ab)*, (foo|foobar)+, (a|b|ab)*.
-  //    Detect by extracting top-level alternation group and comparing branches.
-  const altMatch = /\(([^()]*\|[^()]*)\)[+*]/.exec(pattern);
-  if (altMatch && hasOverlappingAlternatives(altMatch[1])) return true;
+  const altBody = extractRepeatedAlternationBody(pattern);
+  if (altBody !== null && hasOverlappingAlternatives(altBody)) return true;
   return false;
+}
+
+/**
+ * Linear scan: returns true if `pattern` contains a simple (non-nested) group
+ * `(…?…)` immediately followed by `+` or `*`. Replaces the previous regex
+ * `/\([^)]*\?\s*\)[+*]/` which had polynomial backtracking on inputs like
+ * `((((…((`.
+ */
+function hasOptionalAtomInRepeat(pattern: string): boolean {
+  for (let i = 0; i < pattern.length; i++) {
+    if (pattern[i] !== '(') continue;
+    let sawQuestion = false;
+    for (let j = i + 1; j < pattern.length; j++) {
+      const c = pattern[j];
+      if (c === '(') break; // nested group — skip this heuristic
+      if (c === ')') {
+        if (!sawQuestion) break;
+        // Allow optional whitespace before the trailing quantifier.
+        let k = j + 1;
+        while (k < pattern.length && (pattern[k] === ' ' || pattern[k] === '\t')) k++;
+        const next = pattern[k];
+        if (next === '+' || next === '*') return true;
+        break;
+      }
+      if (c === '?') sawQuestion = true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Linear scan: returns the body of the first simple (non-nested) alternation
+ * group `(A|B|…)` followed by `+` or `*`, or `null` if none exists. Replaces
+ * the previous regex `/\(([^()]*\|[^()]*)\)[+*]/` which had polynomial
+ * backtracking on inputs with many `|` characters.
+ */
+function extractRepeatedAlternationBody(pattern: string): string | null {
+  for (let i = 0; i < pattern.length; i++) {
+    if (pattern[i] !== '(') continue;
+    let body = '';
+    let hasAlt = false;
+    let closeIndex = -1;
+    for (let j = i + 1; j < pattern.length; j++) {
+      const c = pattern[j];
+      if (c === '(') break; // nested — skip
+      if (c === ')') { closeIndex = j; break; }
+      if (c === '|') hasAlt = true;
+      body += c;
+    }
+    if (closeIndex === -1 || !hasAlt) continue;
+    const next = pattern[closeIndex + 1];
+    if (next === '+' || next === '*') return body;
+  }
+  return null;
 }
 
 /**

@@ -584,10 +584,9 @@ describe('withGuardrailRetry', () => {
       // cleans up its signal listener on resolve. We can't observe listener
       // counts directly on AbortSignal, but we can assert the function
       // completes normally AND that clearTimeout wasn't left pending.
-      let cb: Guardrail = () => ({ action: 'allow' });
       // Fail once then allow, to force exactly one backoff.
       let attempt = 0;
-      cb = () => {
+      const cb: Guardrail = () => {
         attempt++;
         return attempt === 1 ? { action: 'block', reason: 'bad' } : { action: 'allow' };
       };

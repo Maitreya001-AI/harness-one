@@ -423,15 +423,18 @@ describe('createFileSystemStore', () => {
     });
 
     it('allEntries returns empty for ENOENT directory', async () => {
-      // Create a store pointing to a non-existent dir, then query before any writes
-      const nonExistentDir = join(tmpdir(), 'harness-nonexistent-' + Date.now());
+      // Create a store pointing to a non-existent dir, then query before any writes.
+      // Use mkdtemp to get a unique, secure parent; the non-existent child path
+      // is safe because only this test owns the parent.
+      const parent = await mkdtemp(join(tmpdir(), 'harness-nonexistent-parent-'));
+      const nonExistentDir = join(parent, 'child');
       const freshStore = createFileSystemStore({ directory: nonExistentDir });
 
       // ensureDir creates the dir, but there are no entries
       const results = await freshStore.query({});
       expect(results).toHaveLength(0);
 
-      await rm(nonExistentDir, { recursive: true, force: true });
+      await rm(parent, { recursive: true, force: true });
     });
 
     it('readEntry returns null for ENOENT (missing file)', async () => {

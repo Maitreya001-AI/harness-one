@@ -66,7 +66,9 @@ async function classifyExample(filePath) {
   for (const mod of PEER_SDK_IMPORTS) {
     // Match `from 'mod'` / `from "mod"` / `import('mod')`. Quoted + word-boundary
     // avoids false positives on comments like "install @anthropic-ai/sdk".
-    const re = new RegExp(`from\\s+['"]${mod.replace(/[/\-]/g, '\\$&')}['"]`);
+    // Escape every regex metachar (incl. backslash) so module names remain literal.
+    const escapedMod = mod.replace(/[.*+?^${}()|[\]\\/\-]/g, '\\$&');
+    const re = new RegExp(`from\\s+['"]${escapedMod}['"]`);
     if (re.test(source)) {
       return { skip: true, reason: `imports peer SDK "${mod}" (not installed)` };
     }

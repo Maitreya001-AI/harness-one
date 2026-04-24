@@ -35,8 +35,10 @@ describe('createFileIO', () => {
 
   describe('entryPath', () => {
     it('returns the correct path for an entry ID', () => {
-      const io = createFileIO({ directory: '/tmp/test' });
-      expect(io.entryPath('mem_123')).toBe('/tmp/test/mem_123.json');
+      // Literal path — never written to; used only to verify the join logic.
+      const fakeDir = '/fake/harness-test';
+      const io = createFileIO({ directory: fakeDir });
+      expect(io.entryPath('mem_123')).toBe(`${fakeDir}/mem_123.json`);
     });
   });
 

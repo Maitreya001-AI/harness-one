@@ -4,7 +4,7 @@
 // using the OpenTelemetry API. Harness-one traces and spans are mapped to OTel
 // spans so they flow through your existing OTel pipeline (Jaeger, Zipkin, etc.).
 
-import { trace as otelTrace, SpanStatusCode, context } from '@opentelemetry/api';
+import { trace as otelTrace, SpanStatusCode } from '@opentelemetry/api';
 import type { TraceExporter, Trace, Span } from 'harness-one/observe';
 import { createTraceManager } from 'harness-one/observe';
 

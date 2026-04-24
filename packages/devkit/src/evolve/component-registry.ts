@@ -38,7 +38,9 @@ export function createComponentRegistry(): ComponentRegistry {
 
   // Fix 10: Deep freeze utility for returning immutable copies
   function deepFreeze<T>(obj: T): T {
-    if (obj === null || obj === undefined || typeof obj !== 'object') return obj;
+    // Primitives pass through; null has `typeof === 'object'` but round-trips
+    // safely through JSON.parse/stringify in the clone path below.
+    if (typeof obj !== 'object') return obj;
     // Use JSON parse/stringify for simple deep clone + freeze
     try {
       return JSON.parse(JSON.stringify(obj)) as T;
