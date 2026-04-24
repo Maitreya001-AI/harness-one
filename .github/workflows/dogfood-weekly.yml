@@ -12,8 +12,10 @@ on:
     - cron: '0 4 * * 0'
   workflow_dispatch: {}
 
+# Top-level least-privilege. The rollup job below commits + pushes to main,
+# so it opts up to contents: write at the job scope only.
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: dogfood-weekly
@@ -23,19 +25,21 @@ jobs:
   rollup:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: write  # git push origin HEAD:main in final step
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.4.0
 
       - name: Set up Node 20
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@60edb5dd545a775178f52524783378180af0d1f8 # v4.0.2
         with:
           node-version: 20
           cache: pnpm

@@ -1,0 +1,63 @@
+name: CodeQL
+
+# Static analysis (SAST) for the JS/TS surface of the monorepo. Runs on
+# every PR touching main and on a weekly schedule so the default branch
+# is re-scanned against new CodeQL query versions even when nothing
+# landed that week. Findings show up in the Security tab and block merge
+# if severity is configured to do so on the repo.
+#
+# All pins are by SHA — this workflow is itself audited by Scorecard.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Tuesdays 05:30 UTC — off-peak for Maitreya001-AI runners, before
+    # the maintainer's working hours, one day after the GitHub Advisory
+    # Database's Monday batch so we re-scan against fresh queries.
+    - cron: '30 5 * * 2'
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      # Required for CodeQL to write results to the Security tab via SARIF.
+      security-events: write
+      # Required to fetch private repo contents if this repo goes private.
+      actions: read
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [javascript-typescript]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@ce64ddcb0d8d890d2df4a9d1c04ff297367dea2a # v3.35.2
+        with:
+          languages: ${{ matrix.language }}
+          # `security-and-quality` includes all `security-extended` queries
+          # plus maintainability / reliability rules — useful for a library
+          # where a stray unhandled-promise is itself a correctness bug.
+          queries: security-and-quality
+
+      - name: Autobuild
+        # CodeQL's JS/TS extractor runs without a build step. Autobuild is
+        # a no-op here but kept for parity with multi-language projects.
+        uses: github/codeql-action/autobuild@ce64ddcb0d8d890d2df4a9d1c04ff297367dea2a # v3.35.2
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@ce64ddcb0d8d890d2df4a9d1c04ff297367dea2a # v3.35.2
+        with:
+          category: "/language:${{ matrix.language }}"
