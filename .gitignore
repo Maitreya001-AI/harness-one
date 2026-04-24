@@ -9,3 +9,6 @@ tsup.config.bundled_*.mjs
 # api-extractor scratch dir (contents regenerated on each
 # `pnpm api:update`; the committed baseline lives under packages/*/etc/).
 packages/*/temp/
+
+# Stryker mutation testing scratch dir (reports + incremental cache)
+.stryker-tmp/

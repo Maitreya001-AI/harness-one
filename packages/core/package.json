@@ -96,9 +96,16 @@
     "build": "tsup",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src/"
+    "lint": "eslint src/",
+    "mutation": "stryker run",
+    "mutation:core": "stryker run --mutate 'src/core/agent-loop.ts,src/core/iteration-runner.ts,src/core/adapter-caller.ts'",
+    "mutation:core:all": "stryker run --mutate 'src/core/**/*.ts'",
+    "mutation:validate": "stryker run --mutate 'src/infra/validate.ts'",
+    "mutation:guardrails": "stryker run --mutate 'src/guardrails/pipeline.ts'"
   },
   "devDependencies": {
+    "@stryker-mutator/core": "9.6.1",
+    "@stryker-mutator/vitest-runner": "9.6.1",
     "tsup": "^8.0.0",
     "typescript": "^5.5.0",
     "vitest": "^2.0.0"
