@@ -1,0 +1,33 @@
+name: Audit
+
+# Enforces the supply-chain promise: every PR and weekly scheduled run
+# fails if `pnpm audit --audit-level=high --prod` finds any high/critical
+# advisory against the production dependency graph. The lenient audit step
+# in ci.yml (continue-on-error) remains for informational printing.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    # Mondays 06:00 UTC — catches advisories disclosed over the weekend.
+    - cron: '0 6 * * 1'
+
+jobs:
+  pnpm-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: pnpm audit (high/critical, prod only)
+        run: pnpm audit --audit-level=high --prod
