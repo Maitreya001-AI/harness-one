@@ -19,7 +19,7 @@ export function textResponse(
 }
 
 export function toolCallResponse(
-  toolCalls: AssistantMessage['toolCalls'],
+  toolCalls: NonNullable<AssistantMessage['toolCalls']>,
   usage: TokenUsage = DEFAULT_USAGE,
 ): ChatResponse {
   return {
