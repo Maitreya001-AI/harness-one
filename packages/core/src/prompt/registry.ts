@@ -28,7 +28,13 @@ function resolveTemplateVariables(
 ): string {
   let content = template.content;
   for (const varName of template.variables) {
-    if (!(varName in variables)) {
+    // F-O4-01 (fuzz-discovered): `in` walks the prototype chain, so a
+    // declared variable named `toString` / `valueOf` / `constructor` / …
+    // reads from `Object.prototype` instead of failing cleanly. The
+    // subsequent `rawValue.replace(...)` then throws `TypeError` on the
+    // inherited function. Use an own-property check so reserved-name
+    // declarations surface as the documented PROMPT_MISSING_VARIABLE.
+    if (!Object.prototype.hasOwnProperty.call(variables, varName)) {
       throw new HarnessError(
         `Missing required variable: ${varName} for template ${template.id}`,
         HarnessErrorCode.PROMPT_MISSING_VARIABLE,

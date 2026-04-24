@@ -876,3 +876,52 @@ describe('Issue 1: template variable injection in registry resolve', () => {
     expect(result).toContain('foosys');
   });
 });
+
+// F-O4-01 regression — the fuzz suite (`tests/fuzz/prompt-template.fuzz.test.ts`)
+// discovered that declaring a variable whose name collides with an
+// `Object.prototype` key (toString, valueOf, constructor, …) caused
+// `resolve()` to throw `TypeError: rawValue.replace is not a function`
+// instead of the documented `PROMPT_MISSING_VARIABLE`. Root cause was a
+// prototype-walking `in`-operator check; fix is an own-property test.
+describe('F-O4-01: prototype-chain variable names', () => {
+  const protoKeys = [
+    'toString',
+    'valueOf',
+    'constructor',
+    'hasOwnProperty',
+    'isPrototypeOf',
+    'propertyIsEnumerable',
+    'toLocaleString',
+  ];
+
+  for (const key of protoKeys) {
+    it(`throws HarnessError (not TypeError) when "${key}" is declared but unset`, () => {
+      const reg = createPromptRegistry();
+      reg.register({
+        id: 't',
+        version: '1.0',
+        content: `head {{${key}}} tail`,
+        variables: [key],
+      });
+      expect(() => reg.resolve('t', {})).toThrow(HarnessError);
+      try {
+        reg.resolve('t', {});
+      } catch (err) {
+        expect(err).toBeInstanceOf(HarnessError);
+        expect((err as HarnessError).code).toBe(HarnessErrorCode.PROMPT_MISSING_VARIABLE);
+      }
+    });
+
+    it(`renders cleanly when "${key}" has an own-property value supplied`, () => {
+      const reg = createPromptRegistry();
+      reg.register({
+        id: 't',
+        version: '1.0',
+        content: `head {{${key}}} tail`,
+        variables: [key],
+      });
+      const out = reg.resolve('t', { [key]: 'OK' });
+      expect(out).toBe('head OK tail');
+    });
+  }
+});
