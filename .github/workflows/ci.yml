@@ -153,3 +153,26 @@ jobs:
 
       - name: Check for changeset
         run: pnpm exec changeset status --since=origin/main
+
+  docs-api:
+    # typedoc gate: fails on invalid @link targets, not-exported symbols
+    # referenced from the public API, or any other typedoc warning. Runs
+    # after build so generated .d.ts files exist where typedoc expects
+    # them. We do NOT publish the output here; gate only.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      - name: Generate API docs (gate only, not published)
+        run: pnpm docs:api

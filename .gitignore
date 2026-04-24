@@ -13,3 +13,8 @@ packages/*/temp/
 
 # Stryker mutation testing scratch dir (reports + incremental cache)
 .stryker-tmp/
+
+# typedoc output — the docs-api CI job uses typedoc purely as a gate
+# (invalid @links / not-exported references fail CI); the HTML bundle
+# itself is not a shipped artifact.
+.typedoc/

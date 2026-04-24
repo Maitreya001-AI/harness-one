@@ -22,6 +22,7 @@
     "check:readme": "node tools/check-readme-snippets.mjs",
     "api:update": "pnpm -r --filter \"./packages/*\" exec api-extractor run --local",
     "api:check": "pnpm -r --filter \"./packages/*\" exec api-extractor run",
+    "docs:api": "typedoc",
     "changeset": "changeset",
     "version": "changeset version",
     "release": "pnpm build && changeset publish",
@@ -43,6 +44,7 @@
     "lint-staged": "^16.4.0",
     "tsup": "^8.0.0",
     "tsx": "^4.19.0",
+    "typedoc": "^0.28.9",
     "typescript": "^5.5.0",
     "typescript-eslint": "^8.58.1",
     "vitest": "^2.0.0"
