@@ -27,7 +27,13 @@
       "harness-one/testing": ["../../src/testing/index.ts"],
       "@harness-one/preset": ["../../../preset/src/index.ts"],
       "@harness-one/anthropic": ["../../../anthropic/src/index.ts"],
-      "@harness-one/openai": ["../../../openai/src/index.ts"]
+      "@harness-one/openai": ["../../../openai/src/index.ts"],
+      "@harness-one/ajv": ["../../../ajv/src/index.ts"],
+      "@harness-one/devkit": ["../../../devkit/src/index.ts"],
+      "@harness-one/langfuse": ["../../../langfuse/src/index.ts"],
+      "@harness-one/opentelemetry": ["../../../opentelemetry/src/index.ts"],
+      "@harness-one/redis": ["../../../redis/src/index.ts"],
+      "@harness-one/tiktoken": ["../../../tiktoken/src/index.ts"]
     }
   },
   "include": ["./**/*.test-d.ts"]
