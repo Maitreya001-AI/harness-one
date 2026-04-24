@@ -2,14 +2,20 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const { mockOpenAIConstructor } = vi.hoisted(() => {
   const mockCreateFn = vi.fn();
-  const mockOpenAIConstructor = vi.fn().mockImplementation(() => ({
-    chat: {
-      completions: {
-        create: mockCreateFn,
+  // vitest@v4 requires a `function` expression (not an arrow) in
+  // vi.fn() implementations that will be invoked with `new`. An arrow
+  // isn't [[Construct]]-able, so `new OpenAI(...)` throws with
+  // "<impl> is not a constructor". See vitest v4 release notes.
+  const mockOpenAIConstructor = vi.fn(function () {
+    return {
+      chat: {
+        completions: {
+          create: mockCreateFn,
+        },
       },
-    },
-    _mockCreate: mockCreateFn,
-  }));
+      _mockCreate: mockCreateFn,
+    };
+  });
   return { mockOpenAIConstructor };
 });
 
@@ -124,6 +130,34 @@ describe('createOpenAIAdapter', () => {
       expect(result.message.toolCalls).toHaveLength(1);
       expect(result.message.toolCalls![0].id).toBe('tc-1');
       expect(result.message.toolCalls![0].name).toBe('web_search');
+    });
+
+    it('drops custom tool_calls (openai@v6 ChatCompletionMessageCustomToolCall)', async () => {
+      // openai@v6 widened `tool_calls` to a union of function + custom tool
+      // calls. harness-one only models function tool calls, so custom ones
+      // must be filtered out rather than crash `.function.name` access.
+      mock.mocks.create.mockResolvedValue({
+        choices: [{
+          message: {
+            role: 'assistant',
+            content: 'mixed',
+            tool_calls: [
+              { id: 'tc-fn', type: 'function', function: { name: 'search', arguments: '{}' } },
+              { id: 'tc-custom', type: 'custom', custom: { name: 'freeform', input: 'raw text' } },
+            ],
+          },
+        }],
+        usage: { prompt_tokens: 5, completion_tokens: 5 },
+      });
+
+      const adapter = createOpenAIAdapter({ client: mock.client });
+      const result = await adapter.chat({
+        messages: [{ role: 'user', content: 'go' }],
+      });
+
+      expect(result.message.toolCalls).toHaveLength(1);
+      expect(result.message.toolCalls![0].id).toBe('tc-fn');
+      expect(result.message.toolCalls![0].name).toBe('search');
     });
 
     it('converts tool result messages', async () => {

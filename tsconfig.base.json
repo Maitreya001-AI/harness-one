@@ -1,6 +1,12 @@
 {
   "compilerOptions": {
     "target": "ES2022",
+    // `tsup` (via rollup-plugin-dts) injects a `baseUrl` when generating
+    // .d.ts bundles, which typescript@v6 now reports as deprecated (error
+    // TS5101). `ignoreDeprecations: "6.0"` is the migration-window opt-out
+    // documented at https://aka.ms/ts6 — drop it once tsup bumps past the
+    // rollup-plugin-dts versions that set baseUrl implicitly.
+    "ignoreDeprecations": "6.0",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "lib": ["ES2022"],

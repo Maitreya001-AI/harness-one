@@ -16,6 +16,12 @@
     "includeForgottenExports": true
   },
 
+  // Force LF line endings — api-extractor@7.58 started defaulting to "crlf"
+  // on non-Windows, which causes the committed LF reports to diff against
+  // fresh runs and fails `pnpm api:check` on every PR. Keep this pinned to
+  // match the repo's LF convention (enforced by .gitattributes).
+  "newlineKind": "lf",
+
   "docModel": {
     "enabled": false
   },

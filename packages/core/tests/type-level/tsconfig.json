@@ -7,7 +7,6 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "types": ["node"],
-    "baseUrl": ".",
     "paths": {
       "harness-one": ["../../src/index.ts"],
       "harness-one/core": ["../../src/core/index.ts"],
