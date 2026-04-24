@@ -9,14 +9,58 @@ import type { RedisStoreConfig } from '../index.js';
 function createMockRedis() {
   const store = new Map<string, string>();
   const sets = new Map<string, Set<string>>();
+  /**
+   * Absolute expiry timestamp (ms since epoch) per key. Only populated
+   * when `set()` is called with `'PX' <ms>` / `'EX' <sec>` options. Absent
+   * entries have no TTL (ioredis `pttl` returns -1 for those).
+   */
+  const expiries = new Map<string, number>();
 
   const getSet = (key: string): Set<string> => {
     if (!sets.has(key)) sets.set(key, new Set());
     return sets.get(key)!;
   };
 
-  const setFn = vi.fn((key: string, value: string) => {
+  /**
+   * Lazy-evict: if `key` is past its expiry, drop the store entry and
+   * its expiry record, then signal the caller via the returned boolean
+   * so read paths can treat it as missing.
+   */
+  const evictIfExpired = (key: string): boolean => {
+    const expireAt = expiries.get(key);
+    if (expireAt === undefined) return false;
+    if (Date.now() < expireAt) return false;
+    store.delete(key);
+    expiries.delete(key);
+    return true;
+  };
+
+  /**
+   * Parse ioredis variadic `set()` options (PX <ms> / EX <sec>) and
+   * return the absolute expiry timestamp when a TTL was requested.
+   * Returns `undefined` when the call is plain `set(key, value)`.
+   */
+  const extractExpiry = (extras: unknown[]): number | undefined => {
+    for (let i = 0; i < extras.length - 1; i++) {
+      const flag = extras[i];
+      const amount = extras[i + 1];
+      if (typeof flag !== 'string' || typeof amount !== 'number' || !Number.isFinite(amount)) continue;
+      const lower = flag.toLowerCase();
+      if (lower === 'px') return Date.now() + amount;
+      if (lower === 'ex') return Date.now() + amount * 1000;
+    }
+    return undefined;
+  };
+
+  const setFn = vi.fn((key: string, value: string, ...extras: unknown[]) => {
     store.set(key, value);
+    const expireAt = extractExpiry(extras);
+    if (expireAt !== undefined) {
+      expiries.set(key, expireAt);
+    } else {
+      // Plain `set` clears any prior TTL — matches ioredis semantics.
+      expiries.delete(key);
+    }
     return 'OK';
   });
   const saddFn = vi.fn((key: string, ...members: string[]) => {
@@ -31,6 +75,7 @@ function createMockRedis() {
     let count = 0;
     for (const key of keys) {
       if (store.delete(key)) count++;
+      expiries.delete(key);
       sets.delete(key);
     }
     return count;
@@ -48,7 +93,7 @@ function createMockRedis() {
     const queue: (() => unknown)[] = [];
     const pipeline = {
       set: vi.fn((...args: unknown[]) => {
-        queue.push(() => setFn(...(args as [string, string])));
+        queue.push(() => setFn(args[0] as string, args[1] as string, ...args.slice(2)));
         return pipeline;
       }),
       sadd: vi.fn((...args: unknown[]) => {
@@ -75,19 +120,41 @@ function createMockRedis() {
   });
 
   return {
-    get: vi.fn(async (key: string) => store.get(key) ?? null),
+    get: vi.fn(async (key: string) => {
+      evictIfExpired(key);
+      return store.get(key) ?? null;
+    }),
     set: setFn,
     del: vi.fn(async (...keys: string[]) => delFn(...keys)),
     sadd: saddFn,
     srem: vi.fn(async (key: string, ...members: string[]) => sremFn(key, ...members)),
     smembers: vi.fn(async (key: string) => Array.from(getSet(key))),
     scard: vi.fn(async (key: string) => getSet(key).size),
-    mget: vi.fn(async (...keys: string[]) => keys.map((k) => store.get(k) ?? null)),
+    mget: vi.fn(async (...keys: string[]) =>
+      keys.map((k) => {
+        evictIfExpired(k);
+        return store.get(k) ?? null;
+      }),
+    ),
+    /**
+     * ioredis `pttl` contract:
+     *   - `-2` if the key does not exist
+     *   - `-1` if the key exists but has no associated TTL
+     *   - remaining milliseconds otherwise
+     */
+    pttl: vi.fn(async (key: string) => {
+      evictIfExpired(key);
+      if (!store.has(key)) return -2;
+      const expireAt = expiries.get(key);
+      if (expireAt === undefined) return -1;
+      return Math.max(0, expireAt - Date.now());
+    }),
     multi,
     watch: vi.fn(async () => 'OK'),
     unwatch: vi.fn(async () => 'OK'),
     _store: store,
     _sets: sets,
+    _expiries: expiries,
   } as unknown as RedisStoreConfig['client'];
 }
 

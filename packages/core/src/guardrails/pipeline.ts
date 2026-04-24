@@ -404,9 +404,9 @@ async function runRagContextInternal(
     verdict: { action: 'allow' },
     results: [],
   };
-  for (let i = 0; i < chunks.length; i++) {
+  for (const [i, chunk] of chunks.entries()) {
     const ctx: GuardrailContext = {
-      content: chunks[i]!,
+      content: chunk,
       meta: { ...(meta ?? {}), ragChunkIndex: i },
     };
     const result = await runGuardrails(p, p.input, 'input', ctx);

@@ -46,7 +46,7 @@ export type BeforeToolCallHookDispatcher = (
 /**
  * Build a `(event, info) => void` dispatcher over the registered hooks.
  * Hooks are invoked synchronously in registration order. A throwing hook
- * is logged (or forwarded to `console.error` when no logger is configured)
+ * is logged (or forwarded to `console.warn` when no logger is configured)
  * and otherwise swallowed — the caller never observes the failure. When
  * `strictHooks: true` the dispatcher re-throws instead.
  */
@@ -81,7 +81,9 @@ export function createHookDispatcher(
           }
         }
         try {
-          console.error('[harness-one/agent-loop] hook threw:', err);
+          // Last-resort fallback after the caller-supplied logger also threw.
+          // console.warn is the project-wide allowed channel (see eslint rule).
+          console.warn('[harness-one/agent-loop] hook threw:', err);
         } catch {
           // Truly unreachable — even console is missing.
         }
@@ -109,7 +111,9 @@ function logHookError(
     }
   }
   try {
-    console.error('[harness-one/agent-loop] hook threw:', err);
+    // Last-resort fallback after the caller-supplied logger also threw.
+    // console.warn is the project-wide allowed channel (see eslint rule).
+    console.warn('[harness-one/agent-loop] hook threw:', err);
   } catch {
     // Truly unreachable — even console is missing.
   }

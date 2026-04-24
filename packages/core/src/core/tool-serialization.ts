@@ -84,9 +84,10 @@ export function safeStringifyToolResult(value: unknown): string {
     if (val === null || typeof val !== 'object') return val;
     if (seen.has(val as object)) return '[circular]';
     // Determine this value's depth: parent depth + 1 (or 0 if root).
+    // Nullish-coalesce from get() — depthMap only stores finite numbers (0..N),
+    // so `undefined` unambiguously means "no entry" and maps to -1.
     const parent = this as object | undefined;
-    const parentDepth =
-      parent !== undefined && depthMap.has(parent) ? depthMap.get(parent)! : -1;
+    const parentDepth = (parent !== undefined ? depthMap.get(parent) : undefined) ?? -1;
     const nextDepth = parentDepth + 1;
     if (nextDepth > MAX_TOOL_RESULT_DEPTH) {
       // Returning undefined drops the key from the output; for an array
