@@ -40,6 +40,14 @@ jobs:
         # subpath-import regresses or drifts out of sync with the public API.
         run: pnpm typecheck
 
+      - name: Typecheck type-level assertions (Track N)
+        # Runs tsc against packages/core/tests/type-level/ which contains
+        # expect-type assertions that lock down AgentEvent variants, brand
+        # non-assignability, HarnessConfig narrowing, MetricsPort cross-
+        # subpath identity, and the public-API shape. A break here means a
+        # type contract regressed — see docs/architecture/17-testing.md.
+        run: pnpm --filter harness-one typecheck:type-level
+
       - name: Test with coverage (enforces per-package thresholds)
         # Vitest fails non-zero when coverage falls below thresholds declared
         # in each package's vitest.config.ts (lines/functions/statements=80,
@@ -124,6 +132,70 @@ jobs:
       - name: Check README ts snippets compile
         run: pnpm check:readme
 
+  dx-quality:
+    # DX quality gates (Track L). Each check has its own script so the
+    # failure on the PR status page names the regressed contract.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      - name: Tree-shake check (opt-in subsystems stay out of core bundle)
+        run: pnpm check:tree-shake
+
+      - name: Error-message action-item lint
+        # Non-blocking: the first scan after this lands will surface 15+
+        # pre-existing cases (see Track L PR description). Flip to
+        # blocking once the owner has batched the fix.
+        run: pnpm lint:errors
+        continue-on-error: true
+
+      - name: TSDoc @example coverage on public factories
+        # Non-blocking for the same reason — 12 public `createXxx` factories
+        # are missing @example today. Listed in the PR description.
+        run: pnpm lint:tsdoc
+        continue-on-error: true
+
+  size-limit:
+    # Bundle-size regression gate (Track L1). Runs only on PRs so the
+    # size-limit-action can post a diff comment against the base branch.
+    # `build_script: size:build` = `pnpm build && prebundle.mjs`, which
+    # produces the pre-bundled fixtures that `.size-limit.json` measures.
+    # The action also runs the same steps on the base branch for a real
+    # before/after diff — do NOT inline the prebundle step here, the
+    # action needs both sides to see a consistent build.
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Run size-limit
+        uses: andresz1/size-limit-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          package_manager: pnpm
+          build_script: size:build
+
   changeset-check:
     # Every PR that touches packages/ must include a changeset. Prevents
     # ad-hoc version drift across monorepo packages.
@@ -145,3 +217,26 @@ jobs:
 
       - name: Check for changeset
         run: pnpm exec changeset status --since=origin/main
+
+  docs-api:
+    # typedoc gate: fails on invalid @link targets, not-exported symbols
+    # referenced from the public API, or any other typedoc warning. Runs
+    # after build so generated .d.ts files exist where typedoc expects
+    # them. We do NOT publish the output here; gate only.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      - name: Generate API docs (gate only, not published)
+        run: pnpm docs:api

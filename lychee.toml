@@ -1,0 +1,58 @@
+# lychee link-checker configuration for harness-one.
+#
+# Scans Markdown files under docs/ and at the repo root. The aim is to
+# catch documentation rot (renamed files, dead upstream links) before it
+# ships to users. Configured to be tolerant of transient network blips
+# while still failing on any genuinely broken target.
+
+# Retry / timeout ----------------------------------------------------------
+# Retry handles captcha / transient 5xx; the per-request timeout keeps a
+# single slow host from stalling the whole scan.
+max_retries = 3
+retry_wait_time = 2
+timeout = 30
+# Concurrent requests — high enough to be fast, low enough to avoid
+# getting rate-limited on sites that lump us with the whole action IP.
+max_concurrency = 16
+
+# Caching ------------------------------------------------------------------
+# lychee-action persists `.lycheecache` across runs when cache: true is
+# set in the workflow, so successful links aren't re-checked every run.
+cache = true
+max_cache_age = "1d"
+
+# Request behaviour --------------------------------------------------------
+# User-agent makes rate-limited sites (GitHub, npmjs, etc.) treat us like
+# a browser rather than a bot.
+user_agent = "Mozilla/5.0 (compatible; lychee-link-checker; harness-one CI)"
+# Accept 2xx/3xx; treat common Cloudflare "I'm a teapot"-ish codes as ok.
+accept = ["200..=299", "301..=308", "429"]
+# Ignore scheme checks for these — lychee can't follow mailto anyway.
+include_mail = false
+
+# Exclusions ---------------------------------------------------------------
+# Patterns excluded by URL. Keep this list tight and commented — every
+# exclusion is a hole in the gate.
+exclude = [
+  # Reserved domains per RFC 2606; appears in examples.
+  '^https?://(www\.)?example\.(com|org|net)',
+  # localhost / private IPs — these are examples in dev docs.
+  '^https?://localhost',
+  '^https?://127\.0\.0\.1',
+  '^https?://0\.0\.0\.0',
+  # linkedin / twitter return 999/403 for anonymous checkers.
+  '^https?://([a-z0-9-]+\.)?linkedin\.com',
+  '^https?://([a-z0-9-]+\.)?twitter\.com',
+  '^https?://([a-z0-9-]+\.)?x\.com',
+  # Placeholder URLs in docs/security/ossf-best-practices.md — these
+  # contain `TODO` literal that will be replaced when the application is
+  # filed. Excluding by exact path isn't possible via URL regex, so we
+  # skip any bestpractices URL containing "TODO".
+  '^https?://bestpractices\.coreinfrastructure\.org/projects/TODO',
+]
+
+# The anchors on generated docs (API extractor, markdown-toc, GitHub
+# README sections) frequently contain characters that lychee's anchor
+# checker misinterprets — turn anchor checking off until we have a real
+# reason to re-enable it.
+include_fragments = false

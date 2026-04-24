@@ -56,7 +56,7 @@ export { KahanSum } from '../infra/kahan-sum.js';
  *
  *   - Per-model and per-trace cumulative totals are NEVER evicted; new keys
  *     past `maxModels` / `maxTraces` are aggregated under
- *     {@link OVERFLOW_BUCKET_KEY}.
+ *     `OVERFLOW_BUCKET_KEY`.
  *   - The bounded record buffer still shifts when oversize, decrementing
  *     `getTotalCost()` (recent-window) but leaving per-model / per-trace
  *     cumulative totals untouched.

@@ -88,7 +88,7 @@ export function createTraceManager(config?: {
    */
   redact?: RedactConfig | false;
   /**
-   * Pre-compiled {@link Redactor} instance. Use this to share a single
+   * Pre-compiled `Redactor` instance. Use this to share a single
    * redactor across trace manager, logger, and dataset exporter instead of
    * each component compiling its own pattern set. Takes precedence over
    * {@link redact} when both are set.

@@ -146,7 +146,7 @@ export interface HarnessConfigBase {
  * Configuration for creating a full Harness instance with Anthropic.
  *
  * `adapter` is explicitly `undefined` so the discriminated union enforces XOR
- * with {@link AdapterHarnessConfig} at compile time — passing both `adapter`
+ * with `AdapterHarnessConfig` at compile time — passing both `adapter`
  * and `client` is a type error, not a runtime warning.
  */
 export interface AnthropicHarnessConfig extends HarnessConfigBase {
@@ -168,7 +168,7 @@ export interface AnthropicHarnessConfig extends HarnessConfigBase {
  * Configuration for creating a full Harness instance with OpenAI.
  *
  * `adapter` is explicitly `undefined` so the discriminated union enforces XOR
- * with {@link AdapterHarnessConfig} at compile time.
+ * with `AdapterHarnessConfig` at compile time.
  */
 export interface OpenAIHarnessConfig extends HarnessConfigBase {
   /**
@@ -222,7 +222,7 @@ export interface AdapterHarnessConfig extends HarnessConfigBase {
 /**
  * Configuration for creating a full Harness instance.
  *
- * Preferred: use {@link AdapterHarnessConfig} and inject a pre-built adapter
+ * Preferred: use `AdapterHarnessConfig` and inject a pre-built adapter
  * directly. Provider-based configs ({@link AnthropicHarnessConfig},
  * {@link OpenAIHarnessConfig}) are still supported for convenience.
  */

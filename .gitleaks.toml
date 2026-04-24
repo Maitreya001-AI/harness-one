@@ -1,0 +1,35 @@
+# gitleaks configuration for harness-one.
+#
+# We extend the upstream default ruleset rather than redefining it, so
+# every new detector gitleaks ships upstream starts protecting us on the
+# next CI run without a config change here.
+#
+# Philosophy on allowlisting: we deliberately start with an empty
+# repo-level allowlist. If secret-scan goes red on a test cassette or
+# fixture, that is treated as a finding to investigate (cassettes should
+# already be scrubbed; a hit means the scrub missed something). Only add
+# paths here with a linked issue explaining why the finding is a true
+# negative.
+
+title = "harness-one gitleaks config"
+
+[extend]
+# Pull in every rule from gitleaks' own default config.
+useDefault = true
+
+# ---------------------------------------------------------------------
+# Allowlist — intentionally minimal. Every entry below MUST cite the
+# issue that justifies it.
+# ---------------------------------------------------------------------
+
+[allowlist]
+description = "global allowlist"
+
+# Paths that are documentation of the detectors themselves — without
+# this, the placeholder examples in `docs/security/ossf-best-practices.md`
+# would trip matchers that look for "sk-ant-", "AKIA", etc.
+paths = [
+  '''docs/security/ossf-best-practices\.md''',
+  '''packages/core/src/redact/__tests__/redact-adversarial\.test\.ts''',
+  '''packages/core/tests/security/redact-adversarial\.test\.ts''',
+]

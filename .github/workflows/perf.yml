@@ -1,0 +1,48 @@
+name: Perf
+
+# Only gate on PRs. Push-to-main does not re-measure because the baseline
+# itself was taken on a specific CI image; a drift signal on main after
+# merge is just noise.
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  bench:
+    # Single platform only. Perf numbers vary by 3-10x across OSes —
+    # running on multiple matrix entries would mean cross-platform
+    # comparisons, which baseline.json is not set up to do.
+    runs-on: ubuntu-latest
+    # Keep a hard ceiling well above the 2-minute bench target so a hung
+    # run is killed with a clear timeout, not a silent job leak.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Single pinned Node version — perf metrics are not portable
+          # across V8 majors.
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Run perf bench
+        # `pnpm bench` already applies NODE_OPTIONS=--expose-gc via
+        # the package.json script; `exit 1` propagates on regression so
+        # the job turns red.
+        run: pnpm --filter harness-one bench
+
+      - name: Ensure baseline.json wasn't modified
+        # The CI run must NEVER overwrite baseline.json — that is owner-only
+        # via `pnpm bench:update`. If the bench script or an accidental
+        # UPDATE_BASELINE env var touched the file, fail loudly here.
+        run: |
+          if ! git diff --quiet packages/core/tests/perf/baseline.json; then
+            echo "::error::baseline.json was modified during CI. Only 'pnpm bench:update' (run manually on Ubuntu+Node20) may update this file."
+            git --no-pager diff packages/core/tests/perf/baseline.json
+            exit 1
+          fi

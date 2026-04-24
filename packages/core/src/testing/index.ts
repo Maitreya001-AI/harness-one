@@ -32,3 +32,48 @@ export {
   createStreamingMockAdapter,
   createErrorStreamingMockAdapter,
 } from './test-utils.js';
+
+// Chaos adapter — seeded fault injection for long-running scenarios.
+// See `docs/architecture/17-testing.md` § Chaos 测试.
+export { createChaosAdapter } from './chaos/chaos-adapter.js';
+export type {
+  ChaosConfig,
+  ChaosRecorder,
+  ErrorRateConfig,
+  InjectionKind,
+  InjectionRecord,
+} from './chaos/chaos-adapter.js';
+export { createSeededRng } from './chaos/prng.js';
+export type { SeededRng } from './chaos/prng.js';
+
+// Cassette fixtures — record real adapter I/O once, replay in contract
+// tests. See `docs/architecture/17-testing.md` for the full layer
+// description.
+export {
+  createCassetteAdapter,
+  recordCassette,
+  loadCassette,
+  computeKey,
+  fingerprint,
+  isCassetteEntry,
+  SUPPORTED_VERSIONS,
+  type CassetteChatEntry,
+  type CassetteEntry,
+  type CassetteRequestFingerprint,
+  type CassetteReplayOptions,
+  type CassetteStreamEntry,
+  type CassetteVersion,
+} from './cassette/index.js';
+
+// Adapter contract suite — share a single set of ~25 AgentAdapter
+// assertions across every adapter implementation.
+export {
+  CONTRACT_FIXTURES,
+  cassetteFileName,
+  contractFixturesHandle,
+  createAdapterContractSuite,
+  type AdapterContractSuiteOptions,
+  type ContractAdapterFixturesHandle,
+  type ContractFixture,
+  type ContractFixtureExpectations,
+} from './contract/index.js';

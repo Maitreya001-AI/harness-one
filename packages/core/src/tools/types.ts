@@ -164,7 +164,7 @@ export interface ToolCall {
    * logs a warning and substitutes `{}` (empty object) so downstream code
    * never has to defend against `undefined` or a raw string here. Consumers
    * wanting to distinguish "adapter parse succeeded" from "adapter fell back
-   * to empty" should consult {@link ParsedToolArgumentsMeta} if the adapter
+   * to empty" should consult `ParsedToolArgumentsMeta` if the adapter
    * publishes it on a sibling field.
    *
    * Type kept as `Record<string, unknown>` for backward compatibility.
