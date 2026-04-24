@@ -1,0 +1,3 @@
+﻿event: hi
+data: ok
+

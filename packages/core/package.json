@@ -95,17 +95,25 @@
   "scripts": {
     "build": "tsup",
     "test": "vitest run",
+    "fuzz": "vitest run --config vitest.fuzz.config.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/"
   },
   "devDependencies": {
+    "fast-check": "^4.7.0",
     "tsup": "^8.0.0",
     "typescript": "^5.5.0",
     "vitest": "^2.0.0"
   },
   "license": "MIT",
   "author": "harness-one contributors",
-  "keywords": ["ai", "agent", "harness", "llm", "framework"],
+  "keywords": [
+    "ai",
+    "agent",
+    "harness",
+    "llm",
+    "framework"
+  ],
   "repository": {
     "type": "git",
     "url": "https://github.com/Maitreya001-AI/harness-one",
