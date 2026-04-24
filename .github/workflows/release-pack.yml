@@ -1,0 +1,55 @@
+name: Release Pack (reproducibility)
+
+# Enforces that `pnpm pack` produces byte-identical tarballs across two
+# runs with SOURCE_DATE_EPOCH pinned. A reproducible tarball is the
+# precondition for SLSA build provenance + supply-chain audit: the same
+# source must reproduce to the same artifact, or the attestation is
+# indistinguishable from "trust the runner".
+#
+# Gate mode: PR-blocking. Any change that regresses packing determinism
+# (e.g. new file with unpinned mtime, ordering nondeterminism, leaking
+# env-dependent fields into package.json) fails CI before merge.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  check-pack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      - name: check:pack on packages/core
+        run: pnpm check:pack
+
+      - name: check:pack on every published package
+        # Scan all workspaces marked for publish (non-private) and run the
+        # reproducibility check on each. Core is already covered above but
+        # re-running it here keeps the matrix honest if the default target
+        # ever drifts.
+        run: |
+          set -euo pipefail
+          for pj in packages/*/package.json; do
+            pkg_dir=$(dirname "$pj")
+            is_private=$(node -p "require('./${pj}').private === true")
+            if [ "$is_private" = "true" ]; then
+              echo "skip (private): $pkg_dir"
+              continue
+            fi
+            echo "=== $pkg_dir ==="
+            node tools/check-pack-reproducible.mjs --package "$pkg_dir"
+          done
