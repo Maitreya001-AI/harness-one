@@ -2,7 +2,7 @@
 
 [![codecov](https://codecov.io/gh/Maitreya001-AI/harness-one/graph/badge.svg)](https://codecov.io/gh/Maitreya001-AI/harness-one)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/Maitreya001-AI/harness-one/badge)](https://securityscorecards.dev/viewer/?uri=github.com/Maitreya001-AI/harness-one)
-[![OpenSSF Best Practices](https://bestpractices.coreinfrastructure.org/projects/TODO/badge)](https://bestpractices.coreinfrastructure.org/projects/TODO)
+[![OpenSSF Best Practices](https://img.shields.io/badge/OpenSSF%20Best%20Practices-self--assessed-informational)](./docs/security/ossf-best-practices.md)
 
 > Universal primitives for AI agent harness engineering. The hard 30% of harness infrastructure, done once and done right.
 
@@ -142,7 +142,7 @@ liberally from the root (zero runtime cost).
 | `harness-one/redact` | **`createRedactor`**, **`redactValue`**, **`sanitizeAttributes`**, `REDACTED_VALUE`, `DEFAULT_SECRET_PATTERN` |
 | `harness-one/infra` | **`createAdmissionController`**, **`unrefTimeout`**, **`unrefInterval`** |
 | `harness-one/evolve-check` | **`createArchitectureChecker`**, `noCircularDepsRule`, `layerDependencyRule` |
-| `harness-one/testing` | **`createMockAdapter`**, **`createFailingAdapter`**, **`createStreamingMockAdapter`**, **`createErrorStreamingMockAdapter`** — **test-only**, never import from production code |
+| `harness-one/testing` | Mock adapters: **`createMockAdapter`**, **`createFailingAdapter`**, **`createStreamingMockAdapter`**, **`createErrorStreamingMockAdapter`**. Chaos injection: **`createChaosAdapter`**, **`createSeededRng`**. Cassette record/replay: **`recordCassette`**, **`createCassetteAdapter`**, **`loadCassette`**, **`computeKey`**, **`fingerprint`**. Adapter contract suite: **`createAdapterContractSuite`**, **`CONTRACT_FIXTURES`**, **`cassetteFileName`**, **`contractFixturesHandle`**. **Test-only**, never import from production code |
 | `@harness-one/preset` | **`createSecurePreset`**, **`createHarness`**, **`createShutdownHandler`** |
 | `@harness-one/devkit` | **`createEvalRunner`**, **`createBasicRelevanceScorer`**, **`createComponentRegistry`**, **`createDriftDetector`** |
 | `@harness-one/cli` | **`parseInitArgs`**, **`renderTemplates`** (library form of the `harness-one` binary) |
@@ -1124,23 +1124,95 @@ for the full error-code table and common foot-guns. Highlights:
 
 More runbooks in [`docs/guides/`](./docs/guides/).
 
+## Quality gates & supply chain
+
+harness-one aims to be auditable end-to-end. The table below lists every
+enforcement gate that runs on `main` and on pull requests — all wired
+in `.github/workflows/` and surfaced through the badges above.
+
+| Gate | When it runs | What it enforces |
+|------|--------------|------------------|
+| `ci.yml` | every PR + push to `main` | Lint, type-check, unit/integration/conformance tests, per-package coverage floor (80% lines/statements, 75% branches on `packages/core`) |
+| `api-check.yml` | every PR | `api-extractor` snapshot diff — any public-API change must land with its regenerated `packages/*/etc/*.api.md` |
+| `compat-matrix.yml` | every PR | Installs each adapter against the lowest, mid, and highest supported peer-dep version so declared ranges stay honest |
+| `docs-links.yml` | PR + weekly schedule | `lychee` link-checks every Markdown file; no silent link rot |
+| `audit.yml` | PR + weekly schedule | `pnpm audit --audit-level=high --prod` — any high/critical advisory against the production graph fails CI |
+| `secret-scan.yml` | PR + push | `gitleaks` over the diff; no soft-warn — any finding fails the job |
+| `scorecard.yml` | weekly + push to `main` | OpenSSF Scorecard, published as SARIF into GitHub code scanning (see badge) |
+| `mutation.yml` | weekly + manual dispatch | Stryker mutation testing against `packages/core` (`src/infra/validate.ts`, `src/guardrails/pipeline.ts`, and the agent-loop trio) |
+| `perf.yml` | every PR | `tinybench` p50/p99 regression gate for the five critical hot paths (baseline in `packages/core/perf/baseline/`) |
+| `fuzz.yml` | nightly + manual dispatch | `fast-check` fuzz campaign across the four parser surfaces (tool-args, guardrail input, SSE, prompt template) |
+| `cassette-drift.yml` | nightly | Re-records Anthropic + OpenAI contract cassettes against the live APIs; diff opens a tracking issue rather than auto-committing |
+| `migrations.yml` | every PR | Executes every `tools/migrations/*/` fixture and asserts pre-snippets fail / post-snippets succeed against current code |
+| `release-pack.yml` | every PR touching publishable code | `pnpm pack` reproducibility — same source with pinned `SOURCE_DATE_EPOCH` must produce byte-identical tarballs (precondition for SLSA provenance) |
+| `release.yml` | GitHub Release tag | Builds, re-verifies pack reproducibility, attests SLSA build provenance via Sigstore, publishes via npm OIDC trusted publisher (no `NPM_TOKEN`) |
+| `sbom.yml` | tagged release + manual dispatch | Generates CycloneDX SBOM + `npm audit` snapshot; attached as Release assets |
+
+Supporting material — all reviewable in-repo:
+
+- [`SECURITY.md`](./SECURITY.md) — supported versions, private disclosure flow, SLA, safe-harbor statement.
+- [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md) — Contributor Covenant v2.1.
+- [`.github/CODEOWNERS`](./.github/CODEOWNERS) — review routing per package.
+- [`docs/security/`](./docs/security/) — STRIDE threat models per subsystem (`core`, `prompt`, `context`, `tools`, `guardrails`, `observe`, `session`, `memory`, `rag`, `redact`) plus the OpenSSF Best Practices self-assessment.
+- [`docs/adr/`](./docs/adr/) — Architecture Decision Records (ADR-0001 through ADR-0010, MADR 4.0 format).
+- [`docs/testing-plan.md`](./docs/testing-plan.md) + [`docs/testing-plan/`](./docs/testing-plan/) — 16-track testing blueprint; each workflow above is owned by a track.
+
+## Docs
+
+Start here:
+
+| Topic | File |
+|-------|------|
+| Architecture mental model | [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) |
+| Per-module architecture (01-17) | [`docs/architecture/00-overview.md`](./docs/architecture/00-overview.md) |
+| Testing layers (unit → chaos → fuzz) | [`docs/architecture/17-testing.md`](./docs/architecture/17-testing.md) |
+| Architecture decisions | [`docs/adr/`](./docs/adr/) |
+| Threat models + OSSF self-assessment | [`docs/security/`](./docs/security/) |
+| `AgentAdapter` contract for provider authors | [`docs/provider-spec.md`](./docs/provider-spec.md) |
+| RAG conformance specs | [`docs/retriever-spec.md`](./docs/retriever-spec.md), [`docs/embedding-spec.md`](./docs/embedding-spec.md), [`docs/chunking-spec.md`](./docs/chunking-spec.md) |
+| Release engineering runbook | [`docs/release.md`](./docs/release.md) |
+| i18n translation plan | [`docs/i18n-strategy.md`](./docs/i18n-strategy.md) |
+| Breaking changes (pre-release) | [`MIGRATION.md`](./MIGRATION.md) |
+
 ## Contributing
 
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/my-feature`
-3. Write tests first (TDD): `npm run test:watch`
-4. Ensure all checks pass: `npm run typecheck && npm test && npm run lint`
-5. Submit a pull request
+The full contributor guide is in [`CONTRIBUTING.md`](./CONTRIBUTING.md).
+Short version:
+
+1. Fork, branch off `main`, keep changes focused (1 PR = 1 logical change).
+2. Near-100% test coverage is the bar on `packages/core`. CI enforces 80% lines/statements and 75% branches.
+3. Any user-visible change needs a [changeset](https://github.com/changesets/changesets): `pnpm changeset`.
+4. Read [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md) before posting. Report security issues privately per [`SECURITY.md`](./SECURITY.md) — **do not** open a public issue.
 
 ### Development
 
+harness-one is a `pnpm` monorepo. `npm` / `yarn` will not work — the
+`preinstall` hook rejects them, and `pnpm-workspace.yaml` is required
+to resolve internal `workspace:*` links.
+
 ```bash
-npm install          # Install dev dependencies
-npm test             # Run all tests
-npm run test:watch   # Watch mode
-npm run typecheck    # Type checking
-npm run build        # Build with tsup
-npm run lint         # ESLint
+# Prerequisites: Node >= 18 (20 LTS recommended), pnpm >= 9.
+corepack enable             # or: npm i -g pnpm@9
+
+pnpm install                # workspace install (frozen lockfile on CI)
+pnpm build                  # tsup — ESM + CJS + .d.ts for every package
+pnpm test                   # full workspace test run (vitest)
+pnpm test:coverage          # with coverage gate
+pnpm typecheck              # tsc --noEmit across packages
+pnpm lint                   # ESLint across packages
+pnpm changeset              # required on any user-visible change
+```
+
+Track-level suites (optional, not on the PR critical path):
+
+```bash
+pnpm --filter harness-one bench                  # tinybench; baseline in packages/core/perf/
+pnpm --filter harness-one fuzz                   # fast-check, ~10k iterations per target
+pnpm --filter harness-one mutation               # Stryker (expensive — several minutes)
+pnpm --filter harness-one typecheck:type-level   # expect-type compile-time suite
+pnpm size                                        # size-limit bundle budget
+pnpm check:tree-shake                            # root-bundle tree-shake assertions
+pnpm docs:api                                    # TypeDoc public-API report
 ```
 
 ## License

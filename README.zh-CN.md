@@ -1,8 +1,17 @@
 # harness-one
 
+[![codecov](https://codecov.io/gh/Maitreya001-AI/harness-one/graph/badge.svg)](https://codecov.io/gh/Maitreya001-AI/harness-one)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/Maitreya001-AI/harness-one/badge)](https://securityscorecards.dev/viewer/?uri=github.com/Maitreya001-AI/harness-one)
+[![OpenSSF Best Practices](https://img.shields.io/badge/OpenSSF%20Best%20Practices-self--assessed-informational)](./docs/security/ossf-best-practices.md)
+
 > AI Agent **Harness 层**（非模型层）的通用基础设施。把最难的 30% 工程活一次做对、做完。
 
 **语言版本**: [English → `README.md`](./README.md) · **中文**（本文件）
+
+> 项目 canonical 文档语言是英文（见 [`docs/i18n-strategy.md`](./docs/i18n-strategy.md)）。
+> 本文件是给中文读者的入口镜像，**不是**英文 README 的完整翻译——
+> Feature Maturity、Troubleshooting、所有模块的详细 ts 示例等在英文版。
+> 阅读完整 API 请优先看 [`README.md`](./README.md)。
 
 ## 什么是 Harness Engineering？
 
@@ -284,14 +293,54 @@ await admission.withPermit('tenant-123', () => harness.run(messages));
 - **evolve-check** · `harness-one/evolve-check` — 运行时架构规则引擎（循环依赖 + 层级边界 + 自定义规则）
 - **orchestration** · `harness-one/orchestration` — createOrchestrator / createAgentPool / createHandoff / createContextBoundary / MessageQueue
 - **rag** · `harness-one/rag` — createRAGPipeline / createInMemoryRetriever / runRetrieverConformance / runEmbeddingModelConformance / runChunkingStrategyConformance（覆盖文档加载、分块、嵌入、检索、token 估算、多租户隔离）
-- **preset** · `@harness-one/preset` — createSecurePreset（有偏好的参考装配，含 lifecycle + metrics 自动装配）/ createShutdownHandler / validateHarnessConfig
+- **infra** · `harness-one/infra` — createAdmissionController / unrefTimeout / unrefInterval
+- **evolve-check** · `harness-one/evolve-check` — noCircularDepsRule / layerDependencyRule / createArchitectureChecker
+- **redact** · `harness-one/redact` — createRedactor / redactValue / sanitizeAttributes / DEFAULT_SECRET_PATTERN
+- **testing** · `harness-one/testing` — **仅测试用**，不要从生产代码 import：
+  - Mock adapter: `createMockAdapter` / `createFailingAdapter` / `createStreamingMockAdapter` / `createErrorStreamingMockAdapter`
+  - Chaos: `createChaosAdapter` / `createSeededRng`（H1-H5 故障注入）
+  - Cassette 录制回放: `recordCassette` / `createCassetteAdapter` / `loadCassette` / `computeKey` / `fingerprint`
+  - Adapter 契约套件: `createAdapterContractSuite` / `CONTRACT_FIXTURES` / `cassetteFileName` / `contractFixturesHandle`
+- **preset** · `@harness-one/preset` — createSecurePreset（有偏好的参考装配，含 lifecycle + metrics 自动装配）/ createHarness / createShutdownHandler / validateHarnessConfig
+
+## 质量门禁与供应链
+
+harness-one 的质量承诺全部写进 `.github/workflows/`，总计 15 个 CI workflow：
+
+| 类别 | Workflow | 触发时机 | 断言 |
+|------|---------|----------|------|
+| 核心 CI | `ci.yml` | PR + push main | lint / typecheck / 单测 + 集成 + 契约 + 混沌 + 类型级；每个包的覆盖率下限（`packages/core` 80% lines/statements、75% branches） |
+| API 稳定性 | `api-check.yml` | PR | `api-extractor` 快照 diff——触公开 API 必须同步提交 `packages/*/etc/*.api.md` |
+| 兼容矩阵 | `compat-matrix.yml` | PR | 每个 adapter 对着声明的最低/中/最高 peer-dep 版本都 install 一遍 |
+| 文档链接 | `docs-links.yml` | PR + 周定时 | `lychee` 扫所有 Markdown，链接坏了直接红 |
+| 安全 | `audit.yml` / `secret-scan.yml` / `scorecard.yml` | PR + 周定时 / push | `pnpm audit --prod` 高危直接红；gitleaks 硬失败；OpenSSF Scorecard 周扫并进 GitHub code scanning |
+| 变异测试 | `mutation.yml` | 周定时 + 手动 | Stryker 跑 core 的 validate / guardrail pipeline / agent-loop 三子集 |
+| 性能 | `perf.yml` | PR | tinybench 对 5 条关键路径做 p50/p99 漂移门 |
+| Fuzz | `fuzz.yml` | nightly + 手动 | fast-check ~10k 次/目标，覆盖 4 个 parser（tool-args / guardrail input / SSE / prompt template） |
+| Cassette 漂移 | `cassette-drift.yml` | nightly | 重录 Anthropic + OpenAI 契约 cassette，diff 则开 issue 不自动提交 |
+| 迁移 | `migrations.yml` | PR | 跑 `tools/migrations/*/` 每个 fixture 的 pre→fail / post→pass 断言 |
+| 发布可复现 | `release-pack.yml` | PR 触包 | `pnpm pack` 在固定 `SOURCE_DATE_EPOCH` 下必须 byte-identical（SLSA provenance 的前置） |
+| 发布 | `release.yml` | GitHub Release tag | 构建 → 再验复现 → Sigstore 签 SLSA provenance → npm OIDC trusted publisher 发布（无 `NPM_TOKEN`） |
+| SBOM | `sbom.yml` | tag + 手动 | 生成 CycloneDX SBOM + npm audit 快照，作为 Release asset |
+
+社区文件 + 安全材料：
+
+- [`SECURITY.md`](./SECURITY.md)——支持版本、私报流程、7 天 ack / 30 天 fix SLA、safe harbor。
+- [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md)——Contributor Covenant v2.1。
+- [`.github/CODEOWNERS`](./.github/CODEOWNERS)——按 path 自动请审。
+- [`docs/security/`](./docs/security/)——每个 L3 子系统一份 STRIDE 威胁模型 + OpenSSF Best Practices 自评（项目 ID 等 owner 提交申请后填入）。
+- [`docs/adr/`](./docs/adr/)——10 份 MADR 4.0 格式的架构决策记录。
+- [`docs/testing-plan.md`](./docs/testing-plan.md) + [`docs/testing-plan/`](./docs/testing-plan/)——16 个 Track 的可执行落地 prompt，每个 CI workflow 背后对应一个 Track。
 
 ## 文档
 
 完整架构文档入口：[`docs/architecture/00-overview.md`](./docs/architecture/00-overview.md)
 
+### 架构主线
+
 | 主题 | 文档 |
 |---|---|
+| 一页纸分层合同 | [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) |
 | 架构总览 | [00-overview.md](./docs/architecture/00-overview.md) |
 | Core（AgentLoop） | [01-core.md](./docs/architecture/01-core.md) |
 | Prompt 工程 | [02-prompt.md](./docs/architecture/02-prompt.md) |
@@ -306,19 +355,62 @@ await admission.withPermit('tenant-123', () => harness.run(messages));
 | CLI 工具 | [11-cli.md](./docs/architecture/11-cli.md) |
 | 多 Agent 编排 | [12-orchestration-multi-agent.md](./docs/architecture/12-orchestration-multi-agent.md) |
 | RAG 流水线 | [13-rag.md](./docs/architecture/13-rag.md) |
-| Provider 适配器规范 | [provider-spec.md](./docs/provider-spec.md) |
-| 迁移记录 | [MIGRATION.md](./MIGRATION.md) |
+| Advanced 扩展点 | [14-advanced.md](./docs/architecture/14-advanced.md) |
+| 秘密脱敏 | [15-redact.md](./docs/architecture/15-redact.md) |
+| 架构规则检查 | [16-evolve-check.md](./docs/architecture/16-evolve-check.md) |
+| 测试层（含 cassette / chaos / perf / PBT / fuzz / 类型级） | [17-testing.md](./docs/architecture/17-testing.md) |
 
-示例代码在 [`examples/`](./examples/)，每个主题一个可直接运行的脚本。
+### 架构决策、威胁模型、测试计划
+
+| 目录 | 内容 |
+|------|------|
+| [docs/adr/](./docs/adr/) | 10 份 ADR（ADR-0001..ADR-0010），MADR 4.0 格式 |
+| [docs/security/](./docs/security/) | 每个 L3 子系统的 STRIDE 威胁模型 + OpenSSF Best Practices 自评 |
+| [docs/testing-plan.md](./docs/testing-plan.md) + [docs/testing-plan/](./docs/testing-plan/) | 16 条 Track 的并行落地计划（A-P） |
+
+### 规范与 runbook
+
+| 主题 | 文档 |
+|---|---|
+| Provider 适配器规范 | [provider-spec.md](./docs/provider-spec.md) |
+| RAG 三套 conformance 规范 | [retriever-spec.md](./docs/retriever-spec.md) / [embedding-spec.md](./docs/embedding-spec.md) / [chunking-spec.md](./docs/chunking-spec.md) |
+| 发布 runbook | [release.md](./docs/release.md) |
+| 文档 i18n 策略 | [i18n-strategy.md](./docs/i18n-strategy.md) |
+| pre-release 破坏性变更账本 | [MIGRATION.md](./MIGRATION.md) |
+
+示例代码在 [`examples/`](./examples/)，每个主题一个可直接运行的脚本，`tools/smoke-test.mjs` 会在 CI 里把它们全部 smoke 一遍。
 
 ## 贡献
 
-完整贡献指南见英文版 README。简要流程：
+完整贡献指南见 [`CONTRIBUTING.md`](./CONTRIBUTING.md)。关键纪律：
 
-1. 所有改动需要覆盖测试（`pnpm test`）
-2. 类型检查必过（`pnpm typecheck`）
-3. 触碰 `packages/` 的 PR 必须带 changeset（`pnpm changeset`）
-4. 提交前 pre-commit hook 会跑 `lint-staged`（`eslint --fix`）
+1. **包管理器是 pnpm**——`npm` / `yarn` 不工作（`preinstall` hook 会拒）。Node `>= 18`（20 LTS 推荐），pnpm `>= 9`。
+2. **近 100% 测试覆盖**是 `packages/core` 的硬门槛；CI 的覆盖率下限是 80% lines/statements、75% branches。
+3. 触碰 `packages/` 的 PR **必须带 changeset**：`pnpm changeset`，挑 patch / minor / major 并写为什么。
+4. 安全漏洞**不要开公开 issue**，按 [`SECURITY.md`](./SECURITY.md) 的私报流程走（GitHub Security Advisory 优先，邮箱备用）。
+5. 行为守则见 [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md)（Contributor Covenant v2.1）。
+
+常用命令：
+
+```bash
+corepack enable                                 # 或 npm i -g pnpm@9
+pnpm install                                    # 工作区装依赖
+pnpm build                                      # tsup，输出 ESM + CJS + .d.ts
+pnpm test                                       # 全工作区 vitest
+pnpm test:coverage                              # 带覆盖率门槛
+pnpm typecheck                                  # 全工作区 tsc --noEmit
+pnpm lint                                       # 全工作区 eslint
+pnpm changeset                                  # 用户可见改动必跑
+
+# P1/P2 专项套件（不在 PR critical path）
+pnpm --filter harness-one bench                 # tinybench 基线
+pnpm --filter harness-one fuzz                  # fast-check ~10k 次/目标
+pnpm --filter harness-one mutation              # Stryker（耗时几分钟）
+pnpm --filter harness-one typecheck:type-level  # expect-type 编译期测试
+pnpm size                                       # size-limit bundle 预算
+pnpm check:tree-shake                           # 根桶 tree-shake 断言
+pnpm docs:api                                   # TypeDoc 公开 API 报告
+```
 
 ## 许可
 
