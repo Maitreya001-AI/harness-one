@@ -1,0 +1,67 @@
+name: Peer-dep Compat Matrix
+
+# Verifies that the peer-dependency ranges declared in our adapter
+# package.json files actually hold at install time — not just at the one
+# version we devDepend on.
+#
+# `@harness-one/anthropic` says `"@anthropic-ai/sdk": ">=0.30.0"`; that's
+# a promise to consumers, and the only way to keep it honest is to
+# actually install a representative subset of those versions against the
+# packed adapter tarball and exercise the import + chat round-trip.
+#
+# Gate mode: PR-blocking. If a legitimate SDK drop-in breaks, that's a
+# real compat regression — we must either narrow the declared range,
+# fix the adapter, or document the incompatibility. Loosening the smoke
+# test is never the right answer.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    # Weekly run catches upstream SDK releases that slip the "latest"
+    # leg after a PR has already merged.
+    - cron: '0 6 * * 2'
+
+jobs:
+  compat:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Anthropic: range is >=0.30.0. Cover the floor + the current
+          # latest so a drift in either direction (bumped devDep left
+          # the floor broken / new SDK release broke the adapter)
+          # shows up immediately.
+          - adapter: anthropic
+            peer: '@anthropic-ai/sdk@0.30.0'
+          - adapter: anthropic
+            peer: '@anthropic-ai/sdk@0.40.0'
+          - adapter: anthropic
+            peer: '@anthropic-ai/sdk@latest'
+          # OpenAI: range is >=4.0.0.
+          - adapter: openai
+            peer: 'openai@4.0.0'
+          - adapter: openai
+            peer: 'openai@4.50.0'
+          - adapter: openai
+            peer: 'openai@latest'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      - name: compat ${{ matrix.adapter }} x ${{ matrix.peer }}
+        run: node tools/compat/run-fixture.mjs "${{ matrix.adapter }}" "${{ matrix.peer }}"
