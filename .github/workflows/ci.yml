@@ -153,6 +153,13 @@ jobs:
       - name: Tree-shake check (opt-in subsystems stay out of core bundle)
         run: pnpm check:tree-shake
 
+      - name: Error-message action-item lint
+        # Non-blocking: the first scan after this lands will surface 15+
+        # pre-existing cases (see Track L PR description). Flip to
+        # blocking once the owner has batched the fix.
+        run: pnpm lint:errors
+        continue-on-error: true
+
   size-limit:
     # Bundle-size regression gate (Track L1). Runs only on PRs so the
     # size-limit-action can post a diff comment against the base branch.

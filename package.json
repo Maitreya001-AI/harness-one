@@ -23,6 +23,7 @@
     "size": "node tools/size-check/prebundle.mjs && size-limit",
     "size:build": "pnpm build && node tools/size-check/prebundle.mjs",
     "check:tree-shake": "node tools/tree-shake-check/run.mjs",
+    "lint:errors": "node tools/lint-error-messages/check.mjs",
     "api:update": "pnpm -r --filter \"./packages/*\" exec api-extractor run --local",
     "api:check": "pnpm -r --filter \"./packages/*\" exec api-extractor run",
     "docs:api": "typedoc",
