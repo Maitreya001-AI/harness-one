@@ -109,6 +109,51 @@ describe('createTiktokenTokenizer', () => {
     expect(warn).toHaveBeenCalledTimes(1);
   });
 
+  it('uses console.warn as the default fallback sink when no custom warner is set', async () => {
+    // No setTiktokenFallbackWarner call — exercises the module's initial
+    // default sink (the lambda that wraps console.warn). Without this case,
+    // the default sink is never hit since every other fallback test installs
+    // its own mock warner.
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      mockEncodingForModel.mockImplementationOnce(() => {
+        throw new Error('unknown model');
+      });
+      createTiktokenTokenizer('console-default-model');
+      expect(consoleWarn).toHaveBeenCalledTimes(1);
+      expect(consoleWarn).toHaveBeenCalledWith(
+        'Tokenizer fallback for unknown model: console-default-model',
+      );
+    } finally {
+      consoleWarn.mockRestore();
+    }
+  });
+
+  it('setTiktokenFallbackWarner(null) restores the default console.warn sink', async () => {
+    // Install a custom warner, then pass null to reset. Triggering a fallback
+    // after the reset must route through console.warn again — this exercises
+    // the `warn ?? ((...) => console.warn(...))` branch that is otherwise
+    // never evaluated.
+    const customWarn = vi.fn();
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const mod = await import('../index.js');
+      mod.setTiktokenFallbackWarner(customWarn);
+      mod.setTiktokenFallbackWarner(null);
+      mockEncodingForModel.mockImplementationOnce(() => {
+        throw new Error('unknown model');
+      });
+      mod.createTiktokenTokenizer('reset-default-model');
+      expect(customWarn).not.toHaveBeenCalled();
+      expect(consoleWarn).toHaveBeenCalledTimes(1);
+      expect(consoleWarn).toHaveBeenCalledWith(
+        'Tokenizer fallback for unknown model: reset-default-model',
+      );
+    } finally {
+      consoleWarn.mockRestore();
+    }
+  });
+
   it('delegates model validation to tiktoken instead of using a hardcoded list', () => {
     // Any model that tiktoken accepts should work without a hardcoded allowlist
     createTiktokenTokenizer('gpt-4');
