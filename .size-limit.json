@@ -1,0 +1,44 @@
+[
+  {
+    "name": "harness-one/core",
+    "path": "tools/size-check/bundles/core.js",
+    "limit": "31 KB",
+    "brotli": false,
+    "gzip": true
+  },
+  {
+    "name": "harness-one/advanced",
+    "path": "tools/size-check/bundles/advanced.js",
+    "limit": "18 KB",
+    "brotli": false,
+    "gzip": true
+  },
+  {
+    "name": "harness-one/testing",
+    "path": "tools/size-check/bundles/testing.js",
+    "limit": "500 B",
+    "brotli": false,
+    "gzip": true
+  },
+  {
+    "name": "@harness-one/preset",
+    "path": "tools/size-check/bundles/preset.js",
+    "limit": "15 KB",
+    "brotli": false,
+    "gzip": true
+  },
+  {
+    "name": "@harness-one/anthropic",
+    "path": "tools/size-check/bundles/anthropic.js",
+    "limit": "3.2 KB",
+    "brotli": false,
+    "gzip": true
+  },
+  {
+    "name": "@harness-one/openai",
+    "path": "tools/size-check/bundles/openai.js",
+    "limit": "4.5 KB",
+    "brotli": false,
+    "gzip": true
+  }
+]
