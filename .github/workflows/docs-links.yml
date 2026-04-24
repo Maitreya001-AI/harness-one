@@ -34,7 +34,10 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Restore lychee cache
-        uses: actions/cache@0c45773b623bea8c8e75f6c82b208c3cf94ea4f9 # v4.0.2
+        # Pinned to v4.2.4 — v4.0.2 used the deprecated actions/cache
+        # internals that GitHub retired on 2025-02-01 (see
+        # https://github.blog/changelog/2024-12-05-notice-of-upcoming-releases-and-breaking-changes-for-github-actions/).
+        uses: actions/cache@640a1c2554105b57832a23eea0b4672fc7a790d5 # v4.2.4
         with:
           path: .lycheecache
           key: cache-lychee-${{ github.sha }}
