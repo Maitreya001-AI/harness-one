@@ -1,0 +1,52 @@
+# CODEOWNERS for harness-one
+#
+# Owners listed here are auto-requested for review on matching paths.
+# Ownership is currently centralised on @XRenSiu; split when the team grows.
+# Syntax reference: https://docs.github.com/en/repositories/managing-your-repositories-settings-and-features/customizing-your-repository/about-code-owners
+
+# -----------------------------------------------------------------------------
+# Default owner — applies to anything not matched by a more specific rule
+# -----------------------------------------------------------------------------
+*                                       @XRenSiu
+
+# -----------------------------------------------------------------------------
+# Packages (pnpm workspaces)
+# -----------------------------------------------------------------------------
+/packages/ajv/                          @XRenSiu
+/packages/anthropic/                    @XRenSiu
+/packages/cli/                          @XRenSiu
+/packages/core/                         @XRenSiu
+/packages/devkit/                       @XRenSiu
+/packages/langfuse/                     @XRenSiu
+/packages/openai/                       @XRenSiu
+/packages/opentelemetry/                @XRenSiu
+/packages/preset/                       @XRenSiu
+/packages/redis/                        @XRenSiu
+/packages/tiktoken/                     @XRenSiu
+
+# -----------------------------------------------------------------------------
+# Load-bearing core internals — require explicit review on any change
+# -----------------------------------------------------------------------------
+/packages/core/src/core/                @XRenSiu
+/packages/core/src/infra/               @XRenSiu
+/packages/core/src/guardrails/          @XRenSiu
+/packages/core/src/observe/             @XRenSiu
+/packages/core/src/orchestration/       @XRenSiu
+
+# -----------------------------------------------------------------------------
+# Architecture & governance docs
+# -----------------------------------------------------------------------------
+/docs/architecture/                     @XRenSiu
+/docs/testing-plan.md                   @XRenSiu
+/docs/testing-plan/                     @XRenSiu
+
+# -----------------------------------------------------------------------------
+# Repository governance
+# -----------------------------------------------------------------------------
+/.github/                               @XRenSiu
+/CODEOWNERS                             @XRenSiu
+/.github/CODEOWNERS                     @XRenSiu
+/CODE_OF_CONDUCT.md                     @XRenSiu
+/SECURITY.md                            @XRenSiu
+/CONTRIBUTING.md                        @XRenSiu
+/LICENSE                                @XRenSiu
