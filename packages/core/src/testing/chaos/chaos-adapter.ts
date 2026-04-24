@@ -203,7 +203,7 @@ export function createChaosAdapter(
       // Block until signal fires — the outer timeout / abort must rescue us.
       // The chaos adapter NEVER self-resolves a hang, so a caller without a
       // timeout will deadlock (intentional — it surfaces a missing timeout).
-      await new Promise<void>((resolve, reject) => {
+      await new Promise<void>((_resolve, reject) => {
         if (signal?.aborted) {
           reject(new Error('Aborted'));
           return;
