@@ -1688,10 +1688,10 @@ export interface VectorSearchOptions {
 
 // Warnings were encountered during analysis:
 //
-// dist/cost-tracker-BpTcDwv2.d.ts:402:5 - (ae-forgotten-export) The symbol "RedactConfig" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-BpTcDwv2.d.ts:409:5 - (ae-forgotten-export) The symbol "Redactor" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-BpTcDwv2.d.ts:742:5 - (ae-forgotten-export) The symbol "EvictionStrategyName" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-BpTcDwv2.d.ts:742:5 - (ae-forgotten-export) The symbol "EvictionStrategy" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-IqVhfrMb.d.ts:402:5 - (ae-forgotten-export) The symbol "RedactConfig" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-IqVhfrMb.d.ts:409:5 - (ae-forgotten-export) The symbol "Redactor" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-IqVhfrMb.d.ts:742:5 - (ae-forgotten-export) The symbol "EvictionStrategyName" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-IqVhfrMb.d.ts:742:5 - (ae-forgotten-export) The symbol "EvictionStrategy" needs to be exported by the entry point index.d.ts
 // dist/pipeline-CZkrsTUe.d.ts:45:5 - (ae-forgotten-export) The symbol "GuardrailEvent" needs to be exported by the entry point index.d.ts
 // dist/resilience-Dpouu-q6.d.ts:64:5 - (ae-forgotten-export) The symbol "MiddlewareContext" needs to be exported by the entry point index.d.ts
 // dist/session/index.d.ts:162:5 - (ae-forgotten-export) The symbol "SessionStore" needs to be exported by the entry point index.d.ts

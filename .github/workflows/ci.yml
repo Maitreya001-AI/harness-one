@@ -24,7 +24,13 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        node-version: [18, 20, 22]
+        # Node 18 was dropped because `packageManager: pnpm@10.24.0`
+        # ships a regex with the ES2024 `/v` flag — pnpm itself fails
+        # to load on Node 18 runners with "SyntaxError: Invalid regular
+        # expression flags" before any of our code even runs. pnpm 10
+        # officially requires Node ≥ 20; our `engines.node: ">=20"`
+        # pins match. Add 18 back only if we downgrade to pnpm 9.x.
+        node-version: [20, 22]
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2

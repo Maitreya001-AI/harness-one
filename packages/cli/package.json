@@ -19,7 +19,7 @@
   "files": [
     "dist"
   ],
-  "engines": { "node": ">=18" },
+  "engines": { "node": ">=20" },
   "sideEffects": false,
   "scripts": {
     "build": "tsup",
