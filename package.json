@@ -40,12 +40,17 @@
       "eslint --fix"
     ]
   },
+  "pnpm": {
+    "overrides": {
+      "vite": "^6.4.2"
+    }
+  },
   "devDependencies": {
     "@changesets/cli": "^2.30.0",
     "@microsoft/api-extractor": "^7.47.0",
     "@size-limit/file": "^12.1.0",
     "@types/node": "^22.0.0",
-    "@vitest/coverage-v8": "^2.1.9",
+    "@vitest/coverage-v8": "^3.2.4",
     "esbuild": "^0.28.0",
     "eslint": "^10.2.0",
     "eslint-plugin-import": "^2.31.0",
@@ -57,7 +62,7 @@
     "typedoc": "^0.28.9",
     "typescript": "^5.5.0",
     "typescript-eslint": "^8.58.1",
-    "vitest": "^2.0.0"
+    "vitest": "^3.2.4"
   },
   "author": "harness-one contributors",
   "keywords": [
