@@ -66,19 +66,20 @@ async function main() {
   }
 
   // 4. Context boundary — layered over the orchestrator's SharedContext.
-  orchestrator.context.set('researchFindings', 'AI adoption increased 40%');
-  orchestrator.context.set('confidentialData', 'INTERNAL: Q4 revenue');
+  orchestrator.context.set('research.findings', 'AI adoption increased 40%');
+  orchestrator.context.set('confidential.data', 'INTERNAL: Q4 revenue');
 
   const boundary = createContextBoundary(orchestrator.context, [
     {
       agent: researcher.id,
-      allowRead: ['researchFindings', 'confidentialData'],
+      // Prefixes must end with "." or "/" so "admin." does not match "administrator".
+      allowRead: ['research.', 'confidential.'],
     },
     {
       agent: writer.id,
-      // Writer sees the public key only — confidential prefix denied.
-      allowRead: ['researchFindings'],
-      denyRead: ['confidentialData'],
+      // Writer sees the public prefix only — confidential prefix denied.
+      allowRead: ['research.'],
+      denyRead: ['confidential.'],
     },
   ]);
 
@@ -86,11 +87,11 @@ async function main() {
   const writerView = boundary.forAgent(writer.id);
   console.log(
     `Researcher sees confidential data:`,
-    researcherView.get('confidentialData'),
+    researcherView.get('confidential.data'),
   );
   console.log(
     `Writer sees confidential data:`,
-    writerView.get('confidentialData') ?? '<denied>',
+    writerView.get('confidential.data') ?? '<denied>',
   );
 
   // 5. Clean up.
