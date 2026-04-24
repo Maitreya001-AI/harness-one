@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions & design discussions
+    url: https://github.com/Maitreya001-AI/harness-one/discussions
+    about: Ask usage questions, share patterns, or sketch design ideas before filing an issue.
+  - name: Security vulnerabilities
+    url: https://github.com/Maitreya001-AI/harness-one/security/advisories/new
+    about: Report a vulnerability privately via GitHub Security Advisories. Do NOT open a public issue.

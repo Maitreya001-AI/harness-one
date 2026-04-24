@@ -40,6 +40,14 @@ jobs:
         # subpath-import regresses or drifts out of sync with the public API.
         run: pnpm typecheck
 
+      - name: Typecheck type-level assertions (Track N)
+        # Runs tsc against packages/core/tests/type-level/ which contains
+        # expect-type assertions that lock down AgentEvent variants, brand
+        # non-assignability, HarnessConfig narrowing, MetricsPort cross-
+        # subpath identity, and the public-API shape. A break here means a
+        # type contract regressed — see docs/architecture/17-testing.md.
+        run: pnpm --filter harness-one typecheck:type-level
+
       - name: Test with coverage (enforces per-package thresholds)
         # Vitest fails non-zero when coverage falls below thresholds declared
         # in each package's vitest.config.ts (lines/functions/statements=80,
@@ -95,6 +103,34 @@ jobs:
           node-version: 22
 
       - run: node tools/check-zero-deps.mjs
+
+  examples-smoke:
+    # Execute every example under examples/ via tsx. Catches wiring bugs
+    # that typecheck misses (e.g. invalid policy prefix, wrong ToolResult
+    # shape). Peer-SDK examples and live-API examples are auto-skipped;
+    # see tools/run-examples.mjs for the classification rules.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      - name: Execute examples (mock mode)
+        env:
+          HARNESS_MOCK: '1'
+        run: pnpm examples:smoke
+
+      - name: Check README ts snippets compile
+        run: pnpm check:readme
 
   changeset-check:
     # Every PR that touches packages/ must include a changeset. Prevents

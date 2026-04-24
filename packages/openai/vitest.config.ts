@@ -2,7 +2,10 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    include: ['src/**/*.test.ts'],
+    // Include `tests/**` so the cassette-backed contract suite
+    // (`tests/contract.test.ts`) is picked up alongside the unit
+    // tests that live in `src/__tests__/`.
+    include: ['src/**/*.test.ts', 'tests/**/*.test.ts'],
     coverage: {
       provider: 'v8',
       include: ['src/**/*.ts'],
