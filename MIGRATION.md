@@ -50,6 +50,29 @@ release, then be removed in the following major.
 Breaking + observable changes that downstream consumers on a SHA-pinned
 build should know about:
 
+- **`apps/*` is now a pnpm workspace glob.** Consumers running
+  `pnpm -r <cmd>` at the repo root will now include `apps/dogfood` in the
+  iteration set. This is intentional — the dogfood agent is part of the
+  library quality story (Layer 9 of the testing blueprint) and must
+  typecheck / test alongside `packages/*`.
+- **New workspace: `@harness-one/dogfood` (private, not published).**
+  Ships the Issue Triage Bot used to dogfood the library against the
+  repository's own issues. Zero new public API; exists only to drive the
+  two new workflows `.github/workflows/dogfood-triage.yml` and
+  `.github/workflows/dogfood-weekly.yml`. Downstream consumers can ignore
+  this unless they want to copy the pattern.
+- **New showcases under `examples/showcases/`** (`codebase-qa.ts`,
+  `autoresearch-loop.ts`, `evolve-check-demo.ts`). All three run
+  deterministically under `pnpm examples:smoke` with `HARNESS_MOCK=1`; no
+  API key required. Documented in the new Showcases section of the
+  README + `README.zh-CN.md`.
+- **`docs/ROADMAP.md` published** with v0.1 / v0.2 / v1.0 scopes. The
+  roadmap is the contract for what "public API change" means from this
+  point on.
+- **`docs/security/ossf-best-practices.md` extended** with a submission
+  runbook mapping each Best Practices criterion to its existing evidence
+  file in the repo. Owner action: paste the URLs into the form at
+  <https://www.bestpractices.dev/> and replace the README badge.
 - Prompt module: `SkillEngine` has been removed. Use `createSkillRegistry()`
   or `createAsyncSkillRegistry()` instead. The new registries are stateless:
   they store immutable skill definitions, render prompt text, and validate

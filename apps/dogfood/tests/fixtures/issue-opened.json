@@ -1,0 +1,13 @@
+{
+  "action": "opened",
+  "issue": {
+    "number": 123,
+    "title": "Streaming aborts with maxStreamBytes when adapter is Anthropic",
+    "body": "When running the guardrail pipeline with `maxStreamBytes: 1024` the stream aborts halfway. Using anthropic adapter v0.30.0. Repro: any prompt that produces more than 1KB of tokens.",
+    "html_url": "https://github.com/Maitreya001-AI/harness-one/issues/123",
+    "user": {
+      "login": "testuser",
+      "type": "User"
+    }
+  }
+}

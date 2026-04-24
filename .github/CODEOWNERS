@@ -25,6 +25,13 @@
 /packages/tiktoken/                     @XRenSiu
 
 # -----------------------------------------------------------------------------
+# Dogfood agent + showcases — Layer 9 of the testing blueprint
+# -----------------------------------------------------------------------------
+/apps/dogfood/                          @XRenSiu
+/examples/showcases/                    @XRenSiu
+/dogfood-reports/                       @XRenSiu
+
+# -----------------------------------------------------------------------------
 # Load-bearing core internals — require explicit review on any change
 # -----------------------------------------------------------------------------
 /packages/core/src/core/                @XRenSiu

@@ -1,0 +1,13 @@
+{
+  "action": "opened",
+  "issue": {
+    "number": 200,
+    "title": "[auto] dependency drift detected",
+    "body": "Automated report from dependabot.",
+    "html_url": "https://github.com/Maitreya001-AI/harness-one/issues/200",
+    "user": {
+      "login": "dependabot[bot]",
+      "type": "Bot"
+    }
+  }
+}

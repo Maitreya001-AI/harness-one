@@ -63,6 +63,31 @@ importers:
         specifier: ^3.2.4
         version: 3.2.4(@types/node@22.19.17)(tsx@4.21.0)(yaml@2.8.3)
 
+  apps/dogfood:
+    dependencies:
+      '@harness-one/anthropic':
+        specifier: workspace:*
+        version: link:../../packages/anthropic
+      '@harness-one/preset':
+        specifier: workspace:*
+        version: link:../../packages/preset
+      harness-one:
+        specifier: workspace:*
+        version: link:../../packages/core
+    devDependencies:
+      '@anthropic-ai/sdk':
+        specifier: ^0.30.0
+        version: 0.30.1
+      tsx:
+        specifier: ^4.19.0
+        version: 4.21.0
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.4(@types/node@22.19.17)(tsx@4.21.0)(yaml@2.8.3)
+
   examples:
     dependencies:
       '@harness-one/ajv':

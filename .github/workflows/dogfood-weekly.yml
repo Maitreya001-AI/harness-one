@@ -1,0 +1,92 @@
+name: Dogfood · weekly rollup
+
+# Aggregates the past 7 days of dogfood triage runs into a single markdown
+# report and commits it to main. The point is a visible, dated artefact
+# that answers "are we actually dogfooding our own library?" — it is NOT a
+# CI gate.
+
+on:
+  schedule:
+    # Sundays 04:00 UTC — after Saturday's last batch of issues has been
+    # triaged, before most maintainers start the week.
+    - cron: '0 4 * * 0'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dogfood-weekly
+  cancel-in-progress: false
+
+jobs:
+  rollup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Download last 7 days of run reports
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p dogfood-reports/runs
+          since="$(date -u -d '7 days ago' '+%Y-%m-%dT%H:%M:%SZ')"
+          runs="$(gh run list \
+            --workflow "Dogfood · triage bot" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --json databaseId,createdAt \
+            --limit 200 \
+            --jq ".[] | select(.createdAt >= \"${since}\") | .databaseId")"
+          for id in ${runs}; do
+            echo "Fetching artifacts for run ${id}..."
+            gh run download "${id}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --dir "dogfood-reports-download/${id}" || true
+          done
+          if [ -d dogfood-reports-download ]; then
+            find dogfood-reports-download -name '*.json' -print0 | \
+              while IFS= read -r -d '' file; do
+                day="$(jq -r '.timestamp' "${file}" | cut -c1-10 || true)"
+                if [ -n "${day}" ] && [ "${day}" != "null" ]; then
+                  mkdir -p "dogfood-reports/runs/${day}"
+                  cp "${file}" "dogfood-reports/runs/${day}/"
+                fi
+              done
+          fi
+
+      - name: Run weekly aggregator
+        run: pnpm --filter @harness-one/dogfood weekly
+
+      - name: Commit rollup
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name "harness-one-dogfood-bot"
+          git config user.email "dogfood@users.noreply.github.com"
+          git add dogfood-reports/weekly-*.md
+          if git diff --cached --quiet; then
+            echo "No weekly rollup changes to commit."
+            exit 0
+          fi
+          git commit -m "chore(dogfood): weekly rollup"
+          git push origin HEAD:main

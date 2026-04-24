@@ -1,0 +1,120 @@
+name: Dogfood · triage bot
+
+# Runs the harness-one dogfood triage bot against every newly opened issue.
+# This is Layer 9 of the testing blueprint — we only catch the bugs we hit
+# ourselves, so the same codepath that ships to users must drive this
+# workflow.
+#
+# Failure modes:
+#   - Missing ANTHROPIC_API_KEY secret → bot runs in DOGFOOD_MOCK=1 mode
+#     and posts a mock-labelled comment. Not a hard failure.
+#   - Uncaught exception → the entry point still writes a report JSON and
+#     exits 0; the "Fail if report missing or errored" step decides whether
+#     to surface a failure so it doesn't pollute the author's issue stream.
+
+on:
+  issues:
+    types: [opened]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Issue number to replay (requires an existing issue)
+        required: true
+        type: number
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: dogfood-triage-${{ github.event.issue.number || github.event.inputs.issue_number }}
+  cancel-in-progress: false
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build harness-one workspaces
+        # We build the monorepo once so the dogfood entry point resolves
+        # built dist files (matching what a real consumer would see) rather
+        # than src paths via vitest aliases.
+        run: pnpm build
+
+      - name: Resolve event payload path (workflow_dispatch replay)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.inputs.issue_number }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/dogfood"
+          gh api "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}" \
+            --jq '{ action: "opened", issue: . }' \
+            > "${RUNNER_TEMP}/dogfood/event.json"
+          echo "GITHUB_EVENT_PATH=${RUNNER_TEMP}/dogfood/event.json" >> "$GITHUB_ENV"
+
+      - name: Run triage bot
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          DOGFOOD_REPORTS_ROOT: ${{ github.workspace }}/dogfood-reports
+          # Apply labels only when we have a real LLM; in mock mode the
+          # suggestions are deterministic and applying them would be noise.
+          DOGFOOD_APPLY_LABELS: ${{ secrets.ANTHROPIC_API_KEY != '' && '1' || '0' }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: pnpm --filter @harness-one/dogfood triage
+
+      - name: Upload run report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dogfood-run-${{ github.event.issue.number || github.event.inputs.issue_number }}
+          path: dogfood-reports/runs/**/*.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Fail if report missing or errored
+        if: always()
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number || github.event.inputs.issue_number }}
+        run: |
+          set -euo pipefail
+          report="$(find dogfood-reports/runs -name "${ISSUE_NUMBER}.json" -print -quit || true)"
+          if [ -z "${report}" ]; then
+            echo "::error::dogfood report for issue #${ISSUE_NUMBER} is missing"
+            exit 1
+          fi
+          status="$(jq -r '.status' "${report}")"
+          echo "dogfood status: ${status}"
+          if [ "${status}" = "error" ]; then
+            echo "::warning::dogfood run errored — see report for details"
+            # Do not fail the workflow; a tracking issue is opened below.
+          fi
+
+      - name: Open tracking issue on hard failure
+        if: failure() && github.event_name != 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh issue create \
+            --title "dogfood-failure: triage run for #${ISSUE_NUMBER}" \
+            --label dogfood-failure \
+            --body "The dogfood triage bot failed while processing #${ISSUE_NUMBER}.\n\nWorkflow run: ${RUN_URL}"
