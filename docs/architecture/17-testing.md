@@ -237,3 +237,70 @@ CI 在 `.github/workflows/ci.yml` 的 `build` job 里作为独立 step 跑，
 类型级测试的价值在于**把能用类型系统证明的东西从单测里踢出去**：
 `AgentEvent` 是否穷举、`TraceId`/`SpanId` 是否互相不可赋值、公开 API
 shape 有无悄悄漂移——这些在运行时根本跑不到，写单测是浪费。
+
+## Perf baseline
+
+除了测试工具子路径，`packages/core` 还维护了一套独立的 **perf 回归基线**，
+专门用于防退化而非炫耀"快"。落地文件在
+`packages/core/tests/perf/`，由 `.github/workflows/perf.yml` 在每个 PR
+上自动跑。
+
+### 五条基线
+
+| id | 指标 | 对象 |
+|----|------|------|
+| I1 | `agentloop_overhead_p50_ns`、`agentloop_overhead_p95_ns` | 空 `AgentLoop.run()` 单迭代开销（零延迟 mock adapter） |
+| I2 | `trace_10k_span_peak_heap_mb` | `createTraceManager` 写 10k span 后的 heap 峰值 |
+| I3 | `fs_store_get_p50_us`、`fs_store_query_p95_ms` | `FileSystemStore` 在 2k entries 下的 get / query 延迟 |
+| I4 | `stream_aggregator_10mb_total_ms` | `StreamAggregator` 处理 10 MB 文本流总耗时 |
+| I5 | `guardrail_pipeline_10x_p99_us` | 10-guard pipeline（5 input + 5 output）跑 1k 消息的 p99 |
+
+每条 case 独立文件（`cases/*.ts`），通过标准 `PerfCase` 接口向 runner 汇报
+`{ metric, unit, value, iterations, timestamp }`。输入全部 seed-驱动，temp
+dir 每次重建；不联网、不依赖外部状态。
+
+### 漂移 gate
+
+- **`pnpm bench`**：跑全套 → 和 `tests/perf/baseline.json` 逐项对比 → `> +15 %`
+  失败（perf 回退），`< -15 %` 警告（大概率 bench 本身坏了或停止测量真实
+  代码）。退出码非零时 CI job 变红。
+- **`pnpm bench:update`**：跑全套 → 覆盖 `baseline.json`。**Owner-only**。
+  CI workflow 里有一步 diff 检查，如果 CI 运行期间 `baseline.json` 被
+  修改就主动失败——防止误配的 `UPDATE_BASELINE` 环境变量悄悄 drift baseline。
+
+### 平台门控
+
+`baseline.json` 的数字**只在 Ubuntu + Node 20 上**有比较意义。文件系统 /
+allocator / JIT 在不同平台的差异会让部分指标（特别是 I3）相差 3–10×。
+Runner 会把当前 `process.platform` + `process.version` 主版本号和
+`baseline.json` 里的记录对比：
+
+- 匹配 → 跑 ±15% 门控。
+- 不匹配 → 表格照样输出，但门控**跳过**，GitHub Step Summary 标记为
+  `:information_source: platform mismatch`。
+
+所以 macOS / Windows 本地可以 smoke-test case 逻辑，但提交到 baseline 的
+数字必须在 CI image 上重跑。Merge 第一次引入 perf 体系的 PR 之后，owner
+应该手动在 Ubuntu + Node 20 上执行一次 `pnpm bench:update` 并单独 commit
+新 baseline，CI 才真正开始 gate。
+
+### 时间预算
+
+全套目标 `< 2 分钟`（Ubuntu CI）。I3 占大头——`query()` 扫描全部 entry 文件，
+代价随 entries × queries 线性增长；当前选择的 2 k entries × 20 queries 在
+Ubuntu 上 ≲5 s，慢文件系统（macOS APFS、加密盘、CI cache mount）上可能跑到
+30 s+，本地迭代时用 `--case=` 跳过即可。
+
+其他 case 都在亚秒级（I1、I4、I5）或毫秒级（I2）。
+
+### 稳定性策略
+
+微秒级指标（I1 p95、I5 p99、I3 get p50）对单次 GC 或调度事件非常敏感。
+每条 case 都跑 N 轮同样的采样并**发布各轮 percentile 的 min**（tinybench
+风格的 outlier-drop reducer）。这不是伪造数字——min 代表 steady-state，
+背景进程抖动留在没有被发布的那些轮里，baseline 稳定性换 5-10× 可接受的
+复现性。
+
+### 详细说明
+
+跑法、baseline 格式、regenerate 流程：`packages/core/tests/perf/README.md`。
