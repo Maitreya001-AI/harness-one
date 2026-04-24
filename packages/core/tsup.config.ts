@@ -1,5 +1,12 @@
 import { defineConfig } from 'tsup';
 
+// `harness-one/testing` imports `describe` / `it` / `expect` from `vitest`
+// inside the contract-suite factory. vitest is never pulled into a
+// production bundle because this subpath is test-only (consumers install
+// vitest themselves as a devDep); we just need tsup to leave the import
+// alone instead of trying to resolve and bundle it.
+const sharedExternal = ['vitest'] as const;
+
 export default defineConfig([
   {
     entry: {
@@ -29,6 +36,7 @@ export default defineConfig([
     minify: true,
     target: 'node18',
     sourcemap: true,
+    external: [...sharedExternal],
   },
   {
     entry: {
@@ -57,5 +65,6 @@ export default defineConfig([
     minify: true,
     target: 'node18',
     sourcemap: true,
+    external: [...sharedExternal],
   },
 ]);

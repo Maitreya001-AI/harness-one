@@ -64,3 +64,16 @@ export {
   type CassetteStreamEntry,
   type CassetteVersion,
 } from './cassette/index.js';
+
+// Adapter contract suite — share a single set of ~25 AgentAdapter
+// assertions across every adapter implementation.
+export {
+  CONTRACT_FIXTURES,
+  cassetteFileName,
+  contractFixturesHandle,
+  createAdapterContractSuite,
+  type AdapterContractSuiteOptions,
+  type ContractAdapterFixturesHandle,
+  type ContractFixture,
+  type ContractFixtureExpectations,
+} from './contract/index.js';
