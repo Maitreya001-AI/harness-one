@@ -32,3 +32,14 @@ export {
   createStreamingMockAdapter,
   createErrorStreamingMockAdapter,
 } from './test-utils.js';
+
+export { createChaosAdapter } from './chaos/chaos-adapter.js';
+export type {
+  ChaosConfig,
+  ChaosRecorder,
+  ErrorRateConfig,
+  InjectionKind,
+  InjectionRecord,
+} from './chaos/chaos-adapter.js';
+export { createSeededRng } from './chaos/prng.js';
+export type { SeededRng } from './chaos/prng.js';
