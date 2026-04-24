@@ -56,7 +56,7 @@ export function createConfigFromEnv(env?: Record<string, string | undefined>): P
 // @public
 export function createHarness(config: HarnessConfig): Harness;
 
-// @public (undocumented)
+// @public
 export function createSecurePreset(config: HarnessConfig & SecurePresetOptions): SecureHarness;
 
 // @public
