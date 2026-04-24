@@ -1,0 +1,38 @@
+name: Migrations
+
+# Executes every fixture under tools/migrations/ and asserts the
+# pre/post invariant:
+#   - pre-migration code snippet FAILS (or deprecation-warns, if opted
+#     in) against the current build, proving the breaking change we
+#     documented in MIGRATION.md is real;
+#   - post-migration code snippet SUCCEEDS, proving the recipe we
+#     handed users actually works.
+#
+# A silently-passing pre fixture is as bad as a failing post fixture —
+# both mean MIGRATION.md is lying to consumers. This workflow is the
+# machine-checked counterweight to that prose.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  check-migrations:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      - run: pnpm check:migrations

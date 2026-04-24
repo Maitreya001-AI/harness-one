@@ -18,6 +18,7 @@
     "verify:deps": "tsx tools/verify-deps.ts",
     "check:zero-deps": "node tools/check-zero-deps.mjs",
     "check:pack": "node tools/check-pack-reproducible.mjs",
+    "check:migrations": "node tools/check-migrations.mjs",
     "api:update": "pnpm -r --filter \"./packages/*\" exec api-extractor run --local",
     "api:check": "pnpm -r --filter \"./packages/*\" exec api-extractor run",
     "changeset": "changeset",
