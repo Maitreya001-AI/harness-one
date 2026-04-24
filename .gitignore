@@ -18,3 +18,7 @@ packages/*/temp/
 # (invalid @links / not-exported references fail CI); the HTML bundle
 # itself is not a shipped artifact.
 .typedoc/
+
+# lychee link-checker persistent cache (keyed by commit SHA in CI;
+# regenerated locally each run).
+.lycheecache
