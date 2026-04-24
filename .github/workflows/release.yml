@@ -1,0 +1,78 @@
+name: Release
+
+# Release pipeline: anchored to a GitHub Release (git tag). For every
+# public workspace package we:
+#   1. build
+#   2. re-verify pack reproducibility (same bytes as PR CI produced)
+#   3. pack a single canonical tarball under dist/tarballs/
+#   4. attest build provenance via Sigstore (SLSA level-3-style)
+#   5. publish to npm (wired in follow-up commits: OIDC trusted
+#      publisher + --provenance signing)
+#
+# Publishing itself is intentionally left off in this commit — each
+# follow-up track-P commit layers one release-quality property on top
+# without changing the scaffold.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Pack + attest only; skip publish.'
+        required: false
+        default: 'true'
+        type: string
+
+jobs:
+  pack-attest:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      - name: Reproducibility gate (must pack byte-identical before release)
+        run: pnpm check:pack
+
+      - name: Pack every published package into dist/tarballs/
+        run: |
+          set -euo pipefail
+          mkdir -p dist/tarballs
+          for pj in packages/*/package.json; do
+            pkg_dir=$(dirname "$pj")
+            is_private=$(node -p "require('./${pj}').private === true")
+            if [ "$is_private" = "true" ]; then
+              echo "skip (private): $pkg_dir"
+              continue
+            fi
+            echo "=== pack $pkg_dir ==="
+            (cd "$pkg_dir" && pnpm pack --pack-destination "${GITHUB_WORKSPACE}/dist/tarballs")
+          done
+          ls -la dist/tarballs/
+
+      - name: Attest build provenance for every tarball
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: 'dist/tarballs/*.tgz'
+
+      - name: Upload tarballs as workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-tarballs
+          path: dist/tarballs/*.tgz
+          if-no-files-found: error
+          retention-days: 30
