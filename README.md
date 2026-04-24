@@ -1,5 +1,7 @@
 # harness-one
 
+[![codecov](https://codecov.io/gh/Maitreya001-AI/harness-one/graph/badge.svg)](https://codecov.io/gh/Maitreya001-AI/harness-one)
+
 > Universal primitives for AI agent harness engineering. The hard 30% of harness infrastructure, done once and done right.
 
 **Languages**: **English** (this file) · [中文版 → `README.zh-CN.md`](./README.zh-CN.md)

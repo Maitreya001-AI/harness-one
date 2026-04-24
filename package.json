@@ -12,6 +12,7 @@
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "test:coverage": "pnpm -r test -- --coverage",
+    "coverage:html": "pnpm -r test -- --coverage --coverage.reporter=html",
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm -r lint",
     "verify:deps": "tsx tools/verify-deps.ts",
