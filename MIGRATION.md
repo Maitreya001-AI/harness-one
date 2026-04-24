@@ -117,6 +117,56 @@ build should know about:
   ```
   Shape unchanged. Source file also moved: `src/core/test-utils.ts` →
   `src/testing/test-utils.ts`. See `docs/architecture/17-testing.md`.
+- `harness-one/testing` further gained three sub-surfaces (all additive —
+  no existing import changes):
+  - Chaos injection: `createChaosAdapter` wraps any `AgentAdapter` with a
+    seeded error/latency/corruption schedule for scenario tests;
+    `createSeededRng` + `SeededRng` expose the PRNG directly. See Track H
+    in `docs/architecture/17-testing.md`.
+  - Cassette record/replay: `recordCassette` wraps a real adapter and
+    appends a `CassetteChatEntry | CassetteStreamEntry` JSONL row per call;
+    `createCassetteAdapter` / `loadCassette` replay from that file.
+    Fingerprint helpers (`computeKey`, `fingerprint`, `isCassetteEntry`,
+    `SUPPORTED_VERSIONS`) are exported for adapter-contract authors who need
+    to thread their own keys. Deliberate semantic scope on the fingerprint:
+    messages + tools + temperature / topP / maxTokens / stopSequences +
+    responseFormat; `signal` and `LLMConfig.extra` are not part of the
+    key, so SDK-default parameter changes don't red all cassettes.
+  - Adapter contract suite: `createAdapterContractSuite(adapter, opts)`
+    registers ~25 `AgentAdapter` contract assertions against a caller-
+    supplied vitest `{ describe, it, expect, beforeAll }`. Every adapter
+    package now uses this instead of duplicating mocks.
+    `CONTRACT_FIXTURES` / `cassetteFileName` / `contractFixturesHandle`
+    are the shared fixture registry. See ADR-0008.
+- Redactor: `createRedactor` + `redactValue` now normalise camelCase keys
+  by inserting `-` at every lower→upper boundary before matching the
+  default secret pattern. Keys such as `apiToken`, `accessToken`,
+  `bearerToken`, `refreshToken` that previously slipped through are now
+  redacted. Visible only as *widening* of `[REDACTED]` coverage in logs
+  and trace attributes; no callers should have been relying on these
+  values surfacing in cleartext. Snake_case / kebab-case / single-word
+  matches unchanged. See `docs/security/redact-findings.md` for the full
+  gap ledger.
+- Prompt registry: declaring a variable whose name collides with an
+  `Object.prototype` key (`toString`, `valueOf`, `constructor`,
+  `hasOwnProperty`, `isPrototypeOf`, `propertyIsEnumerable`,
+  `toLocaleString`) and calling `resolve(id, {})` previously threw
+  `TypeError: rawValue.replace is not a function` because the missing-
+  variable check walked the prototype chain. It now throws the documented
+  `HarnessError('PROMPT_MISSING_VARIABLE')`. Callers pattern-matching on
+  `TypeError` around `registry.resolve()` should switch to `HarnessError` /
+  `HarnessErrorCode.PROMPT_MISSING_VARIABLE`. Fuzz-discovered; see
+  `packages/core/tests/fuzz/FINDINGS.md` F-O4-01.
+- `packages/core/tests/` top-level directories split out for dedicated
+  test kinds, each with its own config / tsconfig / CI workflow:
+  `tests/integration/` (Track D), `tests/chaos/` (Track H, `chaos.yml`
+  is part of `ci.yml`), `tests/perf/` (Track I + `perf.yml`), `tests/fuzz/`
+  (Track O + nightly `fuzz.yml`), `tests/type-level/` (Track N +
+  `typecheck:type-level` script), `tests/security/` (Track O threat
+  models). Not a consumer-facing change — noted here because local
+  scripts that globbed `packages/core/src/**/*.test.ts` previously
+  covered every test and now miss the top-level dirs; use
+  `pnpm --filter harness-one test` or the per-kind scripts instead.
 - `StreamAggregator` UTF-8 byte counter now carries a `pendingHighSurrogate`
   flag across chunks so a supplementary codepoint split across two chunks
   (high surrogate at end of chunk N, low surrogate at start of chunk N+1)
