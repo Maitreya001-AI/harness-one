@@ -1,6 +1,7 @@
 # harness-one
 
 [![codecov](https://codecov.io/gh/Maitreya001-AI/harness-one/graph/badge.svg)](https://codecov.io/gh/Maitreya001-AI/harness-one)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/Maitreya001-AI/harness-one/badge)](https://securityscorecards.dev/viewer/?uri=github.com/Maitreya001-AI/harness-one)
 
 > Universal primitives for AI agent harness engineering. The hard 30% of harness infrastructure, done once and done right.
 
