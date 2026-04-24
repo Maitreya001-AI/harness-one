@@ -2,7 +2,7 @@
 
 [![codecov](https://codecov.io/gh/Maitreya001-AI/harness-one/graph/badge.svg)](https://codecov.io/gh/Maitreya001-AI/harness-one)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/Maitreya001-AI/harness-one/badge)](https://securityscorecards.dev/viewer/?uri=github.com/Maitreya001-AI/harness-one)
-[![OpenSSF Best Practices](https://img.shields.io/badge/OpenSSF%20Best%20Practices-self--assessed-informational)](./docs/security/ossf-best-practices.md)
+[![OpenSSF Best Practices](https://bestpractices.coreinfrastructure.org/projects/12635/badge)](https://bestpractices.coreinfrastructure.org/projects/12635)
 
 > AI Agent **Harness 层**（非模型层）的通用基础设施。把最难的 30% 工程活一次做对、做完。
 
@@ -328,9 +328,21 @@ harness-one 的质量承诺全部写进 `.github/workflows/`，总计 15 个 CI 
 - [`SECURITY.md`](./SECURITY.md)——支持版本、私报流程、7 天 ack / 30 天 fix SLA、safe harbor。
 - [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md)——Contributor Covenant v2.1。
 - [`.github/CODEOWNERS`](./.github/CODEOWNERS)——按 path 自动请审。
-- [`docs/security/`](./docs/security/)——每个 L3 子系统一份 STRIDE 威胁模型 + OpenSSF Best Practices 自评（项目 ID 等 owner 提交申请后填入）。
+- [`docs/security/`](./docs/security/)——每个 L3 子系统一份 STRIDE 威胁模型 + OpenSSF Best Practices 自评（项目 ID `12635`，passing 级通过）。
 - [`docs/adr/`](./docs/adr/)——10 份 MADR 4.0 格式的架构决策记录。
 - [`docs/testing-plan.md`](./docs/testing-plan.md) + [`docs/testing-plan/`](./docs/testing-plan/)——16 个 Track 的可执行落地 prompt，每个 CI workflow 背后对应一个 Track。
+
+## Showcases
+
+四个可直接跑的差异化 demo。Triage Bot 每天在本仓真实驱动；其余三个在
+`examples:smoke` 下确定性运行（无需 API key）。
+
+| Showcase | 文件 | 验证了什么 |
+|---|---|---|
+| Issue Triage Bot（dogfood） | [`apps/dogfood/`](./apps/dogfood/) | `createSecurePreset` + tools + guardrails 在每个新 issue 上真实跑；报告写入 `dogfood-reports/`。 |
+| 带引用的 Codebase Q&A | [`examples/showcases/codebase-qa.ts`](./examples/showcases/codebase-qa.ts) | RAG + 对每个 chunk 跑 fail-closed guardrail + `file:line` 引用。 |
+| Autoresearch（Ralph 风格） | [`examples/showcases/autoresearch-loop.ts`](./examples/showcases/autoresearch-loop.ts) | 置信度门控循环 + 主 search 失败 → 指数退避 → fallback。 |
+| Evolve-check 审计 | [`examples/showcases/evolve-check-demo.ts`](./examples/showcases/evolve-check-demo.ts) | `ComponentRegistry` + `DriftDetector` + `TasteCodingRegistry` 组合成一次"代码一直对"巡检。 |
 
 ## 文档
 
@@ -375,6 +387,7 @@ harness-one 的质量承诺全部写进 `.github/workflows/`，总计 15 个 CI 
 | Provider 适配器规范 | [provider-spec.md](./docs/provider-spec.md) |
 | RAG 三套 conformance 规范 | [retriever-spec.md](./docs/retriever-spec.md) / [embedding-spec.md](./docs/embedding-spec.md) / [chunking-spec.md](./docs/chunking-spec.md) |
 | 发布 runbook | [release.md](./docs/release.md) |
+| 公开路线图 | [ROADMAP.md](./docs/ROADMAP.md) |
 | 文档 i18n 策略 | [i18n-strategy.md](./docs/i18n-strategy.md) |
 | pre-release 破坏性变更账本 | [MIGRATION.md](./MIGRATION.md) |
 

@@ -2,7 +2,7 @@
 
 [![codecov](https://codecov.io/gh/Maitreya001-AI/harness-one/graph/badge.svg)](https://codecov.io/gh/Maitreya001-AI/harness-one)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/Maitreya001-AI/harness-one/badge)](https://securityscorecards.dev/viewer/?uri=github.com/Maitreya001-AI/harness-one)
-[![OpenSSF Best Practices](https://img.shields.io/badge/OpenSSF%20Best%20Practices-self--assessed-informational)](./docs/security/ossf-best-practices.md)
+[![OpenSSF Best Practices](https://bestpractices.coreinfrastructure.org/projects/12635/badge)](https://bestpractices.coreinfrastructure.org/projects/12635)
 
 > Universal primitives for AI agent harness engineering. The hard 30% of harness infrastructure, done once and done right.
 
@@ -1157,6 +1157,20 @@ Supporting material — all reviewable in-repo:
 - [`docs/adr/`](./docs/adr/) — Architecture Decision Records (ADR-0001 through ADR-0010, MADR 4.0 format).
 - [`docs/testing-plan.md`](./docs/testing-plan.md) + [`docs/testing-plan/`](./docs/testing-plan/) — 16-track testing blueprint; each workflow above is owned by a track.
 
+## Showcases
+
+Four runnable demos that exercise harness-one end-to-end. The first drives a
+real GitHub repo every day; the others run deterministically under
+`examples:smoke` (no API key required) so you can read them first and wire a
+real adapter after.
+
+| Showcase | File | What it proves |
+|---|---|---|
+| Issue Triage Bot (dogfood) | [`apps/dogfood/`](./apps/dogfood/) | `createSecurePreset` + tools + guardrails running on every new issue in this repo. Reports land in `dogfood-reports/`. |
+| Codebase Q&A with citations | [`examples/showcases/codebase-qa.ts`](./examples/showcases/codebase-qa.ts) | RAG pipeline + fail-closed guardrail scanning every retrieved chunk + `file:line` citations. |
+| Autoresearch (Ralph-style) | [`examples/showcases/autoresearch-loop.ts`](./examples/showcases/autoresearch-loop.ts) | Confidence-gated loop with primary-search failure → exponential backoff → fallback adapter. |
+| Evolve-check audit | [`examples/showcases/evolve-check-demo.ts`](./examples/showcases/evolve-check-demo.ts) | `ComponentRegistry` + `DriftDetector` + `TasteCodingRegistry` composed into one "code keeps being right" pass. |
+
 ## Docs
 
 Start here:
@@ -1167,6 +1181,7 @@ Start here:
 | Per-module architecture (01-17) | [`docs/architecture/00-overview.md`](./docs/architecture/00-overview.md) |
 | Testing layers (unit → chaos → fuzz) | [`docs/architecture/17-testing.md`](./docs/architecture/17-testing.md) |
 | Architecture decisions | [`docs/adr/`](./docs/adr/) |
+| Public roadmap | [`docs/ROADMAP.md`](./docs/ROADMAP.md) |
 | Threat models + OSSF self-assessment | [`docs/security/`](./docs/security/) |
 | `AgentAdapter` contract for provider authors | [`docs/provider-spec.md`](./docs/provider-spec.md) |
 | RAG conformance specs | [`docs/retriever-spec.md`](./docs/retriever-spec.md), [`docs/embedding-spec.md`](./docs/embedding-spec.md), [`docs/chunking-spec.md`](./docs/chunking-spec.md) |

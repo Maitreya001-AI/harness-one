@@ -211,9 +211,10 @@ shows up in the code-scanning tab and is triaged.
 
 ## Action-item summary (owner follow-ups, not in this PR)
 
-1. **Submit the Best Practices application** at
-   <https://www.bestpractices.dev/en/projects/new> — once submitted,
-   replace `TODO` in the README badge with the assigned project ID.
+1. ✅ **Best Practices application submitted** — project ID
+   `12635` (passing level), viewable at
+   <https://www.bestpractices.dev/projects/12635>. README badges in
+   `README.md` and `README.zh-CN.md` now point to this project ID.
 2. **Publish response-time metrics** — after 1 full quarter of issue
    activity, post aggregate stats to `docs/security/` to back criterion
    #13.
@@ -223,13 +224,10 @@ shows up in the code-scanning tab and is triaged.
 
 ---
 
-## Badge placeholder
+## Badge
 
-The README currently carries:
+The README carries the live badge (project ID `12635`):
 
 ```markdown
-[![OpenSSF Best Practices](https://bestpractices.coreinfrastructure.org/projects/TODO/badge)](https://bestpractices.coreinfrastructure.org/projects/TODO)
+[![OpenSSF Best Practices](https://bestpractices.coreinfrastructure.org/projects/12635/badge)](https://bestpractices.coreinfrastructure.org/projects/12635)
 ```
-
-Once the application is filed and a project ID is assigned, replace
-both `TODO` tokens with the numeric ID.
