@@ -20,11 +20,28 @@
 
 ```ts
 import {
+  // mock 工厂
   createMockAdapter,
   createFailingAdapter,
   createStreamingMockAdapter,
   createErrorStreamingMockAdapter,
   type MockAdapterConfig,
+
+  // cassette 层
+  recordCassette,
+  createCassetteAdapter,
+  loadCassette,
+  computeKey,
+  fingerprint,
+
+  // 契约套件
+  createAdapterContractSuite,
+  CONTRACT_FIXTURES,
+  cassetteFileName,
+  contractFixturesHandle,
+  type AdapterContractSuiteOptions,
+  type ContractTestApi,
+  type ContractFixture,
 } from 'harness-one/testing';
 ```
 
@@ -34,9 +51,123 @@ import {
 | `createFailingAdapter(error?)` | 总是抛出给定错误（或 `'Mock adapter failure'`）；用于 fallback / 错误分类测试 |
 | `createStreamingMockAdapter({ chunks, usage? })` | 既有 `chat()` 又有 `stream()`；`stream()` 逐个 yield `chunks`，`chat()` 合并其中的 `text_delta` |
 | `createErrorStreamingMockAdapter({ chunksBeforeError, error })` | 流式返回部分 chunks 然后抛错；用于 partial-stream 恢复测试 |
+| `recordCassette(adapter, path)` | 包装真实 adapter，把每次 `chat()` / `stream()` 的入参 + 出参追加到 `path` 指向的 JSONL 文件 |
+| `createCassetteAdapter(path, opts?)` | 把 cassette 文件加载成一个 `AgentAdapter`，按录制顺序（FIFO）回放；`opts.simulateTiming` 可按录制时的 SSE 间隔出块 |
+| `createAdapterContractSuite(adapter, options)` | 以 `options.testApi`（调用方传入的 vitest `{describe, it, expect, beforeAll}`）注册约 25 条 AgentAdapter 契约断言；每条断言由 cassette 供给数据 |
 
-所有工厂返回的 adapter 都附带 `.calls: ChatParams[]`，按调用顺序记录每次
+所有 mock 工厂返回的 adapter 都附带 `.calls: ChatParams[]`，按调用顺序记录每次
 参数快照——用于在测试里断言"LLM 实际收到了什么"。
+
+## Cassette 层
+
+Adapter 契约测试要**真实 provider 响应的形状**才有意义，但真实 API 又带预算、
+网络、不稳定三重麻烦。Cassette 层把这两件事切开：
+
+1. **录制**一次：`recordCassette(real, path)` 包装真实 adapter，一边正常返回
+   响应给调用方，一边把 `chat()` / `stream()` 的入参指纹和出参（含 SSE 每块的
+   相对时间戳）逐条 append 到 `path` 指向的 JSONL 文件。
+2. **回放**无数次：`createCassetteAdapter(path)` 把文件加载进每个 key 的
+   FIFO 队列，`chat()` / `stream()` 调用命中 key 就弹出下一条。
+
+Key 的计算见 `computeKey(kind, fingerprint(params))`——只覆盖语义相关的字段
+（messages、tools、`temperature` / `topP` / `maxTokens` / `stopSequences`、
+`responseFormat`）。`signal`、`LLMConfig.extra` 之类的透传字段故意不进 hash，
+这样 SDK 版本升级加个默认参数不会让所有 cassette 全红；代价是调用方自己负责
+保持 `extra` 一致。
+
+文件格式（`packages/core/src/testing/cassette/schema.ts`）：每行一条
+`CassetteChatEntry | CassetteStreamEntry`，都带独立的 `version: 1` 字段，
+读者（`loadCassette`）会拒绝未支持的 version。截断的末行会被容忍——允许录制
+进行中的进程被打断，文件仍可回放。
+
+Cassette 文件提交位置约定：
+
+- `packages/anthropic/tests/cassettes/<fixture>.jsonl`
+- `packages/openai/tests/cassettes/<fixture>.jsonl`
+
+**零新运行时依赖**：cassette 层只用 `node:fs` / `node:crypto`。
+
+## 契约套件
+
+`createAdapterContractSuite(adapter, options)` 在 vitest 环境里注册一组与
+adapter 实现无关的断言（≥ 20 条，目前 25 条），每条覆盖 `AgentAdapter`
+接口的一个隐式承诺：
+
+- `chat()` 返回的 `message.role === 'assistant'`，`content` 是字符串；
+- `usage.inputTokens` / `outputTokens` 为非负有限数；可选的 `cache*Tokens`
+  若出现同样限非负有限；
+- `toolCalls[].{id,name,arguments}` 类型和非空字符串约束；`arguments` 非空
+  时必须能 `JSON.parse`；
+- `stream()` 至少 yield 一块、尾块是 `done`、`text_delta` 的 `text` 是字符串，
+  `done` 带 usage；
+- 带 tool 的 stream 在 `done` 之前至少 yield 一个 `tool_call_delta`，
+  并在流中暴露过 id 和 name；
+- 连续两次调用不共享内部状态（adapter 可重用）；
+- `chat()` 不突变调用方传入的 `messages` 数组；
+- 已 abort 的 `AbortSignal` 让 stream 立即 reject；`simulateTiming` 模式下
+  中途 abort 同样 reject；
+- 可选的 `countTokens()` 返回非负有限数；
+- 顶层 `adapter.name` 是非空字符串。
+
+### 为什么 `testApi` 要调用方注入
+
+vitest 是 ESM-only 的、并且在模块求值时就抓 worker state。如果契约模块
+静态 import vitest，`harness-one/testing` 就不能再被测试之外的 Node 脚本
+（比如 `tools/generate-synthetic-cassettes.mjs`、`tools/record-cassettes.mjs`）
+复用。所以我们把 `{ describe, it, expect, beforeAll }` 做成 `testApi` 选项，
+由调用方的测试文件显式传入：
+
+```ts
+import { describe, it, expect, beforeAll } from 'vitest';
+import { createAdapterContractSuite } from 'harness-one/testing';
+import { createAnthropicAdapter } from '@harness-one/anthropic';
+
+createAdapterContractSuite(createAnthropicAdapter({ ... }), {
+  cassetteDir: resolve(__dirname, 'cassettes'),
+  testApi: { describe, it, expect, beforeAll },
+});
+```
+
+契约套件**默认走 replay**（`mode: 'replay'`），所以跑 `pnpm test` 时根本不
+摸 API。想录制新 cassette：
+
+- `mode: 'record'` 或 `CASSETTE_MODE=record` 强制走真实 adapter（需要 API key）。
+- `mode: 'auto'` 缺失 cassette 时 fallback 走真实 adapter，其余仍 replay。
+
+### Fixtures
+
+`CONTRACT_FIXTURES` 是 cassette 和断言共享的单一真源——每条 fixture 对应
+一个 `.jsonl` 文件，通过 `cassetteFileName(fixture)` 推导文件名。目前 5 条：
+
+| name                | kind   | expect                 | 用途                            |
+|---------------------|--------|------------------------|---------------------------------|
+| `chat-simple`       | chat   | text                   | 基础 Q→A 形状 + usage 断言      |
+| `chat-with-system`  | chat   | text                   | 校验 system message 不被丢失    |
+| `chat-tool-call`    | chat   | toolCall               | tool_use 响应形状               |
+| `stream-simple`     | stream | text, doneChunk        | 基础流式序列 + `done` 尾块      |
+| `stream-tool-call`  | stream | toolCall, doneChunk    | tool_call_delta 在 done 前顺序  |
+
+## 离线 seed cassette 与 nightly drift
+
+真实 API 记录既贵、又依赖 owner 本地 key。我们靠两件事让 CI 里也有可靠 fixture：
+
+1. **`tools/generate-synthetic-cassettes.mjs`**：用 `computeKey` / `fingerprint`
+   写手工 cassette 种子——shape 合法、能让契约套件断言全绿。Contributor
+   fork 不用 API key 也能跑通测试。
+2. **`tools/record-cassettes.mjs`** + **`.github/workflows/cassette-drift.yml`**：
+   每天 06:00 UTC 用 repo secret `ANTHROPIC_API_KEY_CI` / `OPENAI_API_KEY_CI`
+   重录 cassette，与仓库里的对 diff；若不同则通过 `peter-evans/create-issue-from-file`
+   开一条 tracking issue 并把 diff 作为 artifact 上传，**不自动 commit**，由
+   维护者决定是否 land 意图性的 re-record。
+
+种子 cassette 是起点，drift workflow 是对 provider-side shape drift 的观测
+系统；缺一侧就只剩"这合约是不是还真的反映了现实"这种问题。
+
+### 本地 smoke
+
+`pnpm smoke` 跑 `tools/smoke-test.mjs`，读 `.env.local` 里的 key，对两个 adapter
+各发一次 `chat()` 和一次 `stream()`，打印 response / usage / 错误分类。**不
+入 CI**——预算敏感，只在本地改过 adapter 源码之后作为"连线还活着"的确认。
 
 ## 为什么单独拆一个子路径
 
@@ -54,9 +185,14 @@ import {
 ## 测试
 
 - 工厂本身的行为契约：`src/testing/__tests__/test-utils.test.ts`
+- Cassette 录制/回放：`src/testing/__tests__/cassette.test.ts`
+- 契约套件自测（synthetic adapter + 手工生成的 cassette 目录驱动套件自己）：
+  `src/testing/__tests__/contract-suite.test.ts`
 - 作为依赖使用：harness 内部 ~20 个测试文件 + examples（middleware-chain /
   resilient-loop / sse-stream / multi-agent）通过 `harness-one/testing`
-  消费。
+  消费。两个 adapter 包各有一条顶层 `tests/contract.test.ts` 接入上面的
+  契约套件：`packages/anthropic/tests/contract.test.ts`、
+  `packages/openai/tests/contract.test.ts`。
 
 ## Import
 
