@@ -281,14 +281,18 @@ export function createChaosAdapter(
             throw new Error('stream connection reset by peer (network)');
           }
 
-          // Rewrite the FIRST tool_call_delta's arguments with a bloated
-          // payload. One oversized delta is enough — the aggregator trips
-          // at the first byte past maxToolArgBytes.
+          // Rewrite the first tool_call_delta that actually carries
+          // `arguments` with a bloated payload. Waiting for a delta with
+          // arguments means we target the path StreamAggregator uses to
+          // GROW an existing tool call — which is where `maxToolArgBytes`
+          // is enforced. Bloat injected on a fresh-tool-call delta would
+          // only trip `maxStreamBytes`, which is a different guard.
           if (
             bloatThisStream &&
             !toolArgsMutated &&
             chunk.type === 'tool_call_delta' &&
-            chunk.toolCall !== undefined
+            chunk.toolCall !== undefined &&
+            chunk.toolCall.arguments !== undefined
           ) {
             const payload = 'x'.repeat(bloatBytes);
             toolArgsMutated = true;

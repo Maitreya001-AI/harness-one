@@ -144,12 +144,15 @@ describe('createChaosAdapter · stream mid-break injection', () => {
 });
 
 describe('createChaosAdapter · tool-arg bloat injection', () => {
-  it('inflates the first tool_call_delta past bloatBytes', async () => {
+  it('inflates the first args-bearing tool_call_delta past bloatBytes', async () => {
     const inner = createStreamingMockAdapter({
       chunks: [
+        // First delta: establish the tool call without args so the
+        // aggregator creates an entry. Bloat targets the second delta.
+        { type: 'tool_call_delta', toolCall: { id: 't1', name: 'search' } },
         {
           type: 'tool_call_delta',
-          toolCall: { id: 't1', name: 'search', arguments: '{' },
+          toolCall: { id: 't1', arguments: '{' },
         },
         { type: 'done' },
       ],
@@ -159,14 +162,16 @@ describe('createChaosAdapter · tool-arg bloat injection', () => {
       toolArgBloatRate: 1,
       bloatBytes: 1024,
     });
-    const emitted: Array<{ type: string; argsLen: number }> = [];
+    const emitted: Array<{ argsLen: number | undefined }> = [];
     for await (const c of chaos.stream!({ messages: [] })) {
       if (c.type === 'tool_call_delta') {
-        emitted.push({ type: c.type, argsLen: c.toolCall?.arguments?.length ?? 0 });
+        emitted.push({ argsLen: c.toolCall?.arguments?.length });
       }
     }
-    expect(emitted).toHaveLength(1);
-    expect(emitted[0].argsLen).toBeGreaterThanOrEqual(1024);
+    // First delta has no args (unchanged); second is bloated past 1 KiB.
+    expect(emitted).toHaveLength(2);
+    expect(emitted[0].argsLen).toBeUndefined();
+    expect(emitted[1].argsLen ?? 0).toBeGreaterThanOrEqual(1024);
     expect(chaos.recorder.count('tool-arg-bloat')).toBe(1);
   });
 });
