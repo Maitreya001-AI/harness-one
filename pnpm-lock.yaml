@@ -144,6 +144,9 @@ importers:
 
   packages/core:
     devDependencies:
+      expect-type:
+        specifier: 1.3.0
+        version: 1.3.0
       tsup:
         specifier: ^8.0.0
         version: 8.5.1(@microsoft/api-extractor@7.58.2(@types/node@22.19.17))(postcss@8.5.8)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
