@@ -22,8 +22,6 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { describe, it, expect, beforeAll } from 'vitest';
-
 import type {
   AgentAdapter,
   ChatParams,
@@ -31,6 +29,39 @@ import type {
   StreamChunk,
 } from '../../core/types.js';
 import { createCassetteAdapter, recordCassette } from '../cassette/index.js';
+
+/**
+ * Minimal subset of the vitest API the suite uses. The caller passes
+ * these in from their test file so this module never has to import
+ * `vitest` itself — that matters because vitest is ESM-only and its
+ * worker state machinery is not safe to evaluate outside a test run
+ * (e.g. inside the cassette generator script).
+ */
+export interface ContractTestApi {
+  readonly describe: (name: string, fn: () => void) => void;
+  readonly it: (name: string, fn: () => void | Promise<void>) => void;
+  readonly expect: (actual: unknown) => ContractExpectAssertions;
+  readonly beforeAll: (fn: () => void | Promise<void>) => void;
+}
+
+/** Structural type for the tiny slice of `expect()` we call. */
+export interface ContractExpectAssertions {
+  toBe(expected: unknown): void;
+  toEqual(expected: unknown): void;
+  toBeDefined(): void;
+  toBeTruthy(): void;
+  toBeGreaterThan(n: number): void;
+  toBeGreaterThanOrEqual(n: number): void;
+  toBeLessThan(n: number): void;
+  toMatch(pattern: RegExp | string): void;
+  toBeInstanceOf(ctor: unknown): void;
+  not: { toThrow(): void };
+  rejects: {
+    toBeInstanceOf(ctor: unknown): Promise<void>;
+    toThrow(pattern?: RegExp | string): Promise<void>;
+  };
+  toThrow(pattern?: RegExp | string): void;
+}
 
 import {
   CONTRACT_FIXTURES,
@@ -42,6 +73,15 @@ import {
 export interface AdapterContractSuiteOptions {
   /** Directory holding `<fixture>.jsonl` files. */
   readonly cassetteDir: string;
+  /**
+   * vitest's `describe`/`it`/`expect`/`beforeAll`, imported by the
+   * caller. See {@link ContractTestApi} for the exact shape.
+   *
+   * Required to keep the testing subpath free of a direct runtime
+   * dependency on vitest — call sites re-export from their own
+   * `import { describe, ... } from 'vitest'`.
+   */
+  readonly testApi: ContractTestApi;
   /**
    * Cassette strategy:
    *
@@ -69,6 +109,7 @@ export function createAdapterContractSuite(
   adapter: AgentAdapter,
   options: AdapterContractSuiteOptions,
 ): void {
+  const { describe, it, expect, beforeAll } = options.testApi;
   const mode = resolveMode(options.mode);
   const label = options.label ?? adapter.name ?? 'AgentAdapter';
 

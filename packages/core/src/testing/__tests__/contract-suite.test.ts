@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 
 import type {
   AgentAdapter,
@@ -159,6 +159,7 @@ createAdapterContractSuite(syntheticAdapter(), {
   cassetteDir: TMP_DIR,
   mode: 'replay',
   label: 'synthetic adapter',
+  testApi: { describe, it, expect, beforeAll },
 });
 
 describe('createAdapterContractSuite — wiring', () => {
