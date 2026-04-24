@@ -1,0 +1,99 @@
+name: SBOM
+
+# Generates a CycloneDX SBOM and an npm-audit snapshot on every tagged
+# release, and attaches both as assets to the Release. Also runnable via
+# workflow_dispatch so maintainers can regenerate an SBOM for an older
+# release without cutting a new one.
+#
+# Why this matters: enterprise procurement teams require a per-release
+# SBOM to feed their supply-chain risk tooling. Producing it from CI
+# (not a laptop) guarantees the SBOM corresponds to the exact lockfile
+# state that produced the release artifacts.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref (tag or SHA) to SBOM. Defaults to HEAD of the default branch.'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  sbom:
+    name: Generate SBOM + audit snapshot
+    runs-on: ubuntu-latest
+    permissions:
+      # `contents: write` is only needed for the "attach to release" step.
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@a3252b78c470c02df07e9d59298aecedc3ccdd6d # v3.0.0
+
+      - name: Setup Node
+        uses: actions/setup-node@60edb5dd545a775178f52524783378180af0d1f8 # v4.0.2
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve release version
+        id: version
+        run: |
+          if [ -n "${{ github.event.release.tag_name }}" ]; then
+            echo "version=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
+          else
+            version="$(git describe --tags --always)"
+            echo "version=${version}" >> "$GITHUB_OUTPUT"
+          fi
+        shell: bash
+
+      - name: Generate CycloneDX SBOM
+        # anchore/sbom-action uses Syft under the hood, which reads the
+        # pnpm lockfile and produces a deterministic CycloneDX document.
+        uses: anchore/sbom-action@7ccf588e3cf3cc2611714c2eeae48550fbc17552 # v0.15.11
+        with:
+          format: cyclonedx-json
+          output-file: sbom-${{ steps.version.outputs.version }}.json
+          # Package everything under the working directory so Syft picks up
+          # all workspaces, not just the root manifest.
+          path: .
+          upload-artifact: false
+
+      - name: Generate npm-audit snapshot
+        # Intentionally does NOT set --audit-level — we want the full
+        # advisory list in the snapshot, regardless of severity. The CI
+        # gate on high/critical lives in audit.yml.
+        run: pnpm audit --json > "audit-${{ steps.version.outputs.version }}.json" || true
+        shell: bash
+
+      - name: Upload as workflow artifacts
+        uses: actions/upload-artifact@26f96dfa697d77e81fd5907df203aa23a56210a8 # v4.3.0
+        with:
+          name: sbom-${{ steps.version.outputs.version }}
+          path: |
+            sbom-${{ steps.version.outputs.version }}.json
+            audit-${{ steps.version.outputs.version }}.json
+          if-no-files-found: error
+
+      - name: Attach to GitHub Release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            "sbom-${{ steps.version.outputs.version }}.json" \
+            "audit-${{ steps.version.outputs.version }}.json" \
+            --clobber
+        shell: bash
