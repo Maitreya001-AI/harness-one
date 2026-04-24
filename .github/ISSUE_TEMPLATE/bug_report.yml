@@ -1,0 +1,79 @@
+name: Bug report
+description: Report a defect in harness-one or any @harness-one/* package.
+title: "[bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. Please fill in every required field so we
+        can reproduce quickly. If this is a security issue, **stop** and
+        follow [SECURITY.md](../../SECURITY.md) instead.
+  - type: input
+    id: harness-version
+    attributes:
+      label: harness-one version
+      description: Output of `pnpm ls harness-one` or the affected `@harness-one/*` package version.
+      placeholder: "harness-one@0.2.0"
+    validations:
+      required: true
+  - type: input
+    id: node-version
+    attributes:
+      label: Node.js version
+      description: Output of `node -v`.
+      placeholder: "v20.11.1"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Linux
+        - Windows
+        - Other (note in description)
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: |
+        A link to a minimal repo, a single `.ts` file, or a failing test is ideal.
+        We cannot triage reports without a reproduction.
+      placeholder: |
+        // repro.ts
+        import { createAgent } from "harness-one";
+        // ...
+      render: typescript
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs, stack trace, or telemetry
+      description: Paste relevant logs/traces. Redact any secrets before posting.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-flight checks
+      options:
+        - label: I searched existing issues and discussions for duplicates.
+          required: true
+        - label: I am on a supported version (see `SECURITY.md`).
+          required: true
