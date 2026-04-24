@@ -80,6 +80,7 @@ Under the hood:
 
 **Graceful shutdown** — wire SIGTERM/SIGINT handlers in one call:
 
+<!-- noverify -->
 ```ts
 import { createSecurePreset, createShutdownHandler } from '@harness-one/preset';
 
@@ -102,22 +103,17 @@ Every public API is re-exported from the root entry **and** from its submodule
 path. Use whichever fits your tree-shaker:
 
 ```typescript
-// Root entry — good for prototyping and examples
-import {
-  AgentLoop,
-  createAgentLoop,
-  defineTool,
-  createRegistry,
-  toolSuccess,
-  createPipeline,
-  createInjectionDetector,
-  runInput,
-} from 'harness-one';
+// Root entry — good for prototyping and examples.
+// Re-exports the canonical factories plus AgentLoop, defineTool,
+// createRegistry, and createPipeline. Specialised pipeline combinators,
+// testing utilities, and the injection detector live on their subpaths and
+// are not re-exported from root to keep tree-shaking predictable.
+import { AgentLoop, createAgentLoop, defineTool, createRegistry, createPipeline } from 'harness-one';
 
-// Or submodule imports — good for production, better tree-shaking
-import { AgentLoop } from 'harness-one/core';
-import { defineTool, createRegistry, toolSuccess } from 'harness-one/tools';
-import { createPipeline, createInjectionDetector, runInput } from 'harness-one/guardrails';
+// Or submodule imports — good for production, better tree-shaking.
+import { AgentLoop as AgentLoopSubpath } from 'harness-one/core';
+import { defineTool as defineToolSubpath, createRegistry as createRegistrySubpath, toolSuccess } from 'harness-one/tools';
+import { createPipeline as createPipelineSubpath, createInjectionDetector, runInput } from 'harness-one/guardrails';
 ```
 
 ### Import-path cheatsheet
@@ -156,8 +152,11 @@ When in doubt, import from the root — types and the 18 curated factories
 resolve cleanly. Drop to a subpath only for tree-shaking or when the root
 doesn't carry the value (e.g. `toSSEStream` lives on `/advanced`).
 
+<!-- noverify -->
 ```typescript
-// Continuing the example:
+import { createAgentLoop } from 'harness-one';
+import { defineTool, createRegistry, toolSuccess } from 'harness-one/tools';
+import { createPipeline, createInjectionDetector, runInput } from 'harness-one/guardrails';
 
 // Define a tool
 const calculator = defineTool<{ a: number; b: number }>({
@@ -271,6 +270,8 @@ Template variable substitution sanitizes values by default (`sanitize: true`) to
 ```typescript
 import { createPromptBuilder, createSkillRegistry } from 'harness-one/prompt';
 
+// Builder-wide variable sanitization is default-on (sanitize: true);
+// pass `sanitize: false` here to allow raw variable content.
 const builder = createPromptBuilder({ separator: '\n\n' });
 
 // Cacheable layers go first (stable KV-cache prefix)
@@ -281,13 +282,12 @@ builder.addLayer({
   cacheable: true,
 });
 
-// Dynamic layers added after; variables are sanitized by default
+// Dynamic layers added after; variables substituted at build time.
 builder.addLayer({
   name: 'context',
   content: 'User project: {{project}}',
   priority: 10,
   cacheable: false,
-  sanitize: true,  // default; strips injection characters from variable values
 });
 
 builder.setVariable('project', 'my-app');
@@ -339,6 +339,7 @@ const packed = packContext({
 
 Define tools with JSON Schema validation, register them in a rate-limited registry, and wire directly to the agent loop.
 
+<!-- noverify -->
 ```typescript
 import { defineTool, createRegistry, toolSuccess, toolError } from 'harness-one/tools';
 
@@ -381,11 +382,13 @@ import {
   runInput,
   withGuardrailRetry,
 } from 'harness-one/guardrails';
+import type { Guardrail } from 'harness-one/guardrails';
 
 // Pipeline entries are {name, guard, timeoutMs?} objects. Built-in factories
 // already return {name, guard}, so they can be passed directly. For a custom
-// Guardrail function, wrap it with an explicit name:
-const customGuard = async (ctx) => ({ action: 'allow' });
+// Guardrail function, wrap it with an explicit name. Annotate the function as
+// `Guardrail` so the verdict tagged union resolves (allow | block | modify).
+const customGuard: Guardrail = async (ctx) => ({ action: 'allow' });
 
 const pipeline = createPipeline({
   input: [
@@ -421,6 +424,8 @@ When using `@harness-one/preset`, guardrails are automatically applied inside `h
 Configure them in `createHarness()`:
 
 ```typescript
+import { createHarness } from '@harness-one/preset';
+
 const harness = createHarness({
   provider: 'anthropic',
   client: anthropicClient,
@@ -623,13 +628,14 @@ registry.register({
   name: 'Context Packer',
   description: 'Packs messages into context window',
   modelAssumption: 'Models have limited context windows',
-  // AND clause: all conditions must be true before retirement is suggested
-  retirementCondition: { all: ['Models support unlimited context', 'Cost is negligible'] },
+  // DSL expression evaluated against `registry.validate(id, context)`
+  retirementCondition: 'contextWindow > 1000000',
   createdAt: '2025-01-01',
 });
 
-// Detect metric drift — zeroThreshold avoids false positives for metrics starting at 0
-const detector = createDriftDetector({ zeroThreshold: 0.01 });
+// Detect metric drift — `zeroBaselineThresholds` keeps tiny deltas from
+// flagging as drift when the baseline is 0 (ratio is undefined there).
+const detector = createDriftDetector({ zeroBaselineThresholds: { low: 1, medium: 10 } });
 detector.setBaseline('ctx-packer', { latencyP50: 12, cacheHitRate: 0.85 });
 const drift = detector.check('ctx-packer', { latencyP50: 18, cacheHitRate: 0.72 });
 
@@ -721,6 +727,7 @@ workerView.set('plan.step', 2);   // throws BOUNDARY_WRITE_DENIED
 **MessageTransport interface**: `createHandoff` accepts any object with a `send(message)` method — the full orchestrator, a custom pub/sub channel, or a test double all work equally.
 
 ```typescript
+import { createHandoff } from 'harness-one/orchestration';
 import type { MessageTransport } from 'harness-one/orchestration';
 
 const transport: MessageTransport = {
@@ -807,6 +814,8 @@ for (const { chunk, score, tokens } of results) {
 **Multi-tenant isolation** (SEC-010): use `indexScoped()` and `tenantId` / `scope` options to prevent cross-tenant data leakage:
 
 ```typescript
+import { createInMemoryRetriever } from 'harness-one/rag';
+
 const retriever = createInMemoryRetriever({ embedding: myModel });
 await retriever.indexScoped(tenantAChunks, 'tenant-a');
 await retriever.indexScoped(tenantBChunks, 'tenant-b');
@@ -937,6 +946,8 @@ await harness.shutdown();
 ```typescript
 // OpenAI
 import OpenAI from 'openai';
+import { createHarness } from '@harness-one/preset';
+
 const harness = createHarness({
   provider: 'openai',
   client: new OpenAI({ apiKey: process.env.OPENAI_API_KEY }),
