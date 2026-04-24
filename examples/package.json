@@ -20,7 +20,7 @@
     "@harness-one/preset": "workspace:*"
   },
   "devDependencies": {
-    "typescript": "^5.5.0"
+    "typescript": "^6.0.3"
   },
   "license": "MIT"
 }

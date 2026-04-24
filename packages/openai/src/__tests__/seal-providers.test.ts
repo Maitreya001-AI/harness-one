@@ -23,17 +23,21 @@ import { HarnessErrorCode } from 'harness-one';
 // Module-level stable mock so the `openai` default export is replaced before
 // `src/index.ts` is (re-)evaluated on each dynamic import.
 vi.mock('openai', () => {
+  // vitest@v4: vi.fn() implementations called with `new` must use a
+  // `function` expression — arrows aren't [[Construct]]-able.
   return {
-    default: vi.fn().mockImplementation(() => ({
-      chat: {
-        completions: {
-          create: vi.fn().mockResolvedValue({
-            choices: [{ message: { role: 'assistant', content: 'ok' } }],
-            usage: { prompt_tokens: 1, completion_tokens: 1 },
-          }),
+    default: vi.fn(function () {
+      return {
+        chat: {
+          completions: {
+            create: vi.fn().mockResolvedValue({
+              choices: [{ message: { role: 'assistant', content: 'ok' } }],
+              usage: { prompt_tokens: 1, completion_tokens: 1 },
+            }),
+          },
         },
-      },
-    })),
+      };
+    }),
   };
 });
 

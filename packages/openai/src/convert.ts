@@ -300,11 +300,17 @@ export function toHarnessMessage(
   choice: OpenAI.Chat.Completions.ChatCompletion.Choice,
 ): Message {
   const msg = choice.message;
-  const toolCalls = msg.tool_calls?.map((tc) => ({
-    id: tc.id,
-    name: tc.function.name,
-    arguments: tc.function.arguments,
-  }));
+  // openai@v6 widened `tool_calls` to a union of function + custom tool calls
+  // (https://github.com/openai/openai-node v6 changelog). harness-one only
+  // models function tool calls, so narrow via `type === 'function'` and drop
+  // any custom tool calls the model might return.
+  const toolCalls = msg.tool_calls
+    ?.filter((tc) => tc.type === 'function')
+    .map((tc) => ({
+      id: tc.id,
+      name: tc.function.name,
+      arguments: tc.function.arguments,
+    }));
 
   return {
     role: 'assistant',
