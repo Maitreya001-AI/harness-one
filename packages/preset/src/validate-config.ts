@@ -193,7 +193,7 @@ const KNOWN_KEYS: ReadonlySet<HarnessConfigKnownKey> = new Set<HarnessConfigKnow
  *
  * Input is an already structurally-validated `Record<string, unknown>` from
  * {@link validateHarnessConfig}; numeric fields are narrowed inline via
- * {@link readNumber} so we never reach for `as any`.
+ * `readNumber` so we never reach for `as any`.
  */
 export function validateHarnessRuntimeConfig(config: Record<string, unknown>): void {
   const hasAdapter = !!config.adapter;

@@ -1,0 +1,6 @@
+event: x
+id: 42
+data: a
+retry: 100
+foo: bar
+

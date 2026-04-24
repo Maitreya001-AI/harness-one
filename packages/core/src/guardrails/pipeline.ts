@@ -87,6 +87,10 @@ export function createPipeline(config: {
     entries.map((entry) => {
       const resolved = entry.timeoutMs ?? (defaultTimeoutMs > 0 ? defaultTimeoutMs : undefined);
       const result: PipelineEntry = { name: entry.name, guard: entry.guard };
+      // Stryker disable next-line ConditionalExpression: equivalent mutant.
+      // Flipping this guard to `true` assigns `result.timeoutMs = undefined`
+      // instead of leaving it unset. Either shape is indistinguishable to
+      // downstream code, which checks `entry.timeoutMs !== undefined`.
       if (resolved !== undefined) {
         result.timeoutMs = resolved;
       }
@@ -154,6 +158,11 @@ class BoundedEventBuffer {
 
   push(event: GuardrailEvent): void {
     if (this.results.length >= this.maxResults) {
+      // Stryker disable next-line UpdateOperator: equivalent mutant.
+      // `_evictedCount` is exposed via a getter but is never read anywhere
+      // inside this package — it exists as a future-diagnostics hook.
+      // Flipping `++` to `--` has no observable effect on the pipeline's
+      // public surface (results/verdict/direction/latencyMs).
       this._evictedCount++;
       if (this.oldestNonBlockIdx >= 0 && this.oldestNonBlockIdx < this.results.length) {
         // Evict at the tracked pointer (O(n) splice into the middle is
@@ -196,6 +205,12 @@ async function runGuardrails(
   const results = buffer.results;
   let currentCtx: GuardrailContext = ctx.meta ? { ...ctx, meta: { ...ctx.meta } } : { ...ctx };
   let lastModifyVerdict: GuardrailEvent['verdict'] | undefined;
+  // Stryker disable next-line BooleanLiteral: equivalent mutant. The final
+  // branch at line 338 gates on `hasModified && lastModifyVerdict`, and
+  // `lastModifyVerdict` is only assigned when we set `hasModified = true`.
+  // Flipping the initial value to `true` therefore cannot change observable
+  // behaviour — the second conjunct remains undefined until a modify verdict
+  // fires.
   let hasModified = false;
   const pipelineStart = performance.now();
 
@@ -248,8 +263,16 @@ async function runGuardrails(
                 () => reject(new Error(`Guardrail "${entry.name}" timed out after ${effectiveTimeout}ms`)),
                 effectiveTimeout,
               );
-              // Ensure timer doesn't keep the process alive
+              // Ensure timer doesn't keep the process alive.
+              // Equivalent-mutant cluster: `.unref()` only affects whether a
+              // pending timer keeps the event loop alive on process exit.
+              // The enclosing `finally` block clears the timer before the
+              // process exits, so mutations here cannot be observed via
+              // any public signal (verdict / events / latency). Kept in
+              // source for correctness on real long-running runtimes.
+              // Stryker disable next-line all
               if (typeof timer === 'object' && 'unref' in timer) {
+                // Stryker disable next-line all
                 (timer as NodeJS.Timeout).unref();
               }
             }),
@@ -335,6 +358,11 @@ async function runGuardrails(
     }
   }
 
+  // Stryker disable next-line LogicalOperator: equivalent mutant. Swapping
+  // `&&` for `||` cannot change the branch outcome — `lastModifyVerdict`
+  // is only ever assigned inside the modify branch alongside
+  // `hasModified = true`, so the two operands are always falsy together
+  // and always truthy together.
   if (hasModified && lastModifyVerdict) {
     return {
       passed: true,

@@ -1,0 +1,53 @@
+name: Mutation
+
+# Mutation testing is expensive — several minutes per module on a fresh
+# runner, longer still on incremental misses — so we deliberately DO NOT
+# run it on every pull request. It runs:
+#
+#   - Weekly (Sunday 03:00 UTC) to catch test-suite decay against main.
+#   - On manual dispatch (`workflow_dispatch`), for targeted diagnosis.
+#
+# A broken mutation threshold does NOT block PRs directly. Instead, the
+# job fails the scheduled run and surfaces the HTML report as an artifact
+# so the on-call engineer can review and open a follow-up issue.
+
+on:
+  schedule:
+    # Sundays 03:00 UTC — low-traffic window.
+    - cron: '0 3 * * 0'
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Which mutation script to run (mutation, mutation:core, mutation:validate, mutation:guardrails)'
+        required: false
+        default: 'mutation'
+
+jobs:
+  stryker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Run Stryker
+        working-directory: packages/core
+        run: pnpm ${{ github.event.inputs.target || 'mutation' }}
+
+      - name: Upload HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stryker-report
+          path: packages/core/.stryker-tmp/report/
+          retention-days: 30

@@ -1,0 +1,59 @@
+name: Fuzz
+
+# Property-based fuzz suite for high-risk parsers (tool-args, guardrail
+# input, SSE output, prompt template). Runs ~10k iterations across targets,
+# so we keep it out of the PR critical path — CI runs nightly at 04:00 UTC
+# and on `workflow_dispatch`. A failure prints the fast-check seed + shrunk
+# counter-example for local reproduction via
+#   `pnpm --filter harness-one fuzz -- --reporter=verbose`.
+
+on:
+  schedule:
+    # Nightly 04:00 UTC — off-peak for Maitreya001-AI runners and before the
+    # maintainer's working hours so triage lands on the morning TODO list.
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Building the core package first ensures the fuzz suite runs against
+      # the same transpiled output surfaces that production consumers see.
+      - name: Build core
+        run: pnpm --filter harness-one build
+
+      - name: Run fuzz suite
+        # `--passWithNoTests` is intentionally omitted — if the include
+        # glob stops matching any file, the job must fail loudly so we
+        # notice a renamed/moved target instead of silently skipping.
+        run: pnpm --filter harness-one fuzz
+
+      # When a fuzz run fails, vitest prints the fast-check failure report
+      # (seed, path, shrunk value). Upload the junit-style log as an
+      # artifact so triagers can reproduce offline without re-running CI.
+      - name: Upload fuzz log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-failure-log
+          path: |
+            packages/core/**/fuzz-*.log
+          if-no-files-found: ignore
+          retention-days: 14

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPointStrategy": "expand",
+  "entryPoints": [
+    "packages/core/src/index.ts",
+    "packages/preset/src/index.ts",
+    "packages/cli/src/index.ts",
+    "packages/devkit/src/index.ts",
+    "packages/ajv/src/index.ts",
+    "packages/anthropic/src/index.ts",
+    "packages/openai/src/index.ts",
+    "packages/langfuse/src/index.ts",
+    "packages/opentelemetry/src/index.ts",
+    "packages/redis/src/index.ts",
+    "packages/tiktoken/src/index.ts"
+  ],
+  "out": ".typedoc",
+  "excludePrivate": true,
+  "excludeExternals": true,
+  "excludeInternal": true,
+  "skipErrorChecking": true,
+  "validation": {
+    "invalidLink": true,
+    "notExported": true,
+    "notDocumented": false
+  },
+  "treatValidationWarningsAsErrors": true,
+  "logLevel": "Warn",
+  "readme": "none"
+}

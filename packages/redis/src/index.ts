@@ -66,7 +66,7 @@ export interface RedisStoreConfig {
 }
 
 /**
- * Redis-backed {@link MemoryStore} with the extra `repair()` admin routine
+ * Redis-backed `MemoryStore` with the extra `repair()` admin routine
  * for the SEC-014 corruption-sweep workflow.
  */
 export interface RedisMemoryStore extends MemoryStore {

@@ -19,6 +19,11 @@ export const REDACTED_VALUE = '[REDACTED]';
 export const DEFAULT_SECRET_PATTERN =
   /(^|[._-])(api[_-]?key|authorization|auth[_-]?token|secret|token|password|passwd|credential|bearer|cookie|session[_-]?id|private[_-]?key|access[_-]?key|refresh[_-]?token)([._-]|$)/i;
 
+// camelCase boundary: a lowercase char followed by an uppercase char. Used
+// to normalize `apiToken` → `api-Token` before the default pattern test so
+// concatenated forms are recognised as if they carried a separator.
+const CAMELCASE_BOUNDARY = /([a-z])([A-Z])/g;
+
 /** Keys that pollute `Object.prototype` or similar when assigned. */
 export const POLLUTING_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
@@ -56,7 +61,17 @@ export function createRedactor(config?: RedactConfig): Redactor {
     shouldRedactKey(key: string): boolean {
       if (typeof key !== 'string') return false;
       if (extraKeysLower.has(key.toLowerCase())) return true;
-      if (useDefault && DEFAULT_SECRET_PATTERN.test(key)) return true;
+      if (useDefault) {
+        if (DEFAULT_SECRET_PATTERN.test(key)) return true;
+        // Retry against a camelCase-normalised form so keys like `apiToken`
+        // or `accessToken` match the separator-anchored default pattern.
+        // Only test if normalisation changed the string — skips the
+        // second regex call for snake_case / kebab-case / single-segment keys.
+        CAMELCASE_BOUNDARY.lastIndex = 0;
+        const normalised = key.replace(CAMELCASE_BOUNDARY, '$1-$2');
+        if (normalised !== key && DEFAULT_SECRET_PATTERN.test(normalised))
+          return true;
+      }
       for (const p of extraPatterns) {
         p.lastIndex = 0;
         const matched = p.test(key);

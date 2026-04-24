@@ -15,6 +15,12 @@ contribution — from a typo fix to a new module — is welcome.
 
 This repo uses [pnpm workspaces](https://pnpm.io/workspaces).
 
+**Prerequisites** (enforced by `engines` in `package.json` and a
+`preinstall` check):
+
+- Node.js `>= 18` (Node 20 LTS recommended).
+- pnpm `>= 9`. Install with `corepack enable` or `npm i -g pnpm@9`.
+
 ```bash
 # 1. Clone
 git clone https://github.com/Maitreya001-AI/harness-one.git
@@ -23,11 +29,10 @@ cd harness-one
 # 2. Install dependencies (workspace-aware)
 pnpm install
 
-# 3. Build all packages
+# 3. Build and verify the full workspace
 pnpm build
+pnpm test
 ```
-
-Node.js `>= 18` is required.
 
 ## Common Tasks
 
@@ -46,6 +51,19 @@ pnpm typecheck
 ```
 
 Each individual package also supports these scripts scoped to its own source.
+
+### Testing Conventions
+
+The full testing strategy — unit / integration / conformance / property
+tests, coverage gates, the RAG conformance harness, and how each package
+layers on top — is documented in
+[`docs/testing-plan.md`](./docs/testing-plan.md) (with per-track detail
+under `docs/testing-plan/`). Read the relevant track before adding new
+test files so your additions slot into the existing matrix instead of
+duplicating it.
+
+Near-100% coverage is the bar. PRs that drop coverage on `packages/core`
+will be blocked by CI.
 
 ## Branching and Commits
 
