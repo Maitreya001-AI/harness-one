@@ -78,16 +78,23 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Publish to npm via OIDC trusted publisher
+      - name: Publish to npm via OIDC trusted publisher (with provenance)
         # No NPM_TOKEN — the workflow's id-token: write permission supplies
         # the OIDC credential npm uses to authenticate. Requires the npm
         # package to have a matching trusted-publisher record configured
         # (see docs/release.md). dry_run=true skips the actual publish so
         # workflow_dispatch can smoke-test the pipeline without shipping.
+        #
+        # --provenance emits a Sigstore-signed npm provenance statement
+        # alongside the tarball. It's redundant with the per-package
+        # publishConfig.provenance = true we set in packages/*/package.json,
+        # but keeping it explicit here makes the signing intent visible in
+        # the workflow log and fails loudly if a package ever drops the
+        # publishConfig flag.
         if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.dry_run != 'true')
         run: |
           set -euo pipefail
           for tgz in dist/tarballs/*.tgz; do
             echo "=== publish $tgz ==="
-            npm publish "$tgz" --access public
+            npm publish "$tgz" --access public --provenance
           done

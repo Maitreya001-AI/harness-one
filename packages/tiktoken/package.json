@@ -37,6 +37,10 @@
   "license": "MIT",
   "author": "harness-one contributors",
   "keywords": ["tiktoken", "tokenizer", "token-counting", "ai", "adapter"],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/Maitreya001-AI/harness-one",

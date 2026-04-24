@@ -44,7 +44,8 @@
   "author": "harness-one contributors",
   "keywords": ["ai", "agent", "harness", "preset", "full", "batteries-included"],
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "provenance": true
   },
   "repository": {
     "type": "git",

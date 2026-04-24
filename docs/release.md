@@ -17,7 +17,7 @@ and is a deliberate, out-of-band step.
 | Reproducible tarballs         | `.github/workflows/release-pack.yml` runs `pnpm check:pack` on every PR. |
 | Release provenance (Sigstore) | `.github/workflows/release.yml` → `actions/attest-build-provenance@v1` attests each `.tgz`. |
 | npm package authentication    | OIDC trusted publisher — no `NPM_TOKEN` secret in the repo.    |
-| npm package signatures        | *Follow-up commit* — `--provenance` + `publishConfig.provenance`. |
+| npm package signatures        | `npm publish --provenance`; enforced by `publishConfig.provenance: true` in every published `package.json`. |
 
 ## Release flow
 
@@ -102,19 +102,68 @@ with 401 until a new record is added.
 
 ## Verifying a release (consumers)
 
-Consumers installing `harness-one` can verify the npm-side signatures:
+There are two independent attestations on every release. Both chain
+back to Sigstore's Rekor transparency log — verifying either is
+sufficient to prove the bytes came from this repo, and verifying
+both detects a compromise of just one path.
+
+### 1. npm package provenance (`--provenance`)
+
+Every tarball published via `release.yml` carries a Sigstore-signed
+provenance statement produced by `npm publish --provenance`. The
+signing intent is pinned in each `packages/*/package.json` as:
+
+```json
+"publishConfig": {
+  "access": "public",
+  "provenance": true
+}
+```
+
+`publishConfig.provenance: true` makes the signing property
+enforced-by-data: a future `npm publish` without `--provenance` still
+produces a signed tarball, because the package-level config wins. The
+CLI flag in `release.yml` is belt-and-braces, not load-bearing.
+
+Consumers verify:
 
 ```bash
-# npm 9.5+: verifies the Sigstore signature bundled in the package's
-# metadata and checks it against the Rekor transparency log.
+# Works from any installed project. Exits non-zero on missing or
+# invalid signatures across the full dependency tree.
 npm audit signatures
 
-# Per-package inspection:
+# Inspect the attestation for a specific version:
 npm view harness-one@<version> dist.attestations
 ```
 
-Additionally, GitHub Release assets carry an SLSA provenance
-attestation produced by `actions/attest-build-provenance`. To verify:
+Internally `npm audit signatures` fetches the Sigstore bundle
+attached to the package, checks the signing certificate against
+`fulcio.sigstore.dev`, and verifies the Rekor log inclusion proof.
+No local trust root is needed beyond the one npm ships.
+
+For a sigstore-cli-style check (useful in CI pipelines that don't
+have npm available):
+
+```bash
+# Extract the provenance bundle from an npm tarball:
+curl -sL "$(npm view harness-one@<version> dist.tarball)" -o pkg.tgz
+npm view harness-one@<version> dist.attestations.provenance.url \
+  | xargs curl -sL -o provenance.intoto.jsonl
+
+# Verify with sigstore-cli:
+sigstore verify identity \
+  --bundle provenance.intoto.jsonl \
+  --cert-identity-regexp 'https://github.com/Maitreya001-AI/harness-one/\.github/workflows/release\.yml@refs/tags/.*' \
+  --cert-oidc-issuer https://token.actions.githubusercontent.com \
+  pkg.tgz
+```
+
+### 2. GitHub Release asset provenance
+
+`actions/attest-build-provenance@v1` emits a separate attestation
+for each tarball, anchored to the GitHub Release (and thus to the
+underlying git tag). To verify any asset downloaded from the
+Releases page:
 
 ```bash
 gh attestation verify \
@@ -125,3 +174,11 @@ gh attestation verify \
 A passing `gh attestation verify` proves the `.tgz` was built by
 `release.yml` on a specific commit of `Maitreya001-AI/harness-one` —
 independent of whether npm has tampered with its mirror.
+
+### Why two attestations
+
+Path (1) protects installs via `npm install`. Path (2) protects
+out-of-band distribution (e.g. an air-gapped mirror or the Release
+page directly). Any attacker capable of forging one still has to
+forge the other to stay consistent — or accept that consumers will
+see mismatched attestations and reject the release.

@@ -44,6 +44,10 @@
   "license": "MIT",
   "author": "harness-one contributors",
   "keywords": ["ajv", "json-schema", "validation", "ai", "harness"],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/Maitreya001-AI/harness-one",
