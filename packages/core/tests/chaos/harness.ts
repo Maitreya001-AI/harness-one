@@ -11,6 +11,14 @@ import type { AgentEvent, DoneReason } from '../../src/core/events.js';
 import type { RunOutcome } from './assertions.js';
 
 /**
+ * Logger bag that swallows the one-time "no guardrail pipeline" warn the
+ * AgentLoop emits on first `run()`. Scenarios wire this in to keep
+ * `pnpm test` output free of noise that is not relevant to the chaos
+ * invariants they actually assert.
+ */
+export const silentLogger = { warn: (_msg: string, _meta?: Record<string, unknown>) => {} };
+
+/**
  * Consume an AgentLoop's event stream, returning the terminal outcome
  * plus a list of every event type observed (useful for tallying).
  */
