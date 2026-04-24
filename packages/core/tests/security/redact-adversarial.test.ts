@@ -170,15 +170,18 @@ const patterns: readonly Pattern[] = [
   },
   {
     name: 'camelCase key `apiToken` (no separator between `api` and `token`)',
-    // KNOWN LIMITATION: DEFAULT_SECRET_PATTERN anchors each sub-keyword
-    // with `(^|[._-])` and `([._-]|$)`. The key `apiToken` has no
-    // separator between `api` and `token`, so neither the `api[_-]?key`
-    // nor the standalone `token` alternative matches. Documented here
-    // so the day the regex grows camelCase-boundary detection this
-    // test flips green and becomes a regression guard.
+    // The redactor normalises camelCase keys to insert a `-` at each
+    // lower→upper boundary before matching, so `apiToken` is tested as
+    // `api-Token` and matches the `token` alternative with a valid
+    // separator prefix. Regression guard — if the normalisation pass is
+    // removed, this test goes red.
     secret: 'prod-' + 'H'.repeat(40),
     key: 'apiToken',
-    expectsMasked: false,
+  },
+  {
+    name: 'camelCase key `accessToken`',
+    secret: 'act_' + 'Z'.repeat(40),
+    key: 'accessToken',
   },
   {
     name: 'camelCase key `sessionId`',
