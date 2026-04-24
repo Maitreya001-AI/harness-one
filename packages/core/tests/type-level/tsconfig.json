@@ -1,0 +1,34 @@
+{
+  "extends": "../../../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "harness-one": ["../../src/index.ts"],
+      "harness-one/core": ["../../src/core/index.ts"],
+      "harness-one/advanced": ["../../src/advanced/index.ts"],
+      "harness-one/prompt": ["../../src/prompt/index.ts"],
+      "harness-one/context": ["../../src/context/index.ts"],
+      "harness-one/tools": ["../../src/tools/index.ts"],
+      "harness-one/guardrails": ["../../src/guardrails/index.ts"],
+      "harness-one/observe": ["../../src/observe/index.ts"],
+      "harness-one/session": ["../../src/session/index.ts"],
+      "harness-one/memory": ["../../src/memory/index.ts"],
+      "harness-one/evolve-check": ["../../src/evolve-check/index.ts"],
+      "harness-one/rag": ["../../src/rag/index.ts"],
+      "harness-one/orchestration": ["../../src/orchestration/index.ts"],
+      "harness-one/redact": ["../../src/redact/index.ts"],
+      "harness-one/infra": ["../../src/infra/index.ts"],
+      "harness-one/testing": ["../../src/testing/index.ts"],
+      "@harness-one/preset": ["../../../preset/src/index.ts"],
+      "@harness-one/anthropic": ["../../../anthropic/src/index.ts"],
+      "@harness-one/openai": ["../../../openai/src/index.ts"]
+    }
+  },
+  "include": ["./**/*.test-d.ts"]
+}
