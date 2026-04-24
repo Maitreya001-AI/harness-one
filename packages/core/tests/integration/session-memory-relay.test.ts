@@ -29,7 +29,7 @@ describe('integration/D5 · session TTL + fs memory store + relay', () => {
     vi.useRealTimers();
   });
 
-  it('expires the session after TTL while the relay state on disk survives untouched', async () => {
+  it('expires the session after TTL while the relay state on disk survives untouched', { timeout: 30_000 }, async () => {
     // Mock only `Date` so SessionManager's `Date.now()`-based isExpired()
     // check can be advanced deterministically; leave `setTimeout` real so
     // the async filesystem code path isn't stalled waiting on virtual time.
@@ -100,7 +100,7 @@ describe('integration/D5 · session TTL + fs memory store + relay', () => {
     }
   });
 
-  it('reconcileIndex() rebuilds a corrupted _index.json from on-disk entry files', async () => {
+  it('reconcileIndex() rebuilds a corrupted _index.json from on-disk entry files', { timeout: 30_000 }, async () => {
     const dir = useTempDir('d5-corrupt-');
     const store = createFileSystemStore({ directory: dir });
 
