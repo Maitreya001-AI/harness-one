@@ -33,10 +33,9 @@ const SCHEMA_PRIMITIVE_LRU_MAX = 32;
 const schemaPrimitiveStringCache = new Map<string, string>();
 
 function primitiveKey(schema: unknown): string {
-  // `typeof null` is 'object' so we branch null out first.
-  if (schema === null) return 'null:';
-  const t = typeof schema;
-  return `${t}:${String(schema)}`;
+  // `typeof` + `String` produces a unique, stable key for every primitive
+  // (and for null, which has `typeof === 'object'` but distinct String form).
+  return `${typeof schema}:${String(schema)}`;
 }
 
 /**

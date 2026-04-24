@@ -16,7 +16,7 @@
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createSessionManager } from '../../src/session/manager.js';
 import { createFileSystemStore } from '../../src/memory/fs-store.js';
@@ -110,7 +110,8 @@ describe('integration/D5 · session TTL + fs memory store + relay', () => {
     await store.write({ key: 'c', content: 'gamma', grade: 'ephemeral' });
 
     const indexPath = join(dir, '_index.json');
-    expect(existsSync(indexPath)).toBe(true);
+    // readFileSync throws ENOENT if the index is missing, which is a clearer
+    // failure than `expect(existsSync).toBe(true)` and avoids the TOCTOU flag.
     const originalIndex = readFileSync(indexPath, 'utf8');
     const originalKeys = JSON.parse(originalIndex).keys as Record<string, string>;
     expect(Object.keys(originalKeys).sort()).toEqual(['a', 'b', 'c']);

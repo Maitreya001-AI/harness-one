@@ -195,7 +195,7 @@ export function createTraceExporterCoordinator(
       // callers can "rescue" a head-dropped trace only by relaxing head
       // sampling — not by using a tail hook (that would defeat memory bounds).
       if (exporter.shouldSampleTrace) {
-        let keep = true;
+        let keep: boolean;
         try {
           keep = exporter.shouldSampleTrace(trace) !== false;
         } catch (err) {

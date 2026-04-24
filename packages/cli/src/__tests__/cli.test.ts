@@ -3,8 +3,9 @@ import { parseArgs, getTemplate, auditProject, ALL_MODULES, MODULE_DESCRIPTIONS,
 import { scanFiles, formatImportSiteCount } from '../audit.js';
 import type { ModuleName, ParsedArgs } from '../index.js';
 import { HarnessError, HarnessErrorCode} from 'harness-one';
-import { mkdirSync, writeFileSync, rmSync, existsSync, symlinkSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync, existsSync, symlinkSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 describe('CLI argument parser', () => {
   it('parses "init --all"', () => {
@@ -234,19 +235,14 @@ describe('Audit logic', () => {
 
   // ── Audit with no harness-one imports ──
 
-  const AUDIT_TMP_DIR = '/tmp/harness-audit-test-cli';
+  let AUDIT_TMP_DIR: string;
 
   beforeEach(() => {
-    if (existsSync(AUDIT_TMP_DIR)) {
-      rmSync(AUDIT_TMP_DIR, { recursive: true, force: true });
-    }
-    mkdirSync(AUDIT_TMP_DIR, { recursive: true });
+    AUDIT_TMP_DIR = mkdtempSync(join(tmpdir(), 'harness-audit-test-cli-'));
   });
 
   afterEach(() => {
-    if (existsSync(AUDIT_TMP_DIR)) {
-      rmSync(AUDIT_TMP_DIR, { recursive: true, force: true });
-    }
+    rmSync(AUDIT_TMP_DIR, { recursive: true, force: true });
   });
 
   it('returns zero usage stats when scanning files with no harness-one imports', () => {
@@ -478,20 +474,15 @@ describe('FILE_NAMES', () => {
 // ---------------------------------------------------------------------------
 
 describe('writeModuleFiles', () => {
-  const WRITE_TMP_DIR = '/tmp/harness-write-test-cli';
+  let WRITE_TMP_DIR: string;
 
   beforeEach(() => {
-    if (existsSync(WRITE_TMP_DIR)) {
-      rmSync(WRITE_TMP_DIR, { recursive: true, force: true });
-    }
-    mkdirSync(WRITE_TMP_DIR, { recursive: true });
+    WRITE_TMP_DIR = mkdtempSync(join(tmpdir(), 'harness-write-test-cli-'));
     vi.spyOn(console, 'log').mockImplementation(() => {});
   });
 
   afterEach(() => {
-    if (existsSync(WRITE_TMP_DIR)) {
-      rmSync(WRITE_TMP_DIR, { recursive: true, force: true });
-    }
+    rmSync(WRITE_TMP_DIR, { recursive: true, force: true });
     vi.restoreAllMocks();
   });
 
@@ -548,22 +539,17 @@ describe('writeModuleFiles', () => {
 // ---------------------------------------------------------------------------
 
 describe('runInit', () => {
-  const INIT_TMP_DIR = '/tmp/harness-init-test-cli';
+  let INIT_TMP_DIR: string;
   let _cwdSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
-    if (existsSync(INIT_TMP_DIR)) {
-      rmSync(INIT_TMP_DIR, { recursive: true, force: true });
-    }
-    mkdirSync(INIT_TMP_DIR, { recursive: true });
+    INIT_TMP_DIR = mkdtempSync(join(tmpdir(), 'harness-init-test-cli-'));
     vi.spyOn(console, 'log').mockImplementation(() => {});
     _cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(INIT_TMP_DIR);
   });
 
   afterEach(() => {
-    if (existsSync(INIT_TMP_DIR)) {
-      rmSync(INIT_TMP_DIR, { recursive: true, force: true });
-    }
+    rmSync(INIT_TMP_DIR, { recursive: true, force: true });
     vi.restoreAllMocks();
   });
 
@@ -630,22 +616,17 @@ describe('runInit', () => {
 // ---------------------------------------------------------------------------
 
 describe('runAudit', () => {
-  const AUDIT_CMD_TMP = '/tmp/harness-audit-cmd-test';
+  let AUDIT_CMD_TMP: string;
   let _cwdSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
-    if (existsSync(AUDIT_CMD_TMP)) {
-      rmSync(AUDIT_CMD_TMP, { recursive: true, force: true });
-    }
-    mkdirSync(AUDIT_CMD_TMP, { recursive: true });
+    AUDIT_CMD_TMP = mkdtempSync(join(tmpdir(), 'harness-audit-cmd-test-'));
     vi.spyOn(console, 'log').mockImplementation(() => {});
     _cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(AUDIT_CMD_TMP);
   });
 
   afterEach(() => {
-    if (existsSync(AUDIT_CMD_TMP)) {
-      rmSync(AUDIT_CMD_TMP, { recursive: true, force: true });
-    }
+    rmSync(AUDIT_CMD_TMP, { recursive: true, force: true });
     vi.restoreAllMocks();
   });
 

@@ -189,7 +189,7 @@ function main(): void {
     const seen = new Map<string, string>(); // importedPkg → first file that imports it
     for (const f of files) {
       // Skip test files — they can legitimately reach into anything.
-      if (/__tests__|\.test\.(ts|tsx)$/.test(f)) continue;
+      if (f.includes('__tests__') || /\.test\.(ts|tsx)$/.test(f)) continue;
       const src = readFileSync(f, 'utf8');
       const specs = collectSpecifiers(src);
       for (const s of specs) {

@@ -142,7 +142,9 @@ export async function withGuardrailRetry(
     // Check token budget before regeneration
     if (estimateTokens && maxTotalTokens !== undefined) {
       if (totalTokens !== undefined && totalTokens + retryPromptTokens > maxTotalTokens) {
-        return { content, attempts: attempt, passed: false, ...(totalTokens !== undefined && { totalTokens }) };
+        // Inside this branch totalTokens is narrowed to `number` — no need to
+        // re-check undefined in the spread.
+        return { content, attempts: attempt, passed: false, totalTokens };
       }
     }
 

@@ -10,7 +10,7 @@
  *   npx harness-one audit                   # Print objective module-usage stats
  */
 
-import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { HarnessError, HarnessErrorCode } from 'harness-one';
@@ -68,21 +68,28 @@ export async function promptModules(): Promise<ModuleName[]> {
 /** @internal Exported for testing only. */
 export function writeModuleFiles(modules: ModuleName[], cwd: string): string[] {
   const dir = join(cwd, 'harness');
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
-  }
+  // `recursive: true` is idempotent, so no need to check existsSync first
+  // (and the check-then-create pattern introduces a TOCTOU race).
+  mkdirSync(dir, { recursive: true });
 
   const written: string[] = [];
   for (const mod of modules) {
     const fileName = FILE_NAMES[mod];
     const filePath = join(dir, fileName);
-    if (existsSync(filePath)) {
-      console.log(c.yellow(`  skip  ${filePath} (already exists)`));
-      continue;
+    try {
+      // `wx` flag: fail atomically with EEXIST if the file exists.
+      // Avoids the existsSync-then-write TOCTOU where a symlink could be
+      // planted between the check and the write.
+      writeFileSync(filePath, getTemplate(mod), { encoding: 'utf-8', flag: 'wx' });
+      console.log(c.green(`  create  ${filePath}`));
+      written.push(filePath);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
+        console.log(c.yellow(`  skip  ${filePath} (already exists)`));
+        continue;
+      }
+      throw err;
     }
-    writeFileSync(filePath, getTemplate(mod), 'utf-8');
-    console.log(c.green(`  create  ${filePath}`));
-    written.push(filePath);
   }
   return written;
 }
