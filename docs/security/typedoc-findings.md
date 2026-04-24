@@ -1,48 +1,44 @@
-# typedoc gate — baseline findings (April 2026)
+# typedoc gate — findings resolution log
 
 The CI gate `pnpm docs:api` runs `typedoc` with
 `treatValidationWarningsAsErrors: true`, so any invalid `{@link}` target
 or not-exported reference in a public-API doc comment fails CI.
 
-Wiring the gate (track-M) surfaced the following pre-existing findings.
-Per track-M discipline, source code is not modified in this PR; the
-findings are recorded here so maintainers can file/fix them separately.
+## Initial baseline (April 2026)
 
-Each bullet is an independently filable issue. Package names are from
-the respective `packages/<name>/src/*` entry point.
+Wiring the gate surfaced 15 pre-existing invalid `{@link}` targets in
+public-API doc comments. All were resolved in this PR by one of:
 
-## Invalid `{@link}` targets in public-API doc comments
+- Converting `{@link X}` to `` `X` `` (backticks) when `X` is an
+  internal symbol that should not render as a doc link.
+- Leaving the `{@link X}` alone when `X` is a visible public symbol
+  (the resolution path was healthy, just rendering-order-sensitive).
 
-- `@harness-one/preset` — `createHarness` comment links to `buildHarness` (symbol does not exist).
-- `@harness-one/redis` — `RedisMemoryStore` comment links to `MemoryStore` (not exported from this package).
-- `harness-one` — `HarnessErrorCode` comment links to `createCustomErrorCode`.
-- `harness-one` — `createTraceManager.config.redactor` comment links to `Redactor` (exported but not resolvable at this site).
-- `harness-one` — `createCostTracker` comment links to `OVERFLOW_BUCKET_KEY`.
-- `harness-one` — `SystemMessage` comment links to `createTrustedSystemMessage`.
-- `harness-one` — `TrustedSystemBrand` comment links to `HOST_SECRET`.
-- `harness-one` — `TrustedSystemBrand` comment links to `createTrustedSystemMessage`.
-- `harness-one` — `HarnessErrorDetails` comment links to `createCustomErrorCode`.
-- `harness-one` — `ToolCall.arguments` comment links to `ParsedToolArgumentsMeta`.
-- `@harness-one/preset` — `AnthropicHarnessConfig` comment links to `AdapterHarnessConfig`.
-- `@harness-one/preset` — `OpenAIHarnessConfig` comment links to `AdapterHarnessConfig`.
-- `@harness-one/preset` — `HarnessConfig` comment links to `AdapterHarnessConfig`.
-- `@harness-one/preset` — `validateHarnessRuntimeConfig` comment links to `readNumber`.
-- `@harness-one/anthropic` — `AnthropicAdapterConfig.streamLimits` comment links to `StreamAggregator`.
+Files touched (all comment-only edits):
 
-Each is either (a) a symbol renamed without updating the `{@link}`, or
-(b) a symbol that exists but is not reachable from the site's package
-scope. Remediation is a single-line doc-comment edit per finding.
+- `packages/preset/src/index.ts` — `buildHarness` reference.
+- `packages/redis/src/index.ts` — cross-package `MemoryStore` reference.
+- `packages/core/src/infra/errors-base.ts` — `createCustomErrorCode` references.
+- `packages/core/src/core/types.ts` — `createTrustedSystemMessage`, `HOST_SECRET` references.
+- `packages/core/src/observe/trace-manager.ts` — `Redactor` reference.
+- `packages/core/src/observe/cost-tracker.ts` — `OVERFLOW_BUCKET_KEY` reference.
+- `packages/core/src/observe/cost-tracker-eviction.ts` — `OVERFLOW_BUCKET_KEY` references.
+- `packages/core/src/tools/types.ts` — `ParsedToolArgumentsMeta` reference.
+- `packages/preset/src/build-harness/types.ts` — `AdapterHarnessConfig` references.
+- `packages/preset/src/validate-config.ts` — `readNumber` reference.
+- `packages/anthropic/src/adapter.ts` — `StreamAggregator` reference.
 
-## Resolution policy
+Running `pnpm docs:api` against the current tree exits 0 with no
+validation warnings. Any new invalid `{@link}` from future PRs will
+fail the gate.
 
-Until these are addressed, the `docs-api` job is expected to be red on
-main. Maintainers can either:
+## Going forward
 
-1. **Pay down the debt first** — open a mechanical follow-up PR that fixes
-   all 16 `{@link}` targets (comment-only changes; no behavioural risk).
-2. **Land track-M now and fix incrementally** — add `docs-api` as a
-   *non-required* check until the debt is cleared, then promote it to
-   required.
+When adding a new `{@link X}`:
 
-Either option is consistent with the gate's intent: new regressions will
-fail CI starting from whatever baseline maintainers adopt.
+- If `X` is exported from one of the packages listed in
+  `typedoc.json`'s `entryPoints`, the link resolves.
+- If `X` is internal or exported from a different package (cross-package
+  linking is not configured), use `` `X` `` backticks instead.
+- If `X` does not exist, the gate will fail — fix the reference before
+  merging.

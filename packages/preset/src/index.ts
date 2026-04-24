@@ -44,7 +44,7 @@ export type {
  * Every auto-configured component can be overridden by passing the
  * explicit config field.
  *
- * Thin delegate to {@link buildHarness} in `./build-harness/run.ts`; the
+ * Thin delegate to `buildHarness` in `./build-harness/run.ts`; the
  * implementation lives there so this module stays focused on the public
  * barrel.
  */

@@ -5,7 +5,7 @@
  * `core/core/errors.ts` and augment this module.
  *
  * For extensibility (registering subsystem-specific error codes without
- * mutating the enum) see {@link createCustomErrorCode}.
+ * mutating the enum) see `createCustomErrorCode`.
  *
  * @module
  */
@@ -23,7 +23,7 @@
  * `import type { HarnessErrorCode }` silently drops the runtime object —
  * flagged by the `harness-one/no-type-only-harness-error-code` ESLint rule.
  *
- * Extension hook: call {@link createCustomErrorCode} to mint a namespaced
+ * Extension hook: call `createCustomErrorCode` to mint a namespaced
  * custom code when a subsystem needs a value the enum does not provide —
  * the code becomes `<namespace>:<member>` and rides on the
  * `HarnessErrorCode.ADAPTER_CUSTOM` branch of the enum for
@@ -176,7 +176,7 @@ export enum HarnessErrorCode {
  * {@link HarnessErrorCode} enum.
  *
  * `namespace` is the canonical container for custom codes registered via
- * {@link createCustomErrorCode} — it parallels `adapterCode` but is
+ * `createCustomErrorCode` — it parallels `adapterCode` but is
  * subsystem-shaped rather than adapter-shaped.
  */
 export interface HarnessErrorDetails {

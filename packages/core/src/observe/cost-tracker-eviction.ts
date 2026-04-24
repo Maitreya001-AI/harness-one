@@ -11,7 +11,7 @@
  * tracker hits a capacity limit:
  *
  *  - **Core (`'overflow-bucket'`)** never evicts existing per-model / per-trace
- *    totals. New unknown keys are aggregated under {@link OVERFLOW_BUCKET_KEY}
+ *    totals. New unknown keys are aggregated under `OVERFLOW_BUCKET_KEY`
  *    so a flood of junk keys cannot wipe a legitimate total (SEC-009). The
  *    record buffer still shifts when oversize, which decrements `runningSum`
  *    but leaves the per-key totals untouched (cumulative-since-start).
@@ -73,7 +73,7 @@ export interface EvictionStrategy {
 
 /**
  * Core's historical strategy: never evict existing per-key totals; route
- * unknown keys past the capacity into {@link OVERFLOW_BUCKET_KEY}. Buffer
+ * unknown keys past the capacity into `OVERFLOW_BUCKET_KEY`. Buffer
  * eviction does NOT decrement per-key totals (they remain cumulative).
  */
 export const overflowBucketStrategy: EvictionStrategy = {

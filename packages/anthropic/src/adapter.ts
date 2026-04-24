@@ -126,7 +126,7 @@ export interface AnthropicAdapterConfig {
    * Per-stream safety caps enforced inside the adapter's stream pump.
    * Unbounded tool-call count or argument size is a memory-exhaustion vector
    * for long-running streams, so the adapter keeps a pre-aggregation limit
-   * even when the loop-level {@link StreamAggregator} would catch the same
+   * even when the loop-level `StreamAggregator` would catch the same
    * condition later. Defaults match the `harness-one/advanced` shared
    * constants (`MAX_TOOL_ARG_BYTES` / `MAX_TOOL_CALLS`) so
    * `createAgentLoop({ limits: { maxToolArgBytes } })` and the adapter see
