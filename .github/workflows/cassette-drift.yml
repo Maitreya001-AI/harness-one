@@ -1,0 +1,106 @@
+name: Cassette drift
+
+# Nightly re-record of adapter contract cassettes against the live
+# Anthropic and OpenAI APIs. Any diff in the generated JSONL files
+# opens a tracking issue (never auto-commits) so a maintainer can
+# eyeball the change, decide whether the adapter still matches the
+# provider's real shape, and land an intentional re-record.
+
+on:
+  schedule:
+    # 06:00 UTC every day — after US night, before EU morning. Adjust
+    # if the drift pattern shifts.
+    - cron: '0 6 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    # `environment` gates the secrets to this workflow — matches the
+    # pattern used by other cost-sensitive jobs in the org.
+    environment: cassette-drift
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build harness-one
+        run: pnpm --filter harness-one build
+
+      - name: Record cassettes against live providers
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_CI }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY_CI }}
+        run: node tools/record-cassettes.mjs
+
+      - name: Check for diff
+        id: diff
+        run: |
+          # shellcheck disable=SC2016
+          # (The markdown code fences `...` below are literal, not shell
+          # expansions — shellcheck's single-quote warning doesn't apply.)
+          set -euo pipefail
+          if git diff --quiet -- packages/anthropic/tests/cassettes/ packages/openai/tests/cassettes/; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          TODAY="$(date -u +%Y-%m-%d)"
+          DIFF_STAT="$(git diff --stat -- packages/anthropic/tests/cassettes/ packages/openai/tests/cassettes/)"
+          DIFF_BODY="$(git diff -- packages/anthropic/tests/cassettes/ packages/openai/tests/cassettes/ | head -n 400)"
+          FENCE='```'
+          DIFF_FENCE='```diff'
+          {
+            echo "# Cassette drift detected"
+            echo
+            echo "The nightly recorder found differences between the committed"
+            echo "cassette fixtures and the responses the live Anthropic / OpenAI"
+            echo "APIs produced on $TODAY. Review, re-record intentionally,"
+            echo "and land via PR if the change is expected."
+            echo
+            echo "## diff --stat"
+            echo
+            echo "$FENCE"
+            echo "$DIFF_STAT"
+            echo "$FENCE"
+            echo
+            echo "## diff (first 400 lines)"
+            echo
+            echo "$DIFF_FENCE"
+            echo "$DIFF_BODY"
+            echo "$FENCE"
+          } > cassette-drift-report.md
+
+      - name: Open tracking issue
+        if: steps.diff.outputs.changed == 'true'
+        uses: peter-evans/create-issue-from-file@v5
+        with:
+          title: "Cassette drift detected (nightly)"
+          content-filepath: cassette-drift-report.md
+          labels: |
+            area/testing
+            automation
+            cassette-drift
+
+      - name: Upload cassette diff artifact
+        if: steps.diff.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cassette-diff-${{ github.run_id }}
+          path: |
+            cassette-drift-report.md
+            packages/anthropic/tests/cassettes/
+            packages/openai/tests/cassettes/
+          retention-days: 14

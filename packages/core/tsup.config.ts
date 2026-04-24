@@ -29,6 +29,7 @@ export default defineConfig([
     minify: true,
     target: 'node18',
     sourcemap: true,
+    
   },
   {
     entry: {
@@ -57,5 +58,6 @@ export default defineConfig([
     minify: true,
     target: 'node18',
     sourcemap: true,
+    
   },
 ]);

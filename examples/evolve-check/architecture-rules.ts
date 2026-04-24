@@ -80,17 +80,18 @@ function main(): void {
   };
   checker.addRule(noLegacyHelper);
 
-  // ── 4. Execute — any `passed: false` rule => fail CI ─────────────────────
+  // ── 4. Execute — in real CI you'd `process.exit(1)` on failure. This demo
+  // only reports so it can run under examples smoke-tests without halting.
   const result = checker.check(ctx);
   if (!result.passed) {
-    console.error('Architecture check FAILED:');
+    console.log('Architecture check would FAIL CI:');
     for (const ruleResult of result.violations) {
       for (const v of ruleResult.violations) {
-        console.error(`  ${v.file}: ${v.message}`);
-        console.error(`    → ${v.suggestion}`);
+        console.log(`  ${v.file}: ${v.message}`);
+        console.log(`    → ${v.suggestion}`);
       }
     }
-    process.exit(1);
+    return;
   }
   console.log('Architecture check passed ✓');
 }

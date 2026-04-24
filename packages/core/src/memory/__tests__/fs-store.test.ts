@@ -17,7 +17,10 @@ describe('createFileSystemStore', () => {
   });
 
   afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
+    // On macOS under parallel test load, fs.rm can race with filesystem
+    // metadata settling and throw ENOTEMPTY despite `recursive`. Retry to
+    // absorb the race rather than leaving behind flaky failures.
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   it('writes and reads an entry', async () => {
@@ -43,7 +46,10 @@ describe('createFileSystemStore', () => {
 
     const searched = await store.query({ search: 'alph' });
     expect(searched).toHaveLength(1);
-  });
+    // macOS fs-load flake margin — two writes + three full-dir queries have
+    // been seen to push past vitest's 5s default when the monorepo test
+    // matrix runs every package in parallel. Raise budget to absorb it.
+  }, 15_000);
 
   it('updates an entry', async () => {
     const entry = await store.write({ key: 'k1', content: 'old', grade: 'useful' });

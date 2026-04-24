@@ -1,0 +1,56 @@
+{
+  "samples": [
+    {
+      "metric": "agentloop_overhead_p50_ns",
+      "unit": "ns",
+      "value": 6333,
+      "iterations": 30000,
+      "timestamp": "2026-04-24T06:53:16.987Z"
+    },
+    {
+      "metric": "agentloop_overhead_p95_ns",
+      "unit": "ns",
+      "value": 7875,
+      "iterations": 30000,
+      "timestamp": "2026-04-24T06:53:16.987Z"
+    },
+    {
+      "metric": "trace_10k_span_peak_heap_mb",
+      "unit": "mb",
+      "value": 3.865,
+      "iterations": 10000,
+      "timestamp": "2026-04-24T06:53:17.037Z"
+    },
+    {
+      "metric": "fs_store_get_p50_us",
+      "unit": "us",
+      "value": 287.75,
+      "iterations": 3000,
+      "timestamp": "2026-04-24T06:53:31.651Z"
+    },
+    {
+      "metric": "fs_store_query_p95_ms",
+      "unit": "ms",
+      "value": 1064.531,
+      "iterations": 20,
+      "timestamp": "2026-04-24T06:53:31.651Z"
+    },
+    {
+      "metric": "stream_aggregator_10mb_total_ms",
+      "unit": "ms",
+      "value": 15.459,
+      "iterations": 5,
+      "timestamp": "2026-04-24T06:53:32.658Z"
+    },
+    {
+      "metric": "guardrail_pipeline_10x_p99_us",
+      "unit": "us",
+      "value": 1.833,
+      "iterations": 1000,
+      "timestamp": "2026-04-24T06:53:32.669Z"
+    }
+  ],
+  "platform": "darwin",
+  "nodeVersion": "v25.2.1",
+  "updatedAt": "2026-04-24T06:53:32.671Z"
+}

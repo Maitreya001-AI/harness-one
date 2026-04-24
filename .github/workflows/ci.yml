@@ -9,6 +9,11 @@ on:
 jobs:
   build:
     runs-on: ${{ matrix.os }}
+    # id-token: write is required by codecov/codecov-action@v4 in tokenless
+    # (OIDC) mode — see the upload step below.
+    permissions:
+      contents: read
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -35,11 +40,30 @@ jobs:
         # subpath-import regresses or drifts out of sync with the public API.
         run: pnpm typecheck
 
+      - name: Typecheck type-level assertions (Track N)
+        # Runs tsc against packages/core/tests/type-level/ which contains
+        # expect-type assertions that lock down AgentEvent variants, brand
+        # non-assignability, HarnessConfig narrowing, MetricsPort cross-
+        # subpath identity, and the public-API shape. A break here means a
+        # type contract regressed — see docs/architecture/17-testing.md.
+        run: pnpm --filter harness-one typecheck:type-level
+
       - name: Test with coverage (enforces per-package thresholds)
         # Vitest fails non-zero when coverage falls below thresholds declared
         # in each package's vitest.config.ts (lines/functions/statements=80,
         # branches=75). A dropping coverage now blocks merge.
         run: pnpm test:coverage
+
+      - name: Upload coverage to Codecov
+        # Tokenless OIDC upload — no secret to rotate. Gated to a single
+        # matrix combo so the 9-cell matrix doesn't generate duplicate
+        # uploads. TODO(owner): if the repo goes private, either enable
+        # Codecov's tokenless path for private repos or add CODECOV_TOKEN.
+        if: matrix.os == 'ubuntu-latest' && matrix.node-version == 22
+        uses: codecov/codecov-action@v4
+        with:
+          use_oidc: true
+          fail_ci_if_error: false
 
       - name: Verify build artifacts contain sourcemaps and declaration maps
         # Protects against accidental removal of `sourcemap: true` /
@@ -65,6 +89,48 @@ jobs:
       - name: Security audit
         run: pnpm audit --audit-level=high
         continue-on-error: true
+
+  zero-deps:
+    # Enforces the zero-runtime-dep promise: every packages/*/package.json
+    # may declare only `workspace:*` entries in `dependencies`. External
+    # SDKs belong in `peerDependencies` so consumers own the install.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: node tools/check-zero-deps.mjs
+
+  examples-smoke:
+    # Execute every example under examples/ via tsx. Catches wiring bugs
+    # that typecheck misses (e.g. invalid policy prefix, wrong ToolResult
+    # shape). Peer-SDK examples and live-API examples are auto-skipped;
+    # see tools/run-examples.mjs for the classification rules.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      - name: Execute examples (mock mode)
+        env:
+          HARNESS_MOCK: '1'
+        run: pnpm examples:smoke
+
+      - name: Check README ts snippets compile
+        run: pnpm check:readme
 
   changeset-check:
     # Every PR that touches packages/ must include a changeset. Prevents

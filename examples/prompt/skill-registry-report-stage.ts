@@ -2,9 +2,9 @@
  * Example: observe model-selected stages with a reporting tool.
  */
 import { createSkillRegistry } from 'harness-one/prompt';
-import { defineTool } from 'harness-one/tools';
+import { defineTool, toolSuccess } from 'harness-one/tools';
 
-const reportStage = defineTool({
+const reportStage = defineTool<{ stage: string; reason?: string }>({
   name: 'report_stage',
   description: 'Record the current stage selected by the model.',
   parameters: {
@@ -15,9 +15,8 @@ const reportStage = defineTool({
     },
     required: ['stage'],
   },
-  async execute({ stage, reason }) {
-    return `stage=${stage}${reason ? ` reason=${reason}` : ''}`;
-  },
+  execute: async ({ stage, reason }) =>
+    toolSuccess(`stage=${stage}${reason ? ` reason=${reason}` : ''}`),
 });
 
 const skills = createSkillRegistry();

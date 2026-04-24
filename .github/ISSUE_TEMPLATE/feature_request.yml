@@ -1,0 +1,38 @@
+name: Feature request
+description: Propose a new primitive, API, or capability.
+title: "[feat]: "
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        harness-one ships primitives, not frameworks. Proposals that
+        compose with existing APIs land faster than those that introduce
+        new global abstractions.
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use case
+      description: What problem are you trying to solve? What can you not do today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposed-api
+    attributes:
+      label: Proposed API
+      description: Sketch the shape — types, function signatures, example usage.
+      render: typescript
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What did you try? Why does it fall short?
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - label: I have checked this is not already possible by composing existing primitives.
+          required: true
