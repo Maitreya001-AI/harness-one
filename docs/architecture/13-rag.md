@@ -22,8 +22,8 @@ rag 模块提供将文档转化为可检索上下文的完整流水线：加载 
 | `src/rag/chunking.ts` | 内置分块策略：`FixedSize`、`Paragraph`、`SlidingWindow`；CJK 字符边界 + emoji surrogate-pair 识别 | 279 |
 | `src/rag/retriever.ts` | 内置检索器：`createInMemoryRetriever`（余弦相似度 + LRU 查询缓存 + 多租户隔离 SEC-010 + `clear()`） | 314 |
 | `src/rag/pipeline.ts` | 流水线编排：`createRAGPipeline`；去重 + 容量上限 + AbortSignal + `maxBatchSize` 感知 | 380 |
-| `src/rag/conformance.ts` | `runRetrieverConformance` / `runEmbeddingModelConformance` / `runChunkingStrategyConformance` | 220 |
-| `src/rag/index.ts` | 公共导出桶文件 | 44 |
+| `src/rag/conformance.ts` | `runRetrieverConformance` / `runRetrieverTenantScopingConformance` / `runEmbeddingModelConformance` / `runChunkingStrategyConformance` | 370 |
+| `src/rag/index.ts` | 公共导出桶文件 | 48 |
 
 ## 公共 API
 
@@ -183,13 +183,30 @@ const injected = results.filter((r) => {
 ## 合规测试与规范文档
 
 - `runRetrieverConformance(runner, factory)`：检索器契约测试，覆盖排序、`limit`、`minScore`、`filter`、`AbortSignal`、空索引和 `clear()`（若实现）
+- `runRetrieverTenantScopingConformance(runner, factory)`：**opt-in** — 仅当实现声称"索引级"多租户隔离时运行，断言 `tenantId` / `scope` 能真正阻断跨租户数据泄漏并不让缓存绕过租户边界
 - `runEmbeddingModelConformance(runner, factory)`：嵌入模型契约测试，覆盖空输入、向量形状、`dimensions`、`AbortSignal`、`maxBatchSize`
 - `runChunkingStrategyConformance(runner, factory)`：分块策略契约测试，覆盖空文档、chunk 索引和元数据传播
-- [retriever-spec.md](../retriever-spec.md)：外部 Retriever 作者的权威规范
-- [embedding-spec.md](../embedding-spec.md)：外部 EmbeddingModel 作者的权威规范
 
 内置 `createInMemoryRetriever()` 自己跑 `runRetrieverConformance(...)`
-做 dogfooding。
+加 `runRetrieverTenantScopingConformance(...)` 做 dogfooding；
+`createBasicFixedSizeChunking()` 跑 `runChunkingStrategyConformance(...)`。
+
+## Adapter Author Guidelines
+
+第三方 adapter（如 `@harness-one/pinecone`、`@harness-one/pgvector`、
+`@harness-one/openai-embeddings`）应该直接对齐下面三份权威规范——
+架构文档只解释 harness-one **如何使用**这些接口，规范文档才是
+**如何实现**的契约。
+
+| Surface | 规范文档 | 应跑的 conformance kit |
+|---------|---------|----------------------|
+| `Retriever` | [retriever-spec.md](../retriever-spec.md) | `runRetrieverConformance` + 可选 `runRetrieverTenantScopingConformance` |
+| `EmbeddingModel` | [embedding-spec.md](../embedding-spec.md) | `runEmbeddingModelConformance` |
+| `ChunkingStrategy` | [chunking-spec.md](../chunking-spec.md) | `runChunkingStrategyConformance` |
+
+每份规范都包含错误码映射表、PR checklist 和最小可运行示例。
+implementation PR 必须附带 conformance kit 的测试通过截图或日志；
+评审者以规范为准，不以这里的使用示例为准。
 
 ## 设计决策
 

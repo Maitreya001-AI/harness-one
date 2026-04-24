@@ -91,6 +91,7 @@ export interface AgentLoopConfig {
     readonly maxAdapterRetries?: number;
     // (undocumented)
     readonly maxConversationMessages?: number;
+    readonly maxDurationMs?: number;
     // (undocumented)
     readonly maxIterations?: number;
     // (undocumented)
@@ -117,6 +118,20 @@ export interface AgentLoopConfig {
 
 // @public
 export interface AgentLoopHook {
+    onBeforeChat?(info: {
+        messages: readonly Message[];
+        iteration: number;
+    }): Promise<readonly Message[] | undefined> | readonly Message[] | undefined;
+    onBeforeToolCall?(info: {
+        call: ToolCallRequest;
+        iteration: number;
+    }): Promise<ToolCallRequest | {
+        abort: true;
+        reason: string;
+    } | undefined> | ToolCallRequest | {
+        abort: true;
+        reason: string;
+    } | undefined;
     onIterationEnd?(info: {
         iteration: number;
         done: boolean;
@@ -523,7 +538,7 @@ export interface FailureClassification {
 }
 
 // @public
-export type FailureMode = 'early_stop' | 'tool_loop' | 'context_forgetting' | 'hallucination' | 'budget_exceeded' | 'timeout' | 'unrecoverable_error' | 'unknown';
+export type FailureMode = 'early_stop' | 'tool_loop' | 'context_forgetting' | 'repeated_tool_failure' | 'budget_exceeded' | 'timeout' | 'adapter_retry_storm' | 'unrecoverable_error' | 'unknown';
 
 // @public
 export interface FallbackAdapterConfig {
@@ -634,6 +649,8 @@ export enum HarnessErrorCode {
     CORE_ABORTED = "CORE_ABORTED",
     // (undocumented)
     CORE_DISPOSE_AGGREGATE = "CORE_DISPOSE_AGGREGATE",
+    // (undocumented)
+    CORE_DURATION_BUDGET_EXCEEDED = "CORE_DURATION_BUDGET_EXCEEDED",
     // (undocumented)
     CORE_FALLBACK_EXHAUSTED = "CORE_FALLBACK_EXHAUSTED",
     // (undocumented)
@@ -777,6 +794,10 @@ export enum HarnessErrorCode {
     SESSION_LOCKED = "SESSION_LOCKED",
     // (undocumented)
     SESSION_NOT_FOUND = "SESSION_NOT_FOUND",
+    // (undocumented)
+    STORE_CAPABILITY_UNSUPPORTED = "STORE_CAPABILITY_UNSUPPORTED",
+    // (undocumented)
+    STORE_VERSION_CONFLICT = "STORE_VERSION_CONFLICT",
     // (undocumented)
     TOOL_CAPABILITY_DENIED = "TOOL_CAPABILITY_DENIED",
     // (undocumented)
@@ -966,11 +987,16 @@ export interface MemoryStore {
     }): Promise<MemoryEntry[]>;
     // (undocumented)
     read(id: string): Promise<MemoryEntry | null>;
+    scopedView?(tenantId: string): MemoryStore;
     searchByVector?(options: VectorSearchOptions): Promise<Array<MemoryEntry & {
         score: number;
     }>>;
+    setWithTtl?(key: string, value: unknown, ttlMs: number): Promise<void>;
     // (undocumented)
     update(id: string, updates: Partial<Pick<MemoryEntry, 'content' | 'grade' | 'metadata' | 'tags'>>): Promise<MemoryEntry>;
+    updateWithVersion?<T>(key: string, expectedVersion: number, updater: (value: T | undefined) => T): Promise<{
+        newVersion: number;
+    }>;
     // (undocumented)
     write(entry: Omit<MemoryEntry, 'id' | 'createdAt' | 'updatedAt'>): Promise<MemoryEntry>;
     writeBatch?(entries: Array<Omit<MemoryEntry, 'id' | 'createdAt' | 'updatedAt'>>): Promise<MemoryEntry[]>;
@@ -982,7 +1008,9 @@ export interface MemoryStoreCapabilities {
     readonly atomicUpdate?: boolean;
     readonly atomicWrite?: boolean;
     readonly batchWrites?: boolean;
-    readonly ttl?: boolean;
+    readonly supportsOptimisticLock?: boolean;
+    readonly supportsTenantScope?: boolean;
+    readonly supportsTtl?: boolean;
     readonly vectorSearch?: boolean;
 }
 
@@ -996,10 +1024,17 @@ export interface MessageMeta {
     // (undocumented)
     readonly pinned?: boolean;
     // (undocumented)
+    readonly provenance?: MessageProvenance;
+    // (undocumented)
+    readonly provenanceDetail?: string;
+    // (undocumented)
     readonly timestamp?: number;
     // (undocumented)
     readonly tokens?: number;
 }
+
+// @public
+export type MessageProvenance = 'user_input' | 'tool_result' | 'memory_restore' | 'rag_retrieved' | 'trusted_system' | 'unknown';
 
 // @public
 export type MetricAttributes = Readonly<Record<string, string | number | boolean | undefined>>;
@@ -1653,12 +1688,12 @@ export interface VectorSearchOptions {
 
 // Warnings were encountered during analysis:
 //
-// dist/cost-tracker-Bnxze39O.d.ts:396:5 - (ae-forgotten-export) The symbol "RedactConfig" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-Bnxze39O.d.ts:403:5 - (ae-forgotten-export) The symbol "Redactor" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-Bnxze39O.d.ts:736:5 - (ae-forgotten-export) The symbol "EvictionStrategyName" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-Bnxze39O.d.ts:736:5 - (ae-forgotten-export) The symbol "EvictionStrategy" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-C49GS-Gw.d.ts:402:5 - (ae-forgotten-export) The symbol "RedactConfig" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-C49GS-Gw.d.ts:409:5 - (ae-forgotten-export) The symbol "Redactor" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-C49GS-Gw.d.ts:742:5 - (ae-forgotten-export) The symbol "EvictionStrategyName" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-C49GS-Gw.d.ts:742:5 - (ae-forgotten-export) The symbol "EvictionStrategy" needs to be exported by the entry point index.d.ts
 // dist/pipeline-CZkrsTUe.d.ts:45:5 - (ae-forgotten-export) The symbol "GuardrailEvent" needs to be exported by the entry point index.d.ts
-// dist/resilience-Lo5raXh_.d.ts:64:5 - (ae-forgotten-export) The symbol "MiddlewareContext" needs to be exported by the entry point index.d.ts
+// dist/resilience-DMg77FVq.d.ts:64:5 - (ae-forgotten-export) The symbol "MiddlewareContext" needs to be exported by the entry point index.d.ts
 // dist/session/index.d.ts:162:5 - (ae-forgotten-export) The symbol "SessionStore" needs to be exported by the entry point index.d.ts
 // dist/session/index.d.ts:163:9 - (ae-forgotten-export) The symbol "SessionId" needs to be exported by the entry point index.d.ts
 

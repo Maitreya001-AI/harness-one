@@ -17,7 +17,23 @@ export const DEFAULT_SKILL_VERSION = '1.0.0';
 export interface SkillDefinition {
   /** Registry-unique skill identifier. */
   readonly id: string;
-  /** Optional semantic version. Missing values are normalized to `1.0.0`. */
+  /**
+   * Optional semantic version.
+   *
+   * Format: numeric dotted segments only — e.g. `1`, `1.0`, `1.0.0`,
+   * `2.10.3`. Pre-release (`1.0.0-rc1`), build-metadata (`1.0.0+sha`),
+   * and non-numeric tags are intentionally rejected. Skill registries
+   * are content-addressed by `(id, version)`; allowing free-form tags
+   * would let two "equivalent" versions of a skill be registered
+   * without a stable ordering, which silently changes the output of
+   * `render()` and invalidates the cache-stable prefix.
+   *
+   * When omitted, the registry normalizes the value to
+   * {@link DEFAULT_SKILL_VERSION} (`"1.0.0"`). If you need
+   * pre-release semantics in the future, extend the grammar in
+   * `skill-registry.ts#SEMVER_RE` and add an explicit ordering rule
+   * for the new segments — do not relax validation silently.
+   */
   readonly version?: string;
   /** Short operator-facing summary used for listing and audit purposes. */
   readonly description: string;

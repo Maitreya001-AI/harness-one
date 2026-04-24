@@ -100,6 +100,7 @@ disclosure.register('auth', [
 2. skill 是内容，不是工作流引擎。模型读完整 skill 内容，自行决定下一步。
 3. `requiredTools` 只用于静态校验，不影响运行时工具调度。
 4. 需要强制前置条件时，用 guardrail 卡在 tool 边界，不用 prompt 状态机“假装强制”。
+5. **skill 版本只接受数字语义版本**（`1`、`1.0`、`1.0.0`、`2.10.3`）。`1.0.0-rc1` / `1.0.0+build` 等预发布或构建标签在 `SEMVER_RE` 层直接抛 `CORE_INVALID_CONFIG`。原因：registry 是 `(id, version)` 内容寻址，预发布标签若没有配套的 ordering 规则会让两个"等价"版本互相覆盖，`render()` 结果和 KV-cache 稳定前缀都会悄悄漂。将来确有需求时应同步扩展 `SEMVER_RE` 与 `compareSemver`，不要单方面放宽正则。
 
 ## 观察模式
 

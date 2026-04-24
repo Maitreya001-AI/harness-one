@@ -177,6 +177,139 @@ export function runRetrieverConformance(
   });
 }
 
+/**
+ * Adapter passed to {@link runRetrieverTenantScopingConformance}.
+ *
+ * Implementations that support `RetrieveOptions.tenantId` /
+ * `RetrieveOptions.scope` provide an `indexForTenant()` helper so the
+ * kit can seed disjoint tenant partitions. Implementations without
+ * tenant support MUST NOT run the tenant suite — the base
+ * {@link runRetrieverConformance} is sufficient for them.
+ */
+export interface TenantScopingRetrieverAdapter {
+  readonly retriever: Retriever;
+  /**
+   * Index `chunks` under `tenantId` such that a subsequent `retrieve()`
+   * call carrying the same `tenantId` (or `scope`, if the backend treats
+   * them as aliases) sees them while another tenant's call does not.
+   */
+  indexForTenant(
+    chunks: readonly DocumentChunk[],
+    tenantId: string,
+  ): Promise<void>;
+}
+
+/**
+ * Opt-in conformance for retrievers that honor
+ * `RetrieveOptions.tenantId` / `RetrieveOptions.scope` for multi-tenant
+ * isolation.
+ *
+ * The kit indexes disjoint chunks under two distinct tenant labels and
+ * asserts that retrieval scoped to one tenant never returns the other
+ * tenant's data. It also exercises the `scope` alias and verifies that
+ * cross-tenant cache reuse does not leak embeddings.
+ *
+ * Base retrievers that treat `tenantId` / `scope` as cache-partition
+ * hints only (without index-side filtering) MUST NOT run this suite —
+ * the base kit already covers single-tenant correctness.
+ */
+export function runRetrieverTenantScopingConformance(
+  runner: RAGConformanceRunner,
+  factory: () =>
+    | Promise<TenantScopingRetrieverAdapter>
+    | TenantScopingRetrieverAdapter,
+): void {
+  const { describe, it, expect } = runner;
+
+  describe('Retriever tenant-scoping conformance', () => {
+    async function seedTwoTenants(): Promise<TenantScopingRetrieverAdapter> {
+      const adapter = await factory();
+      await adapter.indexForTenant(
+        [
+          {
+            id: 'alpha-a',
+            documentId: 'doc-tenant-a',
+            content: 'alpha',
+            index: 0,
+            embedding: [1, 0, 0],
+          },
+        ],
+        'tenant-a',
+      );
+      await adapter.indexForTenant(
+        [
+          {
+            id: 'alpha-b',
+            documentId: 'doc-tenant-b',
+            content: 'alpha',
+            index: 0,
+            embedding: [1, 0, 0],
+          },
+        ],
+        'tenant-b',
+      );
+      return adapter;
+    }
+
+    it('retrieve({ tenantId }) returns only that tenant\'s chunks', async () => {
+      const adapter = await seedTwoTenants();
+      const results = await adapter.retriever.retrieve('alpha', {
+        tenantId: 'tenant-a',
+        limit: 10,
+        minScore: -1,
+      });
+      expect(results.length).toBeGreaterThan(0);
+      for (const result of results) {
+        expect(result.chunk.documentId).toBe('doc-tenant-a');
+      }
+    });
+
+    it('retrieve({ tenantId }) does not leak the other tenant\'s chunks', async () => {
+      const adapter = await seedTwoTenants();
+      const results = await adapter.retriever.retrieve('alpha', {
+        tenantId: 'tenant-b',
+        limit: 10,
+        minScore: -1,
+      });
+      for (const result of results) {
+        expect(result.chunk.documentId === 'doc-tenant-a').toBe(false);
+      }
+    });
+
+    it('scope acts as an alternative partition label', async () => {
+      const adapter = await seedTwoTenants();
+      const results = await adapter.retriever.retrieve('alpha', {
+        scope: 'tenant-a',
+        limit: 10,
+        minScore: -1,
+      });
+      for (const result of results) {
+        expect(result.chunk.documentId).toBe('doc-tenant-a');
+      }
+    });
+
+    it('consecutive cross-tenant queries do not leak cached embeddings', async () => {
+      const adapter = await seedTwoTenants();
+      const aResults = await adapter.retriever.retrieve('alpha', {
+        tenantId: 'tenant-a',
+        limit: 10,
+        minScore: -1,
+      });
+      const bResults = await adapter.retriever.retrieve('alpha', {
+        tenantId: 'tenant-b',
+        limit: 10,
+        minScore: -1,
+      });
+      for (const result of aResults) {
+        expect(result.chunk.documentId).toBe('doc-tenant-a');
+      }
+      for (const result of bResults) {
+        expect(result.chunk.documentId).toBe('doc-tenant-b');
+      }
+    });
+  });
+}
+
 export function runEmbeddingModelConformance(
   runner: RAGConformanceRunner,
   factory: () => Promise<EmbeddingModel> | EmbeddingModel,

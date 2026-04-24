@@ -165,6 +165,7 @@ export type FailureMode =
   | 'repeated_tool_failure'
   | 'budget_exceeded'
   | 'timeout'
+  | 'adapter_retry_storm'
   | 'unrecoverable_error'
   | 'unknown';
 
@@ -199,6 +200,12 @@ export interface FailureTaxonomyConfig {
     readonly earlyStopMaxSpans?: number;
     /** Structured budget-exceeded confidence (0-1). Default: 0.95. */
     readonly budgetExceededConfidence?: number;
+    /**
+     * Minimum retryable-error span count to trigger `adapter_retry_storm`.
+     * Default: 3. Raise in environments where bursts of 3–4 retryable
+     * adapter errors are tolerated noise rather than signal.
+     */
+    readonly adapterRetryStormMinErrors?: number;
   };
 }
 

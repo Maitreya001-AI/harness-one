@@ -173,6 +173,96 @@ describe('createFailureTaxonomy', () => {
     });
   });
 
+  describe('adapter_retry_storm detector', () => {
+    it('detects ≥3 error spans carrying retryable harness.error.code', () => {
+      const codes = [
+        HarnessErrorCode.ADAPTER_RATE_LIMIT,
+        HarnessErrorCode.ADAPTER_NETWORK,
+        HarnessErrorCode.ADAPTER_RATE_LIMIT,
+      ];
+      const spans = codes.map((code, i) =>
+        makeSpan({
+          id: `s${i}`,
+          name: 'adapter.embed',
+          status: 'error',
+          attributes: { 'harness.error.code': code },
+        }),
+      );
+      const trace = makeTrace({ status: 'error', spans });
+      const taxonomy = createFailureTaxonomy();
+      const results = taxonomy.classify(trace);
+      const result = results.find((r) => r.mode === 'adapter_retry_storm');
+      expect(result).toBeDefined();
+      expect(result!.confidence).toBeCloseTo(0.6); // 3 errors = minErrors = base
+      expect(result!.details).toMatchObject({
+        source: 'error_code',
+        retryableErrorCount: 3,
+      });
+    });
+
+    it('does not trigger when error codes are non-retryable', () => {
+      const spans = [
+        makeSpan({
+          id: 's0',
+          name: 'adapter.embed',
+          status: 'error',
+          attributes: { 'harness.error.code': HarnessErrorCode.ADAPTER_AUTH },
+        }),
+        makeSpan({
+          id: 's1',
+          name: 'adapter.embed',
+          status: 'error',
+          attributes: { 'harness.error.code': HarnessErrorCode.ADAPTER_AUTH },
+        }),
+        makeSpan({
+          id: 's2',
+          name: 'adapter.embed',
+          status: 'error',
+          attributes: { 'harness.error.code': HarnessErrorCode.ADAPTER_AUTH },
+        }),
+      ];
+      const trace = makeTrace({ status: 'error', spans });
+      const taxonomy = createFailureTaxonomy();
+      const results = taxonomy.classify(trace);
+      expect(results.find((r) => r.mode === 'adapter_retry_storm')).toBeUndefined();
+    });
+
+    it('respects adapterRetryStormMinErrors threshold override', () => {
+      const spans = Array.from({ length: 4 }, (_, i) =>
+        makeSpan({
+          id: `s${i}`,
+          name: 'adapter.call',
+          status: 'error',
+          attributes: { 'harness.error.code': HarnessErrorCode.ADAPTER_RATE_LIMIT },
+        }),
+      );
+      const trace = makeTrace({ status: 'error', spans });
+      // Raise threshold so 4 errors no longer trigger.
+      const taxonomy = createFailureTaxonomy({
+        thresholds: { adapterRetryStormMinErrors: 5 },
+      });
+      const results = taxonomy.classify(trace);
+      expect(results.find((r) => r.mode === 'adapter_retry_storm')).toBeUndefined();
+    });
+
+    it('caps confidence at 0.9 regardless of error count', () => {
+      const spans = Array.from({ length: 20 }, (_, i) =>
+        makeSpan({
+          id: `s${i}`,
+          name: 'adapter.call',
+          status: 'error',
+          attributes: { 'harness.error.code': HarnessErrorCode.ADAPTER_RATE_LIMIT },
+        }),
+      );
+      const trace = makeTrace({ status: 'error', spans });
+      const taxonomy = createFailureTaxonomy();
+      const results = taxonomy.classify(trace);
+      const result = results.find((r) => r.mode === 'adapter_retry_storm');
+      expect(result).toBeDefined();
+      expect(result!.confidence).toBeLessThanOrEqual(0.9);
+    });
+  });
+
   describe('custom detector', () => {
     it('registers and uses a custom detector', () => {
       const taxonomy = createFailureTaxonomy();

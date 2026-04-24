@@ -3,6 +3,7 @@ import {
   runChunkingStrategyConformance,
   runEmbeddingModelConformance,
   runRetrieverConformance,
+  runRetrieverTenantScopingConformance,
 } from '../conformance.js';
 import { createBasicFixedSizeChunking } from '../chunking.js';
 import { createInMemoryRetriever } from '../retriever.js';
@@ -43,4 +44,17 @@ runEmbeddingModelConformance(
 runChunkingStrategyConformance(
   { describe, it, expect },
   () => createBasicFixedSizeChunking({ chunkSize: 8 }),
+);
+
+runRetrieverTenantScopingConformance(
+  { describe, it, expect },
+  () => {
+    const retriever = createInMemoryRetriever({
+      embedding: createDeterministicEmbeddingModel(),
+    });
+    return {
+      retriever,
+      indexForTenant: (chunks, tenantId) => retriever.indexScoped(chunks, tenantId),
+    };
+  },
 );

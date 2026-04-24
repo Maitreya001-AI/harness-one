@@ -17,7 +17,16 @@ import type {
 } from './skill-types.js';
 import { DEFAULT_SKILL_VERSION } from './skill-types.js';
 
-/** Numeric semantic version pattern: `1.0.0`, `2.1`, etc. */
+/**
+ * Numeric semantic version pattern: `1.0.0`, `2.1`, etc.
+ *
+ * Pre-release (`1.0.0-rc1`) and build-metadata (`1.0.0+sha`) tags are
+ * intentionally rejected. See the JSDoc on `SkillDefinition.version`
+ * for the rationale. Widen this regex only in lockstep with an
+ * explicit ordering rule in `compareSemver`; otherwise two skills can
+ * tie on `(id, version)` and silently clobber each other in the
+ * registry.
+ */
 const SEMVER_RE = /^\d+(?:\.\d+)+$/;
 
 function validateSemver(version: string): void {

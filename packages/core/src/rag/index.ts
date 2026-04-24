@@ -38,10 +38,14 @@ export { createInMemoryRetriever } from './retriever.js';
 // Conformance kits
 export {
   runRetrieverConformance,
+  runRetrieverTenantScopingConformance,
   runEmbeddingModelConformance,
   runChunkingStrategyConformance,
 } from './conformance.js';
-export type { RAGConformanceRunner } from './conformance.js';
+export type {
+  RAGConformanceRunner,
+  TenantScopingRetrieverAdapter,
+} from './conformance.js';
 
 // Pipeline
 export { createRAGPipeline } from './pipeline.js';

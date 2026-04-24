@@ -12,6 +12,7 @@ import type {
   FailureTaxonomyConfig,
 } from './types.js';
 import { HarnessErrorCode } from '../core/errors.js';
+import { isRetryableHarnessErrorCode } from '../core/error-span-attributes.js';
 
 // ---------------------------------------------------------------------------
 // Built-in detectors
@@ -159,6 +160,53 @@ function createRepeatedToolFailureDetector(): FailureDetector {
   };
 }
 
+/**
+ * Detect ≥minErrors error spans carrying a retryable `harness.error.code`
+ * (as classified by `isRetryableHarnessErrorCode`). This bridges the
+ * span-level error-code attribute written by `annotateHarnessErrorSpan`
+ * with the trace-level taxonomy — a burst of `ADAPTER_RATE_LIMIT` /
+ * `ADAPTER_NETWORK` / `CORE_TIMEOUT` errors in one trace is a distinct
+ * failure mode from the generic `repeated_tool_failure` pattern: it
+ * points at provider degradation rather than agent logic.
+ */
+function createAdapterRetryStormDetector(minErrors = 3): FailureDetector {
+  return {
+    detect(trace: Trace) {
+      if (trace.spans.length === 0) return null;
+
+      const retryableSpans = trace.spans.filter((span) => {
+        if (span.status !== 'error') return false;
+        const code = span.attributes['harness.error.code'];
+        return typeof code === 'string' && isRetryableHarnessErrorCode(code);
+      });
+
+      if (retryableSpans.length < minErrors) return null;
+
+      const codeHistogram: Record<string, number> = {};
+      for (const span of retryableSpans) {
+        const code = span.attributes['harness.error.code'] as string;
+        codeHistogram[code] = (codeHistogram[code] ?? 0) + 1;
+      }
+
+      // Empirically chosen, pending validation against production data.
+      // Base 0.6 with +0.05 per additional retryable error beyond minErrors,
+      // capped at 0.9. Retry storms are a high-signal but noisy pattern —
+      // transient upstream hiccups can trigger them without agent fault.
+      const confidence = Math.min(0.6 + (retryableSpans.length - minErrors) * 0.05, 0.9);
+
+      return {
+        confidence,
+        evidence: `${retryableSpans.length} error spans carrying retryable harness.error.code`,
+        details: {
+          source: 'error_code',
+          retryableErrorCount: retryableSpans.length,
+          codeHistogram,
+        },
+      };
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
@@ -178,6 +226,10 @@ export function createFailureTaxonomy(config?: FailureTaxonomyConfig): FailureTa
   detectors.set('budget_exceeded', createBudgetExceededDetector(thresholds?.budgetExceededConfidence));
   detectors.set('timeout', createTimeoutDetector());
   detectors.set('repeated_tool_failure', createRepeatedToolFailureDetector());
+  detectors.set(
+    'adapter_retry_storm',
+    createAdapterRetryStormDetector(thresholds?.adapterRetryStormMinErrors),
+  );
 
   // Apply user-provided detectors (override by key)
   if (config?.detectors) {

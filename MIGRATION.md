@@ -10,6 +10,41 @@ Once the first release ships (driven by `@changesets/cli`, see
 migration steps — API renames, removed symbols, behaviour changes.
 Until then, read the source.
 
+## Release blockers
+
+Before cutting the first npm release, re-introduce `@deprecated`
+JSDoc aliases for every symbol renamed during the thin-harness audit
+(see *Naming cleanup* below). Rationale: once a version exists on
+npm, consumers can no longer pin by SHA; a hard rename inside a
+`^0.1.0` -> `^0.2.0` bump silently breaks them. Post-release renames
+MUST carry a full major-version grace period with runtime-working
+aliases.
+
+Concretely, before the first release:
+
+- [ ] Re-export `createRoundRobinStrategy` / `createRandomStrategy` /
+      `createFirstAvailableStrategy` from `harness-one/orchestration`
+      as `@deprecated` aliases of their `createBasic*` counterparts.
+- [ ] Re-export `createFixedSizeChunking` /
+      `createParagraphChunking` / `createSlidingWindowChunking` from
+      `harness-one/rag` as `@deprecated` aliases of their `createBasic*`
+      counterparts.
+- [ ] Re-export `createRelevanceScorer` / `createFaithfulnessScorer` /
+      `createLengthScorer` from `@harness-one/devkit` eval module as
+      `@deprecated` aliases of their `createBasic*` counterparts.
+- [ ] Re-export `withSelfHealing` from `harness-one/guardrails` as a
+      `@deprecated` alias of `withGuardrailRetry`.
+- [ ] Leave the `hallucination` failure-mode string recognised as an
+      alias for `repeated_tool_failure` in consumer detectors (or
+      document the rename as a breaking change in the first release
+      notes — pick one, decide before shipping).
+- [ ] Add an eslint rule or API-extractor gate that fails CI if any
+      new public symbol is removed without a matching `@deprecated`
+      alias, so future renames can't silently regress this policy.
+
+The grace aliases should live for one full major version after first
+release, then be removed in the following major.
+
 ## Unreleased
 
 Breaking + observable changes that downstream consumers on a SHA-pinned
@@ -19,6 +54,10 @@ build should know about:
   or `createAsyncSkillRegistry()` instead. The new registries are stateless:
   they store immutable skill definitions, render prompt text, and validate
   declared tool requirements, but they do not model staged transitions.
+  Skill `version` values are restricted to numeric semantic versions
+  (`1.0.0`, `2.10.3`) — pre-release / build-metadata tags such as
+  `1.0.0-rc1` are rejected at `register()` time. See
+  `packages/core/src/prompt/skill-types.ts` for the full contract.
   Migration:
   ```diff
   -import { createSkillEngine } from 'harness-one/prompt';

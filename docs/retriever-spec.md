@@ -37,8 +37,8 @@ interface Retriever {
 | `minScore` | `number` | no | Filter out results below this score. |
 | `filter` | `Record<string, unknown>` | no | Metadata filter. The common denominator contract is a plain object. |
 | `signal` | `AbortSignal` | no | Abort promptly. An already-aborted signal MUST reject immediately. |
-| `tenantId` | `string` | no | Cache partition key for multi-tenant retrievers. |
-| `scope` | `string` | no | Alternative partition key name when `tenantId` is not the natural label. |
+| `tenantId` | `string` | no | Partition key for multi-tenant retrievers. When provided, retrieval MUST be scoped to chunks indexed under this tenant (see *Multi-tenant scoping* below). |
+| `scope` | `string` | no | Alternative partition-key name when `tenantId` is not the natural label; semantics are identical. `tenantId` takes precedence when both are set. |
 
 ## Required behavior
 
@@ -49,6 +49,37 @@ interface Retriever {
 - Chunks without usable embeddings MUST be skipped instead of crashing the retriever.
 - `signal` MUST be honored on both `index()` and `retrieve()`. The recommended error is `HarnessErrorCode.CORE_ABORTED`.
 - Metadata filtering MUST accept a plain-object filter. Richer backend-native grammars are allowed, but the README MUST document them explicitly.
+
+## Multi-tenant scoping
+
+`tenantId` / `scope` on `RetrieveOptions` are **optional**. A retriever
+has three valid stances:
+
+1. **No tenancy support.** Treat `tenantId` / `scope` as opaque and
+   return results from the full index. Document this in your README.
+   The base `runRetrieverConformance` suite is sufficient.
+2. **Cache partitioning only.** Use `tenantId` / `scope` to scope the
+   query-embedding cache key so two tenants cannot observe each other's
+   cached embeddings, but return results from a shared index. Document
+   this explicitly — callers who need data isolation must NOT rely on
+   it.
+3. **Index-side isolation.** Associate each indexed chunk with a tenant
+   label (via a backend-specific `indexForTenant(...)`, namespace, or
+   collection) and ensure `retrieve({ tenantId })` never returns chunks
+   indexed under a different tenant. This is the strongest contract and
+   is what multi-tenant applications should target.
+
+Retrievers taking stance (3) MUST run
+`runRetrieverTenantScopingConformance(runner, factory)` in addition to
+the base kit. The kit seeds two tenant partitions, issues queries
+scoped to each, and asserts cross-tenant leakage is impossible. It
+also exercises `scope` as an alternative label and verifies cached
+embeddings do not bypass the scope boundary.
+
+The built-in `createInMemoryRetriever()` is a stance (3) implementation:
+`retriever.indexScoped(chunks, tenantId)` associates chunks with a
+tenant, and the per-tenant query cache prevents cross-tenant embedding
+reuse.
 
 ## Clear semantics
 
@@ -97,7 +128,9 @@ filter behavior against a known fixture corpus.
 - [ ] `index()` and `retrieve()` implement all required fields
 - [ ] `AbortSignal` is forwarded and covered by tests
 - [ ] `runRetrieverConformance(runner, factory)` passes
+- [ ] If the retriever claims tenant isolation, `runRetrieverTenantScopingConformance(runner, factory)` also passes
 - [ ] README documents repeated-id behavior
+- [ ] README documents the tenancy stance (none / cache-only / index-isolated)
 - [ ] README documents supported filter syntax
 - [ ] Errors are mapped to `HarnessError` / `HarnessErrorCode`
 - [ ] Package declares the correct `harness-one` peer dependency

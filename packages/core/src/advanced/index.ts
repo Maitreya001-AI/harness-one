@@ -49,6 +49,7 @@ export { createSequentialStrategy, createParallelStrategy } from '../core/execut
 export { categorizeAdapterError } from '../core/error-classifier.js';
 export { createCustomErrorCode } from '../core/errors.js';
 export type { HarnessErrorDetails } from '../core/errors.js';
+export { isRetryableHarnessErrorCode } from '../core/error-span-attributes.js';
 
 // ─── Conversation pruning ─────────────────────────────────────────────────
 export type { PruneResult } from '../core/conversation-pruner.js';

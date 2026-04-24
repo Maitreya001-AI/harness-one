@@ -46,6 +46,18 @@ export interface ComponentRegistry {
 }
 
 // @public
+export function createBasicFaithfulnessScorer(): Scorer;
+
+// @public
+export function createBasicLengthScorer(config: {
+    minTokens?: number;
+    maxTokens?: number;
+}): Scorer;
+
+// @public
+export function createBasicRelevanceScorer(): Scorer;
+
+// @public
 export function createComponentRegistry(): ComponentRegistry;
 
 // @public
@@ -63,18 +75,6 @@ export function createDriftDetector(config?: DriftDetectorConfig): DriftDetector
 
 // @public
 export function createEvalRunner(config: EvalConfig): EvalRunner;
-
-// @public
-export function createBasicFaithfulnessScorer(): Scorer;
-
-// @public
-export function createBasicLengthScorer(config: {
-    minTokens?: number;
-    maxTokens?: number;
-}): Scorer;
-
-// @public
-export function createBasicRelevanceScorer(): Scorer;
 
 // @public
 export function createTasteCodingRegistry(): TasteCodingRegistry;
