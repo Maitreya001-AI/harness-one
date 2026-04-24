@@ -9,9 +9,13 @@
  *    readable across independent relay instances pointing at the same store.
  *  - `reconcileIndex()` recovers from a deliberately corrupted `_index.json`
  *    so the store returns to a consistent state without losing entries.
+ *
+ * TTL expiry uses `vi.useFakeTimers({ toFake: ['Date'] })` so virtual time
+ * advances deterministically — real `setTimeout` sleeps would flake under
+ * the parallel test-suite load.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { createSessionManager } from '../../src/session/manager.js';
@@ -21,15 +25,27 @@ import { HarnessError, HarnessErrorCode } from '../../src/core/errors.js';
 import { useTempDir } from './fixtures/temp-dirs.js';
 
 describe('integration/D5 · session TTL + fs memory store + relay', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('expires the session after TTL while the relay state on disk survives untouched', async () => {
+    // Mock only `Date` so SessionManager's `Date.now()`-based isExpired()
+    // check can be advanced deterministically; leave `setTimeout` real so
+    // the async filesystem code path isn't stalled waiting on virtual time.
+    vi.useFakeTimers({ toFake: ['Date'], shouldAdvanceTime: false });
+    vi.setSystemTime(new Date(2025, 0, 1, 0, 0, 0));
+
     const dir = useTempDir('d5-ttl-');
     const store = createFileSystemStore({ directory: dir });
     const relay = createRelay({ store });
 
-    // gcIntervalMs: 0 disables the auto-GC timer so the test doesn't leak a
-    // setInterval handle into other suites.
+    // gcIntervalMs: 0 disables the auto-GC timer so the test doesn't leak
+    // a setInterval handle into other suites (and doesn't race with the
+    // manual TTL advance below).
+    const ttlMs = 30_000;
     const sessions = createSessionManager({
-      ttlMs: 15,
+      ttlMs,
       gcIntervalMs: 0,
       maxSessions: 4,
     });
@@ -46,13 +62,16 @@ describe('integration/D5 · session TTL + fs memory store + relay', () => {
         timestamp: Date.now(),
       });
 
-      // Run 2 — advance progress; session still within TTL because `access`
-      // touches lastAccessedAt.
+      // Advance virtual time past half the TTL — session is still active
+      // because `access()` below refreshes lastAccessedAt.
+      vi.setSystemTime(Date.now() + ttlMs / 2);
+
+      // Run 2 — advance progress; session still within TTL.
       sessions.access(session.id);
       await relay.checkpoint({ step: 2 });
 
-      // Wait long enough for the session to cross the TTL boundary.
-      await new Promise((r) => setTimeout(r, 30));
+      // Advance virtual time well past the TTL boundary.
+      vi.setSystemTime(Date.now() + ttlMs * 2);
 
       // Run 3 — session access now throws SESSION_EXPIRED, but the relay
       // state on disk is untouched and another relay instance can load it.
