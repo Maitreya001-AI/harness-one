@@ -1,0 +1,69 @@
+name: Docs link check
+
+# Runs lychee against every Markdown file in docs/ and at the repo root.
+# Fails the workflow on any broken link so documentation rot is caught in
+# CI rather than by confused users.
+#
+# Scheduled weekly in addition to PR + push so upstream links that rot
+# without us touching our own docs still surface on a predictable
+# cadence.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Mondays 07:00 UTC.
+    - cron: '0 7 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # Required so the scheduled run can file an issue when links rot
+  # upstream (the action will open/update a single tracking issue
+  # instead of spamming).
+  issues: write
+
+jobs:
+  lychee:
+    name: lychee link check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+
+      - name: Restore lychee cache
+        uses: actions/cache@0c45773b623bea8c8e75f6c82b208c3cf94ea4f9 # v4.0.2
+        with:
+          path: .lycheecache
+          key: cache-lychee-${{ github.sha }}
+          restore-keys: cache-lychee-
+
+      - name: Run lychee
+        id: lychee
+        uses: lycheeverse/lychee-action@f613c4a64e50d792e0b31ec34bbcbba12263c6a6 # v2.3.0
+        with:
+          args: >-
+            --config lychee.toml
+            --no-progress
+            --cache
+            --max-cache-age 1d
+            './docs/**/*.md'
+            './*.md'
+          fail: true
+          jobSummary: true
+          # Only the scheduled + main-push runs should be allowed to open
+          # issues. PR runs should just fail the check so the author
+          # fixes locally before merge.
+          output: ./lychee-out.md
+
+      - name: File / update tracking issue on schedule
+        if: failure() && github.event_name == 'schedule'
+        uses: peter-evans/create-issue-from-file@e8ef132d6df98ed982188e460ebb3b5d4ef3a9cd # v5.0.0
+        with:
+          title: 'Docs: broken links detected in weekly link check'
+          content-filepath: ./lychee-out.md
+          labels: |
+            documentation
+            tracking
