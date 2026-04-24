@@ -304,3 +304,65 @@ Ubuntu 上 ≲5 s，慢文件系统（macOS APFS、加密盘、CI cache mount）
 ### 详细说明
 
 跑法、baseline 格式、regenerate 流程：`packages/core/tests/perf/README.md`。
+
+## Property-based Testing（PBT）
+
+除了上面的 mock adapter 层，`packages/core` 还维护一套基于
+[`fast-check`](https://fast-check.dev) 的 property 测试，针对"难以用手写 case 穷举"
+的核心不变量。每条 property 紧邻被测模块的 `__tests__/` 目录，文件名以
+`*.property.test.ts` 结尾（方便用 glob 单独挑出或排除）。
+
+`fast-check` 只进 `@harness-one/core` 的 `devDependencies`，**不进运行时依赖图**
+——在发布出去的包里不会出现。
+
+### 覆盖的不变量
+
+| ID | 模块 | 不变量 |
+|----|------|--------|
+| J1 | `core/agent-loop` | 状态机转换图合法；`disposed` 一旦到达就是吸收态；终态不可回流 |
+| J2 | `core/conversation-pruner` | 开头 system 消息全部保留；幂等（`prune(prune(x)) === prune(x)`）；长度上限（含已记录 quirk） |
+| J3 | `infra/backoff` | `delay(n)` 单调非递减；`delay(n) ≤ maxMs`；`delay(0)` 非负有限 |
+| J4 | `infra/lru-cache` | `size ≤ capacity`；`onEvict` 次数 = 实际淘汰次数；最近 touch 的 key 不会成为下一个被淘汰者 |
+| J5 | `observe/cost-tracker` | token/cost 单调非递减；`updateUsage` 不能降低 token；Kahan 求和精度 |
+| J6 | `core/pricing` | 非负输入 → 非负有限输出；空 usage → 0；per-1k 单位换算正确 |
+| J7 | `core/stream-aggregator` | 任意 unicode（含代理对拆包、孤立代理）下的 UTF-8 字节数等于 `Buffer.byteLength` |
+| J8 | `memory/fs-store` | 随机 write/delete/compact + crash 注入（孤儿 entry / 过时 index）后，`reconcileIndex()` 能恢复一致 |
+
+### 运行参数
+
+- 一般 property：`numRuns` 至少 100。
+- 关键 property（J7 unicode 计数）：`numRuns = 500`。
+- I/O 敏感 property（J8，`fc.commands` 状态机）：`numRuns = 100, maxCommands = 5`
+  ——文件系统操作每跑一条命令就是一次 atomic rename，numRuns 过高会拖慢整个套件
+  并把相邻 fs-store 测试挤进 `ENOTEMPTY` 的竞态。
+- 整个 PBT 套件目标 wall-clock < 30 秒，实测 ~2 秒。
+
+### Failure reproduction
+
+所有 property 都支持通过环境变量重放失败 seed：
+
+```bash
+FC_SEED=<seed> pnpm --filter harness-one exec vitest run <path>
+```
+
+fast-check 在 property 失败时会把 seed + path 打到错误信息里，直接拷贝 seed
+环境变量就能复现——不需要手动改源码里的 `seed:` 参数。
+
+### 跑法
+
+PBT 走 `pnpm test`（与常规单测同一条命令），CI 不需要额外 job。
+如果只想跑 PBT：
+
+```bash
+pnpm --filter harness-one exec vitest run '**/*.property.test.ts'
+```
+
+### 新增 property 指引
+
+1. Arbitrary 用 `fc.oneof` 混边界（空字符串、NaN、0、maxInt 等）——不要偏向
+   happy path；`fc.fullUnicodeString` 在 fast-check 4.x 已改名为
+   `fc.string({ unit: 'binary' })`，选这个才能跑到 lone surrogate。
+2. 不要为了让 PBT 通过去改源码；如果 property 揪出源码 bug，在 PR 描述里
+   flag，不擅自修。J2 的"长度上限 quirk"就是走这个通道发现的。
+3. Commit 粒度：每条 property 单独一个 commit（fast-check 依赖添加也独立
+   一个 commit）；方便 bisect 时 diff 失败面。
