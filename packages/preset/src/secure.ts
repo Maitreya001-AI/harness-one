@@ -49,6 +49,14 @@ export interface SecurePresetOptions {
 
 type HarnessGuardrails = NonNullable<HarnessConfig['guardrails']>;
 
+/** Extended Harness returned by `createSecurePreset` with lifecycle + metrics. */
+export interface SecureHarness extends Harness {
+  /** Lifecycle state machine for health checks and drain coordination. */
+  readonly lifecycle: HarnessLifecycle;
+  /** Vendor-neutral metrics port (no-op by default; wire an OTel adapter for real metrics). */
+  readonly metrics: MetricsPort;
+}
+
 /**
  * Create a Harness with fail-closed security defaults and opinionated wiring.
  *
@@ -65,6 +73,7 @@ type HarnessGuardrails = NonNullable<HarnessConfig['guardrails']>;
  *
  * @example
  * ```ts
+ * import Anthropic from '@anthropic-ai/sdk';
  * import { createSecurePreset } from '@harness-one/preset';
  *
  * const harness = createSecurePreset({
@@ -75,14 +84,6 @@ type HarnessGuardrails = NonNullable<HarnessConfig['guardrails']>;
  * });
  * ```
  */
-/** Extended Harness returned by `createSecurePreset` with lifecycle + metrics. */
-export interface SecureHarness extends Harness {
-  /** Lifecycle state machine for health checks and drain coordination. */
-  readonly lifecycle: HarnessLifecycle;
-  /** Vendor-neutral metrics port (no-op by default; wire an OTel adapter for real metrics). */
-  readonly metrics: MetricsPort;
-}
-
 export function createSecurePreset(config: HarnessConfig & SecurePresetOptions): SecureHarness {
   // Unified structural validation — catches typos, invalid enum values,
   // and unrecognized keys at construction time with actionable errors.

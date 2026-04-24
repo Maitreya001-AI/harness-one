@@ -83,6 +83,20 @@ export interface LangfuseExporterConfig {
  * - Traces map to Langfuse traces.
  * - Spans with LLM attributes (model, inputTokens) map to Langfuse generations.
  * - Other spans map to generic Langfuse spans.
+ *
+ * @example
+ * ```ts
+ * import { Langfuse } from 'langfuse';
+ * import { createLangfuseExporter } from '@harness-one/langfuse';
+ * import { createTraceManager } from 'harness-one/observe';
+ *
+ * const client = new Langfuse({
+ *   publicKey: process.env.LANGFUSE_PUBLIC_KEY,
+ *   secretKey: process.env.LANGFUSE_SECRET_KEY,
+ * });
+ * const exporter = createLangfuseExporter({ client });
+ * const traces = createTraceManager({ exporters: [exporter] });
+ * ```
  */
 export function createLangfuseExporter(config: LangfuseExporterConfig): TraceExporter {
   const { client, instrumentation, metrics, logger } = config;

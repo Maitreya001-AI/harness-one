@@ -114,6 +114,17 @@ export interface LangfuseCostTracker extends CostTracker {
  * per-key totals). The divergence is intentional: Langfuse pairs this local
  * tracker with a backend that retains the long-tail history, so the
  * in-process view is a sliding window matched to the bounded record buffer.
+ *
+ * @example
+ * ```ts
+ * import { Langfuse } from 'langfuse';
+ * import { createLangfuseCostTracker } from '@harness-one/langfuse';
+ *
+ * const client = new Langfuse({ ... });
+ * const costs = createLangfuseCostTracker({ client, maxRecords: 1000 });
+ * costs.track({ model: 'claude-sonnet-4-20250514', usage: { inputTokens: 100, outputTokens: 50 } });
+ * const total = costs.getTotalCost();
+ * ```
  */
 export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): LangfuseCostTracker {
   // ARCH-008: explicit strategy reference so the divergence with the core

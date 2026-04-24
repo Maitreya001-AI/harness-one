@@ -119,6 +119,16 @@ export interface OTelTraceExporter extends TraceExporter {
  *
  * Requires an OTel SDK to be configured (e.g. `@opentelemetry/sdk-trace-node`).
  * This adapter bridges harness-one spans into the OTel API.
+ *
+ * @example
+ * ```ts
+ * import { createOTelExporter } from '@harness-one/opentelemetry';
+ * import { createTraceManager } from 'harness-one/observe';
+ *
+ * // Assume @opentelemetry/sdk-trace-node has been initialised elsewhere.
+ * const exporter = createOTelExporter({ serviceName: 'my-agent' });
+ * const traces = createTraceManager({ exporters: [exporter] });
+ * ```
  */
 export function createOTelExporter(config?: OTelExporterConfig): OTelTraceExporter {
   const serviceName = config?.serviceName ?? 'harness-one';

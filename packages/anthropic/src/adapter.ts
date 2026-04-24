@@ -143,6 +143,19 @@ export interface AnthropicAdapterConfig {
  * Create an AgentAdapter backed by the Anthropic SDK.
  *
  * Supports chat(), stream(), and full tool_use handling.
+ *
+ * @example
+ * ```ts
+ * import Anthropic from '@anthropic-ai/sdk';
+ * import { createAnthropicAdapter } from '@harness-one/anthropic';
+ * import { createAgentLoop } from 'harness-one';
+ *
+ * const adapter = createAnthropicAdapter({
+ *   client: new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }),
+ *   model: 'claude-sonnet-4-20250514',
+ * });
+ * const loop = createAgentLoop({ adapter, maxIterations: 10 });
+ * ```
  */
 export function createAnthropicAdapter(config: AnthropicAdapterConfig): AgentAdapter {
   const { client } = config;

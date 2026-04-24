@@ -58,6 +58,7 @@ function validateSemver(version: string): void {
     throw new HarnessError(
       `Invalid semver version: "${version}". Expected format: "major.minor.patch" (numeric segments only)`,
       HarnessErrorCode.CORE_INVALID_CONFIG,
+      'Pass a numeric semver like "1.2.3"; pre-release / build-metadata tags such as "1.0.0-rc1" are rejected by design',
     );
   }
 }

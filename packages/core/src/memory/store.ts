@@ -626,6 +626,7 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
         throw new HarnessError(
           'expectedVersion must be a non-negative integer',
           HarnessErrorCode.CORE_INVALID_CONFIG,
+          'Pass the version returned by the previous read()/updateWithVersion() call, or 0 for the initial write',
         );
       }
       const currentVersion = versionIndex.get(key) ?? 0;
@@ -633,6 +634,7 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
         throw new HarnessError(
           `Version conflict for key "${key}": expected ${expectedVersion}, found ${currentVersion}`,
           HarnessErrorCode.STORE_VERSION_CONFLICT,
+          'Re-read the key to get the latest version, merge your change, and retry updateWithVersion()',
         );
       }
 

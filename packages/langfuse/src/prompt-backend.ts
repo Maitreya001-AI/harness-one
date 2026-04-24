@@ -26,6 +26,17 @@ export interface LangfusePromptBackendConfig {
  *
  * Langfuse prompts use `{{variable}}` placeholders which map directly
  * to harness-one template variables.
+ *
+ * @example
+ * ```ts
+ * import { Langfuse } from 'langfuse';
+ * import { createLangfusePromptBackend } from '@harness-one/langfuse';
+ * import { createPromptBuilder } from 'harness-one/prompt';
+ *
+ * const client = new Langfuse({ ... });
+ * const backend = createLangfusePromptBackend({ client });
+ * const prompts = createPromptBuilder({ backend });
+ * ```
  */
 export function createLangfusePromptBackend(config: LangfusePromptBackendConfig): PromptBackend {
   const { client } = config;

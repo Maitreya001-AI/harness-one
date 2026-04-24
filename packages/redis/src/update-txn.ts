@@ -90,7 +90,11 @@ export async function transactionalUpdate(
 
     if (!raw) {
       await safeUnwatch();
-      throw new HarnessError(`Memory entry not found: ${id}`, HarnessErrorCode.MEMORY_NOT_FOUND);
+      throw new HarnessError(
+        `Memory entry not found: ${id}`,
+        HarnessErrorCode.MEMORY_NOT_FOUND,
+        'Verify the id was returned by a prior write(), or list entries via query() before updating',
+      );
     }
 
     const existing = parseEntryFromRedis(raw, id, logger);

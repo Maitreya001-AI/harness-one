@@ -47,6 +47,19 @@ export type {
  * Thin delegate to `buildHarness` in `./build-harness/run.ts`; the
  * implementation lives there so this module stays focused on the public
  * barrel.
+ *
+ * @example
+ * ```ts
+ * import Anthropic from '@anthropic-ai/sdk';
+ * import { createHarness } from '@harness-one/preset';
+ *
+ * const harness = createHarness({
+ *   provider: 'anthropic',
+ *   client: new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }),
+ *   model: 'claude-sonnet-4-20250514',
+ *   budget: 5.0,
+ * });
+ * ```
  */
 export function createHarness(config: HarnessConfig): Harness {
   return buildHarness(config);

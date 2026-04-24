@@ -54,16 +54,7 @@ export interface ToolRegistry {
 
 const TOOL_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_.]*$/;
 
-/**
- * Create a new tool registry.
- *
- * @example
- * ```ts
- * const registry = createRegistry({ maxCallsPerTurn: 10 });
- * registry.register(myTool);
- * const result = await registry.execute({ id: '1', name: 'myTool', arguments: '{}' });
- * ```
- */
+/** Configuration for {@link createRegistry}. */
 export interface CreateRegistryConfig {
   maxCallsPerTurn?: number;
   maxCallsPerSession?: number;
@@ -99,6 +90,16 @@ export interface CreateRegistryConfig {
   logger?: Logger;
 }
 
+/**
+ * Create a new tool registry.
+ *
+ * @example
+ * ```ts
+ * const registry = createRegistry({ maxCallsPerTurn: 10 });
+ * registry.register(myTool);
+ * const result = await registry.execute({ id: '1', name: 'myTool', arguments: '{}' });
+ * ```
+ */
 export function createRegistry(config?: CreateRegistryConfig): ToolRegistry {
   const tools = new Map<string, ToolDefinition>();
   // production-grade defaults. Callers can still opt out by passing

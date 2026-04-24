@@ -177,6 +177,15 @@ function stableSchemaKey(schema: JsonSchema): string {
  * keyed on a stable hash of the schema JSON. When the cache exceeds
  * `maxCacheSize` (default 256), the least-recently-used entry is evicted and
  * removed from the underlying Ajv instance to release the associated memory.
+ *
+ * @example
+ * ```ts
+ * import { createAjvValidator } from '@harness-one/ajv';
+ * import { createRegistry } from 'harness-one/tools';
+ *
+ * const validator = createAjvValidator({ allErrors: true, maxCacheSize: 512 });
+ * const registry = createRegistry({ validator });
+ * ```
  */
 export function createAjvValidator(options?: AjvValidatorOptions): AjvSchemaValidator {
   // Validate `maxCacheSize` at factory entry. The previous

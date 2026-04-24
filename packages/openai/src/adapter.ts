@@ -145,6 +145,19 @@ function getStreamController(s: unknown): { abort?: () => void } | undefined {
  * Create an AgentAdapter backed by the OpenAI SDK.
  *
  * Supports chat(), stream(), and tool_calls handling.
+ *
+ * @example
+ * ```ts
+ * import OpenAI from 'openai';
+ * import { createOpenAIAdapter } from '@harness-one/openai';
+ * import { createAgentLoop } from 'harness-one';
+ *
+ * const adapter = createOpenAIAdapter({
+ *   client: new OpenAI({ apiKey: process.env.OPENAI_API_KEY }),
+ *   model: 'gpt-4o',
+ * });
+ * const loop = createAgentLoop({ adapter, maxIterations: 10 });
+ * ```
  */
 export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
   const client: OpenAI = config.client ?? new OpenAI({

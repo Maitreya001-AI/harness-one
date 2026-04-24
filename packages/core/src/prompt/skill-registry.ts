@@ -34,6 +34,7 @@ function validateSemver(version: string): void {
     throw new HarnessError(
       `Invalid skill version: "${version}". Expected numeric semantic version segments such as "1.0.0"`,
       HarnessErrorCode.CORE_INVALID_CONFIG,
+      'Pass a numeric semver like "1.2.3"; pre-release / build-metadata tags such as "1.0.0-rc1" are rejected by design',
     );
   }
 }
@@ -62,12 +63,14 @@ function normalizeSkill(skill: SkillDefinition): SkillDefinition & { version: st
     throw new HarnessError(
       `Skill "${skill.id}" description must be a non-empty string`,
       HarnessErrorCode.CORE_INVALID_CONFIG,
+      'Set skill.description to a short human-readable blurb — it is surfaced in the skill index prompt',
     );
   }
   if (typeof skill.content !== 'string' || skill.content.trim().length === 0) {
     throw new HarnessError(
       `Skill "${skill.id}" content must be a non-empty string`,
       HarnessErrorCode.CORE_INVALID_CONFIG,
+      'Set skill.content to the system-prompt body the skill contributes when activated',
     );
   }
   const version = skill.version ?? DEFAULT_SKILL_VERSION;
@@ -77,6 +80,7 @@ function normalizeSkill(skill: SkillDefinition): SkillDefinition & { version: st
       throw new HarnessError(
         `Skill "${skill.id}" requiredTools must be an array of tool names`,
         HarnessErrorCode.CORE_INVALID_CONFIG,
+        'Pass requiredTools as string[] (e.g. ["search", "retrieve"]) or omit the field entirely',
       );
     }
     for (const toolName of skill.requiredTools) {
@@ -84,6 +88,7 @@ function normalizeSkill(skill: SkillDefinition): SkillDefinition & { version: st
         throw new HarnessError(
           `Skill "${skill.id}" requiredTools must contain only non-empty strings`,
           HarnessErrorCode.CORE_INVALID_CONFIG,
+          'Remove empty strings from requiredTools; every entry must match a tool registered in the tools registry',
         );
       }
     }

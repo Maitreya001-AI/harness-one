@@ -80,6 +80,7 @@ function assertFinitePositive(value: number | undefined, name: string): void {
     throw new HarnessError(
       `${name} must be a positive finite number`,
       HarnessErrorCode.CORE_INVALID_CONFIG,
+      `Set ${name} to a finite positive number (e.g. >= 1), or omit the field to accept the default`,
     );
   }
 }
@@ -87,6 +88,17 @@ function assertFinitePositive(value: number | undefined, name: string): void {
 /**
  * Create a Redis-backed memory store. The returned handle is a plain
  * object; ioredis ownership (connect/disconnect) stays with the caller.
+ *
+ * @example
+ * ```ts
+ * import Redis from 'ioredis';
+ * import { createRedisStore } from '@harness-one/redis';
+ *
+ * const client = new Redis(process.env.REDIS_URL);
+ * const store = createRedisStore({ client, prefix: 'harness:memory' });
+ * const id = await store.write({ content: 'hello' });
+ * const entry = await store.read(id);
+ * ```
  */
 export function createRedisStore(config: RedisStoreConfig): RedisMemoryStore {
   const { client } = config;
@@ -235,6 +247,7 @@ export function createRedisStore(config: RedisStoreConfig): RedisMemoryStore {
         throw new HarnessError(
           'expectedVersion must be a non-negative integer',
           HarnessErrorCode.CORE_INVALID_CONFIG,
+          'Pass the version returned by the previous read()/updateWithVersion() call, or 0 for the initial write',
         );
       }
 
@@ -247,6 +260,7 @@ export function createRedisStore(config: RedisStoreConfig): RedisMemoryStore {
           throw new HarnessError(
             `Version conflict for key "${key}": expected ${expectedVersion}, found ${currentVersion}`,
             HarnessErrorCode.STORE_VERSION_CONFLICT,
+            'Re-read the key to get the latest version, merge your change, and retry updateWithVersion()',
           );
         }
 

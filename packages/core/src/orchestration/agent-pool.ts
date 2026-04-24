@@ -343,7 +343,11 @@ export function createAgentPool(
 
   function acquireSync(role?: string): PooledAgent {
     if (disposed) {
-      throw new HarnessError('Agent pool is disposed', HarnessErrorCode.POOL_DISPOSED);
+      throw new HarnessError(
+        'Agent pool is disposed',
+        HarnessErrorCode.POOL_DISPOSED,
+        'Create a new pool via createAgentPool() — pools are single-shot after dispose()',
+      );
     }
     // Remember the role on every acquire so a later resize() / warm-up
     // path builds same-shape agents even if the autoscaler doesn't know
@@ -400,7 +404,11 @@ export function createAgentPool(
     // Async acquire with queuing, timeout, and abort support
     async acquireAsync(optsOrTimeout?: number | AcquireAsyncOptions): Promise<PooledAgent> {
       if (disposed) {
-        throw new HarnessError('Agent pool is disposed', HarnessErrorCode.POOL_DISPOSED);
+        throw new HarnessError(
+          'Agent pool is disposed',
+          HarnessErrorCode.POOL_DISPOSED,
+          'Create a new pool via createAgentPool() — pools are single-shot after dispose()',
+        );
       }
       const opts: AcquireAsyncOptions =
         typeof optsOrTimeout === 'number'
@@ -617,7 +625,13 @@ export function createAgentPool(
         while (pendingQueue.length > 0) {
           const pending = pendingQueue.shift() as PendingAcquire;
           pending.cleanup();
-          pending.reject(new HarnessError('Pool disposed while waiting', HarnessErrorCode.POOL_DISPOSED));
+          pending.reject(
+            new HarnessError(
+              'Pool disposed while waiting',
+              HarnessErrorCode.POOL_DISPOSED,
+              'The pool was disposed before this acquireAsync() could be satisfied — recreate the pool or handle this error as shutdown',
+            ),
+          );
         }
         // Sequentially await each entry's dispose so file/socket handles on
         // the underlying loop settle before we claim the pool is torn down.

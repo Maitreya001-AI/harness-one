@@ -128,6 +128,15 @@ export function registerTiktokenModels(models?: string[]): void {
  *
  * @param model - The model name (e.g., 'gpt-4', 'gpt-4o').
  * @returns The created Tokenizer instance.
+ *
+ * @example
+ * ```ts
+ * import { createTiktokenTokenizer } from '@harness-one/tiktoken';
+ * import { registerTokenizer } from 'harness-one/context';
+ *
+ * const tokenizer = createTiktokenTokenizer('gpt-4o');
+ * registerTokenizer('gpt-4o', tokenizer);
+ * ```
  */
 export function createTiktokenTokenizer(model: string): Tokenizer {
   // Check encoder cache first — touch (delete+reinsert) to mark as recently used
