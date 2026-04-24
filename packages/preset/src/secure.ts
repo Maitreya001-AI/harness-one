@@ -3,7 +3,7 @@
  *
  * Wraps {@link createHarness} with opinionated secure defaults:
  * - Guardrail pipeline is non-empty by default (injection + contentFilter + pii)
- * - Logger defaults to {@link createDefaultLogger} (redaction on)
+ * - Logger defaults to `createDefaultLogger` from `harness-one/observe` (redaction on)
  * - OpenAI provider registry is sealed after construction
  *
  * There is no "guardrails off" escape hatch. Callers who need that must use
@@ -62,9 +62,9 @@ export interface SecureHarness extends Harness {
  *
  * Differences from {@link createHarness}:
  * 1. `guardrails` pipeline is non-empty — at minimum an injection detector.
- * 2. `logger` defaults to {@link createDefaultLogger} (redaction on).
+ * 2. `logger` defaults to `createDefaultLogger` from `harness-one/observe` (redaction on).
  * 3. `sealProviders()` is invoked after the adapter is constructed so
- *    {@link registerProvider} cannot be called with attacker-controlled
+ *    `registerProvider` cannot be called with attacker-controlled
  *    configuration later in the process lifetime.
  *
  * Tool registry security (default `allowedCapabilities: ['readonly']`) and
