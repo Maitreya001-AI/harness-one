@@ -132,6 +132,27 @@ jobs:
       - name: Check README ts snippets compile
         run: pnpm check:readme
 
+  dx-quality:
+    # DX quality gates (Track L). Each check has its own script so the
+    # failure on the PR status page names the regressed contract.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      - name: Tree-shake check (opt-in subsystems stay out of core bundle)
+        run: pnpm check:tree-shake
+
   size-limit:
     # Bundle-size regression gate (Track L1). Runs only on PRs so the
     # size-limit-action can post a diff comment against the base branch.
