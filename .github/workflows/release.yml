@@ -4,14 +4,15 @@ name: Release
 # public workspace package we:
 #   1. build
 #   2. re-verify pack reproducibility (same bytes as PR CI produced)
-#   3. pack a single canonical tarball under dist/tarballs/
-#   4. attest build provenance via Sigstore (SLSA level-3-style)
-#   5. publish to npm (wired in follow-up commits: OIDC trusted
-#      publisher + --provenance signing)
+#   3. pack a canonical tarball under dist/tarballs/
+#   4. attest SLSA build provenance via Sigstore (one per tarball)
+#   5. publish to npm via OIDC trusted-publisher — NO NPM_TOKEN secret.
 #
-# Publishing itself is intentionally left off in this commit — each
-# follow-up track-P commit layers one release-quality property on top
-# without changing the scaffold.
+# The publish step authenticates via the workflow's id-token: write
+# OIDC credential. npm's registry verifies the OIDC claim against a
+# trusted-publisher record configured once in the npm package settings
+# (see docs/release.md). If that record is missing, publish fails with
+# 401 rather than silently falling back to a long-lived token.
 
 on:
   release:
@@ -76,3 +77,17 @@ jobs:
           path: dist/tarballs/*.tgz
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish to npm via OIDC trusted publisher
+        # No NPM_TOKEN — the workflow's id-token: write permission supplies
+        # the OIDC credential npm uses to authenticate. Requires the npm
+        # package to have a matching trusted-publisher record configured
+        # (see docs/release.md). dry_run=true skips the actual publish so
+        # workflow_dispatch can smoke-test the pipeline without shipping.
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.dry_run != 'true')
+        run: |
+          set -euo pipefail
+          for tgz in dist/tarballs/*.tgz; do
+            echo "=== publish $tgz ==="
+            npm publish "$tgz" --access public
+          done
