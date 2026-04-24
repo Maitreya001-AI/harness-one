@@ -160,6 +160,12 @@ jobs:
         run: pnpm lint:errors
         continue-on-error: true
 
+      - name: TSDoc @example coverage on public factories
+        # Non-blocking for the same reason — 12 public `createXxx` factories
+        # are missing @example today. Listed in the PR description.
+        run: pnpm lint:tsdoc
+        continue-on-error: true
+
   size-limit:
     # Bundle-size regression gate (Track L1). Runs only on PRs so the
     # size-limit-action can post a diff comment against the base branch.
