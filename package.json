@@ -15,6 +15,7 @@
     "coverage:html": "pnpm -r test -- --coverage --coverage.reporter=html",
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm -r lint",
+    "smoke": "node tools/smoke-test.mjs",
     "verify:deps": "tsx tools/verify-deps.ts",
     "check:zero-deps": "node tools/check-zero-deps.mjs",
     "examples:smoke": "node tools/run-examples.mjs",
