@@ -42,17 +42,19 @@ jobs:
 
       - uses: pnpm/action-setup@903f9c1a6ebcba6cf41d87230be49611ac97822e # v6.0.3
 
+      # Node 24 (current LTS) ships with npm 11.x. We need that here
+      # because npm OIDC trusted publishing was added in npm 11.5.1 —
+      # earlier npm CLIs return ENEEDAUTH against a trusted-publisher-
+      # only package even when the workflow has `id-token: write`. The
+      # rest of the repo stays on Node 22 in CI; only this release
+      # workflow needs the newer npm. (We tried `npm install -g npm@11`
+      # on top of Node 22's bundled npm 10.x and it crashed with a
+      # MODULE_NOT_FOUND while bootstrapping arborist; bumping the
+      # whole runtime is simpler and removes the upgrade-itself step.)
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
-
-      # npm OIDC trusted publishing requires npm CLI >= 11.5.1; Node 22's
-      # bundled npm is 10.x, so a bare `npm publish --provenance` against
-      # a trusted-publisher-only package fails with `ENEEDAUTH`. Pin to
-      # the 11 line — float within minor so security patches are picked
-      # up automatically without churning this workflow.
-      - run: npm install -g npm@11
 
       - run: pnpm install --frozen-lockfile
 
