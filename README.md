@@ -90,11 +90,15 @@ path. The root barrel carries 18 curated value symbols; everything else lives
 on a submodule path. The full mapping is in
 [`docs/guides/import-paths.md`](./docs/guides/import-paths.md).
 
-```typescript
-// Root entry — good for prototyping and examples.
-import { createAgentLoop, defineTool, createRegistry, createPipeline } from 'harness-one';
+Root-entry imports are convenient for prototypes and examples:
 
-// Submodule imports — good for production, better tree-shaking.
+```typescript
+import { createAgentLoop, defineTool, createRegistry, createPipeline } from 'harness-one';
+```
+
+Subpath imports are better for production builds (sharper tree-shaking):
+
+```typescript
 import { AgentLoop } from 'harness-one/core';
 import { defineTool, createRegistry, toolSuccess } from 'harness-one/tools';
 import { createPipeline, createInjectionDetector, runInput } from 'harness-one/guardrails';
