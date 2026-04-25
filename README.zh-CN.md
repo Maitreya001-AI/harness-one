@@ -144,7 +144,8 @@ await harness.shutdown();
 
 ## 核心设计决策
 
-> 项目仍为 pre-release（所有包 `0.1.0`，未发 npm）。完整破坏性变更见
+> 项目仍为 pre-release（`0.x` — 任何 minor bump 都可能 break）。已发布版本见
+> [npm `@harness-one` org 主页](https://www.npmjs.com/org/harness-one)；完整破坏性变更见
 > [`MIGRATION.md`](./MIGRATION.md) 的 Unreleased 段与 `git log`。
 
 ### 包边界与 API 收口

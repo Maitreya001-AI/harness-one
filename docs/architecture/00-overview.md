@@ -11,7 +11,7 @@
 > const harness = createSecurePreset({ provider: 'anthropic', client, model: 'claude-sonnet-4-20250514' });
 > ```
 >
-> 当前版本仍为 pre-release（所有包都是 `0.1.0`，未发 npm），
+> 当前版本仍为 pre-release（`0.x` — 任何 minor bump 都可能 break），
 > 所有 break change 直接落 `main`，git log 是真正的发布记录——详见 `MIGRATION.md`。
 
 ## 定位

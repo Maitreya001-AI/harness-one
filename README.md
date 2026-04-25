@@ -40,8 +40,9 @@ one that matches how much control you need:
 `createSecurePreset` is not the only production path. Use it when its defaults
 match your deployment; drop to `createHarness` or raw primitives when they do not.
 
-All packages are pre-release (`0.1.0`, not yet on npm); pin by SHA if you
-need stability.
+All packages are pre-release (`0.x` — every minor bump may break). Latest
+published version is shown by the badge at the top of each
+[npm package page](https://www.npmjs.com/org/harness-one).
 
 ### Install
 
