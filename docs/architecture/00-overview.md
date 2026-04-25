@@ -263,31 +263,7 @@ ADR 采用 MADR 4.0 格式。每一条记录一个非显然的设计决定 + 被
 | memory | [memory.md](../security/memory.md) |
 | rag | [rag.md](../security/rag.md) |
 | redact | [redact.md](../security/redact.md) + [redact-findings.md](../security/redact-findings.md)（审计发现清单） |
-| TypeDoc 审计 | [typedoc-findings.md](../security/typedoc-findings.md) |
 | OpenSSF Best Practices | [ossf-best-practices.md](../security/ossf-best-practices.md)（Passing 级自评，项目 ID 待 owner 提交申请） |
-
-### 测试蓝图（[`docs/testing-plan/`](../testing-plan/) + [`docs/testing-plan.md`](../testing-plan.md)）
-
-按 Track 拆分的可执行落地 prompt；每个 CI workflow 都对应一个 Track。P0/P1 已随今日 commit 落地，P2 部分在路上。
-
-| Track | 主题 | 文档 |
-|-------|------|------|
-| A | 社区治理 | [P0-A-community.md](../testing-plan/P0-A-community.md) |
-| B | CI 工程基础 | [P0-B-ci-infra.md](../testing-plan/P0-B-ci-infra.md) |
-| C | 契约 suite + Cassette | [P0-C-contract-cassette.md](../testing-plan/P0-C-contract-cassette.md) |
-| D | 跨子系统集成测试 | [P0-D-integration.md](../testing-plan/P0-D-integration.md) |
-| E | Examples CI | [P0-E-examples-ci.md](../testing-plan/P0-E-examples-ci.md) |
-| F | ADR | [P0-F-adr.md](../testing-plan/P0-F-adr.md) |
-| G | Dogfood | [P0-G-dogfood.md](../testing-plan/P0-G-dogfood.md) |
-| H | Chaos | [P1-H-chaos.md](../testing-plan/P1-H-chaos.md) |
-| I | Perf baseline | [P1-I-perf.md](../testing-plan/P1-I-perf.md) |
-| J | PBT | [P1-J-pbt.md](../testing-plan/P1-J-pbt.md) |
-| K | Mutation testing | [P1-K-mutation.md](../testing-plan/P1-K-mutation.md) |
-| L | DX（size-limit / tree-shake / TSDoc lint / error-lint） | [P1-L-dx.md](../testing-plan/P1-L-dx.md) |
-| M | Security docs | [P1-M-security-docs.md](../testing-plan/P1-M-security-docs.md) |
-| N | 类型级测试 | [P2-N-type-level.md](../testing-plan/P2-N-type-level.md) |
-| O | Fuzz + 威胁模型 | [P2-O-fuzz-threat.md](../testing-plan/P2-O-fuzz-threat.md) |
-| P | Release 工程 | [P2-P-release.md](../testing-plan/P2-P-release.md) |
 
 ### 其它
 

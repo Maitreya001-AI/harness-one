@@ -74,21 +74,6 @@ hours. The architecture docs are the spec that every code reviewer
 cites — translation accuracy matters more than throughput, so
 budget accordingly.
 
-### Needs translation — P1 (before public v1.0)
-
-Internal planning + community docs. Publicly visible, but not on
-the critical path to first-adopter success.
-
-| File / tree                           | CJK chars (approx)         |
-| ------------------------------------- | -------------------------- |
-| `docs/testing-plan.md`                | 798                        |
-| `docs/testing-plan/P0-*.md`           | ~2 500 across 7 files      |
-| `docs/testing-plan/P1-*.md`           | ~2 400 across 5 files      |
-| `docs/testing-plan/P2-*.md`           | ~1 500 across 3 files      |
-
-The testing plan is load-bearing for project governance but isn't
-front-of-funnel for first-time users.
-
 ### Mixed / internal (defer indefinitely)
 
 - Track-P's own prompts and internal team-facing notes that happen

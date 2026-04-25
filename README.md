@@ -279,7 +279,6 @@ Supporting material — all reviewable in-repo:
 - [`.github/CODEOWNERS`](./.github/CODEOWNERS) — review routing per package.
 - [`docs/security/`](./docs/security/) — STRIDE threat models per subsystem (`core`, `prompt`, `context`, `tools`, `guardrails`, `observe`, `session`, `memory`, `rag`, `redact`) plus the OpenSSF Best Practices self-assessment.
 - [`docs/adr/`](./docs/adr/) — Architecture Decision Records (ADR-0001 through ADR-0010, MADR 4.0 format).
-- [`docs/testing-plan.md`](./docs/testing-plan.md) + [`docs/testing-plan/`](./docs/testing-plan/) — 16-track testing blueprint; each workflow above is owned by a track.
 
 ## Docs
 
