@@ -47,6 +47,13 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      # npm OIDC trusted publishing requires npm CLI >= 11.5.1; Node 22's
+      # bundled npm is 10.x, so a bare `npm publish --provenance` against
+      # a trusted-publisher-only package fails with `ENEEDAUTH`. Pin to
+      # the 11 line — float within minor so security patches are picked
+      # up automatically without churning this workflow.
+      - run: npm install -g npm@11
+
       - run: pnpm install --frozen-lockfile
 
       - run: pnpm build
