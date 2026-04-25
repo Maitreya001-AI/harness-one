@@ -37,7 +37,22 @@ interface EntryEnv {
   readonly mocked: boolean;
   readonly applyLabels: boolean;
   readonly model: string;
+  /** Hard per-run USD cap; defaults to 0.50 if `DOGFOOD_BUDGET_USD` is unset. */
+  readonly budgetUsd: number;
   readonly anthropicApiKey?: string;
+}
+
+const DEFAULT_BUDGET_USD = 0.5;
+
+function parseBudget(raw: string | undefined): number {
+  if (raw === undefined || raw === '') return DEFAULT_BUDGET_USD;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new Error(
+      `DOGFOOD_BUDGET_USD must be a positive number; got ${JSON.stringify(raw)}`,
+    );
+  }
+  return n;
 }
 
 function readEnv(env: NodeJS.ProcessEnv): EntryEnv {
@@ -53,6 +68,7 @@ function readEnv(env: NodeJS.ProcessEnv): EntryEnv {
     mocked: env['DOGFOOD_MOCK'] === '1' || env['ANTHROPIC_API_KEY'] === undefined,
     applyLabels: env['DOGFOOD_APPLY_LABELS'] === '1',
     model: env['DOGFOOD_MODEL'] ?? 'claude-sonnet-4-20250514',
+    budgetUsd: parseBudget(env['DOGFOOD_BUDGET_USD']),
     ...(env['ANTHROPIC_API_KEY'] !== undefined && {
       anthropicApiKey: env['ANTHROPIC_API_KEY'],
     }),
@@ -120,7 +136,14 @@ export async function main(env: NodeJS.ProcessEnv = process.env): Promise<RunRep
   }
 
   const adapter = await buildAdapter(envCfg);
-  const harness = buildTriageHarness({ adapter, model: envCfg.model });
+  // Hard cap per-issue cost. A typical sonnet triage with two read-only
+  // tools costs ≤ $0.05 of inference; $0.50 gives 10× headroom while
+  // failing fast on a runaway tool-loop or an attacker-crafted issue
+  // that tries to amplify token spend. The budget is also what silences
+  // harness-one's startup "no cost budget configured" warning that
+  // otherwise pollutes every dogfood run log line — and that warning
+  // exists for a good reason (Layer 9 surfaced exactly this gap).
+  const harness = buildTriageHarness({ adapter, model: envCfg.model, budgetUsd: envCfg.budgetUsd });
 
   try {
     harness.tools.register(

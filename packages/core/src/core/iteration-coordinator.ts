@@ -53,6 +53,12 @@ export interface CoordinatorDeps {
   readonly hasInputPipeline: boolean;
   /** Whether any output guardrail pipeline is configured. */
   readonly hasOutputPipeline: boolean;
+  /**
+   * Wrapper-layer contract declaration — when `true`, an enclosing harness
+   * runs the guardrail pipeline at its own boundary, so the "no pipeline"
+   * warning is suppressed. See `AgentLoopConfig.guardrailsManagedExternally`.
+   */
+  readonly guardrailsManagedExternally: boolean;
   /** Fires `onIterationStart` via the shared hook dispatcher. */
   readonly runHook: (event: 'onIterationStart', payload: { iteration: number }) => void;
 }
@@ -101,8 +107,17 @@ export function startRun(
   const conversation = [...messages];
   state.status = 'running';
 
-  // One-time security warning when neither pipeline is configured.
-  if (!state.noPipelineWarned && !deps.hasInputPipeline && !deps.hasOutputPipeline) {
+  // One-time security warning when neither pipeline is configured AND
+  // no enclosing wrapper has declared it manages guardrails externally.
+  // The wrapper opt-in (`guardrailsManagedExternally`) exists because
+  // `createSecurePreset` runs the pipeline around `harness.run()` — see
+  // ADR-0006 + `docs/architecture/05-guardrails.md`.
+  if (
+    !state.noPipelineWarned
+    && !deps.hasInputPipeline
+    && !deps.hasOutputPipeline
+    && !deps.guardrailsManagedExternally
+  ) {
     state.noPipelineWarned = true;
     const msg = 'AgentLoop has no guardrail pipeline — security risk';
     const meta = { hint: 'use createSecurePreset' };

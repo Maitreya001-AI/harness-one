@@ -11,6 +11,25 @@ export default defineConfig({
     // and `tests/security/` (adversarial coverage of the redact pipeline).
     // All three are documented in `docs/architecture/17-testing.md`.
     include: ['src/**/*.test.ts', 'tests/**/*.test.ts'],
+    // vitest 4 expanded the default `vi.useFakeTimers()` toFake set to
+    // include `setImmediate`/`queueMicrotask`/`nextTick`, which collides
+    // with vitest's own internal hook scheduling and made every
+    // `useFakeTimers()`-based suite (rate-limiter, session GC, circuit
+    // breaker, agent-pool, etc.) hang in afterEach with
+    // "Hook timed out in 10000ms". Pin the safe minimal set project-wide
+    // so individual tests don't have to remember to opt out of microtask
+    // / immediate / nextTick faking. Tests that genuinely need to fake
+    // those types must override `toFake` at the call site.
+    fakeTimers: {
+      toFake: [
+        'setTimeout',
+        'clearTimeout',
+        'setInterval',
+        'clearInterval',
+        'Date',
+        'performance',
+      ],
+    },
     coverage: {
       provider: 'v8',
       include: ['src/**/*.ts'],

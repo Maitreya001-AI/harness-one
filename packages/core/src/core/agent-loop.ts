@@ -127,6 +127,7 @@ export class AgentLoop {
       streaming,
       hasInputPipeline: pipelines.input !== undefined,
       hasOutputPipeline: pipelines.output !== undefined,
+      guardrailsManagedExternally: pipelines.managedExternally,
       runHook: this.runHook,
     });
 

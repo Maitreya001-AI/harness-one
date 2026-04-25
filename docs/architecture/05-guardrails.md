@@ -23,6 +23,14 @@
 **无 pipeline 配置** → AgentLoop 实例首次 `run()` 时 `safeWarn` 一次（推荐 `createSecurePreset`）。
 后续不再 warn。
 
+**Wrapper 接管的语义化 opt-in**：当外层 harness（如 `createSecurePreset`）在
+`harness.run()` 边界跑 guardrail pipeline、而非把 pipeline 穿进 `AgentLoop` 时，
+传入 `AgentLoopConfig.guardrailsManagedExternally: true` 抑制此警告。preset 内部
+已自动声明。直接调 `createAgentLoop` 的用户不应设置该字段——它**仅是契约声明，不是
+开关**：声明 `true` 但未在外层运行 guardrail，等于在静默关闭一条 fail-closed 安全信号
+而无任何替代防护。两层重复挂载 pipeline 会双跑（rate-limit 双计数）且 tool-result block
+语义冲突（preset 终止 vs AgentLoop 改写 stub 续跑），故由 wrapper 单点持有。
+
 ## 概述
 
 guardrails 模块实现 AI 安全层：通过 Pipeline 将多个护栏串联执行（输入/输出/工具输出/RAG 上下文四个钩子点），支持 fail-closed 默认行为；通过 `withGuardrailRetry` 在护栏拦截后自动重试并重新生成；内置 5 个护栏——注入检测、内容过滤、速率限制、Schema 验证、PII 检测。

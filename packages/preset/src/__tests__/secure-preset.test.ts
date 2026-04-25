@@ -141,6 +141,33 @@ describe('createSecurePreset', () => {
     }).not.toThrow();
   });
 
+  it('does not emit "no guardrail pipeline" warning during run() — preset declares wrapper-managed', async () => {
+    // The preset runs the guardrail pipeline around `harness.run()`
+    // (see README §"Auto-wiring in createHarness()"). The AgentLoop's
+    // "no pipeline" safety alert targets DIRECT createAgentLoop callers,
+    // so when a SecureHarness wraps the loop the warning would be a
+    // false positive that pollutes every production log line and
+    // misleadingly tells engineers to "use createSecurePreset" — which
+    // they already are. wire-components.ts threads
+    // `guardrailsManagedExternally: true` so the warning stays silent
+    // here while remaining intact for naked AgentLoop usage.
+    const warn = vi.fn();
+    const harness = createSecurePreset({
+      adapter: stubAdapter(),
+      logger: { debug() {}, info() {}, warn, error() {} },
+    });
+
+    const events: unknown[] = [];
+    for await (const ev of harness.run([{ role: 'user', content: 'hello' }])) {
+      events.push(ev);
+    }
+
+    const guardrailWarns = warn.mock.calls.filter((c) =>
+      typeof c[0] === 'string' && /no guardrail pipeline/i.test(c[0]),
+    );
+    expect(guardrailWarns).toHaveLength(0);
+  });
+
   it('invalid guardrailLevel value still produces an active pipeline', async () => {
     // There is no off switch. Garbage level falls through to default 'standard' behavior
     // — but current impl branches on string literals, so unknown string still passes through.

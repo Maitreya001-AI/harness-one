@@ -82,6 +82,12 @@ export interface ResolvedAgentLoopConfig {
   readonly pipelines: {
     readonly input?: GuardrailPipeline;
     readonly output?: GuardrailPipeline;
+    /**
+     * Wrapper-layer contract declaration — see `AgentLoopConfig.guardrailsManagedExternally`.
+     * When `true`, suppresses the "no guardrail pipeline" warning because an
+     * enclosing harness runs the pipeline at its own boundary.
+     */
+    readonly managedExternally: boolean;
   };
 
   readonly observability: {
@@ -152,6 +158,7 @@ export function resolveAgentLoopConfig(
     pipelines: Object.freeze({
       ...(raw.inputPipeline !== undefined && { input: raw.inputPipeline }),
       ...(raw.outputPipeline !== undefined && { output: raw.outputPipeline }),
+      managedExternally: raw.guardrailsManagedExternally === true,
     }),
     observability: Object.freeze({
       ...(raw.logger !== undefined && { logger: raw.logger }),
