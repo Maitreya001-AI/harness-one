@@ -1,0 +1,62 @@
+name: Auto-create Release after Version PR merge
+
+# Closes the last manual gap in the release pipeline. After
+# `version-packages.yml` opens a Version PR and a maintainer merges it,
+# this workflow fires on the resulting `chore: version packages` commit
+# on `main`, reads the new version out of `packages/core/package.json`,
+# and creates the matching GitHub Release. That Release event in turn
+# fires `release.yml`, which is the canonical OIDC + SLSA + provenance
+# publish lane.
+#
+# Why filter on commit message: GitHub Actions doesn't natively know
+# "the commit that just merged was a Version PR." `changesets/action`
+# always commits the version bumps with the literal message
+# `chore: version packages`, and squash-merging that PR preserves the
+# title (assuming the maintainer doesn't rewrite it). Any other commit
+# on main — feature merges, hotfixes — won't match and won't trigger
+# a release. Final safety net: if a release with the same tag already
+# exists (e.g. workflow re-ran for some reason), the step exits clean
+# instead of double-publishing.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    if: startsWith(github.event.head_commit.message, 'chore: version packages')
+    runs-on: ubuntu-latest
+    permissions:
+      # `gh release create` writes a tag and a Release object — both
+      # require contents:write. No id-token here; Sigstore + OIDC
+      # signing happens later in release.yml.
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Read new version from packages/core/package.json
+        id: version
+        run: |
+          VERSION=$(node -p "require('./packages/core/package.json').version")
+          TAG="v${VERSION}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Resolved tag: ${TAG}"
+
+      - name: Create Release (idempotent — skip if tag already exists)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "Release ${TAG} already exists — skipping creation."
+            exit 0
+          fi
+          gh release create "${TAG}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${TAG}" \
+            --generate-notes
