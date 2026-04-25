@@ -1,6 +1,6 @@
 {
   "name": "@harness-one/devkit",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Developer-time toolkit for harness-one: evaluation runners, scorers, component registry, drift detection",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -16,7 +16,9 @@
   "files": [
     "dist"
   ],
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "sideEffects": false,
   "scripts": {
     "build": "tsup",

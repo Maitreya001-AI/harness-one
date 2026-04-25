@@ -1,6 +1,6 @@
 {
   "name": "harness-one",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Universal primitives for AI agent harness engineering",
   "type": "module",
   "exports": {
