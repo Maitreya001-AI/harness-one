@@ -36,9 +36,12 @@ describe('createFileIO', () => {
   describe('entryPath', () => {
     it('returns the correct path for an entry ID', () => {
       // Literal path — never written to; used only to verify the join logic.
+      // Use `path.join` in the assertion so the expected value tracks the
+      // platform separator (`\` on Windows, `/` elsewhere) instead of
+      // hard-coding POSIX and breaking the windows build matrix.
       const fakeDir = '/fake/harness-test';
       const io = createFileIO({ directory: fakeDir });
-      expect(io.entryPath('mem_123')).toBe(`${fakeDir}/mem_123.json`);
+      expect(io.entryPath('mem_123')).toBe(join(fakeDir, 'mem_123.json'));
     });
   });
 
