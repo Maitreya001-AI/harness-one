@@ -78,73 +78,16 @@ const harness = createSecurePreset({
 
 ### 直接使用 `harness-one`
 
-所有公开 API 既从**根入口**再导出，也保留各子路径导入——按 tree-shake 需求选择：
+所有公开 API 既从**根入口**（18 个精选值符号）再导出，也保留各子路径导入——按 tree-shake 需求选择。完整 subpath ↔ symbol 对照表见 [`docs/guides/import-paths.md`](./docs/guides/import-paths.md)。
 
 ```typescript
 // 根入口：原型开发 / 示例代码更便利
-import {
-  AgentLoop,
-  createAgentLoop,
-  defineTool,
-  createRegistry,
-  toolSuccess,
-  createPipeline,
-  createInjectionDetector,
-  runInput,
-} from 'harness-one';
+import { createAgentLoop, defineTool, createRegistry, createPipeline } from 'harness-one';
 
-// 或子路径：生产代码更友好（tree-shaker 更精准）
+// 子路径：生产代码 tree-shake 更精准
 import { AgentLoop } from 'harness-one/core';
 import { defineTool, createRegistry, toolSuccess } from 'harness-one/tools';
 import { createPipeline, createInjectionDetector, runInput } from 'harness-one/guardrails';
-
-// 定义工具
-const calculator = defineTool<{ a: number; b: number }>({
-  name: 'add',
-  description: 'Add two numbers',
-  parameters: {
-    type: 'object',
-    properties: {
-      a: { type: 'number' },
-      b: { type: 'number' },
-    },
-    required: ['a', 'b'],
-  },
-  execute: async ({ a, b }) => toolSuccess(a + b),
-});
-
-// 工具注册
-const registry = createRegistry();
-registry.register(calculator);
-
-// 配置护栏 —— pipeline 接受 {name, guard} 条目。
-// 内置工厂（createInjectionDetector / createContentFilter / ...）已经返回这个形状，
-// 直接把工厂返回值塞进去即可；自定义 Guardrail 需要显式包一层
-// `{ name: 'custom', guard: myGuardFn }`。
-const pipeline = createPipeline({
-  input: [createInjectionDetector({ sensitivity: 'medium' })],
-  failClosed: true,
-});
-
-// 创建 AgentLoop —— 类形式或工厂形式均可
-const loop = createAgentLoop({
-  adapter: yourLLMAdapter,   // 实现 AgentAdapter 接口
-  maxIterations: 10,
-  onToolCall: registry.handler(),
-});
-
-// 跑一轮对话
-const userInput = 'What is 2 + 3?';
-const check = await runInput(pipeline, { content: userInput });
-if (check.passed) {
-  for await (const event of loop.run([
-    { role: 'system', content: 'You are a helpful assistant.' },
-    { role: 'user', content: userInput },
-  ])) {
-    if (event.type === 'message') console.log(event.message.content);
-    if (event.type === 'done') break;
-  }
-}
 ```
 
 > **非重入约束**：`AgentLoop.run()` 在同一实例上再次调用时抛
@@ -158,7 +101,7 @@ if (check.passed) {
 - `createSecurePreset()`：有偏好的参考装配，带 fail-closed 默认值
 - `createHarness()`：同样是一站式 wiring，但不强制安全姿态
 
-例如使用 `createHarness()`：
+完整选项（`AdapterHarnessConfig` vs provider shorthand、optional integrations、graceful shutdown、lifecycle health 等）见 [`packages/preset/README.md`](./packages/preset/README.md)。
 
 ```typescript
 import Anthropic from '@anthropic-ai/sdk';
@@ -168,8 +111,7 @@ const harness = createHarness({
   provider: 'anthropic',
   client: new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }),
   model: 'claude-sonnet-4-20250514',
-  maxIterations: 20,
-  budget: 5.0,
+  budget: 5.0,  // 生产必填，否则构造时打 warn
 });
 
 for await (const event of harness.run(messages, { sessionId: userId })) {
@@ -279,7 +221,7 @@ await admission.withPermit('tenant-123', () => harness.run(messages));
 
 ## 子模块速查
 
-快速索引——每个模块的公开 API 一眼看完：
+每个模块完整的英文 API 参考在 [`docs/modules.md`](./docs/modules.md)；每个 subpath 持有的具体符号清单在 [`docs/guides/import-paths.md`](./docs/guides/import-paths.md)。下表是中文导览：
 
 - **core** · `harness-one/core` — AgentLoop / createAgentLoop / Message / HarnessError / FallbackAdapter
 - **context** · `harness-one/context` — packContext / compress / compactIfNeeded / registerTokenizer
@@ -348,6 +290,18 @@ harness-one 的质量承诺全部写进 `.github/workflows/`，总计 15 个 CI 
 
 完整架构文档入口：[`docs/architecture/00-overview.md`](./docs/architecture/00-overview.md)
 
+### API 参考与导览
+
+| 主题 | 文档 |
+|---|---|
+| 每个 subpath 的公开 API 与代码示例（英文） | [docs/modules.md](./docs/modules.md) |
+| Subpath ↔ symbol 速查表（英文） | [docs/guides/import-paths.md](./docs/guides/import-paths.md) |
+| 特性成熟度矩阵（Production / Monitoring / Advisory / 等） | [docs/feature-maturity.md](./docs/feature-maturity.md) |
+| `@harness-one/preset` 的完整选项与 footguns | [packages/preset/README.md](./packages/preset/README.md) |
+| `@harness-one/cli` 命令清单 | [packages/cli/README.md](./packages/cli/README.md) |
+| 排查指南（错误码 → 症状 / 修法） | [docs/guides/troubleshooting.md](./docs/guides/troubleshooting.md) |
+| Fallback adapter 行为 + 周期性恢复 pattern | [docs/guides/fallback.md](./docs/guides/fallback.md) |
+
 ### 架构主线
 
 | 主题 | 文档 |
@@ -397,7 +351,7 @@ harness-one 的质量承诺全部写进 `.github/workflows/`，总计 15 个 CI 
 
 完整贡献指南见 [`CONTRIBUTING.md`](./CONTRIBUTING.md)。关键纪律：
 
-1. **包管理器是 pnpm**——`npm` / `yarn` 不工作（`preinstall` hook 会拒）。Node `>= 18`（20 LTS 推荐），pnpm `>= 9`。
+1. **包管理器是 pnpm**——`npm` / `yarn` 不工作（`preinstall` hook 会拒）。Node `>= 22`（pnpm 10.24 用 `node:sqlite`，最低需求 v22.13），pnpm `>= 9`。
 2. **近 100% 测试覆盖**是 `packages/core` 的硬门槛；CI 的覆盖率下限是 80% lines/statements、75% branches。
 3. 触碰 `packages/` 的 PR **必须带 changeset**：`pnpm changeset`，挑 patch / minor / major 并写为什么。
 4. 安全漏洞**不要开公开 issue**，按 [`SECURITY.md`](./SECURITY.md) 的私报流程走（GitHub Security Advisory 优先，邮箱备用）。
