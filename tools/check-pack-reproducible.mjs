@@ -15,7 +15,16 @@
 
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readFileSync, readdirSync, mkdtempSync, rmSync, statSync } from 'node:fs';
+import {
+  closeSync,
+  fstatSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -113,21 +122,37 @@ function contentDigest(tarball, extractDir) {
   const hash = createHash('sha256');
   for (const entry of entries) {
     const absolute = path.join(extractDir, entry);
-    let st;
+    // Tar listings end directory entries with a trailing slash. Branch
+    // up-front so we never call open() on a path that's a directory —
+    // BSD tar on some platforms may not even materialise the entry.
+    if (entry.endsWith('/')) {
+      try {
+        const st = statSync(absolute);
+        hash.update(`\n---\n${entry}\t<dir>\t${st.mode}\n`);
+      } catch {
+        hash.update(`\n---\n${entry}\t<dir>\t<missing>\n`);
+      }
+      continue;
+    }
+    // File entry: open + fstat + read against a single descriptor. Same
+    // fd throughout means there's no stat→read TOCTOU window for
+    // CodeQL's js/file-system-race rule to flag. Still cheap; this only
+    // runs when the raw-bytes hash check has already failed.
+    let fd;
     try {
-      st = statSync(absolute);
+      fd = openSync(absolute, 'r');
     } catch {
-      // Directory-only entries listed by tar may not materialise via
-      // plain extraction on some BSD-tar variants — include the name in
-      // the digest anyway so ordering drift is still caught.
       hash.update(`\n---\n${entry}\t<missing>\n`);
       continue;
     }
-    if (st.isDirectory()) {
-      hash.update(`\n---\n${entry}\t<dir>\t${st.mode}\n`);
-      continue;
+    let st;
+    let bytes;
+    try {
+      st = fstatSync(fd);
+      bytes = readFileSync(fd);
+    } finally {
+      closeSync(fd);
     }
-    let bytes = readFileSync(absolute);
     if (entry === 'package/package.json' || entry.endsWith('/package/package.json')) {
       try {
         const parsed = JSON.parse(bytes.toString('utf8'));

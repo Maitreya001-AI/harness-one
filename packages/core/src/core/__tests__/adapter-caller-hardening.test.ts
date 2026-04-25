@@ -224,7 +224,12 @@ describe('AdapterCaller — cumulative totalBackoffMs + totalDurationMs', () => 
       expect(final.attempts).toBe(2);
       expect(final.totalBackoffMs).toBeGreaterThan(0);
       expect(final.totalDurationMs).toBeGreaterThan(0);
-      expect(final.totalDurationMs).toBeGreaterThanOrEqual(final.totalBackoffMs!);
+      // Wall-clock should cover the summed backoff sleeps. Allow ~2ms slack:
+      // Date.now() has 1ms resolution, so per-attempt integer rounding can
+      // leave the recorded duration trailing the summed delays by a tick on
+      // busy CI runners. A real accounting bug (e.g. totalDurationMs reset
+      // to 0) still trips the assertion.
+      expect(final.totalDurationMs!).toBeGreaterThanOrEqual(final.totalBackoffMs! - 2);
     }
   });
 
@@ -247,7 +252,9 @@ describe('AdapterCaller — cumulative totalBackoffMs + totalDurationMs', () => 
     expect(final.ok).toBe(false);
     if (!final.ok) {
       expect(final.totalBackoffMs).toBeGreaterThan(0);
-      expect(final.totalDurationMs).toBeGreaterThanOrEqual(final.totalBackoffMs!);
+      // Same 2ms slack as above — Date.now()'s 1ms resolution can leave
+      // the wall-clock duration a tick behind the summed delays.
+      expect(final.totalDurationMs!).toBeGreaterThanOrEqual(final.totalBackoffMs! - 2);
     }
   });
 

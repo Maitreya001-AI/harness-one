@@ -36,8 +36,14 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build harness-one
-        run: pnpm --filter harness-one build
+      # `record-cassettes.mjs` is run from the repo root with bare-specifier
+      # imports (`harness-one/testing`, `@harness-one/anthropic`,
+      # `@harness-one/openai`). Those resolve via the root `node_modules`
+      # symlinks pnpm creates because root `package.json` lists each as a
+      # `workspace:*` devDependency. All three need their `dist/` populated
+      # before the script imports from them, so build the trio explicitly.
+      - name: Build harness-one + adapters
+        run: pnpm --filter harness-one --filter @harness-one/anthropic --filter @harness-one/openai build
 
       - name: Record cassettes against live providers
         env:
