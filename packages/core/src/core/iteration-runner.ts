@@ -32,6 +32,7 @@ import { annotateHarnessErrorSpan } from './error-span-attributes.js';
 import {
   runInputGuardrail,
   runOutputGuardrail,
+  runToolArgsGuardrail,
   runToolOutputGuardrail,
 } from './guardrail-runner.js';
 import { safeStringifyToolResult } from './tool-serialization.js';
@@ -357,10 +358,23 @@ export function createIterationRunner(config: Readonly<IterationRunnerConfig>): 
       });
     }
 
-    // [6] Tool calls — push assistant, yield tool_call events, execute.
+    // [6] Tool calls — push assistant, run input pipeline on each tool's
+    //     serialised arguments (no-op if `inputPipeline` is unset; preset
+    //     users hit this path because the preset doesn't pass an input
+    //     pipeline to the inner AgentLoop, deferring to its outer wrapper),
+    //     then yield tool_call events, execute.
     ctx.conversation.push(assistantMsg);
 
     for (const toolCall of toolCalls) {
+      const argOutcome = await runToolArgsGuardrail(
+        toolCall.arguments,
+        toolCall.name,
+        toolCall.id,
+        config.inputPipeline,
+      );
+      if (argOutcome.kind === 'blocked') {
+        return yield* bailGuardrail(ctx, argOutcome.guardrailEvent, argOutcome.errorEvent);
+      }
       yield { type: 'tool_call', toolCall, iteration: ctx.iteration };
       runHook('onToolCall', { iteration: ctx.iteration, toolCall });
     }

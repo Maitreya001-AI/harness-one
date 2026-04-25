@@ -66,6 +66,37 @@ build should know about:
   or attacker-crafted issue. The dogfood agent — Layer 9 of the testing
   blueprint — surfaced this gap as a "no cost budget configured"
   warning on every run.
+- **AgentLoop now runs `inputPipeline` on tool-call arguments.** When
+  `AgentLoopConfig.inputPipeline` is configured, the iteration runner
+  invokes `pipeline.runInput({ content: toolCall.arguments })` once per
+  tool call **before** yielding the `tool_call` event and **before** the
+  tool side-effect runs. A `block` verdict aborts the loop with
+  `guardrail_blocked` (new phase `'tool_args'`) + `error`
+  (`HarnessErrorCode.GUARD_VIOLATION`); the `tool_call` is never
+  yielded. Closes the asymmetry where direct `createAgentLoop` callers
+  with an input pipeline previously got user-message validation but not
+  tool-arg validation — preset users were already covered by the
+  wrapper at `harness.run()`.
+
+  **`AgentEvent['guardrail_blocked'].phase` widened** from
+  `'input' | 'tool_output' | 'output'` to
+  `'input' | 'tool_args' | 'tool_output' | 'output'`. Exhaustive
+  switches on `phase` now need to handle the new variant. Consumers
+  that filter on the existing three values continue to work; only
+  exhaustive type-checks (`assertNever(phase)` patterns) need updating.
+
+  **No impact on preset users.** `createSecurePreset` /
+  `createHarness` do not pass `inputPipeline` to the inner AgentLoop
+  (the preset runs all guardrail phases at the `harness.run()`
+  boundary). The new check is a no-op on the preset path — no
+  double-execution, no rate-limiter double-counting.
+
+  **Direct AgentLoop users with rate-limiter inside `inputPipeline`**
+  will see one additional pipeline run per tool call (counts toward
+  the limiter). If this is undesirable, lift the rate-limiter out of
+  `inputPipeline` (e.g., compose it as a separate, AgentLoop-external
+  guard) so it doesn't count tool-arg checks against the user's
+  request budget.
 - **`AgentLoopConfig.guardrailsManagedExternally?: boolean`** added.
   Wrapper-layer opt-in: when `true`, suppresses the one-time "AgentLoop has
   no guardrail pipeline — security risk" warning. `createSecurePreset` /

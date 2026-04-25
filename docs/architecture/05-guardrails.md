@@ -8,10 +8,17 @@
 每轮迭代固定顺序：
 
 1. **Input** — 调 adapter 前，对最新 user turn 跑 `runInput`
-2. **Tool output** — 工具执行后，对结果跑 `runToolOutput`；block 时将 result 替换为
+2. **Tool args** — adapter 返回带 tool_calls 的 assistant message 后、yield `tool_call` 事件**之前**，
+   对每个 tool 的 `arguments` 串跑 `runInput`（复用 `inputPipeline`）。block 时该 `tool_call` 不会被 yield，
+   loop 直接进 hard-block 退出（phase `tool_args`，details 带 `toolCallId` / `toolName`）。**仅在
+   `inputPipeline` 配置时启用**——未配置 pipeline 的裸 AgentLoop 用户行为完全不变。覆盖了之前 preset
+   外层（`harness.run()` 的 `guardrail:tool-args` span）独有但裸 AgentLoop 缺失的检查面，对齐"input
+   pipeline 检查所有进入系统的内容"语义。**preset 不受影响**：preset 不给内层 AgentLoop 传
+   `inputPipeline`，新检查在 preset 路径上是 no-op，由外层 wrapper 继续负责
+3. **Tool output** — 工具执行后，对结果跑 `runToolOutput`；block 时将 result 替换为
    `JSON.stringify({ error: 'GUARDRAIL_VIOLATION: <guardName>', reason })` 回写，继续下一轮（LLM 看到
    结构化错误，不会孤儿 tool_use）
-3. **Output** — assistant final answer 后，跑 `runOutput`
+4. **Output** — assistant final answer 后，跑 `runOutput`
 
 **Hard-block 语义**：
 - `this.abortController.abort('guardrail_violation')` — 关闭上游 stream 连接
