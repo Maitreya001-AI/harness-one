@@ -27,7 +27,11 @@ permissions:
 
 jobs:
   release:
-    if: startsWith(github.event.head_commit.message, 'chore: version packages')
+    # Wrapped in double quotes — the unquoted form trips YAML's parser
+    # at the colon inside the inner `'chore:` literal (`mapping values
+    # are not allowed here`). With outer `"…"` the whole expression is
+    # one scalar and the parser leaves the inner quotes alone.
+    if: "startsWith(github.event.head_commit.message, 'chore: version packages')"
     runs-on: ubuntu-latest
     permissions:
       # `gh release create` writes a tag and a Release object — both
