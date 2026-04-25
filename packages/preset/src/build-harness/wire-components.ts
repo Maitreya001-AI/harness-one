@@ -209,6 +209,14 @@ export function wireComponents(config: HarnessConfig): WiredComponents {
     // `adapterTimeoutMs` is consumed by AdapterCaller; core's `AgentLoopConfig`
     // widens to accept it via the nested ResolvedAgentLoopConfig path.
     ...({ adapterTimeoutMs: effectiveAdapterTimeoutMs } as { readonly adapterTimeoutMs: number }),
+    // Preset runs the guardrail pipeline around `harness.run()` (see
+    // README §"Auto-wiring in createHarness()" + run.ts:199-329). Declare
+    // that contract to suppress the AgentLoop's "no pipeline" warning,
+    // which targets direct callers of `createAgentLoop`. Threading the
+    // pipeline into both layers would double-execute (rate-limit double-
+    // counts) and conflict on tool-result blocks (preset terminates,
+    // AgentLoop rewrites-and-continues).
+    guardrailsManagedExternally: true,
     onToolCall: async (call) => tools.execute(call),
   });
 

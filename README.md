@@ -24,8 +24,7 @@ Harness engineering is the discipline of building robust, production-grade infra
 ## Quick Start
 
 > **Shortest path:** see [`examples/quickstart.ts`](./examples/quickstart.ts)
-> — 20 LOC, one SDK, first streaming reply. Everything below is the long
-> form of the same pattern.
+> — 20 LOC, one SDK, first streaming reply.
 
 ### `createSecurePreset` vs `createHarness` vs `createAgentLoop`
 
@@ -44,7 +43,7 @@ match your deployment; drop to `createHarness` or raw primitives when they do no
 All packages are pre-release (`0.1.0`, not yet on npm); pin by SHA if you
 need stability.
 
-Two install paths:
+### Install
 
 ```bash
 # À la carte — the core package (tree-shakeable submodules).
@@ -80,970 +79,78 @@ Under the hood:
 - `MetricsPort` wired (no-op by default; swap in OTel adapter for real metrics)
 - Unified config validation catches typos and invalid values at construction time
 
-**Graceful shutdown** — wire SIGTERM/SIGINT handlers in one call:
-
-<!-- noverify -->
-```ts
-import { createSecurePreset, createShutdownHandler } from '@harness-one/preset';
-
-const harness = createSecurePreset({ ... });
-createShutdownHandler(harness, { timeoutMs: 15_000 });
-// Now SIGTERM/SIGINT will drain in-flight work and exit cleanly.
-```
-
-**Lifecycle & health checks** — query harness readiness (useful for k8s probes):
-
-```ts
-const health = await harness.lifecycle.health();
-// { state: 'ready', ready: true, components: { traceManager: { status: 'up' }, ... } }
-```
-
+For the full preset surface (graceful shutdown, lifecycle health, provider
+variants, optional integrations, observability, footguns), see
+[`packages/preset/README.md`](./packages/preset/README.md).
 
 ### Using `harness-one` directly
 
 Every public API is re-exported from the root entry **and** from its submodule
-path. Use whichever fits your tree-shaker:
+path. The root barrel carries 18 curated value symbols; everything else lives
+on a submodule path. The full mapping is in
+[`docs/guides/import-paths.md`](./docs/guides/import-paths.md).
+
+Root-entry imports are convenient for prototypes and examples:
 
 ```typescript
-// Root entry — good for prototyping and examples.
-// Re-exports the canonical factories plus AgentLoop, defineTool,
-// createRegistry, and createPipeline. Specialised pipeline combinators,
-// testing utilities, and the injection detector live on their subpaths and
-// are not re-exported from root to keep tree-shaking predictable.
-import { AgentLoop, createAgentLoop, defineTool, createRegistry, createPipeline } from 'harness-one';
-
-// Or submodule imports — good for production, better tree-shaking.
-import { AgentLoop as AgentLoopSubpath } from 'harness-one/core';
-import { defineTool as defineToolSubpath, createRegistry as createRegistrySubpath, toolSuccess } from 'harness-one/tools';
-import { createPipeline as createPipelineSubpath, createInjectionDetector, runInput } from 'harness-one/guardrails';
+import { createAgentLoop, defineTool, createRegistry, createPipeline } from 'harness-one';
 ```
 
-### Import-path cheatsheet
+Subpath imports are better for production builds (sharper tree-shaking):
 
-Not sure which subpath owns a symbol? This table covers the 95% cases.
-The **root barrel** (`'harness-one'`) re-exports 18 curated value symbols;
-everything else is on a submodule path only. Types are re-exported
-liberally from the root (zero runtime cost).
-
-| Subpath | Key exports (factories in bold) |
-|---|---|
-| `'harness-one'` (root) | **`createAgentLoop`**, **`AgentLoop`**, **`createResilientLoop`**, **`createMiddlewareChain`**, **`createPipeline`**, **`createTraceManager`**, **`createCostTracker`**, **`createLogger`**, **`createSessionManager`**, **`defineTool`**, **`createRegistry`**, **`disposeAll`**, `HarnessError`, `HarnessErrorCode`, `MaxIterationsError`, `AbortedError`, `ToolValidationError`, `TokenBudgetExceededError` |
-| `harness-one/core` | `AgentLoop`, `AgentAdapter`, `Message`, `ChatParams`, `ChatResponse`, `AgentEvent`, `createTrustedSystemMessage` |
-| `harness-one/advanced` | **`createMiddlewareChain`**, **`createResilientLoop`**, **`createFallbackAdapter`**, **`toSSEStream`**, **`categorizeAdapterError`**, **`StreamAggregator`**, `createJsonOutputParser`, `createSequentialStrategy`, `createParallelStrategy`, `pruneConversation`, `computeBackoffMs` |
-| `harness-one/tools` | **`defineTool`**, **`createRegistry`**, **`toolSuccess`**, **`toolError`**, `ToolMiddleware` |
-| `harness-one/guardrails` | **`createPipeline`**, **`createInjectionDetector`**, **`createContentFilter`**, **`createRateLimiter`**, **`createSchemaValidator`**, **`createPIIDetector`**, **`withGuardrailRetry`**, **`runRagContext`**, `runInput`, `runOutput` |
-| `harness-one/observe` | **`createTraceManager`**, **`createCostTracker`**, **`createLogger`**, **`createFailureTaxonomy`**, **`createCacheMonitor`**, **`createHarnessLifecycle`**, **`createNoopMetricsPort`**, `MetricsPort`, `InstrumentationPort`, `TraceExporter` |
-| `harness-one/session` | **`createSessionManager`**, **`createInMemoryConversationStore`**, `AuthContext` |
-| `harness-one/memory` | **`createInMemoryStore`**, **`createFsMemoryStore`**, **`createRelay`**, **`runMemoryStoreConformance`** |
-| `harness-one/context` | **`createBudget`**, **`packContext`**, **`compress`**, **`compactIfNeeded`**, **`registerTokenizer`**, **`countTokens`** |
-| `harness-one/prompt` | **`createPromptBuilder`**, **`createPromptRegistry`**, **`createSkillRegistry`**, **`createAsyncSkillRegistry`**, **`createDisclosureManager`** |
-| `harness-one/orchestration` | **`createOrchestrator`**, **`createAgentPool`**, **`createHandoff`**, **`createContextBoundary`**, **`createMessageQueue`** |
-| `harness-one/rag` | **`createRAGPipeline`**, **`createInMemoryRetriever`**, **`runRetrieverConformance`**, **`runEmbeddingModelConformance`**, **`runChunkingStrategyConformance`** |
-| `harness-one/redact` | **`createRedactor`**, **`redactValue`**, **`sanitizeAttributes`**, `REDACTED_VALUE`, `DEFAULT_SECRET_PATTERN` |
-| `harness-one/infra` | **`createAdmissionController`**, **`unrefTimeout`**, **`unrefInterval`** |
-| `harness-one/evolve-check` | **`createArchitectureChecker`**, `noCircularDepsRule`, `layerDependencyRule` |
-| `harness-one/testing` | Mock adapters: **`createMockAdapter`**, **`createFailingAdapter`**, **`createStreamingMockAdapter`**, **`createErrorStreamingMockAdapter`**. Chaos injection: **`createChaosAdapter`**, **`createSeededRng`**. Cassette record/replay: **`recordCassette`**, **`createCassetteAdapter`**, **`loadCassette`**, **`computeKey`**, **`fingerprint`**. Adapter contract suite: **`createAdapterContractSuite`**, **`CONTRACT_FIXTURES`**, **`cassetteFileName`**, **`contractFixturesHandle`**. **Test-only**, never import from production code |
-| `@harness-one/preset` | **`createSecurePreset`**, **`createHarness`**, **`createShutdownHandler`** |
-| `@harness-one/devkit` | **`createEvalRunner`**, **`createBasicRelevanceScorer`**, **`createComponentRegistry`**, **`createDriftDetector`** |
-| `@harness-one/cli` | **`parseInitArgs`**, **`renderTemplates`** (library form of the `harness-one` binary) |
-| `@harness-one/anthropic` / `@harness-one/openai` | Provider `AgentAdapter` factories |
-| `@harness-one/ajv` / `@harness-one/tiktoken` | `SchemaValidator` / `Tokenizer` providers |
-| `@harness-one/redis` / `@harness-one/langfuse` / `@harness-one/opentelemetry` | `MemoryStore` / `TraceExporter` providers |
-
-When in doubt, import from the root — types and the 18 curated factories
-resolve cleanly. Drop to a subpath only for tree-shaking or when the root
-doesn't carry the value (e.g. `toSSEStream` lives on `/advanced`).
-
-<!-- noverify -->
 ```typescript
-import { createAgentLoop } from 'harness-one';
+import { AgentLoop } from 'harness-one/core';
 import { defineTool, createRegistry, toolSuccess } from 'harness-one/tools';
 import { createPipeline, createInjectionDetector, runInput } from 'harness-one/guardrails';
-
-// Define a tool
-const calculator = defineTool<{ a: number; b: number }>({
-  name: 'add',
-  description: 'Add two numbers',
-  parameters: {
-    type: 'object',
-    properties: {
-      a: { type: 'number' },
-      b: { type: 'number' },
-    },
-    required: ['a', 'b'],
-  },
-  execute: async ({ a, b }) => toolSuccess(a + b),
-});
-
-// Create tool registry
-const registry = createRegistry();
-registry.register(calculator);
-
-// Set up guardrails — pipeline entries are {name, guard} objects.
-// Built-in factories (createInjectionDetector / createContentFilter / ...) already
-// return that shape, so you can pass the factory call directly.
-const pipeline = createPipeline({
-  input: [createInjectionDetector({ sensitivity: 'medium' })],
-  failClosed: true,
-});
-
-// Create agent loop — class form or factory form, your choice
-const loop = createAgentLoop({
-  adapter: yourLLMAdapter, // Implement AgentAdapter interface
-  maxIterations: 10,
-  onToolCall: registry.handler(),
-});
-
-// Run with guardrails
-const userInput = 'What is 2 + 3?';
-const check = await runInput(pipeline, { content: userInput });
-
-if (check.passed) {
-  for await (const event of loop.run([
-    { role: 'system', content: 'You are a helpful assistant.' },
-    { role: 'user', content: userInput },
-  ])) {
-    if (event.type === 'message') console.log(event.message.content);
-    if (event.type === 'done') break;
-  }
-}
 ```
 
-`AgentLoop.run()` is **not re-entrant**: calling it again while a previous call is
-still running throws `HarnessError('INVALID_STATE')`. Create one `AgentLoop`
+`AgentLoop.run()` is **not re-entrant**: calling it again while a previous call
+is still running throws `HarnessError('INVALID_STATE')`. Create one `AgentLoop`
 instance per concurrent run, or await the previous run before starting a new one.
 
 ## Modules
 
-### harness-one/core -- Agent Loop
-
-The execution engine. Calls your LLM adapter in a loop, dispatches tool calls, and enforces safety valves (max iterations, token budgets, abort signals).
-
-Adapters receive `ChatParams.signal` (an `AbortSignal`) and should forward it to their underlying SDK to cancel in-flight requests when the loop is aborted. `LLMConfig.extra` accepts a `Record<string, unknown>` for provider-specific options that fall outside the standard fields.
-
-`maxConversationMessages` defaults to **200** — the loop automatically trims conversation history once it exceeds this length, always preserving all leading system messages. Pass `maxConversationMessages: Infinity` to disable.
-
-`maxStreamBytes` (default **10 MB**) caps the total bytes consumed from a single streaming response. `maxToolArgBytes` (default **5 MB**) caps the byte length of any individual tool-call argument payload. Both prevent unbounded memory growth from runaway streams or malformed tool calls.
-
-Pass an optional `traceManager` to get automatic observability: one trace per `run()`, one span per iteration, child spans per tool call.
-
-```typescript
-import { AgentLoop } from 'harness-one/core';
-import type { AgentAdapter, Message } from 'harness-one/core';
-
-const adapter: AgentAdapter = {
-  async chat({ messages }) {
-    // Your LLM call here
-    return {
-      message: { role: 'assistant', content: 'Hello!' },
-      usage: { inputTokens: 10, outputTokens: 5 },
-    };
-  },
-};
-
-const loop = new AgentLoop({
-  adapter,
-  maxIterations: 10,
-  maxTotalTokens: 100_000,
-  maxConversationMessages: 200,  // default; trims history, preserving system messages
-  maxStreamBytes: 10_485_760,    // default 10 MB; caps streaming response size
-  maxToolArgBytes: 5_242_880,    // default 5 MB; caps tool argument payload size
-  onToolCall: async (call) => ({ result: `Executed ${call.name}` }),
-  traceManager: myTraceManager,  // optional; auto-creates spans
-});
-
-const messages: Message[] = [
-  { role: 'system', content: 'You are helpful.' },
-  { role: 'user', content: 'Hi' },
-];
-
-for await (const event of loop.run(messages)) {
-  if (event.type === 'message') console.log(event.message.content);
-  if (event.type === 'done') console.log('Reason:', event.reason);
-}
-```
-
-### harness-one/prompt -- Prompt Engineering
-
-Multi-layer prompt assembly optimized for KV-cache stability, template registry with versioning, stateless skill registries, and progressive disclosure.
-
-Template variable substitution sanitizes values by default (`sanitize: true`) to prevent injection through variable content. The prompt registry validates semver on `register()` and rejects malformed version strings. `SkillRegistry` stores immutable skill definitions, renders cacheable skills first, and validates declared tool requirements before runtime.
-
-```typescript
-import { createPromptBuilder, createSkillRegistry } from 'harness-one/prompt';
-
-// Builder-wide variable sanitization is default-on (sanitize: true);
-// pass `sanitize: false` here to allow raw variable content.
-const builder = createPromptBuilder({ separator: '\n\n' });
-
-// Cacheable layers go first (stable KV-cache prefix)
-builder.addLayer({
-  name: 'system',
-  content: 'You are an expert assistant.',
-  priority: 0,
-  cacheable: true,
-});
-
-// Dynamic layers added after; variables substituted at build time.
-builder.addLayer({
-  name: 'context',
-  content: 'User project: {{project}}',
-  priority: 10,
-  cacheable: false,
-});
-
-builder.setVariable('project', 'my-app');
-const result = builder.build();
-// result.systemPrompt, result.stablePrefixHash, result.metadata
-
-const skills = createSkillRegistry();
-skills.register({
-  id: 'planner',
-  description: 'Planning instructions',
-  content: 'Plan before acting. Use search before drafting.',
-  requiredTools: ['search'],
-});
-
-const rendered = skills.render(['planner']);
-const validation = skills.validate(['planner'], ['search']);
-// rendered.content, rendered.stableHash, validation.valid
-```
-
-### harness-one/context -- Context Engineering
-
-Token budget management with named segments, HEAD/MID/TAIL context packing with automatic trimming, and cache stability analysis across iterations.
-
-The `truncate` compression strategy always retains at least the final message so the conversation is never left empty. The sliding window compressor uses an optimized 2-Set implementation for O(1) eviction.
-
-```typescript
-import { createBudget, packContext, analyzeCacheStability } from 'harness-one/context';
-import type { Message } from 'harness-one/core';
-
-const budget = createBudget({
-  totalTokens: 4096,
-  segments: [
-    { name: 'system', maxTokens: 500, reserved: true },
-    { name: 'history', maxTokens: 3000, trimPriority: 1 },
-    { name: 'recent', maxTokens: 596, trimPriority: 0 },
-  ],
-});
-
-const packed = packContext({
-  head: [{ role: 'system', content: 'You are helpful.' }],
-  mid: conversationHistory,
-  tail: [{ role: 'user', content: 'Latest message' }],
-  budget,
-});
-// packed.messages, packed.truncated, packed.usage
-```
-
-### harness-one/tools -- Tool System
-
-Define tools with JSON Schema validation, register them in a rate-limited registry, and wire directly to the agent loop.
-
-<!-- noverify -->
-```typescript
-import { defineTool, createRegistry, toolSuccess, toolError } from 'harness-one/tools';
-
-const readFile = defineTool<{ path: string }>({
-  name: 'readFile',
-  description: 'Read a file from disk',
-  parameters: {
-    type: 'object',
-    properties: { path: { type: 'string' } },
-    required: ['path'],
-  },
-  execute: async ({ path }) => {
-    // Your implementation
-    return toolSuccess(`Contents of ${path}`);
-  },
-});
-
-const registry = createRegistry({ maxCallsPerTurn: 10 });
-registry.register(readFile);
-
-// Wire to AgentLoop
-const loop = new AgentLoop({
-  adapter,
-  onToolCall: registry.handler(),
-});
-```
-
-### harness-one/guardrails -- Safety & Guardrails
-
-Pipeline of input/output guardrails with fail-closed semantics, built-in detectors for injection and content filtering, rate limiting, and self-healing retry loops.
-
-The injection detector at `sensitivity: 'medium'` includes base64 payload detection. The Unicode homoglyph scanner covers mathematical alphanumeric lookalikes (U+1D400–U+1D467) in addition to standard confusables. Content analysis on payloads larger than 100 KB uses sliding window analysis rather than truncation so no content is silently skipped. User-supplied regex patterns in `createContentFilter` are validated against ReDoS at construction time. `createPipeline` accepts a `maxResults` option (default **1000**) to cap the number of events retained for bounded memory use. `withGuardrailRetry` uses optimized token estimation internally.
-
-```typescript
-import {
-  createPipeline,
-  createInjectionDetector,
-  createContentFilter,
-  createRateLimiter,
-  runInput,
-  withGuardrailRetry,
-} from 'harness-one/guardrails';
-import type { Guardrail } from 'harness-one/guardrails';
-
-// Pipeline entries are {name, guard, timeoutMs?} objects. Built-in factories
-// already return {name, guard}, so they can be passed directly. For a custom
-// Guardrail function, wrap it with an explicit name. Annotate the function as
-// `Guardrail` so the verdict tagged union resolves (allow | block | modify).
-const customGuard: Guardrail = async (ctx) => ({ action: 'allow' });
-
-const pipeline = createPipeline({
-  input: [
-    createInjectionDetector({ sensitivity: 'medium' }), // includes base64 detection
-    createContentFilter({ blocked: ['password'] }),      // regex validated against ReDoS
-    createRateLimiter({ max: 10, windowMs: 60_000 }),
-    { name: 'custom', guard: customGuard },              // custom guard: wrap in {name, guard}
-  ],
-  failClosed: true,
-  maxResults: 1000,  // default; caps retained events
-});
-
-const result = await runInput(pipeline, { content: userMessage });
-if (!result.passed) {
-  console.log('Blocked:', result.verdict);
-}
-
-// Guardrail retry: regenerate when guardrails block
-const healed = await withGuardrailRetry({
-  guardrails: [createContentFilter({ blocked: ['secret'] })],
-  buildRetryPrompt: (content, failures) => `Rewrite: ${failures[0].reason}`,
-  regenerate: async (prompt) => callLLM(prompt),
-}, initialContent);
-```
-
-#### Auto-wiring in createHarness()
-
-When using `@harness-one/preset`, guardrails are automatically applied inside `harness.run()` — no manual `runInput`/`runOutput` calls required. Each guardrail check also emits a child span on the `harness.run` trace (`guardrail:input`, `guardrail:output`, `guardrail:tool-args`, `guardrail:tool-result`) so blocked requests are auditable post-hoc.
-
-- **Input guardrails** run on every `user` role message before the agent loop starts.
-- **Output guardrails** run on every `assistant` message and every `tool_result` yielded by the loop.
-
-Configure them in `createHarness()`:
-
-```typescript
-import { createHarness } from '@harness-one/preset';
-
-const harness = createHarness({
-  provider: 'anthropic',
-  client: anthropicClient,
-  model: 'claude-sonnet-4-20250514',
-  guardrails: {
-    injection: { sensitivity: 'medium' }, // or true for defaults
-    rateLimit: { max: 10, windowMs: 60_000 },
-    contentFilter: { blocked: ['confidential'] }, // applied to output
-    pii: true,  // auto-wires PII detector; or { redact: true } for redaction mode
-  },
-});
-
-// Guardrails fire automatically — blocked input/output yields an 'error' event
-// Tool call arguments are also validated against input guardrails before execution
-for await (const event of harness.run(messages)) {
-  if (event.type === 'error') console.error('Blocked:', event.error.message);
-  if (event.type === 'message') console.log(event.message.content);
-}
-```
-
-### harness-one/observe -- Observability
-
-Structured tracing with spans and exporters, plus token cost tracking with budget alerts. Trace eviction uses a try-finally guard so the `isEvicting` flag is always released even if an exporter throws.
-
-`costTracker.updateUsage(traceId, partialUsage)` updates the most recent record for a given `traceId` with new token totals for streaming responses — call `recordUsage()` once at the start of the stream, then `updateUsage()` as larger token counts arrive; cost is recomputed from the merged totals.
-
-```typescript
-import {
-  createTraceManager,
-  createConsoleExporter,
-  createCostTracker,
-} from 'harness-one/observe';
-
-const tm = createTraceManager({
-  exporters: [createConsoleExporter({ verbose: false })],
-});
-
-const traceId = tm.startTrace('request', { userId: 'alice' });
-const spanId = tm.startSpan(traceId, 'llm-call');
-tm.setSpanAttributes(spanId, { model: 'claude-3' });
-tm.endSpan(spanId);
-tm.endTrace(traceId);
-
-const costTracker = createCostTracker({
-  pricing: [{ model: 'claude-3', inputPer1kTokens: 0.003, outputPer1kTokens: 0.015 }],
-  budget: 10.0,
-});
-
-costTracker.onAlert((alert) => console.warn(alert.message));
-
-// Streaming: record the initial usage for a traceId, then apply incremental
-// updates as more tokens arrive. updateUsage(traceId, partialUsage) locates
-// the most recent record for that traceId and merges new token counts in,
-// recomputing cost from the merged totals (not a delta).
-costTracker.recordUsage({ traceId, model: 'claude-3', inputTokens: 1000, outputTokens: 0 });
-costTracker.updateUsage(traceId, { outputTokens: 12 });  // per chunk / incremental
-costTracker.updateUsage(traceId, { outputTokens: 500 }); // final total for the stream
-```
-
-### harness-one/session -- Session Management
-
-Session lifecycle with TTL-based expiry, LRU eviction, exclusive locking, and automatic garbage collection. LRU eviction skips sessions that are currently locked (with a safety counter to prevent infinite loops). Auth context stored on a session is deep-frozen recursively, not just at the top level, preventing accidental mutation of nested objects.
-
-```typescript
-import { createSessionManager } from 'harness-one/session';
-
-const sm = createSessionManager({
-  maxSessions: 100,
-  ttlMs: 30 * 60 * 1000,
-});
-
-const session = sm.create({ userId: 'alice' });
-const accessed = sm.access(session.id);
-
-// Exclusive locking for concurrent safety
-// LRU eviction will skip this session until unlocked
-const { unlock } = sm.lock(session.id);
-try {
-  // Critical section
-} finally {
-  unlock();
-}
-
-sm.dispose(); // Clean up GC timer
-```
-
-### harness-one/memory -- Memory & Persistence
-
-Graded memory storage (critical/useful/ephemeral) with compaction, file-system persistence, and cross-context relay for session handoff between agent contexts.
-
-```typescript
-import { createInMemoryStore, createFileSystemStore, createRelay } from 'harness-one/memory';
-
-const store = createInMemoryStore();
-// Or for persistence: createFileSystemStore({ directory: './memory' })
-
-await store.write({
-  key: 'user-pref',
-  content: 'Prefers TypeScript',
-  grade: 'critical',
-  tags: ['preference'],
-  metadata: { sessionId: 'sess_abc123' }, // tag entries with session
-});
-
-// sessionId filter: retrieve only entries belonging to a specific session
-const results = await store.query({ sessionId: 'sess_abc123', limit: 10 });
-await store.compact({ maxEntries: 1000, maxAge: 86400000 });
-
-// Cross-context relay for agent handoff
-const relay = createRelay({ store });
-await relay.save({
-  progress: { step: 3 },
-  artifacts: ['src/index.ts'],
-  checkpoint: 'v1',
-  timestamp: Date.now(),
-});
-```
-
-**Vector stores**: `write()` validates that the dimension of any provided embedding vector matches the store's configured dimension; a `HarnessError` is thrown on mismatch rather than silently storing an incompatible vector.
-
-**File-system store**: `createFileSystemStore` serializes each entry as an individual JSON file. An index file maps keys to IDs. `update()` performs a full read-modify-write cycle inside the index lock for atomicity — partial updates never leave the store in an inconsistent state. Raw I/O is delegated to `fs-io.ts`, keeping the business logic layer testable in isolation.
-
-### @harness-one/devkit -- Evaluation & Validation
-
-Evaluation runner with starter scorers (relevance, faithfulness, length),
-custom scorers, quality gates, generator-evaluator loops, and data-flywheel
-extraction.
-
-```typescript
-import {
-  createEvalRunner,
-  createBasicRelevanceScorer,
-  createBasicFaithfulnessScorer,
-  createBasicLengthScorer,
-  runGeneratorEvaluator,
-  extractNewCases,
-} from '@harness-one/devkit';
-
-const runner = createEvalRunner({
-  scorers: [
-    createBasicRelevanceScorer(),
-    createBasicFaithfulnessScorer(),
-    createBasicLengthScorer({ minTokens: 10, maxTokens: 200 }),
-  ],
-  passThreshold: 0.7,
-  overallPassRate: 0.8,
-});
-
-const report = await runner.run(
-  [{ id: 'q1', input: 'What is TypeScript?' }],
-  async (input) => callLLM(input),
-);
-
-const gate = runner.checkGate(report);
-if (!gate.passed) process.exit(1); // CI quality gate
-
-// Generator-Evaluator pattern
-const result = await runGeneratorEvaluator({
-  generate: async (input) => callLLM(input),
-  evaluate: async (input, output) => ({
-    pass: output.length > 20,
-    feedback: 'Too short',
-  }),
-}, 'Explain closures');
-
-const newCases = extractNewCases(report, { scoreThreshold: 0.5, maxNewCases: 5 });
-```
-
-### @harness-one/devkit + harness-one/evolve-check -- Continuous Evolution
-
-Component registry with model assumptions and retirement conditions, drift
-detection for tracking metric changes, architecture rule enforcement, and
-taste-coding registries for institutional knowledge.
-
-The drift detector supports configurable zero-baseline thresholds so metrics
-that start at zero do not produce false positives. The architecture checker
-uses exact path-segment matching (not substring matching) to avoid false
-positive rule violations. `ValidationResult` includes an
-`unsupportedKeywords` array when a JSON Schema contains keywords the validator
-does not implement. The data flywheel uses length-prefix encoding in its
-hashing scheme to prevent hash collisions across different input shapes.
-Component retirement conditions support AND clauses for multi-condition gates.
-
-```typescript
-import {
-  createComponentRegistry,
-  createDriftDetector,
-  createTasteCodingRegistry,
-} from '@harness-one/devkit';
-import {
-  createArchitectureChecker,
-  noCircularDepsRule,
-  layerDependencyRule,
-} from 'harness-one/evolve-check';
-
-// Track components and their model assumptions
-const registry = createComponentRegistry();
-registry.register({
-  id: 'ctx-packer',
-  name: 'Context Packer',
-  description: 'Packs messages into context window',
-  modelAssumption: 'Models have limited context windows',
-  // DSL expression evaluated against `registry.validate(id, context)`
-  retirementCondition: 'contextWindow > 1000000',
-  createdAt: '2025-01-01',
-});
-
-// Detect metric drift — `zeroBaselineThresholds` keeps tiny deltas from
-// flagging as drift when the baseline is 0 (ratio is undefined there).
-const detector = createDriftDetector({ zeroBaselineThresholds: { low: 1, medium: 10 } });
-detector.setBaseline('ctx-packer', { latencyP50: 12, cacheHitRate: 0.85 });
-const drift = detector.check('ctx-packer', { latencyP50: 18, cacheHitRate: 0.72 });
-
-// Encode postmortem rules as a reviewable rulebook
-const taste = createTasteCodingRegistry();
-taste.addRule({
-  id: 'validate-json-boundaries',
-  pattern: 'JSON.parse(',
-  rule: 'Validate parsed JSON before narrowing it into domain types.',
-  enforcement: 'lint',
-  createdFrom: 'Corrupt persistence payload incident',
-  createdAt: '2025-01-01',
-});
-
-// Enforce architecture rules (exact path-segment matching)
-const checker = createArchitectureChecker();
-checker.addRule(noCircularDepsRule(['core', 'context', 'tools']));
-checker.addRule(layerDependencyRule({
-  core: [],
-  context: ['core'],
-  tools: ['core'],
-}));
-```
-
-### harness-one/orchestration -- Multi-Agent Orchestration
-
-Manage multiple agents with hierarchical or peer-to-peer communication, shared context, delegation strategies, and lifecycle events. Includes AgentPool, Handoff protocol, ContextBoundary, and MessageQueue.
-
-```typescript
-import {
-  createOrchestrator,
-  createBasicRoundRobinStrategy,
-  createAgentPool,
-  createHandoff,
-  createContextBoundary,
-} from 'harness-one/orchestration';
-import { AgentLoop } from 'harness-one/core';
-
-// Orchestrator — agent registration, routing, delegation
-const orch = createOrchestrator({
-  mode: 'hierarchical',
-  strategy: createBasicRoundRobinStrategy(),
-  maxAgents: 10,
-});
-
-orch.register('coordinator', 'Coordinator');
-orch.register('researcher', 'Researcher', { parentId: 'coordinator' });
-
-orch.context.set('topic', 'AI safety');
-orch.send({ from: 'coordinator', to: 'researcher', type: 'request', content: 'Find papers on RLHF' });
-
-// AgentPool — lifecycle management for reusable AgentLoop instances
-const pool = createAgentPool({
-  factory: (role) => new AgentLoop({ adapter }),
-  min: 2,    // keep 2 agents warm
-  max: 10,   // hard cap
-  idleTimeout: 60_000,
-});
-
-const agent = pool.acquire('researcher');
-// ... use agent.loop
-pool.release(agent);
-console.log(pool.stats); // { idle, active, total, created, recycled }
-await pool.drain();      // wait for all active agents to be released
-
-// Handoff — structured inter-agent messaging
-// Accepts any MessageTransport (AgentOrchestrator satisfies this interface)
-const handoff = createHandoff(orch);
-const receipt = handoff.send('coordinator', 'researcher', {
-  summary: 'Research RLHF papers',
-  artifacts: [{ type: 'url', content: 'https://...', label: 'survey' }],
-  acceptanceCriteria: ['At least 5 papers', 'Include 2024 publications'],
-});
-
-const payload = handoff.receive('researcher'); // FIFO dequeue
-const { passed, violations } = handoff.verify(receipt.id, output, myVerifier);
-
-// ContextBoundary — advisory access control on SharedContext
-const boundary = createContextBoundary(orch.context, [
-  { agent: 'planner', allowWrite: ['plan.'], denyWrite: ['config.'] },
-  { agent: 'worker',  allowRead: ['plan.', 'shared.'], denyWrite: ['plan.'] },
-]);
-
-const workerView = boundary.forAgent('worker');
-workerView.get('plan.step');      // allowed
-workerView.set('plan.step', 2);   // throws BOUNDARY_WRITE_DENIED
-```
-
-**MessageTransport interface**: `createHandoff` accepts any object with a `send(message)` method — the full orchestrator, a custom pub/sub channel, or a test double all work equally.
-
-```typescript
-import { createHandoff } from 'harness-one/orchestration';
-import type { MessageTransport } from 'harness-one/orchestration';
-
-const transport: MessageTransport = {
-  send(msg) { myEventBus.publish(msg); },
-};
-const handoff = createHandoff(transport);
-```
-
-### harness-one/rag -- RAG Pipeline
-
-Document loading, chunking, embedding, and retrieval pipeline with built-in strategies, in-memory vector search, deduplication, and token-count estimates on results.
-
-**Loaders** — convert raw data into `Document` objects:
-
-```typescript
-import { createTextLoader, createDocumentArrayLoader } from 'harness-one/rag';
-
-// From string array
-const loader = createTextLoader(['Doc A', 'Doc B'], { source: 'my-corpus' });
-
-// From pre-built Document objects
-const loader2 = createDocumentArrayLoader([
-  { id: 'custom-1', content: 'Pre-built doc', metadata: { version: 2 } },
-]);
-```
-
-**Chunking strategies** — split documents into indexable pieces:
-
-```typescript
-import {
-  createBasicFixedSizeChunking,
-  createBasicParagraphChunking,
-  createBasicSlidingWindowChunking,
-} from 'harness-one/rag';
-
-// Fixed character size with optional overlap
-const fixedChunking = createBasicFixedSizeChunking({ chunkSize: 512, overlap: 64 });
-
-// Split on double newlines; sub-split oversized paragraphs
-const paraChunking = createBasicParagraphChunking({ maxChunkSize: 500 });
-
-// Overlapping sliding windows
-const slidingChunking = createBasicSlidingWindowChunking({ windowSize: 300, stepSize: 150 });
-```
-
-**Full pipeline** — wire all stages together:
-
-```typescript
-import {
-  createTextLoader,
-  createBasicParagraphChunking,
-  createInMemoryRetriever,
-  createRAGPipeline,
-} from 'harness-one/rag';
-
-const pipeline = createRAGPipeline({
-  loader: createTextLoader([
-    'TypeScript is a typed superset of JavaScript.',
-    'Harness engineering builds infrastructure around LLMs.',
-  ]),
-  chunking: createBasicParagraphChunking({ maxChunkSize: 500 }),
-  embedding: myEmbeddingModel,     // implement EmbeddingModel interface
-  retriever: createInMemoryRetriever({ embedding: myEmbeddingModel }),
-  maxChunks: 10_000,               // optional capacity cap
-  onWarning: ({ type, message }) => console.warn(type, message),
-});
-
-// Ingest: load → chunk → deduplicate → embed → index
-const { documents, chunks } = await pipeline.ingest();
-
-// Or ingest pre-loaded documents directly (skips loader step)
-await pipeline.ingestDocuments([{ id: 'd1', content: '...' }]);
-
-// Query: embed query → cosine similarity → top-k
-// Each result includes `tokens` (heuristic: content.length / 4)
-const results = await pipeline.query('What is harness engineering?', { limit: 3 });
-for (const { chunk, score, tokens } of results) {
-  console.log(`[${score.toFixed(2)}] ~${tokens} tokens: ${chunk.content.slice(0, 80)}`);
-}
-```
-
-`RetrievalResult.tokens` gives a token estimate so you can stay within your context budget when injecting retrieved chunks into a prompt.
-
-**Multi-tenant isolation** (SEC-010): use `indexScoped()` and `tenantId` / `scope` options to prevent cross-tenant data leakage:
-
-```typescript
-import { createInMemoryRetriever } from 'harness-one/rag';
-
-const retriever = createInMemoryRetriever({ embedding: myModel });
-await retriever.indexScoped(tenantAChunks, 'tenant-a');
-await retriever.indexScoped(tenantBChunks, 'tenant-b');
-
-// Tenant A only sees their own chunks:
-const results = await retriever.retrieve('query', { tenantId: 'tenant-a', limit: 5 });
-```
-
-## Feature Maturity
-
-Not all features are at the same maturity level. This table clarifies what's production-ready vs. what requires additional work.
-
-| Feature | Maturity | Notes |
-|---------|----------|-------|
-| Agent Loop (core) | Production | Token budget, abort, streaming, tool timeout |
-| Adapters (anthropic, openai) | Production | Full chat + streaming support |
-| Tool System | Production | Schema validation, rate limiting, namespacing |
-| Guardrails Pipeline | Production | Fail-closed, PII detection, injection detection |
-| Self-Healing Guardrails | Production | Retry with exponential backoff |
-| Observability (tracing, spans) | Production | Langfuse, OpenTelemetry exporters |
-| Cost Tracking | Production | Model pricing, budget alerts, auto-stop |
-| Memory System | Production | In-memory, file-system, Redis backends |
-| Session Management | Production | TTL, LRU eviction, locking |
-| Evaluation Framework | Production | Scorers, quality gates, generator-evaluator |
-| RAG Pipeline | Production | Loaders, chunking, in-memory retriever |
-| Prompt Engineering | Production | Builder, registry, skill engine |
-| Context Engineering | Production | Budget, packing, compression, checkpoints |
-| Multi-Agent Orchestration | Production | Agent pool, handoff, context boundaries |
-| Fallback Adapter | Production | Circuit-breaker with mutual exclusion |
-| Circuit Breaker | Production | Prevents cascade failures when LLM provider is down |
-| Graceful Shutdown | Production | SIGTERM/SIGINT → drain → dispose handler |
-| Failure Taxonomy | Monitoring | Classifies failures; requires manual action |
-| Drift Detection | Advisory | Detects metric drift; no auto-remediation |
-| Component Registry | Tracking | Tracks retirement conditions; no CI enforcement |
-| Progressive Disclosure | Manual | Requires explicit `advance()` calls |
-| Context Boundaries | Advisory | Access control is advisory, not enforced |
-| Data Flywheel (eval) | Passive | Extracts low-score cases; manual re-eval |
-| Resilient Loop | New | Outer retry with fresh context (REQ-015) |
-| Dataset Export | New | Trace-to-JSONL for fine-tuning (REQ-018) |
-
-## @harness-one/preset — Batteries Included
-
-> Previously scaffolded as `harness-one-full`. Renamed to
-> `@harness-one/preset` to match the rest of the `@harness-one/*`
-> integration scope. See `.changeset/rename-preset.md` for the
-> rename trail — runtime behavior is unchanged.
-
-`@harness-one/preset` wires all modules and integrations together in a single
-`createHarness()` call. Install it when you want a fully-configured harness
-without writing boilerplate.
-
-```bash
-npm install @harness-one/preset @anthropic-ai/sdk
-```
-
-**Preferred pattern — inject a pre-built adapter** (`AdapterHarnessConfig`):
-
-```typescript
-import { createAnthropicAdapter } from '@harness-one/anthropic';
-import { createHarness } from '@harness-one/preset';
-
-const adapter = createAnthropicAdapter({
-  client: anthropicClient,
-  model: 'claude-sonnet-4-20250514',
-});
-
-const harness = createHarness({
-  adapter,  // no provider/client fields needed
-  maxIterations: 20,
-  guardrails: {
-    injection: { sensitivity: 'medium' },
-    rateLimit: { max: 10, windowMs: 60_000 },
-    pii: true,  // auto-wires PII detector via guardrails.pii config
-  },
-  budget: 5.0,         // REQUIRED for production — see warning below
-  pricing: [{ model: 'claude-sonnet-4-20250514', inputPer1kTokens: 0.003, outputPer1kTokens: 0.015 }],
-});
-```
-
-> **Heads-up**: when `budget` is omitted, `createHarness()` logs a one-time
-> warning — token usage is otherwise unbounded. Always set `budget` in
-> production. Similarly, `harness.run(messages)` without `{ sessionId }`
-> logs a one-time warning: the default `"default"` session is unsafe when
-> multiple concurrent `run()` calls share a harness instance.
-
-**Provider-based shorthand** (still supported):
-
-```typescript
-import Anthropic from '@anthropic-ai/sdk';
-import { createHarness } from '@harness-one/preset';
-
-// HarnessConfig is a discriminated union keyed by `provider`.
-// TypeScript narrows the required `client` field by provider.
-const harness = createHarness({
-  provider: 'anthropic',
-  client: new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }),
-  model: 'claude-sonnet-4-20250514',
-  maxIterations: 20,
-  guardrails: {
-    injection: { sensitivity: 'medium' },
-    rateLimit: { max: 10, windowMs: 60_000 },
-  },
-  budget: 5.0,
-});
-```
-
-**harness.run() auto-wiring**: guardrails fire on every user message (input) and every assistant message + tool result (output). Tool call arguments are also validated against input guardrails before execution. The `AgentLoop` is created internally with `maxConversationMessages: 200` by default, and the shared `traceManager` is passed through so every iteration / tool call / guardrail check shows up as a span in your configured exporter.
-
-```typescript
-harness.tools.register(myTool);
-
-// Always pass a per-request sessionId in multi-tenant servers.
-// Concurrent run() calls to the same session will interleave messages;
-// pass distinct sessionIds to isolate conversation histories.
-for await (const event of harness.run(messages, { sessionId: userId })) {
-  if (event.type === 'message') console.log(event.message.content);
-  if (event.type === 'error') console.error('Blocked:', event.error.message);
-  if (event.type === 'done') break;
-}
-
-// shutdown() allows up to 5 seconds per exporter for graceful flush.
-// flush() / dispose() wait for pending span/trace exports.
-await harness.shutdown();
-```
-
-**Provider variants**:
-
-```typescript
-// OpenAI
-import OpenAI from 'openai';
-import { createHarness } from '@harness-one/preset';
-
-const harness = createHarness({
-  provider: 'openai',
-  client: new OpenAI({ apiKey: process.env.OPENAI_API_KEY }),
-  model: 'gpt-4o',
-});
-```
-
-**Optional integrations** (pass pre-configured clients to enable):
-
-| Field | Type | Effect |
-|-------|------|--------|
-| `langfuse` | `Langfuse` instance | Enables Langfuse trace export and cost tracking; generation detection prioritizes explicit `harness.span.kind` attribute |
-| `redis` | `Redis` instance | Enables Redis-backed persistent memory |
-| `tokenizer` | `'tiktoken'` \| `(text) => number` \| `{ encode }` | Token counting — string enables tiktoken globally; function/object avoids global side-effects |
-
-**Integration package notes**:
-
-- **OpenAI adapter** (`@harness-one/openai`): `stream()` forwards `temperature`, `topP`, and `stopSequences` from `LLMConfig` to the underlying API call.
-- **AJV validator** (`@harness-one/ajv`): async `validate()` awaits format plugin loading before validating, preventing a race condition where format keywords were silently ignored on the first call.
-- **Langfuse** (`@harness-one/langfuse`): span kind detection checks the explicit `harness.span.kind` attribute first before falling back to heuristics.
-- **OpenTelemetry** (`@harness-one/opentelemetry`): when a parent span is evicted from the active-spans map before a child span finishes, the parent's context is preserved for correct child linking.
-
-**Observability auto-wiring**: pass a `traceManager` to `AgentLoop` directly if you need per-iteration and per-tool spans without managing traces manually:
-
-```typescript
-import { createTraceManager, createConsoleExporter } from 'harness-one/observe';
-import { AgentLoop } from 'harness-one/core';
-
-const tm = createTraceManager({ exporters: [createConsoleExporter()] });
-const loop = new AgentLoop({
-  adapter,
-  traceManager: tm, // creates trace on run(), span per iteration, child span per tool call
-});
-```
-
-**No central event bus**: `harness.eventBus` does not exist — each module exposes its own `onEvent()` subscription (sessions, orchestrator, traces); use those for new code.
-
-**AgentLoop class + factory coexist**: both `new AgentLoop(...)` and `createAgentLoop()` are first-class — pick whichever you prefer. The factory form is the style used across the rest of the `createX()` surface.
-
-**Harness.initialize()** — optional warmup that pre-initialises exporters and tokenizers behind an idempotent latch. `harness.run()` still works without it but may pay a cold-start latency on the first call.
-
-**No `/essentials` subpath**: there is no `harness-one/essentials`. Import the symbols you need directly from `harness-one` (root barrel) or the relevant submodule (`harness-one/core`, `harness-one/observe`, …).
-
-**`harness-one/testing` subpath**: mock `AgentAdapter` factories (`createMockAdapter`, `createFailingAdapter`, `createStreamingMockAdapter`, `createErrorStreamingMockAdapter`) live here. `harness-one/advanced` carries only composable production primitives (middleware, resilient-loop, fallback-adapter, SSE, validators, backoff, output parsers, trusted system-message, execution strategies). See [`docs/architecture/17-testing.md`](./docs/architecture/17-testing.md) for the rationale.
-
-**Root barrel is 18 symbols**: the unscoped `harness-one` root re-exports only 18 curated user-journey value symbols. `createSecurePreset` intentionally lives on `@harness-one/preset` (not the root barrel) to avoid a `harness-one` ↔ `@harness-one/preset` dependency cycle. Other factories (`toSSEStream`, `categorizeAdapterError`, …) live on subpaths only. See [`MIGRATION.md`](./MIGRATION.md) + `git log` for the authoritative changelog (`CHANGELOG.md` is intentionally empty pre-release).
-
-**`HarnessErrorCode` is closed and module-prefixed**: `HarnessError.code` is not widened with `(string & {})`; every member is prefixed by module (`CORE_UNKNOWN`, `CORE_MAX_ITERATIONS`, `GUARD_VIOLATION`, etc.). Adapter-specific codes use `HarnessErrorCode.ADAPTER_CUSTOM` + `details.adapterCode`. Always **value-import** (`import { HarnessErrorCode }`) — `import type` silently breaks `Object.values()`; the lint rule `harness-one/no-type-only-harness-error-code` catches this.
-
-**CLI + devkit live in sibling packages**: the CLI ships as [`@harness-one/cli`](./packages/cli) (use `pnpm dlx @harness-one/cli init` or install locally); eval + evolve dev-tooling ships as [`@harness-one/devkit`](./packages/devkit). The runtime architecture-rule engine remains in core under `harness-one/evolve-check`.
-
-**Trust-boundary typing + multi-tenant Redis**: `SystemMessage` carries an optional `_trust` brand minted by `createTrustedSystemMessage()` from `harness-one/core`; restored messages without the brand are downgraded to `user` so a session-store write cannot elevate authority. `RedisStoreConfig.tenantId` is required for multi-tenant deployments (one-shot warn if defaulted) — keys flip to `prefix:{tenantId}:id`. Memory entries enforce a 1 MiB content / 16 KiB metadata cap and reserve `_version`/`_trust` keys. `createContextBoundary` rejects policy prefixes without a trailing `.`/`/`. `HandoffManager.createSendHandle(from)` mints sealed sender handles; payloads cap at 64 KiB / depth 16. Tool schemas declaring `additionalProperties: false` are enforced at runtime. Per-chunk RAG context scanning ships as `runRagContext` from `harness-one/guardrails`.
-
-**Adapter logger + crypto IDs + unref timers**: `@harness-one/anthropic` / `@harness-one/openai` / `@harness-one/ajv` / `@harness-one/redis` route their default logger through core's redaction-enabled `createDefaultLogger()` (never bare `console.warn`). `@harness-one/langfuse` inline warnings flow through `safeWarn`. `harness-one/context` checkpoint IDs use `prefixedSecureId('cp')` (crypto.randomBytes); trace sampling uses `crypto.randomInt`. The `harness-one/infra` `unrefTimeout` / `unrefInterval` helpers replace the ad-hoc `.unref?.()` pattern. `@harness-one/preset` pricing validation rejects NaN/Infinity alongside negatives.
-
-**MetricsPort + lifecycle state machine + AdmissionController**: three vendor-neutral primitives shipping on subpaths.
-
-```ts
-import {
-  createNoopMetricsPort,         // counter / gauge / histogram facade — wire an OTel bridge in your host
-  createHarnessLifecycle,        // init → ready → draining → shutdown + aggregated `health()`
-} from 'harness-one/observe';
-
-import { createAdmissionController } from 'harness-one/infra';
-
-const metrics = createNoopMetricsPort();
-const lifecycle = createHarnessLifecycle();
-lifecycle.registerHealthCheck('adapter', () => ({ status: 'up' }));
-lifecycle.markReady();
-
-const admission = createAdmissionController({ maxInflight: 64, defaultTimeoutMs: 5000 });
-await admission.withPermit('tenant-123', async () => {
-  // adapter call — automatically respects per-tenant inflight cap, fails closed on timeout
-  return harness.run(messages);
-});
-```
-
-
-**AgentLoopHook** — pass an array of hooks in `AgentLoopConfig.hooks` to receive `onIterationStart` / `onToolCall` / `onTokenUsage` / `onIterationEnd` callbacks without subscribing to `AgentEvent`. Hook errors are swallowed through the injected logger and never break the loop.
-
-All auto-configured components can be replaced by passing the explicit override field (`adapter`, `exporters`, `memoryStore`, `schemaValidator`).
-
-## CLI Tool
-
-Scaffold harness-one boilerplate into your project with a single command:
-
-```bash
-npx harness-one init          # Interactive -- choose which modules to scaffold
-npx harness-one init --all    # Generate boilerplate for all available modules
-npx harness-one init --modules core,tools,guardrails
-npx harness-one audit         # Print per-module harness-one usage statistics
-```
-
-The `init` command creates working starter files in a `harness/` directory. The `audit` command scans your codebase for `harness-one/*` imports and reports objective usage statistics (per-module import sites, used/unused counts, and coverage percentage).
+Twelve composable subpaths plus seven sibling packages. The full per-module
+API reference (with code samples for each subpath) is in
+[`docs/modules.md`](./docs/modules.md).
+
+| Subpath / Package | Purpose |
+|---|---|
+| `harness-one/core` | Agent Loop — LLM calling, tool dispatch, safety valves |
+| `harness-one/prompt` | Prompt builder, registry, skill registry, disclosure |
+| `harness-one/context` | Token budgets, packing, compression, cache stability |
+| `harness-one/tools` | `defineTool`, registry, JSON Schema validation, rate limiting |
+| `harness-one/guardrails` | Pipeline, injection detector, content filter, PII detector, rate limiter |
+| `harness-one/observe` | TraceManager, CostTracker, Logger, MetricsPort, lifecycle |
+| `harness-one/session` | TTL + LRU + locking + GC |
+| `harness-one/memory` | In-memory / fs / vector stores + relay |
+| `harness-one/orchestration` | AgentPool, Handoff, ContextBoundary, MessageQueue |
+| `harness-one/rag` | Loaders, chunking, embedding, retriever, RAG pipeline |
+| `harness-one/redact` | Redactor, value sanitization, secret patterns |
+| `harness-one/infra` | AdmissionController, unref timer helpers |
+| `harness-one/evolve-check` | Architecture rule engine (runtime checker) |
+| `harness-one/advanced` | Middleware chain, resilient loop, fallback adapter, SSE, output parsers |
+| `harness-one/testing` | Mock + chaos + cassette adapter factories (test-only) |
+| [`@harness-one/preset`](./packages/preset/) | Batteries-included `createSecurePreset` / `createHarness` |
+| [`@harness-one/devkit`](./packages/devkit/) | Eval runner, scorers, ComponentRegistry, DriftDetector |
+| [`@harness-one/cli`](./packages/cli/) | `harness-one init` / `audit` scaffolder |
+| [`@harness-one/anthropic`](./packages/anthropic/) / [`@harness-one/openai`](./packages/openai/) | Provider adapters |
+| [`@harness-one/ajv`](./packages/ajv/) / [`@harness-one/tiktoken`](./packages/tiktoken/) | SchemaValidator / Tokenizer |
+| [`@harness-one/redis`](./packages/redis/) / [`@harness-one/langfuse`](./packages/langfuse/) / [`@harness-one/opentelemetry`](./packages/opentelemetry/) | MemoryStore / TraceExporter |
+
+## Showcases
+
+Four runnable demos that exercise harness-one end-to-end. The first drives a
+real GitHub repo every day; the others run deterministically under
+`examples:smoke` (no API key required) so you can read them first and wire a
+real adapter after.
+
+| Showcase | File | What it proves |
+|---|---|---|
+| Issue Triage Bot (dogfood) | [`apps/dogfood/`](./apps/dogfood/) | `createSecurePreset` + tools + guardrails running on every new issue in this repo. Reports land in `dogfood-reports/`. |
+| Codebase Q&A with citations | [`examples/showcases/codebase-qa.ts`](./examples/showcases/codebase-qa.ts) | RAG pipeline + fail-closed guardrail scanning every retrieved chunk + `file:line` citations. |
+| Autoresearch (Ralph-style) | [`examples/showcases/autoresearch-loop.ts`](./examples/showcases/autoresearch-loop.ts) | Confidence-gated loop with primary-search failure → exponential backoff → fallback adapter. |
+| Evolve-check audit | [`examples/showcases/evolve-check-demo.ts`](./examples/showcases/evolve-check-demo.ts) | `ComponentRegistry` + `DriftDetector` + `TasteCodingRegistry` composed into one "code keeps being right" pass. |
 
 ## Architecture
 
@@ -1093,6 +200,8 @@ Dependency rules (enforced by `harness-one/evolve-check`):
 - **Immutable data** -- `Object.freeze()` on all returned structures to prevent accidental mutation
 - **Zero dependencies** -- pure TypeScript with only `node:fs`, `node:path`, and `node:readline` for the CLI
 
+The full set of accepted ADRs lives in [`docs/adr/`](./docs/adr/).
+
 ## 12+ Layer Reference Architecture
 
 | Layer | Module | Purpose |
@@ -1109,6 +218,20 @@ Dependency rules (enforced by `harness-one/evolve-check`):
 | 10. Evolution | `@harness-one/devkit` + `harness-one/evolve-check` | Component registry, drift detection (devkit) + architecture rules (core) |
 | 11. Multi-Agent Orchestration | `orchestration` | AgentPool, Handoff (sealed `SendHandle` + 64 KiB cap), MessageTransport, ContextBoundary (segment-aware), MessageQueue |
 | 12. RAG Pipeline | `rag` + `runRagContext` | Document loading, chunking, embedding, retrieval, token estimates, per-chunk guardrail scanning |
+
+For per-feature maturity (Production / Monitoring / Advisory / etc.), see
+[`docs/feature-maturity.md`](./docs/feature-maturity.md).
+
+## CLI
+
+Scaffold harness-one boilerplate or audit existing usage:
+
+```bash
+npx harness-one init --modules core,tools,guardrails    # scaffold starter files
+npx harness-one audit                                    # print per-module usage stats
+```
+
+Full command reference: [`packages/cli/README.md`](./packages/cli/README.md).
 
 ## Troubleshooting
 
@@ -1157,26 +280,15 @@ Supporting material — all reviewable in-repo:
 - [`docs/adr/`](./docs/adr/) — Architecture Decision Records (ADR-0001 through ADR-0010, MADR 4.0 format).
 - [`docs/testing-plan.md`](./docs/testing-plan.md) + [`docs/testing-plan/`](./docs/testing-plan/) — 16-track testing blueprint; each workflow above is owned by a track.
 
-## Showcases
-
-Four runnable demos that exercise harness-one end-to-end. The first drives a
-real GitHub repo every day; the others run deterministically under
-`examples:smoke` (no API key required) so you can read them first and wire a
-real adapter after.
-
-| Showcase | File | What it proves |
-|---|---|---|
-| Issue Triage Bot (dogfood) | [`apps/dogfood/`](./apps/dogfood/) | `createSecurePreset` + tools + guardrails running on every new issue in this repo. Reports land in `dogfood-reports/`. |
-| Codebase Q&A with citations | [`examples/showcases/codebase-qa.ts`](./examples/showcases/codebase-qa.ts) | RAG pipeline + fail-closed guardrail scanning every retrieved chunk + `file:line` citations. |
-| Autoresearch (Ralph-style) | [`examples/showcases/autoresearch-loop.ts`](./examples/showcases/autoresearch-loop.ts) | Confidence-gated loop with primary-search failure → exponential backoff → fallback adapter. |
-| Evolve-check audit | [`examples/showcases/evolve-check-demo.ts`](./examples/showcases/evolve-check-demo.ts) | `ComponentRegistry` + `DriftDetector` + `TasteCodingRegistry` composed into one "code keeps being right" pass. |
-
 ## Docs
 
 Start here:
 
 | Topic | File |
 |-------|------|
+| Per-module public API reference | [`docs/modules.md`](./docs/modules.md) |
+| Import-path cheatsheet | [`docs/guides/import-paths.md`](./docs/guides/import-paths.md) |
+| Feature maturity matrix | [`docs/feature-maturity.md`](./docs/feature-maturity.md) |
 | Architecture mental model | [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) |
 | Per-module architecture (01-17) | [`docs/architecture/00-overview.md`](./docs/architecture/00-overview.md) |
 | Testing layers (unit → chaos → fuzz) | [`docs/architecture/17-testing.md`](./docs/architecture/17-testing.md) |
@@ -1206,7 +318,7 @@ harness-one is a `pnpm` monorepo. `npm` / `yarn` will not work — the
 to resolve internal `workspace:*` links.
 
 ```bash
-# Prerequisites: Node >= 18 (20 LTS recommended), pnpm >= 9.
+# Prerequisites: Node >= 20, pnpm >= 9.
 corepack enable             # or: npm i -g pnpm@9
 
 pnpm install                # workspace install (frozen lockfile on CI)
@@ -1232,4 +344,4 @@ pnpm docs:api                                    # TypeDoc public-API report
 
 ## License
 
-MIT
+Apache-2.0. See [`LICENSE`](./LICENSE) and [`NOTICE`](./NOTICE).

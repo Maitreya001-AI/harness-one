@@ -84,6 +84,51 @@ describe('AgentLoop guardrail integration', () => {
     expect(guardrailWarns[0][0]).toMatch(/no guardrail pipeline/i);
   });
 
+  it('suppresses no-pipeline warning when guardrailsManagedExternally=true (wrapper opt-in)', async () => {
+    // Wrapper-layer opt-in (e.g. createSecurePreset runs the pipeline around
+    // harness.run() instead of threading it into AgentLoop). The warning
+    // targets DIRECT callers; suppressing it here matches the contract on
+    // `AgentLoopConfig.guardrailsManagedExternally`.
+    const { adapter } = adapterFromResponses([
+      { message: { role: 'assistant', content: 'ok' }, usage: USAGE },
+    ]);
+    const warn = vi.fn();
+    const loop = createAgentLoop({
+      adapter,
+      logger: { warn },
+      guardrailsManagedExternally: true,
+    });
+
+    await drain(loop.run([{ role: 'user', content: 'hi' }]));
+
+    const guardrailWarns = warn.mock.calls.filter((c) =>
+      typeof c[0] === 'string' && /no guardrail pipeline/i.test(c[0]),
+    );
+    expect(guardrailWarns).toHaveLength(0);
+  });
+
+  it('still warns when guardrailsManagedExternally=false (default; safety alert preserved)', async () => {
+    // Explicit-false must behave identically to "field omitted" — the
+    // fail-closed default of warning on naked AgentLoop callers must not
+    // be silently lost on a typo or refactor.
+    const { adapter } = adapterFromResponses([
+      { message: { role: 'assistant', content: 'ok' }, usage: USAGE },
+    ]);
+    const warn = vi.fn();
+    const loop = createAgentLoop({
+      adapter,
+      logger: { warn },
+      guardrailsManagedExternally: false,
+    });
+
+    await drain(loop.run([{ role: 'user', content: 'hi' }]));
+
+    const guardrailWarns = warn.mock.calls.filter((c) =>
+      typeof c[0] === 'string' && /no guardrail pipeline/i.test(c[0]),
+    );
+    expect(guardrailWarns).toHaveLength(1);
+  });
+
   it('inputPipeline hard-block yields guardrail_blocked + error and skips adapter', async () => {
     const { adapter, calls } = adapterFromResponses([
       { message: { role: 'assistant', content: 'should not run' }, usage: USAGE },

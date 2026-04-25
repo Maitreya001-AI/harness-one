@@ -247,4 +247,20 @@ export interface AgentLoopConfig {
    *     `guardrail_blocked` + `error` pair (see `inputPipeline`).
    */
   readonly outputPipeline?: GuardrailPipeline;
+  /**
+   * Wrapper-layer opt-in. Set to `true` when an enclosing harness
+   * (e.g. `createSecurePreset` from `@harness-one/preset`) executes the
+   * guardrail pipeline at its own boundary — i.e. around `harness.run()` —
+   * rather than threading the pipeline through `inputPipeline` / `outputPipeline`.
+   *
+   * Effect: suppresses the one-time "AgentLoop has no guardrail pipeline —
+   * security risk" warning. **No other behaviour changes.** The AgentLoop
+   * still does not run guardrails itself; this flag is a contract declaration,
+   * not an enable switch.
+   *
+   * Default: `false`. Direct callers of `createAgentLoop` MUST NOT set this
+   * unless they truly run guardrails at a wrapping layer — otherwise they
+   * silence a fail-closed safety alert with no replacement protection.
+   */
+  readonly guardrailsManagedExternally?: boolean;
 }

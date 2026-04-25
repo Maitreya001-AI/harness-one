@@ -45,6 +45,12 @@ Set `DOGFOOD_DRY_RUN=1` to skip the comment POST — the report is still
 written. Set `DOGFOOD_MOCK=1` to replace the Anthropic adapter with a
 deterministic fixture adapter (used by tests + CI smoke).
 
+`DOGFOOD_BUDGET_USD` (default `0.50`) hard-caps per-run inference spend.
+A typical sonnet triage costs ≤ $0.05; the default leaves 10× headroom
+while failing fast on a runaway tool-loop or attacker-crafted issue
+that tries to amplify token usage. Setting `DOGFOOD_BUDGET_USD=0` is
+rejected — the dogfood agent never runs without a budget.
+
 ## Why not Octokit?
 
 We deliberately shell out to `gh` CLI instead of importing Octokit. Two

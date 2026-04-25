@@ -50,6 +50,38 @@ release, then be removed in the following major.
 Breaking + observable changes that downstream consumers on a SHA-pinned
 build should know about:
 
+- **`packages/core/vitest.config.ts` pins `fakeTimers.toFake`** to the
+  safe minimal set (`setTimeout`, `clearTimeout`, `setInterval`,
+  `clearInterval`, `Date`, `performance`). vitest 4 expanded the default
+  `useFakeTimers()` set to also mock `setImmediate` / `queueMicrotask`
+  / `nextTick`, which collides with vitest's own internal hook
+  scheduling and made every fake-timer-based suite (rate-limiter,
+  session GC, circuit breaker, agent-pool, etc.) hang in `afterEach`
+  with "Hook timed out in 10000ms". This pin restores 51 tests to
+  green across 4 files. Tests that genuinely need to fake those types
+  must override `toFake` at the call site.
+- **`apps/dogfood` enforces a per-run USD budget** (`DOGFOOD_BUDGET_USD`,
+  default `0.50`). The triage harness was previously built without a
+  cost budget, leaving inference spend uncapped on a runaway tool-loop
+  or attacker-crafted issue. The dogfood agent — Layer 9 of the testing
+  blueprint — surfaced this gap as a "no cost budget configured"
+  warning on every run.
+- **`AgentLoopConfig.guardrailsManagedExternally?: boolean`** added.
+  Wrapper-layer opt-in: when `true`, suppresses the one-time "AgentLoop has
+  no guardrail pipeline — security risk" warning. `createSecurePreset` /
+  `createHarness` now set this to `true` internally because they run the
+  guardrail pipeline around `harness.run()` rather than threading it into
+  the inner AgentLoop (see README §"Auto-wiring in createHarness()"). For
+  preset users this fixes a false-positive warning that previously fired
+  on every `harness.run()` call telling them to "use createSecurePreset"
+  — which they already were.
+
+  Behaviour for direct `createAgentLoop` callers is unchanged: omitting
+  the field (or setting `false`) preserves the fail-closed safety alert.
+  The field is opt-in; setting it to `true` without an external wrapper
+  silences a security signal with no replacement, so direct callers
+  MUST NOT set it unless an enclosing harness genuinely runs guardrails
+  at its boundary.
 - **`apps/*` is now a pnpm workspace glob.** Consumers running
   `pnpm -r <cmd>` at the repo root will now include `apps/dogfood` in the
   iteration set. This is intentional — the dogfood agent is part of the

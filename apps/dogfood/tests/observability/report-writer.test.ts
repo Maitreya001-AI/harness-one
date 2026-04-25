@@ -23,7 +23,10 @@ describe('writeRunReport', () => {
   it('writes a pretty-printed JSON file under runs/<date>/<issue>.json', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dogfood-reports-'));
     const path = await writeRunReport(root, BASE);
-    expect(path.endsWith('runs/2026-04-24/10.json')).toBe(true);
+    // Use `path.join` so the expected suffix tracks the platform separator.
+    // On Windows, `endsWith('runs/2026-04-24/10.json')` is always false
+    // because the real path uses `\` separators.
+    expect(path.endsWith(join('runs', '2026-04-24', '10.json'))).toBe(true);
     const content = await readFile(path, 'utf8');
     expect(content.endsWith('\n')).toBe(true);
     const parsed = JSON.parse(content) as RunReport;

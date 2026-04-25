@@ -22,6 +22,20 @@ Node 18+. Depends on `harness-one` (regular dependency; not peer) so the CLI res
 - **`harness-one audit`** — scan a project directory for `harness-one/*` imports and print per-module import-site counts plus used/unused coverage.
 - **`harness-one help [<topic>]`** — interactive module documentation browser. No network calls; everything ships with the binary.
 
+## Examples
+
+```bash
+npx harness-one init                        # interactive — choose which modules to scaffold
+npx harness-one init --all                  # generate boilerplate for all available modules
+npx harness-one init --modules core,tools,guardrails
+npx harness-one audit                       # print per-module harness-one usage statistics
+```
+
+The `init` command creates working starter files in a `harness/`
+directory. The `audit` command scans your codebase for `harness-one/*`
+imports and reports objective usage statistics (per-module import sites,
+used/unused counts, and coverage percentage).
+
 ## Programmatic API
 
 The package also exports the parser + template registry for tools that want to embed the same scaffolding logic without shelling out to `harness-one init`.
