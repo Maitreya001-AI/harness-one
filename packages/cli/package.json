@@ -1,6 +1,6 @@
 {
   "name": "@harness-one/cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "CLI scaffolding + audit tool for harness-one",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -19,7 +19,9 @@
   "files": [
     "dist"
   ],
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "sideEffects": false,
   "scripts": {
     "build": "tsup",

@@ -1,6 +1,6 @@
 {
   "name": "@harness-one/tiktoken",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Tiktoken tokenizer integration for harness-one",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -13,8 +13,12 @@
       "require": "./dist/index.cjs"
     }
   },
-  "files": ["dist"],
-  "engines": { "node": ">=22" },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
   "sideEffects": false,
   "scripts": {
     "build": "tsup",
@@ -36,7 +40,13 @@
   },
   "license": "MIT",
   "author": "harness-one contributors",
-  "keywords": ["tiktoken", "tokenizer", "token-counting", "ai", "adapter"],
+  "keywords": [
+    "tiktoken",
+    "tokenizer",
+    "token-counting",
+    "ai",
+    "adapter"
+  ],
   "publishConfig": {
     "access": "public",
     "provenance": true

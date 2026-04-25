@@ -1,6 +1,6 @@
 {
   "name": "@harness-one/opentelemetry",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "OpenTelemetry trace exporter for harness-one",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -13,8 +13,12 @@
       "require": "./dist/index.cjs"
     }
   },
-  "files": ["dist"],
-  "engines": { "node": ">=22" },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
   "sideEffects": false,
   "scripts": {
     "build": "tsup",
@@ -36,7 +40,13 @@
   },
   "license": "MIT",
   "author": "harness-one contributors",
-  "keywords": ["opentelemetry", "tracing", "observability", "ai", "adapter"],
+  "keywords": [
+    "opentelemetry",
+    "tracing",
+    "observability",
+    "ai",
+    "adapter"
+  ],
   "publishConfig": {
     "access": "public",
     "provenance": true
