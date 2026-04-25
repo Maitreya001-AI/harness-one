@@ -144,7 +144,8 @@ await harness.shutdown();
 
 ## 核心设计决策
 
-> 项目仍为 pre-release（所有包 `0.1.0`，未发 npm）。完整破坏性变更见
+> 项目仍为 pre-release（`0.x` — 任何 minor bump 都可能 break）。当前已发布版本以
+> `npm view harness-one version` 为准，其余 workspace 包跟随同步；完整破坏性变更见
 > [`MIGRATION.md`](./MIGRATION.md) 的 Unreleased 段与 `git log`。
 
 ### 包边界与 API 收口
@@ -272,7 +273,6 @@ harness-one 的质量承诺全部写进 `.github/workflows/`，总计 15 个 CI 
 - [`.github/CODEOWNERS`](./.github/CODEOWNERS)——按 path 自动请审。
 - [`docs/security/`](./docs/security/)——每个 L3 子系统一份 STRIDE 威胁模型 + OpenSSF Best Practices 自评（项目 ID `12635`，passing 级通过）。
 - [`docs/adr/`](./docs/adr/)——10 份 MADR 4.0 格式的架构决策记录。
-- [`docs/testing-plan.md`](./docs/testing-plan.md) + [`docs/testing-plan/`](./docs/testing-plan/)——16 个 Track 的可执行落地 prompt，每个 CI workflow 背后对应一个 Track。
 
 ## Showcases
 
@@ -332,7 +332,6 @@ harness-one 的质量承诺全部写进 `.github/workflows/`，总计 15 个 CI 
 |------|------|
 | [docs/adr/](./docs/adr/) | 10 份 ADR（ADR-0001..ADR-0010），MADR 4.0 格式 |
 | [docs/security/](./docs/security/) | 每个 L3 子系统的 STRIDE 威胁模型 + OpenSSF Best Practices 自评 |
-| [docs/testing-plan.md](./docs/testing-plan.md) + [docs/testing-plan/](./docs/testing-plan/) | 16 条 Track 的并行落地计划（A-P） |
 
 ### 规范与 runbook
 

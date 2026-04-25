@@ -40,8 +40,9 @@ one that matches how much control you need:
 `createSecurePreset` is not the only production path. Use it when its defaults
 match your deployment; drop to `createHarness` or raw primitives when they do not.
 
-All packages are pre-release (`0.1.0`, not yet on npm); pin by SHA if you
-need stability.
+All packages are pre-release (`0.x` — every minor bump may break). The
+canonical published version is whatever `npm view harness-one version`
+returns; every other workspace package is fixed-version with it.
 
 ### Install
 
@@ -278,7 +279,6 @@ Supporting material — all reviewable in-repo:
 - [`.github/CODEOWNERS`](./.github/CODEOWNERS) — review routing per package.
 - [`docs/security/`](./docs/security/) — STRIDE threat models per subsystem (`core`, `prompt`, `context`, `tools`, `guardrails`, `observe`, `session`, `memory`, `rag`, `redact`) plus the OpenSSF Best Practices self-assessment.
 - [`docs/adr/`](./docs/adr/) — Architecture Decision Records (ADR-0001 through ADR-0010, MADR 4.0 format).
-- [`docs/testing-plan.md`](./docs/testing-plan.md) + [`docs/testing-plan/`](./docs/testing-plan/) — 16-track testing blueprint; each workflow above is owned by a track.
 
 ## Docs
 

@@ -54,13 +54,11 @@ Each individual package also supports these scripts scoped to its own source.
 
 ### Testing Conventions
 
-The full testing strategy — unit / integration / conformance / property
-tests, coverage gates, the RAG conformance harness, and how each package
-layers on top — is documented in
-[`docs/testing-plan.md`](./docs/testing-plan.md) (with per-track detail
-under `docs/testing-plan/`). Read the relevant track before adding new
-test files so your additions slot into the existing matrix instead of
-duplicating it.
+Tests live next to their subjects under `packages/*/src/**/__tests__`,
+with cross-cutting suites (integration, contract, chaos, perf,
+property-based) under `packages/core/tests/`. Read existing tests in
+the area you're touching before adding new files so your additions
+slot into the matrix instead of duplicating it.
 
 Near-100% coverage is the bar. PRs that drop coverage on `packages/core`
 will be blocked by CI.

@@ -1,0 +1,64 @@
+name: Version Packages
+
+# Manages the "Version Packages" pull request lane via @changesets/action.
+#
+# Two modes, both decided by what's in `.changeset/`:
+#   1. Pending changesets present → opens or updates a "Version Packages"
+#      PR with version bumps + changelog entries. The PR is rebased on
+#      every push to main, so contributors only ever see one open PR.
+#   2. No pending changesets → no-op (action exits cleanly).
+#
+# The action does NOT run npm publish here. Actual publishing is owned
+# by `release.yml`, which fires on `release: published` and uses OIDC
+# trusted publishing + SLSA provenance per docs/release.md. After the
+# maintainer merges the Version Packages PR, they cut a GitHub Release
+# (`gh release create v<x.y.z> --generate-notes`) which fires that
+# canonical publish lane.
+
+on:
+  push:
+    branches: [main]
+
+# Top-level least-privilege; the version-pr job opts up to write where
+# changesets/action needs to push the branch and open the PR.
+permissions:
+  contents: read
+
+jobs:
+  version-pr:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          # changesets/action reads the existing tags + git log to compute
+          # version bumps and to detect when no pending changesets remain.
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@903f9c1a6ebcba6cf41d87230be49611ac97822e # v6.0.3
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Open / update Version Packages PR
+        uses: changesets/action@e0145edc7d9d8679003495b11f87bd8ef63c0cba # v1.5.3
+        with:
+          # `version` is the only command we wire. `publish` is intentionally
+          # left empty so this workflow stays a *version-PR-only* lane: the
+          # OIDC + SLSA + provenance publish happens exclusively in
+          # release.yml when a GitHub Release is published. Wiring publish
+          # here would split the publish surface across two workflows and
+          # bypass the trusted-publisher record that's bound to release.yml.
+          version: pnpm exec changeset version
+          commit: 'chore: version packages'
+          title: 'chore: version packages'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -13,7 +13,7 @@
  *   - UPDATE_BASELINE=1             → skip the gate, overwrite baseline.json
  *
  * Only Ubuntu + Node 20 numbers are committed to baseline.json; other
- * platforms show a table but exit 0 (see `docs/testing-plan/perf-baseline.md`).
+ * platforms show a table but exit 0.
  *
  * @module
  */

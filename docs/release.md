@@ -23,10 +23,11 @@ and is a deliberate, out-of-band step.
 
 1. **Accumulate changesets.** Contributors run `pnpm changeset` as
    part of any user-visible PR. Changesets land on `main`.
-2. **Version bump PR.** `@changesets/cli` is configured in
-   `.changeset/config.json`; when it's run locally (or via a future
-   changesets GitHub Action) it opens a "Version Packages" PR that
-   consumes the pending changesets.
+2. **Version bump PR.** `.github/workflows/version-packages.yml` runs
+   on every push to `main`; when pending `.changeset/*.md` files exist
+   it opens (or updates) a "Version Packages" PR via
+   [`changesets/action`](https://github.com/changesets/action). The PR
+   contains the proposed version bumps + changelog inserts.
 3. **Merge the version PR.** Versions bump, CHANGELOG entries land,
    git tags get cut.
 4. **Cut a GitHub Release.** `gh release create v<x.y.z> --generate-notes`
