@@ -50,7 +50,7 @@ export type AgentEvent = {
     error: HarnessError | Error;
 } | {
     type: 'guardrail_blocked';
-    phase: 'input' | 'tool_output' | 'output';
+    phase: 'input' | 'tool_args' | 'tool_output' | 'output';
     guardName: string;
     details?: unknown;
 } | {
@@ -1694,7 +1694,7 @@ export interface VectorSearchOptions {
 // dist/cost-tracker-IqVhfrMb.d.ts:742:5 - (ae-forgotten-export) The symbol "EvictionStrategyName" needs to be exported by the entry point index.d.ts
 // dist/cost-tracker-IqVhfrMb.d.ts:742:5 - (ae-forgotten-export) The symbol "EvictionStrategy" needs to be exported by the entry point index.d.ts
 // dist/pipeline-CZkrsTUe.d.ts:45:5 - (ae-forgotten-export) The symbol "GuardrailEvent" needs to be exported by the entry point index.d.ts
-// dist/resilience-Cb2kYg6U.d.ts:64:5 - (ae-forgotten-export) The symbol "MiddlewareContext" needs to be exported by the entry point index.d.ts
+// dist/resilience-DFiMtlx0.d.ts:64:5 - (ae-forgotten-export) The symbol "MiddlewareContext" needs to be exported by the entry point index.d.ts
 // dist/session/index.d.ts:162:5 - (ae-forgotten-export) The symbol "SessionStore" needs to be exported by the entry point index.d.ts
 // dist/session/index.d.ts:163:9 - (ae-forgotten-export) The symbol "SessionId" needs to be exported by the entry point index.d.ts
 

@@ -157,6 +157,111 @@ describe('AgentLoop guardrail integration', () => {
     expect(done?.reason).toBe('error');
   });
 
+  it('inputPipeline targeted at tool args (not user input) blocks at tool_args phase', async () => {
+    // Closes the asymmetry where direct AgentLoop callers got user-message
+    // input validation but not tool-arg validation. Preset users were
+    // already covered by the wrapper at harness.run(); this brings naked
+    // AgentLoop callers up to parity. The tool_call event MUST NOT be
+    // yielded — consumers should never see a tool_call that was blocked
+    // by its own arguments.
+    const tc = { id: 't1', name: 'shell_exec', arguments: '{"cmd":"DROP TABLE users"}' };
+    const { adapter, calls } = adapterFromResponses([
+      { message: { role: 'assistant', content: '', toolCalls: [tc] }, usage: USAGE },
+    ]);
+    // Targeted guard: only blocks when content contains "DROP TABLE", which
+    // is in tool args, not in user message. So input phase passes, tool_args
+    // phase blocks.
+    const marker = 'DROP TABLE';
+    const targetedGuard: Guardrail = (ctx) =>
+      typeof ctx.content === 'string' && ctx.content.includes(marker)
+        ? { action: 'block', reason: 'destructive sql' }
+        : { action: 'allow' };
+    const pipeline = createPipeline({ input: [{ name: 'sql-scan', guard: targetedGuard }] });
+    const onToolCall = vi.fn(async () => 'should not run');
+    const loop = createAgentLoop({
+      adapter,
+      inputPipeline: pipeline,
+      onToolCall,
+    });
+
+    const events = await drain(loop.run([{ role: 'user', content: 'list users' }]));
+
+    // The adapter WAS called (input phase passed, then tool_call came back).
+    expect(calls).toHaveLength(1);
+    // The tool was NOT executed (tool_args phase blocked before yield).
+    expect(onToolCall).not.toHaveBeenCalled();
+
+    // No tool_call event was yielded.
+    const toolCallEvents = events.filter((e) => e.type === 'tool_call');
+    expect(toolCallEvents).toHaveLength(0);
+
+    // A guardrail_blocked event with phase 'tool_args' was emitted, with
+    // toolName + toolCallId in details.
+    const blocked = events.find(
+      (e): e is Extract<AgentEvent, { type: 'guardrail_blocked' }> => e.type === 'guardrail_blocked',
+    );
+    expect(blocked).toBeDefined();
+    expect(blocked?.phase).toBe('tool_args');
+    expect(blocked?.guardName).toBe('sql-scan');
+    const details = blocked?.details as { toolCallId: string; toolName: string; reason: string };
+    expect(details.toolCallId).toBe('t1');
+    expect(details.toolName).toBe('shell_exec');
+
+    // Followed by an error event with GUARD_VIOLATION.
+    const err = events.find((e): e is Extract<AgentEvent, { type: 'error' }> => e.type === 'error');
+    expect(err).toBeDefined();
+    expect((err!.error as HarnessError).code).toBe(HarnessErrorCode.GUARD_VIOLATION);
+
+    // Loop terminated with reason 'error'.
+    const done = events.find((e): e is Extract<AgentEvent, { type: 'done' }> => e.type === 'done');
+    expect(done?.reason).toBe('error');
+  });
+
+  it('inputPipeline that allows tool args yields tool_call normally (no false positives)', async () => {
+    const tc = { id: 't2', name: 'list_files', arguments: '{"path":"/safe/dir"}' };
+    const { adapter } = adapterFromResponses([
+      { message: { role: 'assistant', content: '', toolCalls: [tc] }, usage: USAGE },
+      { message: { role: 'assistant', content: 'done' }, usage: USAGE },
+    ]);
+    // Allow-all input pipeline. Tool args should pass through unchanged.
+    const allowAll: Guardrail = () => ({ action: 'allow' });
+    const pipeline = createPipeline({ input: [{ name: 'allow', guard: allowAll }] });
+    const onToolCall = vi.fn(async () => 'ok');
+    const loop = createAgentLoop({
+      adapter,
+      inputPipeline: pipeline,
+      onToolCall,
+    });
+
+    const events = await drain(loop.run([{ role: 'user', content: 'list it' }]));
+
+    expect(onToolCall).toHaveBeenCalledTimes(1);
+    const toolCallEvents = events.filter((e) => e.type === 'tool_call');
+    expect(toolCallEvents).toHaveLength(1);
+    const blocked = events.find((e) => e.type === 'guardrail_blocked');
+    expect(blocked).toBeUndefined();
+  });
+
+  it('no inputPipeline configured → no tool_args check (preserves naked-AgentLoop behavior)', async () => {
+    // Critical: when inputPipeline is unset, the new tool_args path must be
+    // a no-op. Otherwise we'd silently block users who never opted into
+    // any guardrail. The "no pipeline" warning still fires (existing
+    // contract) but tool execution must proceed unchanged.
+    const tc = { id: 't3', name: 'echo', arguments: '{"text":"anything"}' };
+    const { adapter } = adapterFromResponses([
+      { message: { role: 'assistant', content: '', toolCalls: [tc] }, usage: USAGE },
+      { message: { role: 'assistant', content: 'done' }, usage: USAGE },
+    ]);
+    const onToolCall = vi.fn(async () => 'ok');
+    const loop = createAgentLoop({ adapter, onToolCall });
+
+    const events = await drain(loop.run([{ role: 'user', content: 'echo' }]));
+
+    expect(onToolCall).toHaveBeenCalledTimes(1);
+    expect(events.filter((e) => e.type === 'tool_call')).toHaveLength(1);
+    expect(events.find((e) => e.type === 'guardrail_blocked')).toBeUndefined();
+  });
+
   it('outputPipeline.runToolOutput hard-block rewrites tool result to stub and continues', async () => {
     const tc = { id: 't1', name: 'danger', arguments: '{}' };
     const { adapter, calls } = adapterFromResponses([

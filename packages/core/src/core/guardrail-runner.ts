@@ -93,6 +93,67 @@ export async function runInputGuardrail(
 }
 
 /**
+ * Run the input pipeline against a tool call's serialised arguments.
+ *
+ * Called once per tool_call BEFORE the runner yields the `tool_call` event
+ * and BEFORE any tool side-effect runs. Closes the asymmetry where direct
+ * `createAgentLoop` users with an input pipeline previously got
+ * user-message validation but not tool-arg validation. Preset users are
+ * unaffected because the preset does not pass `inputPipeline` to the inner
+ * AgentLoop (it manages all guardrail phases at the `harness.run()`
+ * boundary instead).
+ *
+ * Returns `{ kind: 'passed' }` when the pipeline is absent — the runner
+ * proceeds to yield the `tool_call` event. A `block` verdict mirrors
+ * `runInputGuardrail`: emit `guardrail_blocked` (phase `'tool_args'`) +
+ * `error` (`HarnessErrorCode.GUARD_VIOLATION`), abort upstream, bail the
+ * iteration. The `tool_call` event is NOT yielded — consumers never see
+ * a tool_call that was blocked by its own arguments.
+ *
+ * Note on rate-limit-style guardrails: this check counts as one
+ * additional pipeline run per tool_call. If `inputPipeline` includes a
+ * rate-limiter, the limiter will see N+M increments per iteration where
+ * N is user-message increments (today) and M is tool-call count. Lift
+ * the rate-limiter out of `inputPipeline` (or use a wrapping retry/
+ * backoff layer) if this is undesirable.
+ */
+export async function runToolArgsGuardrail(
+  argContent: string,
+  toolName: string | undefined,
+  toolCallId: string,
+  pipeline: GuardrailPipeline | undefined,
+): Promise<TextGuardrailOutcome> {
+  if (!pipeline) return { kind: 'passed' };
+
+  const result = await pipeline.runInput({ content: argContent });
+  if (result.passed || result.verdict.action !== 'block') return { kind: 'passed' };
+
+  const guardName = pickBlockingGuardName(result, 'input');
+  const reason = result.verdict.reason;
+  return {
+    kind: 'blocked',
+    guardrailEvent: {
+      type: 'guardrail_blocked',
+      phase: 'tool_args',
+      guardName,
+      details: {
+        toolCallId,
+        ...(toolName !== undefined ? { toolName } : {}),
+        reason,
+      },
+    },
+    errorEvent: {
+      type: 'error',
+      error: new HarnessError(
+        `guardrail "${guardName}" blocked tool arguments — ${reason}`,
+        HarnessErrorCode.GUARD_VIOLATION,
+        'Review the input pipeline and the tool-call arguments emitted by the model',
+      ),
+    },
+  };
+}
+
+/**
  * Run the output pipeline against the model's final (no-tool-calls) response
  * content. Same `passed` / `blocked` semantics as {@link runInputGuardrail}.
  */

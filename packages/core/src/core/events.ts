@@ -30,11 +30,19 @@ export type AgentEvent =
   | { type: 'warning'; message: string }
   | { type: 'error'; error: HarnessError | Error }
   // Emitted when a GuardrailPipeline returns a `block` verdict
-  // during one of AgentLoop's three fixed hook points. Consumers can observe
-  // this before the follow-up `error`/`done` pair (for input/output blocks)
-  // or in isolation (for tool_output blocks, which rewrite the tool result
-  // and let the loop continue).
-  | { type: 'guardrail_blocked'; phase: 'input' | 'tool_output' | 'output'; guardName: string; details?: unknown }
+  // during one of AgentLoop's four fixed hook points. Consumers can observe
+  // this before the follow-up `error`/`done` pair (for input/tool_args/output
+  // blocks, which all abort the loop) or in isolation (for tool_output
+  // blocks, which rewrite the tool result and let the loop continue).
+  //
+  // `tool_args` fires when `AgentLoopConfig.inputPipeline` is configured AND
+  // a `block` verdict is returned for a tool call's serialised arguments,
+  // BEFORE the tool_call event is yielded and BEFORE any tool side-effect.
+  // Closes the asymmetry where direct `createAgentLoop` users with an
+  // input pipeline previously got user-message validation but not tool-arg
+  // validation; preset users were already covered by the wrapper at
+  // `harness.run()` (see docs/architecture/05-guardrails.md).
+  | { type: 'guardrail_blocked'; phase: 'input' | 'tool_args' | 'tool_output' | 'output'; guardName: string; details?: unknown }
   | { type: 'done'; reason: DoneReason; totalUsage: TokenUsage };
 
 /**
