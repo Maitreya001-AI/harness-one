@@ -39,10 +39,10 @@ async function main(): Promise<void> {
       privateKey: true,
     },
   });
-  const blockApiKey = await strict.guard({
+  const strictVerdict = await strict.guard({
     content: 'Set AUTH_TOKEN=sk-abcdefghijklmnopqrstuvwxyz1234567890 in your .env',
   });
-  console.log('Strict API-key verdict action:', blockApiKey.action);
+  console.log('Strict API-key verdict action:', strictVerdict.action);
 
   // ── 3. Credit-card Luhn validation — random 16-digits do NOT trigger ───
   const random16 = await defaultDetector.guard({

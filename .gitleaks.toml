@@ -25,11 +25,24 @@ useDefault = true
 [allowlist]
 description = "global allowlist"
 
-# Paths that are documentation of the detectors themselves — without
-# this, the placeholder examples in `docs/security/ossf-best-practices.md`
-# would trip matchers that look for "sk-ant-", "AKIA", etc.
+# Paths whose entire purpose is to *contain* placeholder secrets — they
+# exercise the redaction/scanning surface, so any string in them that
+# looks like a leak is by design. Without this, every full-history scan
+# on push-to-main re-flags the same fixtures and the workflow goes red
+# on every commit.
 paths = [
+  # Detector documentation with placeholder examples ("sk-ant-", "AKIA", …).
   '''docs/security/ossf-best-practices\.md''',
+  # Adversarial redaction tests — fixtures impersonate real secrets.
   '''packages/core/src/redact/__tests__/redact-adversarial\.test\.ts''',
   '''packages/core/tests/security/redact-adversarial\.test\.ts''',
+  # Redactor example: fake `tok_…` / `sk-ant-…` values demonstrate the
+  # default key matcher in `examples/redact/redactor.ts`.
+  '''examples/redact/redactor\.ts''',
+  # Langfuse sanitiser test: fixture span carries `api_key: 'sk-1234…'`
+  # so the sanitiser's behaviour can be asserted on a known input.
+  '''packages/langfuse/src/__tests__/langfuse-sanitize-default\.test\.ts''',
+  # Injection-detector test: a realistic JWT is fed to the LOW-sensitivity
+  # detector to assert it does NOT block legitimate API-key-shaped content.
+  '''packages/core/src/guardrails/__tests__/builtins\.test\.ts''',
 ]
