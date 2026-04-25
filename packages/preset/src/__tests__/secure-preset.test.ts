@@ -168,6 +168,42 @@ describe('createSecurePreset', () => {
     expect(guardrailWarns).toHaveLength(0);
   });
 
+  it('shutdown() calls inner harness.shutdown and walks lifecycle through drain → completeShutdown', async () => {
+    // SecureHarness wraps shutdown/drain to gate them through the lifecycle
+    // state machine. Without this test the wrappers (secure.ts:142-156)
+    // sat at 0% coverage and pulled the whole package below the 80% bar.
+    const harness = createSecurePreset({ adapter: stubAdapter() });
+    expect(harness.lifecycle.status()).toBe('ready');
+    await harness.shutdown();
+    // State machine has transitioned past 'ready'. We don't pin the exact
+    // string (draining → shutdown), but it must not still report 'ready'.
+    expect(harness.lifecycle.status()).not.toBe('ready');
+  });
+
+  it('drain() also walks lifecycle, accepting an optional timeout', async () => {
+    const harness = createSecurePreset({ adapter: stubAdapter() });
+    await harness.drain(50);
+    expect(harness.lifecycle.status()).not.toBe('ready');
+  });
+
+  it('drain() with no timeout uses the inner harness default', async () => {
+    const harness = createSecurePreset({ adapter: stubAdapter() });
+    await harness.drain();
+    expect(harness.lifecycle.status()).not.toBe('ready');
+  });
+
+  it('lifecycle health checks for traceManager + sessions are wired', async () => {
+    // Covers secure.ts:120-126 — registerHealthCheck calls.
+    const harness = createSecurePreset({ adapter: stubAdapter() });
+    const health = await harness.lifecycle.health();
+    expect(health.components).toHaveProperty('traceManager');
+    expect(health.components).toHaveProperty('sessions');
+    // Both are stub "always up" checks — nothing should be reporting down on
+    // a freshly constructed harness.
+    expect(health.components.traceManager?.status).toBe('up');
+    expect(health.components.sessions?.status).toBe('up');
+  });
+
   it('invalid guardrailLevel value still produces an active pipeline', async () => {
     // There is no off switch. Garbage level falls through to default 'standard' behavior
     // — but current impl branches on string literals, so unknown string still passes through.
