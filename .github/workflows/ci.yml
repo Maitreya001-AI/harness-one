@@ -23,7 +23,25 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # Cross-platform coverage rationale:
+        #   - ubuntu-latest: primary CI substrate. POSIX + ELF + GNU libc;
+        #     all integration / fuzz / mutation tracks run here.
+        #   - windows-latest: catches the platform-specific bug class that
+        #     ubuntu cannot — path separator (`\`), case-insensitive
+        #     filesystem, `gh.exe`/spawn argv quoting, CRLF line endings.
+        #     Two real bugs were caught here in 2026-04 (fs-io test
+        #     hard-coded POSIX separator; dogfood report-writer test
+        #     ditto). This row pays for itself.
+        #   - macos-latest was REMOVED in this commit. Rationale: macOS
+        #     and Ubuntu are both POSIX with effectively identical
+        #     Node.js semantics; the unique platform deltas (BSD libc
+        #     vs glibc, APFS vs ext4) do not exercise any code in this
+        #     library. macOS minutes cost 10× ubuntu minutes on
+        #     GitHub-hosted runners — keeping the row was paying 10×
+        #     for ~0× additional bug-finding power. If a macOS-specific
+        #     regression ever surfaces we'll add it back; until then
+        #     the slot was pure CI tax.
+        os: [ubuntu-latest, windows-latest]
         # Node 18 was dropped because `packageManager: pnpm@10.24.0`
         # ships a regex with the ES2024 `/v` flag — pnpm itself fails
         # to load on Node 18 runners with "SyntaxError: Invalid regular
