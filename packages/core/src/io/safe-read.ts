@@ -215,8 +215,22 @@ export async function safeReadFile(
 /**
  * Best-effort name for the file's kind, used in error messages so
  * operators see "directory" not "stat object".
+ *
+ * Exported for unit testing — the FIFO / socket / block-device /
+ * character-device branches are not portably triggerable through
+ * `safeReadFile()` itself across all CI runners (they require
+ * `mkfifo` / `mknod` privileges or platform-specific device files),
+ * so the predicates are exercised directly with a synthetic stat
+ * object in the test suite.
  */
-function describeKind(stat: { isDirectory(): boolean; isSymbolicLink(): boolean; isFIFO(): boolean; isSocket(): boolean; isBlockDevice(): boolean; isCharacterDevice(): boolean }): string {
+export function describeKind(stat: {
+  isDirectory(): boolean;
+  isSymbolicLink(): boolean;
+  isFIFO(): boolean;
+  isSocket(): boolean;
+  isBlockDevice(): boolean;
+  isCharacterDevice(): boolean;
+}): string {
   if (stat.isDirectory()) return 'directory';
   if (stat.isFIFO()) return 'fifo';
   if (stat.isSocket()) return 'socket';

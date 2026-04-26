@@ -163,6 +163,48 @@ describe('safeReadFile — truncateOnOverflow', () => {
   });
 });
 
+describe('describeKind — synthetic stat predicates', () => {
+  // The directory branch is exercised via `safeReadFile(dir)` above.
+  // FIFO / socket / device files cannot be created portably on every
+  // CI runner (no mknod privilege, win32 doesn't have them at all),
+  // so the remaining predicates are unit-tested with synthetic stat
+  // objects below.
+  function stat(over: Partial<Record<'isFile' | 'isDirectory' | 'isSymbolicLink' | 'isFIFO' | 'isSocket' | 'isBlockDevice' | 'isCharacterDevice', boolean>>) {
+    return {
+      isDirectory: () => over.isDirectory === true,
+      isFIFO: () => over.isFIFO === true,
+      isSocket: () => over.isSocket === true,
+      isBlockDevice: () => over.isBlockDevice === true,
+      isCharacterDevice: () => over.isCharacterDevice === true,
+      isSymbolicLink: () => over.isSymbolicLink === true,
+    };
+  }
+  it('reports "fifo" for FIFO stats', async () => {
+    const { describeKind } = await import('../safe-read.js');
+    expect(describeKind(stat({ isFIFO: true }))).toBe('fifo');
+  });
+  it('reports "socket" for socket stats', async () => {
+    const { describeKind } = await import('../safe-read.js');
+    expect(describeKind(stat({ isSocket: true }))).toBe('socket');
+  });
+  it('reports "block-device" for block-device stats', async () => {
+    const { describeKind } = await import('../safe-read.js');
+    expect(describeKind(stat({ isBlockDevice: true }))).toBe('block-device');
+  });
+  it('reports "character-device" for char-device stats', async () => {
+    const { describeKind } = await import('../safe-read.js');
+    expect(describeKind(stat({ isCharacterDevice: true }))).toBe('character-device');
+  });
+  it('reports "symlink" for orphaned symlink stats', async () => {
+    const { describeKind } = await import('../safe-read.js');
+    expect(describeKind(stat({ isSymbolicLink: true }))).toBe('symlink');
+  });
+  it('reports "unknown-non-file" when nothing matches', async () => {
+    const { describeKind } = await import('../safe-read.js');
+    expect(describeKind(stat({}))).toBe('unknown-non-file');
+  });
+});
+
 describe('safeReadFile — TOCTOU defence (regression test for HC-018 / CWE-367)', () => {
   it('uses fd-based stat — not a separate path-based stat', async () => {
     // We assert the BEHAVIOUR contract: the read result reflects the

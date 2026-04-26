@@ -83,15 +83,17 @@ export async function spawnSubAgent(config: SpawnSubAgentConfig): Promise<SpawnS
   }
 
   if (doneReason === 'error') {
-    const cause = capturedError;
+    // Branch-free message construction: when no error event was
+    // captured (defensive — AgentLoop should always emit one before
+    // done(error)), the optional chain falls through to the
+    // sentinel string. Single execution path.
+    const causeMessage = capturedError?.message ?? 'no error event was captured';
     throw new HarnessError(
-      cause !== undefined
-        ? `spawnSubAgent: sub-agent loop terminated with error: ${cause.message}`
-        : 'spawnSubAgent: sub-agent loop terminated with error (no error event was captured)',
+      `spawnSubAgent: sub-agent loop terminated with error: ${causeMessage}`,
       HarnessErrorCode.ADAPTER_ERROR,
       'Inspect the `cause` for the originating exception; check the adapter wiring or downstream tool errors. ' +
         'If you need to handle this without throwing, wrap the call in try/catch.',
-      cause,
+      capturedError,
     );
   }
 

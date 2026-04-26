@@ -166,6 +166,57 @@ describe('createFsCheckpointStorage + createCheckpointManager composition', () =
   });
 });
 
+describe('createFsCheckpointStorage — non-ENOENT errors propagate', () => {
+  // Windows ignores POSIX modes — chmod won't deny read on win32, so
+  // these branches are only reachable on Linux + macOS CI runners.
+  it.skipIf(process.platform === 'win32')(
+    'list() rethrows when scanDirectory hits a non-ENOENT error (e.g. EACCES)',
+    async () => {
+      const storage = createFsCheckpointStorage({ dir });
+      await storage.save(makeCheckpoint({ id: 'a' }));
+      await fs.chmod(dir, 0o000);
+      try {
+        const fresh = createFsCheckpointStorage({ dir });
+        await expect(fresh.list()).rejects.toBeDefined();
+      } finally {
+        await fs.chmod(dir, 0o755).catch(() => undefined);
+      }
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'load() rethrows non-ENOENT errors (e.g. EACCES)',
+    async () => {
+      const storage = createFsCheckpointStorage({ dir });
+      const cp = makeCheckpoint({ id: 'guarded' });
+      await storage.save(cp);
+      const file = path.join(dir, 'guarded.json');
+      await fs.chmod(file, 0o000);
+      try {
+        await expect(storage.load(cp.id)).rejects.toBeDefined();
+      } finally {
+        await fs.chmod(file, 0o644).catch(() => undefined);
+      }
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'delete() rethrows non-ENOENT errors from unlink (e.g. EPERM)',
+    async () => {
+      const storage = createFsCheckpointStorage({ dir });
+      const cp = makeCheckpoint({ id: 'sticky' });
+      await storage.save(cp);
+      // Make the parent dir non-writable so unlink fails with EACCES.
+      await fs.chmod(dir, 0o500); // r-x — listable but not writable
+      try {
+        await expect(storage.delete(cp.id)).rejects.toBeDefined();
+      } finally {
+        await fs.chmod(dir, 0o755).catch(() => undefined);
+      }
+    },
+  );
+});
+
 describe('createFsCheckpointStorage — concurrent writes serialised in-process', () => {
   it('parallel saves on the same instance produce a consistent index', async () => {
     const storage = createFsCheckpointStorage({ dir });

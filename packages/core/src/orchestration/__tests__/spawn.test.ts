@@ -247,6 +247,53 @@ describe('spawnSubAgent', () => {
     });
   });
 
+  describe('config option spreads — optional fields plumb through', () => {
+    it('forwards maxTotalTokens, tools, onToolCall, streaming when supplied', async () => {
+      const adapter = createMockAdapter([
+        { message: { role: 'assistant', content: 'ok' }, usage: USAGE },
+      ]);
+      // Pass every optional field so the conditional spreads at
+      // spawn.ts:47/49/51 are exercised.
+      const result = await spawnSubAgent({
+        adapter,
+        messages: [{ role: 'user', content: 'hi' }],
+        maxTotalTokens: 1_000_000,
+        signal: new AbortController().signal,
+        tools: [
+          {
+            name: 't',
+            description: 'd',
+            parameters: { type: 'object', properties: {} },
+          },
+        ],
+        onToolCall: async () => 'never-called',
+        streaming: false,
+      });
+      expect(result.doneReason).toBe('end_turn');
+    });
+  });
+
+  describe('tool_result message serialisation', () => {
+    it('JSON-serialises non-string tool_result payloads', async () => {
+      const toolCall = { id: 'tc-1', name: 't', arguments: '{}' };
+      const adapter = createMockAdapter([
+        { message: { role: 'assistant', content: '', toolCalls: [toolCall] }, usage: USAGE },
+        { message: { role: 'assistant', content: 'done' }, usage: USAGE },
+      ]);
+      const result = await spawnSubAgent({
+        adapter,
+        messages: [{ role: 'user', content: 'go' }],
+        // Returning an object → JSON.stringify branch on spawn.ts:66.
+        onToolCall: async () => ({ shape: 'object', value: 42 }),
+      });
+      const toolMsg = result.messages[1];
+      expect(toolMsg.role).toBe('tool');
+      if (toolMsg.role === 'tool') {
+        expect(toolMsg.content).toBe('{"shape":"object","value":42}');
+      }
+    });
+  });
+
   describe('failure contract is grep-able', () => {
     it('throw message includes "spawnSubAgent" prefix so logs are searchable', async () => {
       const adapter: AgentAdapter = {
