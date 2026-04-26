@@ -1,6 +1,6 @@
 {
   "name": "@harness-one/langfuse",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Langfuse integration for harness-one — trace export, prompt management, and cost tracking",
   "type": "module",
   "main": "./dist/index.cjs",

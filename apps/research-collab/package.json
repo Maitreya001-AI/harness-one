@@ -1,6 +1,6 @@
 {
   "name": "@harness-one/research-collab",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "private": true,
   "description": "Multi-agent research collaboration pipeline. Dogfoods harness-one orchestration / core / observe / guardrails subsystems against real research tasks (Researcher → Specialists → Coordinator).",
   "type": "module",

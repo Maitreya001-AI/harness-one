@@ -1,5 +1,59 @@
 # harness-one
 
+## 1.0.2
+
+### Patch Changes
+
+- 9654276: Release-engineering: rewrite `version-packages.yml` so the auto-generated
+  "Version Packages" PR can be squash-merged from the GitHub UI without
+  any maintainer-side scripting.
+
+  Two long-standing blockers stacked on every release:
+
+  1. **`required_signatures` ruleset** rejected the bot's commit because
+     `GITHUB_TOKEN` cannot sign commits.
+  2. **`required_status_checks`** could not be satisfied because GitHub
+     deliberately does NOT trigger downstream workflows on
+     `GITHUB_TOKEN` pushes (recursion guard).
+
+  The new workflow:
+
+  - Replaces `changesets/action`'s git-push step with a GraphQL
+    `createCommitOnBranch` mutation. GitHub server-side signs the
+    resulting commit (verified ✓), satisfying `required_signatures`
+    with no signing key, App, or PAT setup needed.
+  - Explicitly invokes `gh workflow run --ref changeset-release/main`
+    on each required CI workflow (`ci.yml`, `api-check.yml`,
+    `codeql.yml`) so they produce check-runs at the bot PR's HEAD SHA.
+  - Adds `workflow_dispatch:` triggers to those required workflows so
+    the dispatch is a no-op for ordinary contributors but legal for
+    the version-packages step to invoke.
+
+  `tools/sign-changeset-release-pr.sh` (added in #44) remains as a
+  documented escape hatch should the workflow ever fail.
+
+- 932028b: Release-engineering follow-up to #45: add `workflow_dispatch:` triggers
+  to the remaining 3 required-check workflows (`audit.yml`,
+  `migrations.yml`, `release-pack.yml`) and extend
+  `version-packages.yml`'s dispatch loop to cover them.
+
+  PR #45 dispatched only `ci.yml`, `api-check.yml`, `codeql.yml` — but
+  the `main` ruleset's `required_status_checks` also includes
+  `pnpm-audit`, `check-migrations`, `check-pack`, which are produced by
+  those three workflows. Without `workflow_dispatch:` on them the bot
+  PR (#46) was BLOCKED on those three checks despite verified commits +
+  all dispatched workflows green.
+
+  This PR completes the coverage so the bot PR is fully self-unblocking
+  from the GitHub UI: every required check-run lands at the bot PR's
+  HEAD SHA via dispatch.
+
+  Also restores `tools/sign-changeset-release-pr.sh` as the documented
+  escape hatch (per the existing `docs/release.md` "Unblocking the
+  Version Packages PR" section). The workflow is the primary path; the
+  script remains in the tree for the case where the workflow itself
+  breaks (createCommitOnBranch API change, file-size limit, etc.).
+
 ## 1.0.1
 
 ### Patch Changes

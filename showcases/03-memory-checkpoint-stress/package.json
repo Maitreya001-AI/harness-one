@@ -1,6 +1,6 @@
 {
   "name": "@harness-one/showcase-03-memory-checkpoint-stress",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "private": true,
   "description": "Showcase 03 — memory + checkpoint stress test. Crash injection across FsMemoryStore.",
   "type": "module",

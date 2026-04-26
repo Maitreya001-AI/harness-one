@@ -1,5 +1,15 @@
 # harness-one-coding
 
+## 0.1.2
+
+### Patch Changes
+
+- Updated dependencies [9654276]
+- Updated dependencies [932028b]
+  - harness-one@1.0.2
+  - @harness-one/anthropic@0.1.4
+  - @harness-one/preset@1.0.2
+
 ## 0.1.1
 
 ### Patch Changes

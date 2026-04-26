@@ -1,5 +1,13 @@
 # @harness-one/tiktoken
 
+## 0.1.4
+
+### Patch Changes
+
+- Updated dependencies [9654276]
+- Updated dependencies [932028b]
+  - harness-one@1.0.2
+
 ## 0.1.3
 
 ### Patch Changes

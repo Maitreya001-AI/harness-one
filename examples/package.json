@@ -1,6 +1,6 @@
 {
   "name": "@harness-one/examples",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "private": true,
   "description": "Integration examples for harness-one (not published)",
   "type": "module",
