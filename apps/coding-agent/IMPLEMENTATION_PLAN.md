@@ -53,7 +53,20 @@
 
 每个阶段执行中遇到的 friction 写入 `HARNESS_LOG.md`(在 S9 一并落)。
 
+---
+
+## Phase 2 — 生产级接入与发布
+
+| Stage | 主题 | 状态 | 交付物 | 验收 |
+|---|---|---|---|---|
+| **S10** | Live Anthropic adapter | ⬜ pending | `tests/integration/live-anthropic.test.ts` + 错误路径测试 | 有 `ANTHROPIC_API_KEY` 时端到端跑通,无 key 时优雅 skip |
+| **S11** | Build + 发布 | ⬜ pending | `tsup.config.ts` / `.changeset/` 入口 / `package.json` exports 切到 dist / npmignore | `pnpm build` + `npm pack --dry-run` 通过;changeset 文件就绪 |
+| **S12** | Eval harness | ⬜ pending | `src/eval/{runner,fixtures,verifier}.ts` + 3 个内建 fixture + `harness-coding eval` 子命令 | 全 fixture 通过(mock 模式)+ SWE-bench 数据加载器扩展点文档 |
+| **S13** | LSP tool | ⬜ pending | `src/tools/lsp/{client,definition,references}.ts` + mock LSP server 单测 | LSP client 端到端单测通过;tools registry 注入 lsp_* 二个 tool |
+| **S14** | VS Code extension | ⬜ pending | `apps/coding-agent-vscode/{package.json,src/extension.ts}` | 编译产物可打包 vsix;命令 `harness-coding.run` 可注册 |
+
 ## 当前状态
 
-**Active Stage**: complete (S1–S9 all done)
+**Active Stage**: S10
+**Phase 1**: complete (S1–S9, 235 测试)
 **Last updated**: 2026-04-26
