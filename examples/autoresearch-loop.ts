@@ -1,23 +1,32 @@
 /**
- * Showcase · Autoresearch loop (Ralph style).
+ * Example · Confidence-gated outer loop with harness-one fallback adapter.
  *
- * A minimal research agent with four explicit states:
- *   1. search     — find candidate sources for the topic.
- *   2. read       — summarise the top result, producing a confidence score.
- *   3. refine     — fold new findings into the running answer.
- *   4. evaluate   — stop when confidence ≥ threshold, else loop.
+ * Demonstrates two harness-one primitives in a research-loop shape:
  *
- * The showcase focuses on three things the rest of the examples don't:
- *   - Stop criterion gated by a confidence float, not just an iteration
- *     count. Iteration cap is the back-stop, not the primary stop.
- *   - A fallback path: the first "search call" fails on purpose, so the
- *     loop exercises exponential backoff + fallback source. That is the
- *     resilience narrative turned into a runnable test vector.
- *   - A running trace: every state transition is printed with elapsed
- *     wall-clock so readers can see how the loop times itself.
+ *   1. `createFallbackAdapter` from `harness-one/advanced` — when the
+ *      primary "search provider" fails, the call automatically falls over
+ *      to a backup. Concurrency-safe.
+ *   2. `computeBackoffMs` from `harness-one/advanced` — deterministic
+ *      exponential backoff with bounded jitter. Production-grade retry
+ *      math without dependencies.
  *
- * No peer SDK, no API key — this showcase runs in CI under `examples:smoke`.
+ * The four-state outer loop (search → read → refine → evaluate) is
+ * application code, NOT a harness-one feature. harness-one supplies the
+ * resilience primitives; the application owns the state machine.
+ *
+ * Stopping rule: confidence ≥ 0.85 OR `maxIterations` reached. The
+ * iteration cap is the back-stop, not the primary stop.
+ *
+ *   pnpm tsx examples/autoresearch-loop.ts
+ *
+ * No peer SDK, no API key — this example runs in CI under
+ * `examples:smoke`.
  */
+import { createFallbackAdapter, computeBackoffMs } from 'harness-one/advanced';
+import { createMockAdapter, createFailingAdapter } from 'harness-one/testing';
+import type { AgentAdapter, ChatParams } from 'harness-one/core';
+
+// ── 1. Domain model ────────────────────────────────────────────────────────
 
 interface Source {
   readonly id: string;
@@ -35,9 +44,7 @@ interface LoopState {
   readonly attempts: { search: number; read: number };
 }
 
-// ── 1. Fake search index ───────────────────────────────────────────────────
-// In production this is a retriever over real docs. Here we ship a fixed
-// list so every run produces the same narrative.
+// ── 2. The "search index" the fallback adapter returns ─────────────────────
 const INDEX: readonly Source[] = [
   {
     id: 'a',
@@ -59,56 +66,85 @@ const INDEX: readonly Source[] = [
   },
 ];
 
-// ── 2. A deliberately flaky "primary" search ───────────────────────────────
-let primaryAttempts = 0;
-async function primarySearch(topic: string): Promise<readonly Source[]> {
-  primaryAttempts += 1;
-  if (primaryAttempts === 1) {
-    throw new Error('primary search unreachable (simulated 503)');
-  }
-  return INDEX.filter((s) => s.title.toLowerCase().includes(topicKeyword(topic)));
+// ── 3. Build the fallback-wrapped adapter ──────────────────────────────────
+//
+// In production, "primary" and "fallback" would be real LLM adapters
+// (e.g., Anthropic primary, OpenAI fallback). Here we abuse the adapter
+// abstraction to shape "search calls" — the failing-then-recovering shape
+// is what we want to demonstrate, not the actual semantics.
+//
+// The PRIMARY adapter always fails (simulated 503) so every call exercises
+// the fallback path. The FALLBACK adapter returns a JSON-encoded list of
+// sources, which the application below parses into Source[].
+//
+// `createFallbackAdapter` switches to the next adapter after `maxFailures`
+// consecutive failures. We set `maxFailures: 1` so the very first failure
+// trips the breaker, which keeps the example snappy.
+
+function buildSearchAdapter(): AgentAdapter {
+  const primary = createFailingAdapter(
+    new Error('primary search unreachable (simulated 503)'),
+  );
+
+  const fallback = createMockAdapter({
+    responses: [{ content: JSON.stringify(INDEX) }],
+    usage: { inputTokens: 100, outputTokens: 50 },
+  });
+
+  return createFallbackAdapter({
+    adapters: [primary, fallback],
+    maxFailures: 1,
+  });
 }
 
-// ── 3. A fallback that is always available ─────────────────────────────────
-async function fallbackSearch(_topic: string): Promise<readonly Source[]> {
-  return INDEX;
-}
+// ── 4. Search step (uses harness-one fallback adapter + backoff) ───────────
+async function searchWithBackoff(
+  adapter: AgentAdapter,
+  topic: string,
+): Promise<readonly Source[]> {
+  const params: ChatParams = {
+    messages: [{ role: 'user', content: `Find sources for: ${topic}` }],
+  };
 
-function topicKeyword(topic: string): string {
-  const tokens = topic.toLowerCase().split(/\W+/).filter((t) => t.length >= 4);
-  return tokens[0] ?? '';
-}
+  // Outer retry: even after the fallback adapter trips, we still want to
+  // retry the whole chain a few times in case the fallback itself is
+  // momentarily unavailable. This is application-level retry around the
+  // adapter chain — separate from the per-adapter circuit-breaker logic
+  // inside `createFallbackAdapter`.
+  const maxAttempts = 3;
+  // Deterministic random source so backoff math is reproducible under
+  // `examples:smoke`.
+  const random = ((): (() => number) => {
+    let i = 0;
+    return () => {
+      i += 1;
+      return ((i * 0.37) % 1);
+    };
+  })();
 
-// ── 4. Exponential backoff with jitter (no external dep) ───────────────────
-async function sleepWithBackoff(attempt: number): Promise<void> {
-  const base = 25; // keep the showcase snappy; production would use 500ms+
-  const cap = 200;
-  const delay = Math.min(cap, base * 2 ** attempt);
-  // Deterministic jitter — use attempt as the seed so the showcase is
-  // reproducible under `examples:smoke`.
-  const jitter = (attempt * 7) % 5;
-  await new Promise((r) => setTimeout(r, delay + jitter));
-}
-
-// ── 5. Search with fallback ────────────────────────────────────────────────
-async function searchWithFallback(topic: string): Promise<readonly Source[]> {
-  const maxAttempts = 2;
+  let lastErr: unknown;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
-      const result = await primarySearch(topic);
-      if (result.length > 0) return result;
+      const response = await adapter.chat(params);
+      return JSON.parse(response.message.content) as Source[];
     } catch (err) {
-      console.log(`  [search] primary failed (${(err as Error).message}) — backing off ${attempt}`);
-      await sleepWithBackoff(attempt);
+      lastErr = err;
+      const delayMs = computeBackoffMs(attempt, {
+        baseMs: 25,
+        maxMs: 200,
+        jitterFraction: 0.1,
+        random,
+      });
+      console.log(
+        `  [search] attempt ${attempt + 1} failed: ${(err as Error).message}; backoff ${delayMs}ms`,
+      );
+      await new Promise((r) => setTimeout(r, delayMs));
     }
   }
-  console.log('  [search] primary exhausted — falling back to static index');
-  return fallbackSearch(topic);
+  throw lastErr instanceof Error ? lastErr : new Error('search exhausted');
 }
 
-// ── 6. Deterministic reader ────────────────────────────────────────────────
-// Produces a summary and a confidence delta. The "delta" mimics a real
-// reader that is more confident the more relevant sources it has seen.
+// ── 5. Deterministic reader ────────────────────────────────────────────────
 function readSource(state: LoopState, source: Source): { summary: string; delta: number } {
   const alreadyCited = state.cites.some((c) => c.id === source.id);
   if (alreadyCited) return { summary: '', delta: 0 };
@@ -116,7 +152,7 @@ function readSource(state: LoopState, source: Source): { summary: string; delta:
   return { summary, delta: source.quality };
 }
 
-// ── 7. Main loop ───────────────────────────────────────────────────────────
+// ── 6. Outer loop (application code, NOT from harness-one) ─────────────────
 async function autoresearch(topic: string): Promise<LoopState> {
   const state: LoopState = {
     topic,
@@ -129,15 +165,21 @@ async function autoresearch(topic: string): Promise<LoopState> {
   const maxIterations = 6;
   const start = Date.now();
 
+  // Build the search adapter once; it's reusable across iterations. The
+  // fallback adapter handles primary failure internally — application
+  // code does NOT need its own try/catch for that.
+  const searchAdapter = buildSearchAdapter();
+
   for (let i = 0; i < maxIterations; i++) {
     const elapsed = Date.now() - start;
-    console.log(`\n[${elapsed}ms] iteration ${i + 1}, confidence=${state.confidence.toFixed(2)}`);
+    console.log(
+      `\n[${elapsed}ms] iteration ${i + 1}, confidence=${state.confidence.toFixed(2)}`,
+    );
 
-    // Search step
+    // SEARCH state
     state.attempts.search += 1;
-    const sources = await searchWithFallback(topic);
+    const sources = await searchWithBackoff(searchAdapter, topic);
 
-    // Pick the most promising unseen source
     const unseen = sources.filter((s) => !state.cites.some((c) => c.id === s.id));
     if (unseen.length === 0) {
       console.log('  [search] no new sources — bailing out');
@@ -146,7 +188,7 @@ async function autoresearch(topic: string): Promise<LoopState> {
     unseen.sort((a, b) => b.quality - a.quality);
     const source = unseen[0]!;
 
-    // Read step
+    // READ state
     state.attempts.read += 1;
     const { summary, delta } = readSource(state, source);
     if (summary) {
@@ -156,29 +198,33 @@ async function autoresearch(topic: string): Promise<LoopState> {
       console.log(`  [read] +${delta.toFixed(2)} confidence from ${source.id}`);
     }
 
+    // EVALUATE state
     if (state.confidence >= target) {
-      console.log(`  [evaluate] confidence ${state.confidence.toFixed(2)} ≥ ${target} — stopping`);
+      console.log(
+        `  [evaluate] confidence ${state.confidence.toFixed(2)} ≥ ${target} — stopping`,
+      );
       break;
     }
+    // REFINE state — implicit (next iteration loops back to SEARCH)
   }
 
   return state;
 }
 
-// ── 8. Entry ───────────────────────────────────────────────────────────────
+// ── 7. Entry ───────────────────────────────────────────────────────────────
 async function main(): Promise<void> {
   const topic = 'How does harness-one handle transient provider errors?';
   console.log(`=== Autoresearch: ${topic} ===`);
   const result = await autoresearch(topic);
   console.log('\n=== Report ===');
   console.log(`Final confidence: ${result.confidence.toFixed(2)}`);
-  console.log(`Search attempts: ${result.attempts.search} (primary attempts: ${primaryAttempts})`);
+  console.log(`Search attempts: ${result.attempts.search}`);
   console.log(`Sources read: ${result.cites.length}`);
   console.log('\nAnswer:');
   console.log(result.answer || '(no content gathered)');
 }
 
 main().catch((err: unknown) => {
-  console.error('[showcase:autoresearch] failed:', err);
+  console.error('[example:autoresearch-loop] failed:', err);
   process.exit(1);
 });

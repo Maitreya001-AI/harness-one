@@ -1,10 +1,8 @@
 /**
- * Showcase · Evolve-check end-to-end — "the code keeps being right."
+ * Example · Evolve-check primitives — "the code keeps being right."
  *
- * Layer 15 of the architecture / layer 9 of the testing blueprint asks
- * whether harness-one can tell you when a component has silently rotted.
- * This showcase composes three primitives from `@harness-one/devkit` into
- * a single runnable narrative:
+ * Demonstrates three primitives from `@harness-one/devkit` that detect
+ * when components in a long-lived codebase silently rot:
  *
  *   1. ComponentRegistry — explicit `modelAssumption` + `retirementCondition`
  *      per component.
@@ -13,8 +11,10 @@
  *   3. TasteCodingRegistry — executable post-mortem rules, exported as
  *      Markdown so maintainers can review them in a PR.
  *
- * The showcase drives the registries with deterministic inputs so it runs
+ * The example drives the registries with deterministic inputs so it runs
  * under `examples:smoke` without network or LLM.
+ *
+ *   pnpm tsx examples/evolve-check-demo.ts
  */
 import {
   createComponentRegistry,

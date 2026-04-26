@@ -1,18 +1,26 @@
 /**
- * Showcase · Codebase Q&A with RAG + fail-closed guardrails.
+ * Example · Codebase Q&A with RAG + fail-closed guardrails.
  *
- * Why this example is different from `examples/rag/custom-pipeline.ts`:
- *   - It closes the loop end-to-end. The retriever is wired to a
- *     deterministic reader so there's no live LLM key required.
- *   - It demonstrates `harness-one/guardrails` running *on each retrieved
- *     chunk* before the reader sees it — the RAG-injection mitigation the
- *     README promises.
- *   - It emits file:line-style citations in the final answer, so you can
- *     see what a production citation pipeline would look like.
+ * Demonstrates the full RAG-to-answer pipeline with three production-grade
+ * concerns wired in:
  *
- *   pnpm tsx examples/showcases/codebase-qa.ts
+ *   1. RAG retrieval (`harness-one/rag`) over a small file:line-indexed
+ *      corpus.
+ *   2. Fail-closed injection guardrails (`harness-one/guardrails`) running
+ *      on every retrieved chunk before the reader sees it — the
+ *      RAG-injection mitigation the README promises.
+ *   3. AgentLoop with a mock reader (`harness-one/core` +
+ *      `harness-one/testing`) that consumes retrieved chunks as system
+ *      context and produces an assistant reply with citations.
  *
- * No peer SDK, no API key — this showcase runs in CI under `examples:smoke`.
+ * To run with a real provider, swap `createMockAdapter` for
+ * `@harness-one/anthropic` or `@harness-one/openai` and provide the API
+ * key.
+ *
+ *   pnpm tsx examples/codebase-qa.ts
+ *
+ * No peer SDK, no API key — this example runs in CI under
+ * `examples:smoke`.
  */
 import {
   createBasicParagraphChunking,
@@ -30,12 +38,21 @@ import {
   createPipeline,
   runInput,
 } from 'harness-one/guardrails';
+import { AgentLoop } from 'harness-one/core';
+import type { Message } from 'harness-one/core';
+import { createMockAdapter } from 'harness-one/testing';
 
 interface Citation {
   readonly file: string;
   readonly line: number;
   readonly snippet: string;
   readonly score: number;
+}
+
+interface AskResult {
+  readonly question: string;
+  readonly answer: string;
+  readonly citations: readonly Citation[];
 }
 
 // ── 1. Corpus ───────────────────────────────────────────────────────────────
@@ -74,7 +91,7 @@ const CORPUS: readonly Document[] = [
 ];
 
 // ── 2. Deterministic embedding ──────────────────────────────────────────────
-// A toy bag-of-words embedding so the showcase has no API-key dependency.
+// A toy bag-of-words embedding so the example has no API-key dependency.
 // The dimensions are fixed so index + retrieve share the same space.
 const VOCAB = Array.from(
   new Set(
@@ -124,23 +141,97 @@ async function filterSafeChunks(
   return safe;
 }
 
-// ── 4. Deterministic reader ────────────────────────────────────────────────
-function render(question: string, citations: readonly Citation[]): string {
-  if (citations.length === 0) {
-    return `I could not find anything about "${question}" in the corpus.`;
-  }
+// ── 4. Reader (mock AgentLoop) ──────────────────────────────────────────────
+// In production this is a real Anthropic/OpenAI adapter. Here we use the
+// testing mock so the example runs in CI without API keys. The mock returns
+// a deterministic answer derived from the citations so the wiring is
+// observable without an LLM.
+
+function deterministicAnswer(citations: readonly Citation[]): string {
   const best = citations[0]!;
-  const linked = citations
-    .map((c) => `- \`${c.file}:${c.line}\` — "${c.snippet.slice(0, 80)}${c.snippet.length > 80 ? '…' : ''}"`)
-    .join('\n');
   return [
-    `Question: ${question}`,
-    '',
-    `Short answer (quoting \`${best.file}:${best.line}\`):`,
+    `Based on [1]:`,
     `> ${best.snippet}`,
     '',
-    'Sources:',
-    linked,
+    `(See ${best.file}:${best.line} for the full context.)`,
+  ].join('\n');
+}
+
+async function ask(
+  question: string,
+  retriever: ReturnType<typeof createInMemoryRetriever>,
+): Promise<AskResult> {
+  const raw = await retriever.retrieve(question, { limit: 3 });
+  const safe = await filterSafeChunks(raw.map((r) => r.chunk));
+
+  const citations: Citation[] = safe.map((chunk, i) => ({
+    file: (chunk.metadata?.['file'] as string | undefined) ?? chunk.id,
+    line: (chunk.metadata?.['line'] as number | undefined) ?? 0,
+    snippet: chunk.content.trim(),
+    score: raw[i]?.score ?? 0,
+  }));
+
+  if (citations.length === 0) {
+    return {
+      question,
+      answer: `I could not find anything about "${question}" in the corpus.`,
+      citations: [],
+    };
+  }
+
+  const contextBlock = citations
+    .map((c, i) => `[${i + 1}] ${c.file}:${c.line}\n${c.snippet}`)
+    .join('\n\n');
+
+  const systemPrompt = [
+    'You are answering questions about the harness-one codebase.',
+    'Use ONLY the provided context. Cite sources by their bracketed number.',
+    '',
+    'Context:',
+    contextBlock,
+  ].join('\n');
+
+  const adapter = createMockAdapter({
+    responses: [{ content: deterministicAnswer(citations) }],
+    usage: { inputTokens: 200, outputTokens: 80 },
+  });
+
+  const messages: Message[] = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: question },
+  ];
+
+  const loop = new AgentLoop({
+    adapter,
+    maxIterations: 1,
+    maxTotalTokens: 10_000,
+  });
+
+  let answer = '';
+  for await (const event of loop.run(messages)) {
+    if (event.type === 'message' && event.message.role === 'assistant') {
+      answer = event.message.content;
+    }
+  }
+
+  return { question, answer, citations };
+}
+
+function renderResult(result: AskResult): string {
+  if (result.citations.length === 0) {
+    return result.answer;
+  }
+  const citationList = result.citations
+    .map((c, i) => `  [${i + 1}] \`${c.file}:${c.line}\` (score=${c.score.toFixed(3)})`)
+    .join('\n');
+  return [
+    `Question: ${result.question}`,
+    '',
+    'Answer:',
+    result.answer,
+    '',
+    'Citations:',
+    citationList,
   ].join('\n');
 }
 
@@ -168,19 +259,12 @@ async function main(): Promise<void> {
   for (const q of questions) {
     console.log('\n=== Question ===');
     console.log(q);
-    const raw = await retriever.retrieve(q, { limit: 3 });
-    const safe = await filterSafeChunks(raw.map((r) => r.chunk));
-    const citations: Citation[] = safe.map((chunk, i) => ({
-      file: (chunk.metadata?.['file'] as string | undefined) ?? chunk.id,
-      line: (chunk.metadata?.['line'] as number | undefined) ?? 0,
-      snippet: chunk.content.trim(),
-      score: raw[i]?.score ?? 0,
-    }));
-    console.log(render(q, citations));
+    const result = await ask(q, retriever);
+    console.log(renderResult(result));
   }
 }
 
 main().catch((err: unknown) => {
-  console.error('[showcase:codebase-qa] failed:', err);
+  console.error('[example:codebase-qa] failed:', err);
   process.exit(1);
 });
