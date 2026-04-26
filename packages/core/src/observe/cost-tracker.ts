@@ -42,6 +42,20 @@ import { createCostRecordBuffer } from './cost-record-buffer.js';
 export type { EvictionStrategy, EvictionStrategyName } from './cost-tracker-eviction.js';
 export { overflowBucketStrategy, lruStrategy, getEvictionStrategy } from './cost-tracker-eviction.js';
 export type { ModelPricing, CostTracker } from './cost-tracker-types.js';
+
+/**
+ * Input to {@link CostTracker.recordUsage}. `traceId` and `model` are
+ * optional; missing values fall through to the `'unknown'` bucket so
+ * simple callers (single-task budget trackers) don't have to fabricate
+ * stub values that pollute aggregations. Closes HARNESS_LOG HC-005.
+ */
+export type RecordUsageInput = Omit<
+  TokenUsageRecord,
+  'estimatedCost' | 'timestamp' | 'traceId' | 'model'
+> & {
+  readonly traceId?: string;
+  readonly model?: string;
+};
 export { OVERFLOW_BUCKET_KEY } from './cost-tracker-types.js';
 import { OVERFLOW_BUCKET_KEY } from './cost-tracker-types.js';
 
@@ -229,6 +243,30 @@ export function createCostTracker(config?: {
     }
   }
 
+  // FRICTION-FIX (research-collab L-006): when a budget is set but no
+  // pricing table is supplied, every recordUsage() returns cost = 0 and
+  // the budget is therefore unreachable — silently disabling the gating
+  // mechanism the caller asked for. Warn loudly at construction time so
+  // misconfiguration surfaces before any production traffic hits this
+  // tracker. The constructor warns at most once per process via a normal
+  // logger call (downstream callers can still set warnUnpricedModels=false
+  // independently — that flag governs the per-record warning, not this
+  // construction-time alarm).
+  if (
+    config?.budget !== undefined
+    && config.budget > 0
+    && pricing.size === 0
+  ) {
+    safeWarn(
+      logger,
+      '[harness-one/cost-tracker] budget is set but no pricing table was supplied; '
+        + 'recordUsage() will report $0 for every call and the budget gate will never fire. '
+        + 'Pass `pricing: defaultModelPricing` (from harness-one/observe) for a snapshot of '
+        + 'common Claude/GPT models, or supply your own ModelPricing[] table.',
+      { budget: config.budget },
+    );
+  }
+
   function computeCost(usage: Omit<TokenUsageRecord, 'estimatedCost' | 'timestamp'>): number {
     if (hasNonFiniteTokens(usage)) {
       safeWarn(
@@ -265,10 +303,12 @@ export function createCostTracker(config?: {
       });
     },
 
-    recordUsage(usage: Omit<TokenUsageRecord, 'estimatedCost' | 'timestamp'>): TokenUsageRecord {
+    recordUsage(usage: RecordUsageInput): TokenUsageRecord {
       // Strict-mode validation: fail loudly when the adapter has failed to
-      // populate model or token counts. Permissive default preserves the
-      // historical behavior where streaming adapters may record partial data.
+      // populate model or token counts. Permissive default (HC-005 fix)
+      // accepts missing traceId/model and routes them to the 'unknown'
+      // bucket so simple callers (budget trackers without a trace
+      // context) can record usage without fabricating stub IDs.
       if (strictMode) {
         if (!usage.model || typeof usage.model !== 'string' || usage.model.length === 0) {
           throw new HarnessError(
@@ -286,18 +326,42 @@ export function createCostTracker(config?: {
         }
       }
 
+      // Default missing identifiers to a stable 'unknown' sentinel so
+      // downstream cost-by-trace / cost-by-model aggregations still
+      // bucket consistently. Closes HARNESS_LOG HC-005.
+      const effectiveTraceId =
+        typeof usage.traceId === 'string' && usage.traceId.length > 0
+          ? usage.traceId
+          : 'unknown';
+      const effectiveModel =
+        typeof usage.model === 'string' && usage.model.length > 0
+          ? usage.model
+          : 'unknown';
+
       // One-time warning for unpriced models (so operators can update pricing).
-      if (warnUnpricedModels && usage.model && !pricing.has(usage.model) && !warnedUnpriced.has(usage.model)) {
-        warnedUnpriced.add(usage.model);
+      // We warn only when the caller supplied an explicit model name; the
+      // 'unknown' sentinel is suppressed because it isn't a real model.
+      if (
+        warnUnpricedModels
+        && usage.model
+        && !pricing.has(effectiveModel)
+        && !warnedUnpriced.has(effectiveModel)
+      ) {
+        warnedUnpriced.add(effectiveModel);
         safeWarn(
           logger,
-          `[harness-one/cost-tracker] No pricing registered for model "${usage.model}". Cost will be reported as 0. Pass \`pricing\` to createCostTracker() or call updatePricing() to fix.`,
+          `[harness-one/cost-tracker] No pricing registered for model "${effectiveModel}". Cost will be reported as 0. Pass \`pricing\` to createCostTracker() or call updatePricing() to fix.`,
         );
       }
 
-      const estimatedCost = computeCost(usage);
-      const record: TokenUsageRecord = {
+      const normalised: Omit<TokenUsageRecord, 'estimatedCost' | 'timestamp'> = {
         ...usage,
+        traceId: effectiveTraceId,
+        model: effectiveModel,
+      };
+      const estimatedCost = computeCost(normalised);
+      const record: TokenUsageRecord = {
+        ...normalised,
         estimatedCost,
         timestamp: Date.now(),
       };
@@ -314,21 +378,19 @@ export function createCostTracker(config?: {
       // once per minute (per kind) to alert operators.
       const modelSum = evictionStrategy.resolveKeyBucket(
         modelTotals,
-        usage.model,
+        effectiveModel,
         maxModels,
         ({ key }) => signalOverflow('model', maxModels, key),
       );
       if (modelSum) modelSum.add(estimatedCost);
 
-      if (usage.traceId) {
-        const traceSum = evictionStrategy.resolveKeyBucket(
-          traceTotals,
-          usage.traceId,
-          maxTraces,
-          ({ key }) => signalOverflow('trace', maxTraces, key),
-        );
-        if (traceSum) traceSum.add(estimatedCost);
-      }
+      const traceSum = evictionStrategy.resolveKeyBucket(
+        traceTotals,
+        effectiveTraceId,
+        maxTraces,
+        ({ key }) => signalOverflow('trace', maxTraces, key),
+      );
+      if (traceSum) traceSum.add(estimatedCost);
 
       if (evicted) {
         runningSum.subtract(evicted.estimatedCost);

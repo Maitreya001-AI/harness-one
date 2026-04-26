@@ -14,6 +14,7 @@
     "test:coverage": "pnpm -r test --coverage --coverage.reporter=text --coverage.reporter=html --coverage.reporter=lcov --coverage.reporter=json",
     "coverage:html": "pnpm -r test --coverage --coverage.reporter=html",
     "typecheck": "pnpm -r typecheck",
+    "fresh": "pnpm install && pnpm -r --filter './packages/*' build && pnpm typecheck && pnpm test",
     "lint": "pnpm -r lint",
     "smoke": "node tools/smoke-test.mjs",
     "verify:deps": "tsx tools/verify-deps.ts",

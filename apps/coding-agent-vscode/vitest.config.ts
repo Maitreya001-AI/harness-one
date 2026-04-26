@@ -21,6 +21,7 @@ export default defineConfig({
       'harness-one/memory': path.join(coreSrc, 'memory/index.ts'),
       'harness-one/redact': path.join(coreSrc, 'redact/index.ts'),
       'harness-one/infra': path.join(coreSrc, 'infra/index.ts'),
+      'harness-one/io': path.join(coreSrc, 'io/index.ts'),
       'harness-one': path.join(coreSrc, 'index.ts'),
       '@harness-one/preset': path.join(pkgs, 'preset/src/index.ts'),
       '@harness-one/anthropic': path.join(pkgs, 'anthropic/src/index.ts'),

@@ -227,10 +227,12 @@ export function defineWebSearchTool(
     description:
       'Run a search-engine query and return up to `limit` hits (title, url, snippet). ' +
       'Use this to find candidate sources before calling web_fetch on the most promising URL.',
-    // Treated as readonly from the agent's POV — the tool only ever reads
-    // the web, never mutates remote state. Mirrors the dogfood precedent
-    // (`search_recent_issues` shells out to `gh` but is declared readonly).
-    capabilities: [ToolCapability.Readonly],
+    // Truthful capability declaration — readonly from the agent's POV
+    // (no remote mutation) but the call leaves the workspace via the
+    // search-engine API. The harness-factory explicitly allows
+    // `network` via HarnessConfigBase.tools.allowedCapabilities so
+    // the truthful declaration sticks. Closes HARNESS_LOG L-001.
+    capabilities: [ToolCapability.Readonly, ToolCapability.Network],
     parameters: {
       type: 'object',
       properties: {

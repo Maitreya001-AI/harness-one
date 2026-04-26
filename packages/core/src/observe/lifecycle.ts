@@ -23,6 +23,20 @@
  *   `draining` → `shutdown` via `completeShutdown()` (all in-flight done).
  *   `any` → `shutdown` via `forceShutdown()` (emergency).
  *
+ * **There is intentionally NO `transitionTo(state)` method.** The named-verb
+ * API surface (`markReady()`, `beginDrain()`, `completeShutdown()`,
+ * `forceShutdown()`) makes illegal transitions a TypeScript error rather
+ * than a runtime check. Callers reaching for a generic state-setter
+ * should grep this table instead — see the showcase 01 FRICTION_LOG
+ * entry "HarnessLifecycle lacks the documented transitionTo(state) API".
+ *
+ * | from → to                | method                  |
+ * | ------------------------ | ----------------------- |
+ * | `init` → `ready`         | `markReady()` or `markReadyAfterHealthCheck()` |
+ * | `ready` → `draining`     | `beginDrain()`          |
+ * | `draining` → `shutdown`  | `completeShutdown()`    |
+ * | any → `shutdown`         | `forceShutdown()`       |
+ *
  * @module
  */
 

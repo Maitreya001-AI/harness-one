@@ -200,10 +200,10 @@ export function createOTelExporter(config?: OTelExporterConfig): OTelTraceExport
       // (library-authored) under `harness.sys.*` so OTel observers can
       // tell them apart.
       attributes.applyAttributes(root, Object.fromEntries([
-        ...Object.entries(harnessTrace.userMetadata).map(
+        ...Object.entries(harnessTrace.userMetadata ?? {}).map(
           ([k, v]) => [`harness.meta.${k}`, v] as const,
         ),
-        ...Object.entries(harnessTrace.systemMetadata).map(
+        ...Object.entries(harnessTrace.systemMetadata ?? {}).map(
           ([k, v]) => [`harness.sys.${k}`, v] as const,
         ),
       ]));
@@ -309,13 +309,14 @@ export function createOTelExporter(config?: OTelExporterConfig): OTelTraceExport
           otelSpan.setAttribute('harness.parent.id', harnessSpan.parentId);
         }
 
-        attributes.applyAttributes(otelSpan, harnessSpan.attributes);
-        const harnessErrorCode = harnessSpan.attributes['harness.error.code'];
+        const spanAttrs = harnessSpan.attributes ?? {};
+        attributes.applyAttributes(otelSpan, spanAttrs);
+        const harnessErrorCode = spanAttrs['harness.error.code'];
         if (typeof harnessErrorCode === 'string') {
           otelSpan.setAttribute('exception.type', harnessErrorCode);
         }
 
-        for (const event of harnessSpan.events) {
+        for (const event of (harnessSpan.events ?? [])) {
           const attrs = attributes.filterEventAttributes(event.attributes);
           otelSpan.addEvent(event.name, attrs, new Date(event.timestamp));
         }

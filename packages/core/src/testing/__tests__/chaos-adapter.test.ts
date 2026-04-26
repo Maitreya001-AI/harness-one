@@ -124,6 +124,7 @@ describe('createChaosAdapter · hang injection', () => {
 describe('createChaosAdapter · stream mid-break injection', () => {
   it('throws a network-looking error after at least one chunk', async () => {
     const inner = createStreamingMockAdapter({
+      usage: { inputTokens: 1, outputTokens: 1 },
       chunks: [
         { type: 'text_delta', text: 'hi' },
         { type: 'text_delta', text: ' there' },
@@ -146,6 +147,7 @@ describe('createChaosAdapter · stream mid-break injection', () => {
 describe('createChaosAdapter · tool-arg bloat injection', () => {
   it('inflates the first args-bearing tool_call_delta past bloatBytes', async () => {
     const inner = createStreamingMockAdapter({
+      usage: { inputTokens: 1, outputTokens: 1 },
       chunks: [
         // First delta: establish the tool call without args so the
         // aggregator creates an entry. Bloat targets the second delta.
@@ -197,6 +199,7 @@ describe('createChaosAdapter · invalid JSON injection', () => {
 
   it('rewrites stream-path tool call arguments', async () => {
     const inner = createStreamingMockAdapter({
+      usage: { inputTokens: 1, outputTokens: 1 },
       chunks: [
         {
           type: 'tool_call_delta',
@@ -219,6 +222,7 @@ describe('createChaosAdapter · invalid JSON injection', () => {
 describe('createChaosAdapter · recorder', () => {
   it('counts calls across chat and stream paths', async () => {
     const inner = createStreamingMockAdapter({
+      usage: { inputTokens: 1, outputTokens: 1 },
       chunks: [{ type: 'text_delta', text: 'x' }, { type: 'done' }],
     });
     const chaos = createChaosAdapter(inner, { seed: 1 });

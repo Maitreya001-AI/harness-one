@@ -13,9 +13,9 @@
  */
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import path from 'node:path';
 
 import { HarnessError, HarnessErrorCode } from 'harness-one/core';
+import { toFileUri } from 'harness-one/io';
 
 export interface LspClientOptions {
   /** argv[0] for the LSP server (e.g. `'typescript-language-server'`). */
@@ -141,16 +141,10 @@ export function createLspClient(options: LspClientOptions): LspClient {
   }
 
   function uri(relativePath: string): string {
-    const abs = path.isAbsolute(relativePath)
-      ? relativePath
-      : path.join(options.workspace, relativePath);
-    // LSP `file://` URIs must use forward slashes regardless of the host OS.
-    // On Windows `path.join` emits `\` separators which break LSP servers
-    // and produce malformed URIs like `file://\tmp\ws\a.ts`.
-    const posix = abs.replace(/\\/g, '/');
-    // Windows absolute paths look like `C:/foo`; LSP prefixes them with an
-    // extra `/` so the URI authority component stays empty.
-    return posix.startsWith('/') ? `file://${posix}` : `file:///${posix}`;
+    // Cross-platform `file://` URI construction lives in harness-one/io
+    // — see HARNESS_LOG HC-019 for the Windows backslash-in-URI bug
+    // that motivated the centralised primitive.
+    return toFileUri(options.workspace, relativePath);
   }
 
   async function request<T = unknown>(method: string, params?: unknown): Promise<T> {

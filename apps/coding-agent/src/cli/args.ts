@@ -19,6 +19,7 @@
  */
 
 import { HarnessError, HarnessErrorCode } from 'harness-one/core';
+import { omitUndefined } from 'harness-one/infra';
 
 export type ParsedApprovalMode = 'auto' | 'always-ask' | 'allowlist';
 
@@ -157,16 +158,18 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
   const prompt = positional.join(' ');
 
   return {
+    ...omitUndefined({
+      workspace,
+      model,
+      maxTokens,
+      maxIterations,
+      maxDurationMs,
+      budgetUsd,
+      approval,
+      output,
+      resume,
+    }),
     prompt,
-    ...(workspace !== undefined && { workspace }),
-    ...(model !== undefined && { model }),
-    ...(maxTokens !== undefined && { maxTokens }),
-    ...(maxIterations !== undefined && { maxIterations }),
-    ...(maxDurationMs !== undefined && { maxDurationMs }),
-    ...(budgetUsd !== undefined && { budgetUsd }),
-    ...(approval !== undefined && { approval }),
-    ...(output !== undefined && { output }),
-    ...(resume !== undefined && { resume }),
     planOnly,
     dryRun,
     help,

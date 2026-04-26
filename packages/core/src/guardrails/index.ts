@@ -8,11 +8,18 @@
 export type {
   GuardrailVerdict,
   GuardrailContext,
+  GuardrailDirection,
   Guardrail,
+  SyncGuardrail,
+  AsyncGuardrail,
   GuardrailEvent,
   PipelineResult,
   PermissionLevel,
 } from './types.js';
+
+// `getRejectionReason` helper closes the showcase 02 friction
+// (verbose `'reason' in verdict.verdict ? ...` pattern at every call site).
+export { getRejectionReason } from './pipeline.js';
 
 // Pipeline
 export { createPipeline, runInput, runOutput, runToolOutput, runRagContext } from './pipeline.js';

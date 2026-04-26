@@ -51,12 +51,14 @@ and TypeScript can't narrow to `reason` automatically without the in-check.
 call site that wants a human-readable reason.
 
 **Feedback action**:
-- [ ] Consider: a `verdict.reason` accessor or a tiny
-      `getRejectionReason(verdict)` helper that always returns a string.
-      Three different files in the showcase work would now repeat the
-      same `'reason' in ...` dance.
-- [ ] Doc: add a "common patterns" snippet showing the right way to
-      pull a printable reason out of a guardrail block.
+- [x] **Resolved 2026-04-26** — `harness-one/guardrails` now exports
+      `getRejectionReason(result: PipelineResult): string | undefined`.
+      Returns the verdict's reason for `block`/`modify`, undefined for
+      `allow`. Centralises the `'reason' in verdict.verdict ? ...`
+      narrowing dance.
+- [ ] Doc: a "common patterns" snippet showing
+      `result.passed ? ok() : reject(getRejectionReason(result) ?? 'policy violation')`
+      will land in the W4 docs pass.
 
 **Severity**: low
 

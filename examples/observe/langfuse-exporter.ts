@@ -80,8 +80,9 @@ export function createLangfuseExporter(config: {
 
       // Determine if this span represents an LLM call (generation) or a
       // generic span. We check for common LLM-related attributes.
+      const attrs = span.attributes ?? {};
       const isGeneration =
-        span.attributes['model'] !== undefined ||
+        attrs['model'] !== undefined ||
         span.name.includes('llm') ||
         span.name.includes('chat');
 
@@ -91,17 +92,17 @@ export function createLangfuseExporter(config: {
           name: span.name,
           startTime: new Date(span.startTime),
           endTime: span.endTime ? new Date(span.endTime) : undefined,
-          model: span.attributes['model'] as string | undefined,
-          input: span.attributes['input'] as unknown,
-          output: span.attributes['output'] as unknown,
+          model: attrs['model'] as string | undefined,
+          input: attrs['input'] as unknown,
+          output: attrs['output'] as unknown,
           metadata: {
-            ...span.attributes,
+            ...attrs,
             events: span.events,
             status: span.status,
           },
           usage: {
-            input: span.attributes['inputTokens'] as number | undefined,
-            output: span.attributes['outputTokens'] as number | undefined,
+            input: attrs['inputTokens'] as number | undefined,
+            output: attrs['outputTokens'] as number | undefined,
           },
         });
       } else {

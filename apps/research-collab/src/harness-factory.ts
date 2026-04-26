@@ -11,6 +11,7 @@
  */
 
 import type { AgentAdapter } from 'harness-one/core';
+import { defaultModelPricing } from 'harness-one/observe';
 import { createSecurePreset, type SecureHarness } from '@harness-one/preset';
 
 import { DEFAULT_BUDGET_USD, DEFAULT_MODEL, MAX_AGENT_ITERATIONS } from './config/defaults.js';
@@ -36,6 +37,15 @@ export interface BuildAgentHarnessOptions {
  * web_search + web_fetch via {@link buildAgentHarness} after construction.
  */
 export function buildAgentHarness(options: BuildAgentHarnessOptions): SecureHarness {
+  // FRICTION-RESOLVED (L-006): supply `defaultModelPricing` so the
+  // budget gate actually fires. Without this the cost tracker reports
+  // $0 for every recordUsage() call and the budget cap is unreachable —
+  // the cost-tracker now warns at construction time when this happens.
+  //
+  // FRICTION-RESOLVED (L-001 / L-005): explicitly allow the `network`
+  // capability so web_search / web_fetch can declare their truthful
+  // capability set instead of mis-declaring as Readonly only. The
+  // registry stays fail-closed for everything else.
   return createSecurePreset({
     type: 'adapter',
     adapter: options.adapter,
@@ -43,5 +53,7 @@ export function buildAgentHarness(options: BuildAgentHarnessOptions): SecureHarn
     guardrailLevel: 'standard',
     maxIterations: options.maxIterations ?? MAX_AGENT_ITERATIONS,
     budget: options.budgetUsd ?? DEFAULT_BUDGET_USD,
+    pricing: [...defaultModelPricing],
+    tools: { allowedCapabilities: ['readonly', 'network'] },
   });
 }

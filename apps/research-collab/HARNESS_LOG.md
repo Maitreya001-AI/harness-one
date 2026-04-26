@@ -37,8 +37,14 @@
   `paths` 把 workspace 包 alias 到 src（和 vitest config 对齐）；要么在
   `apps/dogfood/README.md` + `apps/research-collab/README.md` 顶部就放一
   句 "first-time setup 必须 `pnpm build` 一次"。
-- **Status**: workaround
-- **Owner**: 主仓库 DX
+- **Status**: resolved 2026-04-26 — 选了"显式文档 + 单命令"路径而非
+  tsconfig paths（后者跟现有 `rootDir` 推断冲突，会污染 emit 边界）：
+  - 根 `package.json` 新增 `pnpm fresh` 一键脚本：install → 构建所有
+    `packages/*` → typecheck → test。
+  - `CONTRIBUTING.md` 顶部明确说明：首次 setup 走 `pnpm fresh`，或者
+    手动 `pnpm install && pnpm -r --filter './packages/*' build && pnpm typecheck`。
+  - 引用本 friction 条目（L-008）作为根因记录。
+- **Owner**: 主仓库 DX ✅
 
 ---
 
@@ -82,8 +88,17 @@
   - 选项 B：当 `budget` 设了但 `pricing` 没设时，`createSecurePreset`
     构造期 `safeWarn` "budget will never trip without pricing config"。
   - 任意一种都比当前的"静默 \$0"好。
-- **Status**: open（影响生产正确性，不只是 ergonomic）
-- **Owner**: 主仓库
+- **Status**: resolved 2026-04-26 — 同时实现两个选项：
+  - `harness-one/observe` 新增 `defaultModelPricing` opt-in 常量
+    (Claude 4.x / 3.x + GPT 主流型号，附 `DEFAULT_PRICING_SNAPSHOT_DATE`
+    元数据，文档警告 vendor 价格漂移)。
+  - `createCostTracker` 在 `budget > 0 && pricing.size === 0` 时构造期
+    `safeWarn`，提示用 `defaultModelPricing` 或自定义表。
+  - `apps/research-collab/src/harness-factory.ts` 已切换到
+    `defaultModelPricing`，预算门禁现在真正生效。
+  - 测试覆盖：`packages/core/src/observe/__tests__/default-pricing.test.ts`
+    锁定 snapshot 完整性 + 警告触发条件 + 缓存价比例。
+- **Owner**: 主仓库 ✅
 
 ---
 
@@ -102,8 +117,12 @@
 - **建议反哺**：`HarnessConfigBase` 加 `tools?: { registry?: ToolRegistry;
   allowedCapabilities?: ToolCapabilityValue[] }`。两个字段互斥（前者
   完全自带，后者只是配置默认 registry）。
-- **Status**: open
-- **Owner**: 主仓库
+- **Status**: resolved 2026-04-26 — 与 L-001 同一改动落地。
+  `wireComponents` 三种模式：(a) caller 传 `tools.registry` → 直用；
+  (b) caller 传 `tools.allowedCapabilities` → 按列表建 registry；
+  (c) 都不传 → fail-closed `['readonly']`。两字段在
+  `validateHarnessConfig` 中强制互斥。
+- **Owner**: 主仓库 ✅
 
 ---
 
@@ -128,8 +147,13 @@
 - **建议反哺**：在 `HarnessConfigBase` 上加 `tools?: { allowedCapabilities?, ... }`
   字段，转交 `createRegistry`。`createSecurePreset` 仍可以用安全默认，
   但允许 app 显式扩展（例如 `['readonly', 'network']`）。
-- **Status**: workaround
-- **Owner**: app-side，待主仓库决策
+- **Status**: resolved 2026-04-26 — `HarnessConfigBase.tools` 现支持
+  互斥两种注入模式: `{ registry }` 或 `{ allowedCapabilities }`。
+  `apps/research-collab/src/harness-factory.ts` 已切换到
+  `tools: { allowedCapabilities: ['readonly', 'network'] }`，
+  web_search / web_fetch 也同步把 capabilities 改回真实声明
+  `[Readonly, Network]`。capability 元数据失真的隐患消除。
+- **Owner**: 主仓库 ✅
 - **关联**：DESIGN §5.1 第 1 项（"orchestration 子系统的 handoff API
   ergonomic" 类型摩擦的兄弟问题）
 
@@ -148,8 +172,12 @@
 - **建议反哺**：把 `direction` 提升为 GuardrailContext 一等字段（pipeline
   实际上已经知道这个值，只是没暴露给单个 guardrail），并提供
   `GuardrailContextBuilder` 帮助 app 维护一致的 meta key。
-- **Status**: workaround
-- **Owner**: 主仓库
+- **Status**: resolved 2026-04-26 — `GuardrailContext` 现有一等字段
+  `direction?: 'input'|'output'|'tool_output'|'rag'` + `source?: string`。
+  Pipeline 在 `runInput` / `runOutput` 调用前自动填充 direction（caller
+  显式传入则尊重 caller 决策）。`apps/research-collab/src/guardrails/web-content.ts`
+  已经迁移到 first-class fields，不再用 `meta.source` 绕过。
+- **Owner**: 主仓库 ✅
 
 ---
 
@@ -166,8 +194,13 @@
 - **临时绕过**：`if (verdict instanceof Promise) throw …`，断言不变量。
 - **建议反哺**：拆 `Guardrail` 成 `SyncGuardrail` + `AsyncGuardrail` 两个类型，
   pipeline 接受联合，但 app 可以用 `SyncGuardrail` 作 narrower 类型。
-- **Status**: workaround
-- **Owner**: 主仓库
+- **Status**: resolved 2026-04-26 — `harness-one/guardrails` 现导出
+  `SyncGuardrail = (ctx) => GuardrailVerdict` 和
+  `AsyncGuardrail = (ctx) => Promise<GuardrailVerdict>` 两个 narrow 别名，
+  原 `Guardrail` 联合保持不变给 pipeline 用。`createInjectionDetector`
+  实际仍是 sync——下游可以把 detector 的返回类型 narrow 到 `SyncGuardrail`，
+  消除 `instanceof Promise` 冗余防御。
+- **Owner**: 主仓库 ✅
 
 ---
 
@@ -184,8 +217,13 @@
 - **建议反哺**：要么放宽到允许显式 `undefined`（违反 exactOptional 项目
   规范），要么提供一个 `withDefined<T>(obj: { [K in keyof T]?: T[K] | undefined })`
   helper 自动剥离 undefined。
-- **Status**: workaround
-- **Owner**: 主仓库（人体工学小修）
+- **Status**: resolved 2026-04-26 — `harness-one/infra` 现在导出
+  `omitUndefined<T>(obj)` + `WithoutUndefined<T>` 类型，调用点用
+  `omitUndefined({ field: maybeValue })` 取代条件 spread 模式。
+  `apps/research-collab/src/pipeline/run.ts` 6 处调用点已批量迁移；
+  `apps/coding-agent/src/cli/args.ts` 9 处调用点同样迁移完成。其余
+  call sites 后续按需替换 — helper 是 additive，无破坏。
+- **Owner**: 主仓库 ✅
 
 ---
 

@@ -1,6 +1,15 @@
 /**
  * Trace and span management for observability.
  *
+ * **No `shutdown()` method.** Migrators from OpenTelemetry frequently
+ * reach for `traceManager.shutdown()` because OTel's TracerProvider
+ * has one. This module's `TraceManager` deliberately exposes only
+ * `flush()` — span lifecycle is owned by the host's
+ * `Harness.shutdown()` / `HarnessLifecycle.completeShutdown()`. Use
+ * `await traces.flush()` inside your shutdown handler to drain pending
+ * exports. See showcase 01 FRICTION_LOG entry "TraceManager.shutdown()
+ * doesn't exist; the right method is flush()".
+ *
  * @module
  */
 

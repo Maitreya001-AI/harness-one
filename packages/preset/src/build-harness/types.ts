@@ -13,7 +13,7 @@ import type { AgentAdapter, Message, AgentEvent, AgentLoop } from 'harness-one/c
 import type { MiddlewareChain } from 'harness-one/advanced';
 import type { TraceExporter, TraceManager, CostTracker, ModelPricing, Logger } from 'harness-one/observe';
 import type { PromptBuilder } from 'harness-one/prompt';
-import type { ToolRegistry, SchemaValidator } from 'harness-one/tools';
+import type { ToolRegistry, ToolCapabilityValue, SchemaValidator } from 'harness-one/tools';
 import type { GuardrailPipeline } from 'harness-one/guardrails';
 import type { SessionManager, ConversationStore } from 'harness-one/session';
 import type { MemoryStore } from 'harness-one/memory';
@@ -140,6 +140,27 @@ export interface HarnessConfigBase {
    * session, conversation-append failures) into your observability stack.
    */
   readonly logger?: Logger;
+
+  /**
+   * Tool-registry configuration injection. **Mutually exclusive fields**:
+   *
+   * - `registry` — pass an already-built `ToolRegistry` instance
+   *   (with custom middleware, permission checker, byte caps, etc.).
+   *   When set, `allowedCapabilities` MUST NOT be set; the registry's
+   *   own configuration governs.
+   * - `allowedCapabilities` — extend / replace the secure default of
+   *   `['readonly']`. Useful when an app legitimately needs network
+   *   tools (e.g. `['readonly', 'network']`) without giving up the
+   *   rest of the secure-preset hardening.
+   *
+   * Default (when omitted): the harness builds its own registry with
+   * `allowedCapabilities: ['readonly']` — fail-closed.
+   *
+   * Closes HARNESS_LOG research-collab L-001 / L-005.
+   */
+  readonly tools?:
+    | { readonly registry: ToolRegistry; readonly allowedCapabilities?: never }
+    | { readonly allowedCapabilities: readonly ToolCapabilityValue[]; readonly registry?: never };
 }
 
 /**

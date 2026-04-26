@@ -52,14 +52,15 @@ problem.
 explains the signal-laundering for future readers.
 
 **Feedback action**:
-- [ ] Possibly: a `harness-one/testing` helper for spawning crash-test
-      children that hides this concern. Anyone writing a chaos /
-      stress harness for harness-one will hit this exact issue. A
-      `spawnCrashable({ entry, args, killAt })` helper that returns a
-      structured outcome (clean / killed / errored) would centralize
-      it.
-- [ ] Doc: the showcase-method doc's Stage 3 advice on "process-level
-      chaos injection" should warn about wrapped invocations.
+- [x] **Resolved 2026-04-26** — `harness-one/testing` now exports
+      `spawnCrashable({ entry, args, killAt })` returning a structured
+      `{ outcome: 'clean' | 'killed' | 'errored', code, signal }`.
+      Recognises BOTH `signal === 'SIGKILL'` and `code === 137`
+      (laundered via pnpm/tsx wrappers) as the killed outcome.
+      Tests in `packages/core/src/testing/__tests__/extra-helpers.test.ts`
+      lock all six exit-shape branches.
+- [ ] Doc: showcase-method note about wrapped invocations to land in
+      W4-DOCS pass.
 
 **Severity**: medium for any future stress test author; trivial once
 known.
@@ -89,13 +90,20 @@ pressure (fs-backed crash-recovery) is satisfied by FsMemoryStore
 alone, which has its own atomic-rename + index recovery.
 
 **Feedback action**:
-- [ ] Either ship a `createFsCheckpointStorage()` helper in
-      `harness-one/context` that bridges to MemoryStore, or change
-      `CheckpointStorage` to be async so the natural composition
-      works.
-- [ ] Doc: PLAN.md and form-coverage.md both name "CheckpointManager
-      + ContextRelay" as the memory pressure stack. Either update the
-      docs to point at FsMemoryStore directly, or fix the gap above.
+- [x] **Resolved 2026-04-26** — implemented BOTH suggestions:
+      1. `CheckpointStorage` is now async (`Promise<...>` everywhere).
+         Composes naturally with any async backend including the
+         existing `FsMemoryStore` pattern. Major version bump for
+         the breaking interface change.
+      2. New `createFsCheckpointStorage({ dir })` ships from
+         `harness-one/context`, with atomic-rename writes, an
+         `_index.json` for ordered list reads, and directory-scan
+         recovery when the index is torn or missing. Same shape as
+         FsMemoryStore.
+      Tests: `packages/core/src/context/__tests__/fs-checkpoint-storage.test.ts`
+      cover CRUD, cold-restart persistence, torn-index recovery,
+      cross-process auto-prune, and concurrent in-process writes.
+- [ ] Doc: PLAN.md / form-coverage.md update tracked under W4-DOCS.
 
 **Severity**: medium — the docs over-promise composition that the
 APIs don't deliver. New contributors trying to follow the PLAN will

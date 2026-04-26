@@ -33,6 +33,26 @@ export {
   createErrorStreamingMockAdapter,
 } from './test-utils.js';
 
+// Slow mock adapter — deterministic delays so abort/timeout scenarios
+// are observable in tests without real network. Closes showcase 04
+// `Cascade abort scenario didn't trigger`.
+export type { SlowMockAdapterConfig } from './slow-mock-adapter.js';
+export { createSlowMockAdapter } from './slow-mock-adapter.js';
+
+// Crashable subprocess spawner — recognises SIGKILL even when laundered
+// through pnpm/tsx wrappers (exit code 137). Closes showcase 03
+// `SIGKILL via pnpm wrapper surfaces as exit code 137`.
+export type {
+  SpawnCrashableConfig,
+  SpawnCrashableOutcome,
+} from './spawn-crashable.js';
+export { spawnCrashable } from './spawn-crashable.js';
+
+// Temp checkpoint dir helper — closes coding-agent HC-017
+// (`checkpointDir is the only seam for sandboxing tests`).
+export type { WithTempCheckpointDirOptions } from './temp-checkpoint.js';
+export { withTempCheckpointDir } from './temp-checkpoint.js';
+
 // Chaos adapter — seeded fault injection for long-running scenarios.
 // See `docs/architecture/17-testing.md` § Chaos 测试.
 export { createChaosAdapter } from './chaos/chaos-adapter.js';

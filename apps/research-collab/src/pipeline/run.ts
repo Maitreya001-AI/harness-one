@@ -8,6 +8,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type { AgentAdapter } from 'harness-one/core';
+import { omitUndefined } from 'harness-one/infra';
 
 import { buildAgentHarness } from '../harness-factory.js';
 import { fingerprint } from '../observability/fingerprint.js';
@@ -70,28 +71,34 @@ export async function runResearch(
   const questionFingerprint = fingerprint(task.question);
 
   // Build per-role harnesses up front so cost slices stay independent.
-  const researcherHarness = buildAgentHarness({
-    role: 'researcher',
-    adapter: options.adapter,
-    ...(options.model !== undefined && { model: options.model }),
-    ...(options.budgetUsd !== undefined && { budgetUsd: options.budgetUsd }),
-  });
-  const coordinatorHarness = buildAgentHarness({
-    role: 'coordinator',
-    adapter: options.adapter,
-    ...(options.model !== undefined && { model: options.model }),
-    ...(options.budgetUsd !== undefined && { budgetUsd: options.budgetUsd }),
-  });
+  const researcherHarness = buildAgentHarness(
+    omitUndefined({
+      role: 'researcher' as const,
+      adapter: options.adapter,
+      model: options.model,
+      budgetUsd: options.budgetUsd,
+    }),
+  );
+  const coordinatorHarness = buildAgentHarness(
+    omitUndefined({
+      role: 'coordinator' as const,
+      adapter: options.adapter,
+      model: options.model,
+      budgetUsd: options.budgetUsd,
+    }),
+  );
 
   const guardrail = createWebContentGuardrail();
 
   const specialistFactory: SpecialistFactory = () => {
-    const harness = buildAgentHarness({
-      role: 'specialist',
-      adapter: options.adapter,
-      ...(options.model !== undefined && { model: options.model }),
-      ...(options.budgetUsd !== undefined && { budgetUsd: options.budgetUsd }),
-    });
+    const harness = buildAgentHarness(
+      omitUndefined({
+        role: 'specialist' as const,
+        adapter: options.adapter,
+        model: options.model,
+        budgetUsd: options.budgetUsd,
+      }),
+    );
     return {
       harness,
       tools: {

@@ -204,7 +204,41 @@ export interface HandoffArtifact {
   readonly label?: string;
 }
 
-/** Structured payload for an agent-to-agent handoff. */
+/**
+ * Structured payload for an agent-to-agent handoff.
+ *
+ * **Field map** (every field is optional except `summary`):
+ *
+ * - `summary` — one-line description of what is being handed off.
+ *   *(required)*
+ * - `artifacts` — structured documents the receiver should consume.
+ * - `concerns` — open issues / risks the sender wants flagged.
+ * - `acceptanceCriteria` — predicate strings the receiver's output
+ *   must satisfy; `HandoffManager.verify()` evaluates these.
+ * - `context` — arbitrary extra data the receiver may need.
+ * - `metadata` — observability tags (trace ids, source URLs, …).
+ * - `priority` — `'high' | 'normal' | 'low'`; high-priority handoffs
+ *   are pulled from the inbox first.
+ *
+ * The orchestration README's "Handoff payload" section motivates the
+ * shape; the canonical reference is this JSDoc plus the example below.
+ * (Closes HARNESS_LOG research-collab L-007 — the user reached for
+ * `details:` and TS rejected it; the type uses `metadata`.)
+ *
+ * @example
+ * ```ts
+ * const receipt = handoff.send('researcher', 'writer', {
+ *   summary: 'Draft research notes ready for review',
+ *   artifacts: [
+ *     { type: 'markdown', content: '## findings\n…', label: 'notes.md' },
+ *   ],
+ *   concerns: ['Source #3 contradicts source #1 — flagged for fact-check'],
+ *   acceptanceCriteria: ['Synthesised report cites all three sources'],
+ *   metadata: { traceId: ctx.traceId, sourceCount: 3 },
+ *   priority: 'normal',
+ * });
+ * ```
+ */
 export interface HandoffPayload {
   readonly summary: string;
   readonly artifacts?: readonly HandoffArtifact[];

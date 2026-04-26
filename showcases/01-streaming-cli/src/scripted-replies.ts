@@ -16,10 +16,11 @@ function textChunks(s: string, splitEvery = 6): StreamChunk[] {
   for (let i = 0; i < s.length; i += splitEvery) {
     out.push({ type: 'text_delta', text: s.slice(i, i + splitEvery) });
   }
-  // Mirror production streaming providers: the terminal `done` chunk
-  // carries TokenUsage. Without this AgentLoop's cumulative usage stays
-  // at zero in streaming mode (see FRICTION_LOG entry on
-  // createStreamingMockAdapter usage defaults).
+  // Per-message TokenUsage on the terminal `done` chunk gives the
+  // showcase varying cost numbers per turn; createStreamingMockAdapter
+  // also auto-attaches `config.usage` as a fallback (FRICTION-RESOLVED
+  // 2026-04-26 — silent zero-usage failure mode is now a construction-
+  // time throw).
   const inputTokens = 30 + Math.floor(s.length / 4);
   const outputTokens = Math.max(1, Math.ceil(s.length / 4));
   out.push({ type: 'done', usage: { inputTokens, outputTokens } });

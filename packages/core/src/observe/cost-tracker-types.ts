@@ -59,8 +59,20 @@ export interface CostTracker {
    * factory time.
    */
   updatePricing(pricing: ModelPricing[]): Promise<void>;
-  /** Record token usage and return the record with computed cost. */
-  recordUsage(usage: Omit<TokenUsageRecord, 'estimatedCost' | 'timestamp'>): TokenUsageRecord;
+  /**
+   * Record token usage and return the record with computed cost.
+   *
+   * `traceId` and `model` on the input are **optional** as of HC-005:
+   * missing values fall through to the `'unknown'` bucket so simple
+   * callers (single-task budget trackers) don't have to fabricate
+   * stub IDs that pollute aggregations.
+   */
+  recordUsage(
+    usage: Omit<TokenUsageRecord, 'estimatedCost' | 'timestamp' | 'traceId' | 'model'> & {
+      readonly traceId?: string;
+      readonly model?: string;
+    },
+  ): TokenUsageRecord;
   /**
    * Update the most recent usage record for a given traceId with partial new
    * token counts. Used for streaming scenarios where token counts arrive

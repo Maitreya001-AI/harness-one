@@ -6,7 +6,6 @@
  * @module
  */
 
-import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
 import {
@@ -16,6 +15,8 @@ import {
   toolSuccess,
 } from 'harness-one/tools';
 import type { ToolDefinition } from 'harness-one/tools';
+import { safeReadFile } from 'harness-one/io';
+import { HarnessError, HarnessErrorCode } from 'harness-one/core';
 
 import type { ToolContext } from './context.js';
 import { resolveSafePath } from './paths.js';
@@ -55,36 +56,31 @@ export function defineReadFileTool(ctx: ToolContext): ToolDefinition<ReadFileInp
       const cap = Math.min(params.maxBytes ?? 64 * 1024, ctx.maxOutputBytes);
       const safe = await resolveSafePath(ctx.workspace, params.path);
       try {
-        // Open first, then stat the resulting file descriptor — eliminates
-        // the TOCTOU race between `stat()` and `open()` (CWE-367) where
-        // the path could be replaced with a different file or a symlink
-        // that escapes the workspace between the two calls.
-        const fh = await fs.open(safe, 'r');
-        try {
-          const stat = await fh.stat();
-          if (!stat.isFile()) {
-            return toolError(
-              `Not a regular file: ${path.relative(ctx.workspace, safe)}`,
-              'validation',
-              'Pass a path to a file, not a directory or symlink target',
-            );
-          }
-          // Read up to `cap + 1` bytes so we can detect truncation.
-          const buf = Buffer.alloc(cap + 1);
-          const { bytesRead } = await fh.read(buf, 0, cap + 1, 0);
-          const truncated = bytesRead > cap;
-          const content = buf.slice(0, Math.min(bytesRead, cap)).toString('utf8');
-          return toolSuccess({
-            path: path.relative(ctx.workspace, safe),
-            content,
-            bytes: Math.min(bytesRead, cap),
-            truncated,
-            totalBytes: stat.size,
-          });
-        } finally {
-          await fh.close();
-        }
+        // safeReadFile (harness-one/io) opens-then-stats the file
+        // descriptor — TOCTOU-safe by construction (CWE-367 fix lives
+        // upstream now). truncateOnOverflow lets us surface the same
+        // "first N bytes + truncated flag" envelope the model expects.
+        const result = await safeReadFile(safe, {
+          maxBytes: cap,
+          requireFileKind: 'file',
+          encoding: 'utf8',
+          truncateOnOverflow: true,
+        });
+        return toolSuccess({
+          path: path.relative(ctx.workspace, safe),
+          content: result.content,
+          bytes: result.bytesRead,
+          truncated: result.truncated,
+          totalBytes: result.totalBytes,
+        });
       } catch (err) {
+        if (err instanceof HarnessError && err.code === HarnessErrorCode.IO_NOT_REGULAR_FILE) {
+          return toolError(
+            `Not a regular file: ${path.relative(ctx.workspace, safe)}`,
+            'validation',
+            'Pass a path to a file, not a directory or symlink target',
+          );
+        }
         const code = (err as NodeJS.ErrnoException).code;
         if (code === 'ENOENT') {
           return toolError(

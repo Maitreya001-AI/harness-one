@@ -104,7 +104,7 @@ describe('iteration-coordinator', () => {
   });
 
   describe('checkPreIteration', () => {
-    it('emits abort + done and signals stop when the controller is already aborted', async () => {
+    it('emits iteration_start + error + done and signals stop when the controller is already aborted', async () => {
       const state = freshState();
       const deps = freshDeps();
       deps.abortController.abort();
@@ -117,9 +117,13 @@ describe('iteration-coordinator', () => {
       );
       const { events, done } = await drain(gen);
       expect(done).toBe(true);
-      expect(events[0]).toMatchObject({ type: 'error' });
-      expect((events[0] as { error: unknown }).error).toBeInstanceOf(AbortedError);
-      expect(events[1]).toMatchObject({ type: 'done', reason: 'aborted' });
+      // Per HARNESS_LOG HC-010: every `done` is preceded by at least
+      // one `iteration_start` so consumer state machines have a
+      // uniform contract to key on.
+      expect(events[0]).toMatchObject({ type: 'iteration_start', iteration: 1 });
+      expect(events[1]).toMatchObject({ type: 'error' });
+      expect((events[1] as { error: unknown }).error).toBeInstanceOf(AbortedError);
+      expect(events[2]).toMatchObject({ type: 'done', reason: 'aborted' });
     });
 
     it('trips max_iterations after the configured cap', async () => {
@@ -143,7 +147,9 @@ describe('iteration-coordinator', () => {
       );
       const second = await drain(secondGen);
       expect(second.done).toBe(true);
-      expect((second.events[0] as { error: unknown }).error).toBeInstanceOf(MaxIterationsError);
+      // Leading iteration_start emitted before error per HC-010.
+      expect(second.events[0]).toMatchObject({ type: 'iteration_start', iteration: 2 });
+      expect((second.events[1] as { error: unknown }).error).toBeInstanceOf(MaxIterationsError);
     });
 
     it('trips the token budget when cumulative usage exceeds the cap', async () => {
@@ -159,7 +165,8 @@ describe('iteration-coordinator', () => {
       );
       const { events, done } = await drain(gen);
       expect(done).toBe(true);
-      expect((events[0] as { error: unknown }).error).toBeInstanceOf(TokenBudgetExceededError);
+      expect(events[0]).toMatchObject({ type: 'iteration_start' });
+      expect((events[1] as { error: unknown }).error).toBeInstanceOf(TokenBudgetExceededError);
     });
 
     it('trips the duration budget when wall-clock runtime exceeds maxDurationMs', async () => {
@@ -175,10 +182,11 @@ describe('iteration-coordinator', () => {
       );
       const { events, done } = await drain(gen);
       expect(done).toBe(true);
-      expect((events[0] as { error: HarnessError }).error.code).toBe(
+      expect(events[0]).toMatchObject({ type: 'iteration_start' });
+      expect((events[1] as { error: HarnessError }).error.code).toBe(
         HarnessErrorCode.CORE_DURATION_BUDGET_EXCEEDED,
       );
-      expect(events[1]).toMatchObject({ type: 'done', reason: 'aborted' });
+      expect(events[2]).toMatchObject({ type: 'done', reason: 'aborted' });
     });
   });
 
