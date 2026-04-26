@@ -1,0 +1,86 @@
+{
+  "name": "harness-one-coding",
+  "version": "0.0.1",
+  "description": "Autonomous coding agent built on harness-one. Long-horizon dogfood + reusable vertical package.",
+  "type": "module",
+  "bin": {
+    "harness-coding": "./dist/cli/bin.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./tools": {
+      "types": "./dist/tools/index.d.ts",
+      "import": "./dist/tools/index.js"
+    },
+    "./guardrails": {
+      "types": "./dist/guardrails/index.d.ts",
+      "import": "./dist/guardrails/index.js"
+    },
+    "./config": {
+      "types": "./dist/config/index.d.ts",
+      "import": "./dist/config/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "HARNESS_LOG.md",
+    "METRICS.md"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "start": "tsx src/cli/bin.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/ tests/",
+    "prepublishOnly": "pnpm build"
+  },
+  "dependencies": {
+    "harness-one": "workspace:*",
+    "@harness-one/preset": "workspace:*",
+    "@harness-one/anthropic": "workspace:*"
+  },
+  "peerDependencies": {
+    "@anthropic-ai/sdk": ">=0.30.0"
+  },
+  "peerDependenciesMeta": {
+    "@anthropic-ai/sdk": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@anthropic-ai/sdk": "^0.91.0",
+    "@vitest/coverage-v8": "^4.1.5",
+    "tsup": "^8.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.5"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT",
+  "author": "harness-one contributors",
+  "keywords": [
+    "ai",
+    "agent",
+    "coding-agent",
+    "harness",
+    "llm",
+    "claude",
+    "autonomous"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Maitreya001-AI/harness-one",
+    "directory": "apps/coding-agent"
+  }
+}
