@@ -46,7 +46,7 @@ export function createOTelExporter(config?: {
 
         // Copy user-supplied metadata as OTel attributes. `systemMetadata`
         // is library-authored and stays in-process.
-        for (const [key, value] of Object.entries(harnessTrace.userMetadata)) {
+        for (const [key, value] of Object.entries(harnessTrace.userMetadata ?? {})) {
           if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
             otelSpan.setAttribute(`harness.meta.${key}`, value);
           }
@@ -75,14 +75,14 @@ export function createOTelExporter(config?: {
           otelSpan.setAttribute('harness.parent.id', harnessSpan.parentId);
         }
 
-        for (const [key, value] of Object.entries(harnessSpan.attributes)) {
+        for (const [key, value] of Object.entries(harnessSpan.attributes ?? {})) {
           if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
             otelSpan.setAttribute(key, value);
           }
         }
 
         // Map harness-one events to OTel events
-        for (const event of harnessSpan.events) {
+        for (const event of (harnessSpan.events ?? [])) {
           const attrs: Record<string, string | number | boolean> = {};
           if (event.attributes) {
             for (const [k, v] of Object.entries(event.attributes)) {

@@ -1,6 +1,12 @@
 /**
  * Checkpoint Manager — save and restore conversation state.
  *
+ * **Async since 0.3**: see HARNESS_LOG showcase 03
+ * (`CheckpointManager doesn't natively compose with FsMemoryStore`).
+ * The interface is now `Promise<...>` everywhere so fs-backed and
+ * remote backends compose naturally; the in-memory default still
+ * resolves synchronously under the hood.
+ *
  * @module
  */
 
@@ -28,17 +34,17 @@ function createInMemoryStorage(): CheckpointStorage {
   const store = new Map<string, Checkpoint>();
   const order: string[] = [];
   return {
-    save(cp) {
+    async save(cp) {
       store.set(cp.id, cp);
       order.push(cp.id);
     },
-    load(id) {
+    async load(id) {
       return store.get(id);
     },
-    list() {
+    async list() {
       return order.filter((id) => store.has(id)).map((id) => store.get(id) as Checkpoint);
     },
-    delete(id) {
+    async delete(id) {
       const had = store.delete(id);
       if (had) {
         const i = order.indexOf(id);
@@ -58,33 +64,34 @@ function createInMemoryStorage(): CheckpointStorage {
 export function createCheckpointManager(
   config?: CheckpointManagerConfig,
 ): CheckpointManager {
-  // use crypto-backed IDs so checkpoint handles cannot be
-  // guessed by an attacker who can see timestamps. `prefixedSecureId` uses
-  // `crypto.randomBytes` and returns a URL-safe suffix.
   function generateId(): string {
     return prefixedSecureId('cp');
   }
   const maxCheckpoints = config?.maxCheckpoints ?? 5;
   if (maxCheckpoints < 1) {
-    throw new HarnessError('maxCheckpoints must be >= 1', HarnessErrorCode.CORE_INVALID_CONFIG, 'Provide a positive integer for maxCheckpoints');
+    throw new HarnessError(
+      'maxCheckpoints must be >= 1',
+      HarnessErrorCode.CORE_INVALID_CONFIG,
+      'Provide a positive integer for maxCheckpoints',
+    );
   }
   const countTokens = config?.countTokens ?? defaultCountTokens;
   const storage = config?.storage ?? createInMemoryStorage();
 
-  function autoPrune(): void {
-    const list = storage.list();
+  async function autoPrune(): Promise<void> {
+    const list = await storage.list();
     if (list.length >= maxCheckpoints) {
-      storage.delete(list[0].id);
+      await storage.delete(list[0].id);
     }
   }
 
   return {
-    save(
+    async save(
       messages: readonly Message[],
       label?: string,
       metadata?: Record<string, unknown>,
-    ): Checkpoint {
-      autoPrune();
+    ): Promise<Checkpoint> {
+      await autoPrune();
 
       const cp: Checkpoint = Object.freeze({
         id: generateId(),
@@ -97,12 +104,12 @@ export function createCheckpointManager(
           : {}),
       });
 
-      storage.save(cp);
+      await storage.save(cp);
       return cp;
     },
 
-    restore(checkpointId: string): readonly Message[] {
-      const cp = storage.load(checkpointId);
+    async restore(checkpointId: string): Promise<readonly Message[]> {
+      const cp = await storage.load(checkpointId);
       if (!cp) {
         throw new HarnessError(
           `Checkpoint not found: ${checkpointId}`,
@@ -113,29 +120,29 @@ export function createCheckpointManager(
       return [...cp.messages];
     },
 
-    list(): readonly Checkpoint[] {
+    async list(): Promise<readonly Checkpoint[]> {
       return storage.list();
     },
 
-    prune(options?: { maxCheckpoints?: number; maxAge?: number }): number {
+    async prune(options?: { maxCheckpoints?: number; maxAge?: number }): Promise<number> {
       let pruned = 0;
-      const list = storage.list();
+      const list = await storage.list();
 
       if (options?.maxAge != null) {
         const cutoff = Date.now() - options.maxAge;
         for (const cp of list) {
           if (cp.timestamp < cutoff) {
-            storage.delete(cp.id);
+            await storage.delete(cp.id);
             pruned++;
           }
         }
       }
 
       if (options?.maxCheckpoints != null) {
-        const current = storage.list();
+        const current = await storage.list();
         const excess = current.length - options.maxCheckpoints;
         for (let i = 0; i < excess; i++) {
-          storage.delete(current[i].id);
+          await storage.delete(current[i].id);
           pruned++;
         }
       }
@@ -143,10 +150,10 @@ export function createCheckpointManager(
       return pruned;
     },
 
-    dispose(): void {
-      const list = storage.list();
+    async dispose(): Promise<void> {
+      const list = await storage.list();
       for (const cp of list) {
-        storage.delete(cp.id);
+        await storage.delete(cp.id);
       }
     },
   };

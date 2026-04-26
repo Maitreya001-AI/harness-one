@@ -72,6 +72,34 @@ export function validateHarnessConfig(config: Record<string, unknown>): void {
     );
   }
 
+  // Tools-injection mutual exclusion (HarnessConfigBase.tools).
+  if (config.tools !== undefined) {
+    if (typeof config.tools !== 'object' || config.tools === null) {
+      throw new HarnessError(
+        'config.tools must be an object',
+        HarnessErrorCode.CORE_INVALID_CONFIG,
+        'Pass `{ registry }` to inject a pre-built ToolRegistry, or `{ allowedCapabilities }` to extend the default secure capability whitelist.',
+      );
+    }
+    const t = config.tools as Record<string, unknown>;
+    const hasRegistry = t.registry !== undefined && t.registry !== null;
+    const hasAllowedCaps = t.allowedCapabilities !== undefined && t.allowedCapabilities !== null;
+    if (hasRegistry && hasAllowedCaps) {
+      throw new HarnessError(
+        'config.tools.registry and config.tools.allowedCapabilities are mutually exclusive',
+        HarnessErrorCode.CORE_INVALID_CONFIG,
+        'Pass exactly ONE of `{ registry }` or `{ allowedCapabilities }`. The registry, if supplied, governs its own capability rules.',
+      );
+    }
+    if (hasAllowedCaps && !Array.isArray(t.allowedCapabilities)) {
+      throw new HarnessError(
+        'config.tools.allowedCapabilities must be an array of capability names',
+        HarnessErrorCode.CORE_INVALID_CONFIG,
+        'Pass e.g. `["readonly", "network"]`.',
+      );
+    }
+  }
+
   // Guardrails sub-config validation.
   if (config.guardrails !== undefined && typeof config.guardrails === 'object' && config.guardrails !== null) {
     const g = config.guardrails as Record<string, unknown>;
@@ -173,6 +201,7 @@ const KNOWN_KEYS: ReadonlySet<HarnessConfigKnownKey> = new Set<HarnessConfigKnow
   'budget',
   'pricing',
   'logger',
+  'tools',
   // Provider-variant discriminators.
   'type',
   'provider',

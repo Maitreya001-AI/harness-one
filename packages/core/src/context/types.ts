@@ -126,16 +126,24 @@ export interface Checkpoint {
   readonly metadata?: Readonly<Record<string, unknown>>;
 }
 
-/** Pluggable storage backend for checkpoints (sync interface). */
+/**
+ * Pluggable storage backend for checkpoints — **async interface as of 0.3**.
+ *
+ * The previous sync interface composed badly with the async {@link MemoryStore}
+ * (showcase 03 FRICTION_LOG `CheckpointManager doesn't natively compose
+ * with FsMemoryStore`). The async migration lets fs-backed and remote
+ * (Redis, S3, …) backends slot in directly without forcing callers to
+ * write a write-through cache + queue bridge.
+ */
 export interface CheckpointStorage {
   /** Save a checkpoint. */
-  save(checkpoint: Checkpoint): void;
+  save(checkpoint: Checkpoint): Promise<void>;
   /** Load a checkpoint by ID. Returns undefined if not found. */
-  load(id: string): Checkpoint | undefined;
+  load(id: string): Promise<Checkpoint | undefined>;
   /** List all checkpoints in insertion order (oldest first). */
-  list(): readonly Checkpoint[];
+  list(): Promise<readonly Checkpoint[]>;
   /** Delete a checkpoint by ID. Returns true if it existed. */
-  delete(id: string): boolean;
+  delete(id: string): Promise<boolean>;
 }
 
 /** Configuration for creating a CheckpointManager. */
@@ -144,20 +152,27 @@ export interface CheckpointManagerConfig {
   readonly maxCheckpoints?: number;
   /** Custom token counting function. Default: heuristic estimate. */
   readonly countTokens?: (messages: readonly Message[]) => number;
-  /** Pluggable storage backend. Default: in-memory. */
+  /** Pluggable storage backend. Default: in-memory (still async). */
   readonly storage?: CheckpointStorage;
 }
 
-/** Checkpoint manager for saving and restoring conversation state. */
+/**
+ * Checkpoint manager for saving and restoring conversation state — async
+ * since 0.3 (matches the underlying {@link CheckpointStorage} interface).
+ */
 export interface CheckpointManager {
   /** Save current messages as a checkpoint. Auto-prunes if at capacity. */
-  save(messages: readonly Message[], label?: string, metadata?: Record<string, unknown>): Checkpoint;
+  save(
+    messages: readonly Message[],
+    label?: string,
+    metadata?: Record<string, unknown>,
+  ): Promise<Checkpoint>;
   /** Restore messages from a checkpoint. Returns a fresh copy. Throws if not found. */
-  restore(checkpointId: string): readonly Message[];
+  restore(checkpointId: string): Promise<readonly Message[]>;
   /** List all checkpoints (oldest first). */
-  list(): readonly Checkpoint[];
+  list(): Promise<readonly Checkpoint[]>;
   /** Prune checkpoints by count and/or age. Returns number pruned. */
-  prune(options?: { maxCheckpoints?: number; maxAge?: number }): number;
+  prune(options?: { maxCheckpoints?: number; maxAge?: number }): Promise<number>;
   /** Dispose the manager and clear all checkpoints. */
-  dispose(): void;
+  dispose(): Promise<void>;
 }

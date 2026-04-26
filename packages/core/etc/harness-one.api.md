@@ -351,7 +351,10 @@ export interface CostTracker {
     getTotalCost(): number;
     isBudgetExceeded(): boolean;
     onAlert(handler: (alert: CostAlert) => void): () => void;
-    recordUsage(usage: Omit<TokenUsageRecord, 'estimatedCost' | 'timestamp'>): TokenUsageRecord;
+    recordUsage(usage: Omit<TokenUsageRecord, 'estimatedCost' | 'timestamp' | 'traceId' | 'model'> & {
+        readonly traceId?: string;
+        readonly model?: string;
+    }): TokenUsageRecord;
     reset(): void;
     shouldStop(): boolean;
     updateBudget(budget: number): Promise<void>;
@@ -554,11 +557,17 @@ export type Guardrail = (ctx: GuardrailContext) => Promise<GuardrailVerdict> | G
 export interface GuardrailContext {
     // (undocumented)
     content: string;
+    // Warning: (ae-forgotten-export) The symbol "GuardrailDirection" needs to be exported by the entry point index.d.ts
+    direction?: GuardrailDirection;
     // (undocumented)
     meta?: Record<string, unknown>;
     // (undocumented)
     permissionLevel?: PermissionLevel;
+    source?: string;
 }
+
+// @public
+type GuardrailDirection = 'input' | 'output' | 'tool_output' | 'rag';
 
 // @public
 interface GuardrailEvent {
@@ -719,6 +728,10 @@ export enum HarnessErrorCode {
     GUARD_SELF_HEALING_ABORTED = "GUARD_SELF_HEALING_ABORTED",
     // (undocumented)
     GUARD_VIOLATION = "GUARD_VIOLATION",
+    IO_FILE_TOO_LARGE = "IO_FILE_TOO_LARGE",
+    IO_NOT_REGULAR_FILE = "IO_NOT_REGULAR_FILE",
+    IO_PATH_ESCAPE = "IO_PATH_ESCAPE",
+    IO_PATH_INVALID = "IO_PATH_INVALID",
     // (undocumented)
     LOCK_ABORTED = "LOCK_ABORTED",
     // (undocumented)
@@ -941,9 +954,7 @@ export interface MemoryEntry {
     readonly createdAt: number;
     // (undocumented)
     readonly grade: MemoryGrade;
-    // (undocumented)
     readonly id: string;
-    // (undocumented)
     readonly key: string;
     // (undocumented)
     readonly metadata?: Record<string, unknown>;
@@ -1308,11 +1319,11 @@ interface SessionStore<T> {
 // @public
 export interface Span {
     // (undocumented)
-    readonly attributes: Record<string, unknown>;
+    readonly attributes?: Record<string, unknown>;
     // (undocumented)
     readonly endTime?: number;
     // (undocumented)
-    readonly events: readonly SpanEvent[];
+    readonly events?: readonly SpanEvent[];
     // (undocumented)
     readonly id: string;
     // (undocumented)
@@ -1550,6 +1561,7 @@ export type ToolMiddleware<TParams = unknown> = (ctx: {
 export interface ToolRegistry {
     // (undocumented)
     execute(call: ToolCallRequest): Promise<ToolResult>;
+    executeByName(name: string, args: unknown): Promise<ToolResult>;
     // (undocumented)
     get(name: string): ToolDefinition | undefined;
     // Warning: (ae-forgotten-export) The symbol "ResolvedRegistryConfig" needs to be exported by the entry point index.d.ts
@@ -1610,8 +1622,8 @@ export interface Trace {
     readonly startTime: number;
     // (undocumented)
     readonly status: 'running' | 'completed' | 'error';
-    readonly systemMetadata: Record<string, unknown>;
-    readonly userMetadata: Record<string, unknown>;
+    readonly systemMetadata?: Record<string, unknown>;
+    readonly userMetadata?: Record<string, unknown>;
 }
 
 // @public
@@ -1689,12 +1701,12 @@ export interface VectorSearchOptions {
 
 // Warnings were encountered during analysis:
 //
-// dist/cost-tracker-IqVhfrMb.d.ts:402:5 - (ae-forgotten-export) The symbol "RedactConfig" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-IqVhfrMb.d.ts:409:5 - (ae-forgotten-export) The symbol "Redactor" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-IqVhfrMb.d.ts:742:5 - (ae-forgotten-export) The symbol "EvictionStrategyName" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-IqVhfrMb.d.ts:742:5 - (ae-forgotten-export) The symbol "EvictionStrategy" needs to be exported by the entry point index.d.ts
-// dist/pipeline-CZkrsTUe.d.ts:45:5 - (ae-forgotten-export) The symbol "GuardrailEvent" needs to be exported by the entry point index.d.ts
-// dist/resilience-DFiMtlx0.d.ts:64:5 - (ae-forgotten-export) The symbol "MiddlewareContext" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-TBpERf_h.d.ts:425:5 - (ae-forgotten-export) The symbol "RedactConfig" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-TBpERf_h.d.ts:432:5 - (ae-forgotten-export) The symbol "Redactor" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-TBpERf_h.d.ts:775:5 - (ae-forgotten-export) The symbol "EvictionStrategyName" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-TBpERf_h.d.ts:775:5 - (ae-forgotten-export) The symbol "EvictionStrategy" needs to be exported by the entry point index.d.ts
+// dist/pipeline-Bx5VXFpi.d.ts:45:5 - (ae-forgotten-export) The symbol "GuardrailEvent" needs to be exported by the entry point index.d.ts
+// dist/resilience-U5b4w90B.d.ts:64:5 - (ae-forgotten-export) The symbol "MiddlewareContext" needs to be exported by the entry point index.d.ts
 // dist/session/index.d.ts:162:5 - (ae-forgotten-export) The symbol "SessionStore" needs to be exported by the entry point index.d.ts
 // dist/session/index.d.ts:163:9 - (ae-forgotten-export) The symbol "SessionId" needs to be exported by the entry point index.d.ts
 

@@ -167,8 +167,30 @@ export function wireComponents(config: HarnessConfig): WiredComponents {
   // 7. Trace manager
   const traces = createTraceManager({ exporters });
 
-  // 8. Tool registry
-  const tools = createRegistry({ validator: schemaValidator });
+  // 8. Tool registry — three modes (mutually exclusive in HarnessConfigBase.tools):
+  //    a) caller passed a fully-built `tools.registry` → use as-is.
+  //    b) caller passed `tools.allowedCapabilities` → build a registry
+  //       with the schema validator wired AND the explicit capability
+  //       allow-list (e.g. `['readonly', 'network']` for apps that need
+  //       web tools without surrendering the rest of the secure preset).
+  //    c) neither set → build a registry with the secure default
+  //       (`allowedCapabilities: ['readonly']` from createRegistry).
+  // Closes HARNESS_LOG research-collab L-001 / L-005.
+  let tools: ToolRegistry;
+  if (config.tools && 'registry' in config.tools && config.tools.registry !== undefined) {
+    tools = config.tools.registry;
+  } else if (
+    config.tools
+    && 'allowedCapabilities' in config.tools
+    && config.tools.allowedCapabilities !== undefined
+  ) {
+    tools = createRegistry({
+      validator: schemaValidator,
+      allowedCapabilities: config.tools.allowedCapabilities,
+    });
+  } else {
+    tools = createRegistry({ validator: schemaValidator });
+  }
 
   // 9. Guardrails
   const guardrailPipeline = createGuardrails(config);

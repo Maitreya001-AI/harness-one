@@ -17,7 +17,15 @@ import {
 describe('harness-one/infra public surface', () => {
   it('exposes exactly the documented value symbols', () => {
     expect(Object.keys(barrel).sort()).toEqual(
-      ['createAdmissionController', 'unrefInterval', 'unrefTimeout'].sort(),
+      [
+        'createAdmissionController',
+        'unrefInterval',
+        'unrefTimeout',
+        // omitUndefined — added to centralise the
+        // exactOptionalPropertyTypes conditional-spread workaround
+        // (HARNESS_LOG HC-001 / HC-014 / research-collab L-004).
+        'omitUndefined',
+      ].sort(),
     );
   });
 

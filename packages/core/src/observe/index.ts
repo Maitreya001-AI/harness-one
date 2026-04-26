@@ -36,6 +36,23 @@ export type { InstrumentationPort } from '../core/instrumentation-port.js';
 export type { ModelPricing, CostTracker } from './cost-tracker.js';
 export { createCostTracker, OVERFLOW_BUCKET_KEY, KahanSum } from './cost-tracker.js';
 
+// Default pricing snapshot for opt-in convenience use with createCostTracker.
+// See `default-pricing.ts` for the WARNING about vendor pricing drift.
+export {
+  defaultModelPricing,
+  DEFAULT_PRICING_SNAPSHOT_DATE,
+  getDefaultPricing,
+} from './default-pricing.js';
+
+// ── Cross-subpath ergonomic re-export (zero runtime cost) ──────────────────
+//
+// `TokenUsage` is the per-iteration token-count shape returned by
+// AgentLoop / adapters. Its canonical home is `harness-one/core`, but
+// every cost-aware consumer already importing from `harness-one/observe`
+// reaches for it here first. Re-exporting as type-only keeps the bundle
+// cost zero. See HARNESS_LOG HC-007.
+export type { TokenUsage } from '../core/types.js';
+
 // ARCH-008: pluggable eviction strategy shared with @harness-one/langfuse.
 export type { EvictionStrategy, EvictionStrategyName } from './cost-tracker-eviction.js';
 export {

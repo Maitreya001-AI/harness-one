@@ -215,14 +215,14 @@ export function createLangfuseExporter(config: LangfuseExporterConfig): TraceExp
       // falls back to the built-in default redactor. There is no opt-out —
       // the exporter always applies some scrubber.
       const sanitize = config.sanitize ?? defaultLangfuseSanitize;
-      const attrs = sanitize(span.attributes);
+      const attrs = sanitize(span.attributes ?? {});
 
       // `events[].attributes` are sanitized with the same sanitizer as
       // sanitizer to each event's attribute record so secrets injected via
       // span.addEvent(name, { api_key: '...' }) are redacted in the same
       // way as span.attributes. Events without attributes are passed
       // through unchanged to preserve structural identity in snapshots.
-      const sanitizedEvents = span.events.map((event) =>
+      const sanitizedEvents = (span.events ?? []).map((event) =>
         event.attributes === undefined
           ? event
           : { ...event, attributes: sanitize(event.attributes) },

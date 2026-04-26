@@ -17,6 +17,12 @@ import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import { safeWarn } from '../infra/safe-log.js';
 import { unrefTimeout } from '../infra/timers.js';
 import type { Logger } from '../infra/logger.js';
+import { randomUUID } from 'node:crypto';
+
+/** Synthesise a unique tool-call id for `executeByName`. */
+function synthesiseCallId(): string {
+  return `executeByName-${randomUUID()}`;
+}
 
 /**
  * Resolved registry configuration — reflects the defaults applied by
@@ -45,6 +51,20 @@ export interface ToolRegistry {
   list(namespace?: string): ToolDefinition[];
   schemas(): ToolSchema[];
   execute(call: ToolCallRequest): Promise<ToolResult>;
+  /**
+   * Convenience entry point for ad-hoc tool execution — synthesises a
+   * `ToolCallRequest` from `(name, args)` and forwards to {@link execute}.
+   * Use this from runbooks, tests, custom drivers, and any caller that
+   * does not already have a `ToolCallRequest` in hand. Caller-supplied
+   * `args` is JSON-serialised internally; non-serialisable arguments
+   * raise `TOOL_VALIDATION` synchronously.
+   *
+   * Use `execute(call)` when you already have a `ToolCallRequest`
+   * (e.g. forwarded from `AgentLoop.run()`).
+   *
+   * Closes HARNESS_LOG HC-009.
+   */
+  executeByName(name: string, args: unknown): Promise<ToolResult>;
   handler(): (call: ToolCallRequest) => Promise<unknown>;
   resetTurn(): void;
   resetSession(): void;
@@ -519,10 +539,42 @@ export function createRegistry(config?: CreateRegistryConfig): ToolRegistry {
     };
   }
 
+  /**
+   * Convenience wrapper around {@link execute} for ad-hoc callers.
+   * See {@link ToolRegistry.executeByName} for the contract.
+   */
+  async function executeByName(name: string, args: unknown): Promise<ToolResult> {
+    if (typeof name !== 'string' || name.length === 0) {
+      return toolError(
+        'executeByName: tool name must be a non-empty string',
+        'validation',
+        'Pass the tool name string registered via registry.register()',
+      );
+    }
+    let serialised: string;
+    try {
+      // Tools historically receive JSON-string arguments because the
+      // upstream LLM adapter delivers them that way. Synthesise the
+      // same shape so middleware, validators, and the byte-budget
+      // accountant see the same payload as a real LLM-driven call.
+      serialised = JSON.stringify(args ?? {});
+    } catch (err) {
+      return toolError(
+        `executeByName: failed to JSON-serialise args for tool "${name}": ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+        'validation',
+        'Pass a JSON-serialisable object (no cycles, no BigInt, no functions).',
+      );
+    }
+    const id = synthesiseCallId();
+    return execute({ id, name, arguments: serialised });
+  }
+
   // add a Symbol.toStringTag marker so Object.prototype.toString
   // surfaces a descriptive tag (e.g. `[object HarnessToolRegistry]`) for
   // debuggers and structured-logging pretty-printers.
-  const registry: ToolRegistry = { register, get, list, schemas, execute, handler, resetTurn, resetSession, getConfig };
+  const registry: ToolRegistry = { register, get, list, schemas, execute, executeByName, handler, resetTurn, resetSession, getConfig };
   Object.defineProperty(registry, Symbol.toStringTag, {
     value: 'HarnessToolRegistry',
     enumerable: false,

@@ -53,7 +53,8 @@ export interface DatasetExporterConfig {
  * `llm.input_messages` attribute.
  */
 function isLlmSpan(span: Span): boolean {
-  return Array.isArray(span.attributes['llm.input_messages']);
+  const attrs = span.attributes ?? {};
+  return Array.isArray(attrs['llm.input_messages']);
 }
 
 /**
@@ -73,9 +74,11 @@ function passesFilters(
     return false;
   }
 
+  const attrs = span.attributes ?? {};
+
   // Model filter
   if (config.model !== undefined) {
-    const spanModel = span.attributes['llm.model'];
+    const spanModel = attrs['llm.model'];
     if (spanModel !== config.model) {
       return false;
     }
@@ -83,7 +86,7 @@ function passesFilters(
 
   // Quality filter — spans without a quality score are included
   if (config.minQuality !== undefined) {
-    const quality = span.attributes['llm.quality_score'];
+    const quality = attrs['llm.quality_score'];
     if (typeof quality === 'number' && quality < config.minQuality) {
       return false;
     }
@@ -96,8 +99,9 @@ function passesFilters(
  * Convert a single span into a DatasetEntry.
  */
 function spanToEntry(span: Span, includeToolCalls: boolean): DatasetEntry | undefined {
-  const rawInput = span.attributes['llm.input_messages'];
-  const rawOutput = span.attributes['llm.output_message'];
+  const attrs = span.attributes ?? {};
+  const rawInput = attrs['llm.input_messages'];
+  const rawOutput = attrs['llm.output_message'];
   if (!Array.isArray(rawInput) || typeof rawOutput !== 'object' || rawOutput === null) {
     return undefined;
   }
@@ -112,11 +116,11 @@ function spanToEntry(span: Span, includeToolCalls: boolean): DatasetEntry | unde
     toolCalls?: Array<{ name: string; arguments: string }>;
   };
 
-  const model = span.attributes['llm.model'] as string | undefined;
-  const tokenUsage = span.attributes['llm.token_usage'] as
+  const model = attrs['llm.model'] as string | undefined;
+  const tokenUsage = attrs['llm.token_usage'] as
     | { inputTokens: number; outputTokens: number }
     | undefined;
-  const cost = span.attributes['llm.cost'] as number | undefined;
+  const cost = attrs['llm.cost'] as number | undefined;
 
   const latencyMs =
     span.endTime !== undefined ? span.endTime - span.startTime : undefined;

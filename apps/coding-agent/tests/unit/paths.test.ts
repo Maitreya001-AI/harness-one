@@ -87,7 +87,10 @@ describe('resolveSafePath', () => {
       caught = err;
     }
     expect(caught).toBeInstanceOf(HarnessError);
-    expect((caught as HarnessError).code).toBe(HarnessErrorCode.CORE_INVALID_INPUT);
+    // Path containment now uses the dedicated IO_PATH_ESCAPE code from
+    // harness-one/io rather than the catch-all CORE_INVALID_INPUT — see
+    // HARNESS_LOG HC-002 / HC-019 for the upstream primitive promotion.
+    expect((caught as HarnessError).code).toBe(HarnessErrorCode.IO_PATH_ESCAPE);
   });
 
   it('rejects absolute path outside the workspace', async () => {

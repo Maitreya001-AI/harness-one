@@ -888,6 +888,30 @@ describe('AgentLoop', () => {
       expect(done).toBeDefined();
       expect(done.reason).toBe('aborted');
     });
+
+    // HARNESS_LOG HC-010: orchestrators rely on `iteration_start` to
+    // transition state machines (planning → executing). The empty-stream
+    // failure mode (no events except `done`) used to leave them stuck
+    // in planning. Lock the new contract: every `done` is preceded by
+    // at least one `iteration_start`.
+    it('emits iteration_start BEFORE the abort error/done pair (HC-010)', async () => {
+      const controller = new AbortController();
+      controller.abort();
+
+      const adapter: AgentAdapter = {
+        async chat() { return { message: { role: 'assistant', content: 'x' }, usage: USAGE }; },
+      };
+
+      const loop = new AgentLoop({ adapter, signal: controller.signal });
+      const events = await collectEvents(loop.run([{ role: 'user', content: 'test' }]));
+
+      // First event must be iteration_start, NOT done. This is the
+      // contract that HC-010 promised but the previous implementation
+      // violated.
+      expect(events[0]).toMatchObject({ type: 'iteration_start', iteration: 1 });
+      const done = events.find((e) => e.type === 'done') as Extract<AgentEvent, { type: 'done' }>;
+      expect(done.reason).toBe('aborted');
+    });
   });
 
   // "Streaming: post-call budget check" + "Streaming: done chunk

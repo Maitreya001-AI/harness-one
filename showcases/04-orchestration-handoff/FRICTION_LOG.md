@@ -45,17 +45,19 @@ if (result.doneReason === 'aborted') {
 ```
 
 **Feedback action**:
-- [ ] **Issue**: `spawnSubAgent` should EITHER (a) re-throw the original
-      error caught by AgentLoop, OR (b) return a `Result`-style discriminated
-      union. The current shape is a footgun: the type system says "this
-      Promise resolves on success" but it actually resolves regardless of
-      success or failure, with the only signal in a string field.
-- [ ] **Doc**: at minimum, the JSDoc on `spawnSubAgent` should bold the
-      contract: "This Promise resolves regardless of success or failure;
-      inspect `result.doneReason`."
-- [ ] Test: a unit test in `packages/core/src/orchestration/__tests__/`
-      that documents the silent-failure shape and locks it (or breaks
-      when an issue fix changes the behavior).
+- [x] **Resolved** in `packages/core/src/orchestration/spawn.ts`:
+      `spawnSubAgent` now throws `HarnessError(ADAPTER_ERROR)` with the
+      originating exception as `cause` when `doneReason === 'error'`,
+      and `HarnessError(CORE_ABORTED)` when `doneReason === 'aborted'`.
+      Soft-budget reasons (`max_iterations`, `token_budget`,
+      `duration_budget`, `guardrail_blocked`) still resolve normally so
+      callers can inspect partial work.
+- [x] JSDoc updated with a full table mapping every `doneReason` to the
+      resolve/throw behaviour.
+- [x] Tests in `packages/core/src/orchestration/__tests__/spawn.test.ts`
+      cover the new throw contract: pre-aborted signal, mid-flight abort,
+      adapter rejection with cause-chain preservation, multiple-error
+      ordering, message+suggestion grep-ability.
 
 **Severity**: high — this is the most expensive kind of bug to debug.
 The error is NOT in the harness (it correctly captures and tags the
@@ -110,10 +112,13 @@ escapes", document the limitation. A follow-up enhancement: introduce
 a slow mock adapter helper.
 
 **Feedback action**:
-- [ ] Showcase enhancement: add a `createSlowMockAdapter({ chatDelayMs })`
-      helper to `harness-one/testing` so abort / timeout scenarios can
-      be tested without real network. There's no built-in way to slow
-      a mock adapter today.
+- [x] **Resolved 2026-04-26** — `harness-one/testing` now exports
+      `createSlowMockAdapter({ chatDelayMs, streamChunkDelayMs,
+      respectAbort })`. Delays are interruptible via the
+      AbortSignal so cascade-abort tests are deterministic without
+      real network. Tests in
+      `packages/core/src/testing/__tests__/extra-helpers.test.ts`
+      cover signal-honouring, signal-ignoring, and inter-chunk delay.
 
 **Severity**: low — limits what this showcase can prove, but doesn't
 indicate a harness defect.

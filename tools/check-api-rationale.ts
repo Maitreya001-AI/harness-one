@@ -48,8 +48,24 @@ function main(): void {
     process.exit(1);
   }
 
-  const match = body.match(/^## API change rationale\s*$([\s\S]*?)(?=^## |\Z)/m);
-  const rationaleBody = (match?.[1] ?? '').trim();
+  // Capture the rationale body — everything between the
+  // "## API change rationale" heading and either (a) the next H2/H1
+  // heading or (b) end-of-string.
+  //
+  // Note: JS regex does NOT support `\Z` (end-of-string anchor) — it
+  // silently matches a literal `Z` instead. The previous version of
+  // this regex used `\Z` and therefore failed entirely whenever the
+  // rationale section was the LAST section in the PR body AND the
+  // body contained no literal `Z`. We slice manually to avoid the
+  // pitfall.
+  const headingMatch = body.match(/^## API change rationale\s*$/m);
+  const rationaleBody = (() => {
+    if (!headingMatch || headingMatch.index === undefined) return '';
+    const after = body.slice(headingMatch.index + headingMatch[0].length);
+    const nextHeading = after.match(/^#{1,2} /m);
+    const cutoff = nextHeading?.index ?? after.length;
+    return after.slice(0, cutoff).trim();
+  })();
   if (rationaleBody.length < MIN_BODY_CHARS) {
     console.error(
       `::error::"## API change rationale" body must be ≥${MIN_BODY_CHARS} chars (got ${rationaleBody.length}). Explain WHY the public surface is changing.`,

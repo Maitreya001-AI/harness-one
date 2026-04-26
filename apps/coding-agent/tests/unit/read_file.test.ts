@@ -70,4 +70,35 @@ describe('read_file', () => {
     // defineTool wraps thrown errors into a structured result.
     expect(r.kind).toBe('error');
   });
+
+  it.skipIf(process.platform === 'win32')(
+    'falls through to internal-error category for non-Error / non-ENOENT failures',
+    async () => {
+      // Force the catch-all branch in read_file's error handler.
+      // Windows ignores POSIX modes — chmod(file, 0o000) leaves the
+      // file fully readable on win32, so the open() succeeds and the
+      // assertion fails. The branch we exercise here only fires on
+      // POSIX-mode filesystems (Linux + macOS CI), which is the
+      // intended target for this defensive code path.
+      const sandbox = await fs.realpath(
+        await fs.mkdtemp(path.join(os.tmpdir(), 'cagent-rf-perm-')),
+      );
+      const file = path.join(sandbox, 'restricted.txt');
+      await fs.writeFile(file, 'x');
+      try {
+        await fs.chmod(file, 0o000);
+        const tool = defineReadFileTool({
+          workspace: sandbox,
+          dryRun: false,
+          maxOutputBytes: 64 * 1024,
+          defaultTimeoutMs: 1000,
+        });
+        const r = await tool.execute({ path: 'restricted.txt' });
+        expect(r.kind).toBe('error');
+      } finally {
+        await fs.chmod(file, 0o644).catch(() => undefined);
+        await fs.rm(sandbox, { recursive: true, force: true });
+      }
+    },
+  );
 });

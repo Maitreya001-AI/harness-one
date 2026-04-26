@@ -13,7 +13,10 @@ export type {
   GuardrailVerdict,
   PermissionLevel,
   GuardrailContext,
+  GuardrailDirection,
   Guardrail,
+  SyncGuardrail,
+  AsyncGuardrail,
   GuardrailEvent,
   PipelineResult,
 } from '../core/guardrail-port.js';

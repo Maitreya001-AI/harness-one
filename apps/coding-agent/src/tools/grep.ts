@@ -21,6 +21,7 @@ import {
   toolSuccess,
 } from 'harness-one/tools';
 import type { ToolDefinition } from 'harness-one/tools';
+import { safeReadFile } from 'harness-one/io';
 
 import type { ToolContext } from './context.js';
 import { isSensitivePath, resolveSafePath } from './paths.js';
@@ -139,21 +140,27 @@ export function defineGrepTool(ctx: ToolContext): ToolDefinition<GrepInput> {
             truncated = true;
             break;
           }
-          // Open first, then stat the file descriptor — eliminates the
-          // TOCTOU race (CWE-367) between `stat()` and `readFile()` where
-          // a malicious actor could swap the path with a symlink between
-          // the two calls and bypass `MAX_FILE_BYTES`.
+          // safeReadFile (harness-one/io) handles the open-then-stat
+          // sequencing internally so the TOCTOU race (CWE-367) is
+          // impossible by construction. Skip the file when it exceeds
+          // MAX_FILE_BYTES — for grep this is a soft skip, not an
+          // error — by passing truncateOnOverflow: true and ignoring
+          // truncated reads.
           let content: string;
           try {
-            const fh = await fs.open(filePath, 'r');
-            try {
-              const stat = await fh.stat();
-              if (stat.size > MAX_FILE_BYTES) continue;
-              content = await fh.readFile({ encoding: 'utf8' });
-            } finally {
-              await fh.close();
-            }
+            const result = await safeReadFile(filePath, {
+              maxBytes: MAX_FILE_BYTES,
+              requireFileKind: 'file',
+              encoding: 'utf8',
+              truncateOnOverflow: false,
+            });
+            content = result.content;
           } catch {
+            // Oversize / non-regular / unreadable — skip, don't fail
+            // the whole grep. Errors here are common (broken symlinks,
+            // /proc-style virtual files on Linux, oversize log files
+            // we deliberately skip via MAX_FILE_BYTES, etc.). All
+            // failure modes collapse to "skip this file".
             continue;
           }
           const lines = content.split('\n');

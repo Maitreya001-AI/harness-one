@@ -441,9 +441,13 @@ describe('AgentLoop guardrail integration', () => {
     async () => {
       // Build an injection-detector pipeline (default patterns are ReDoS-safe,
       // and the pipeline enforces defaultTimeoutMs=5000 even if a guard hangs).
+      // `createInjectionDetector()` returns `{ name, guard }`; the previous
+      // shape used the whole object as `guard:` which silently typechecked
+      // (HC-003 footgun) — the new runtime validation in createPipeline
+      // would now reject that, so unwrap the inner `guard` function.
       const detector = createInjectionDetector();
       const pipeline = createPipeline({
-        input: [{ name: 'inj', guard: detector }],
+        input: [{ name: 'inj', guard: detector.guard }],
         // defaultTimeoutMs defaults to 5000 — explicit for clarity.
         defaultTimeoutMs: 5000,
       });

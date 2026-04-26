@@ -23,3 +23,8 @@ export {
   unrefInterval,
   type UnrefTimer,
 } from './timers.js';
+
+export {
+  omitUndefined,
+  type WithoutUndefined,
+} from './omit-undefined.js';

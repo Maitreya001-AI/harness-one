@@ -52,6 +52,12 @@ export type SpanAttributes = Readonly<Record<string, SpanAttributeValue>>;
  * by `shouldExport()` sampling hooks). Exporters that forward user
  * content to external services (Langfuse, etc.) MUST use `userMetadata`
  * only; `systemMetadata` stays internal.
+ *
+ * `userMetadata` and `systemMetadata` are **optional in the type** as of
+ * the HC-012 ergonomics fix, so test fixtures and exporter mocks no
+ * longer need to spell out `{}` literals. The TraceManager always
+ * populates them with empty objects when materialising a real Trace,
+ * so production readers never observe `undefined`.
  */
 export interface Trace {
   readonly id: string;
@@ -59,14 +65,22 @@ export interface Trace {
   readonly startTime: number;
   readonly endTime?: number;
   /** Caller-supplied metadata (may be redacted). */
-  readonly userMetadata: Record<string, unknown>;
+  readonly userMetadata?: Record<string, unknown>;
   /** Library-authored metadata; `shouldExport()` hooks MUST only read this. */
-  readonly systemMetadata: Record<string, unknown>;
+  readonly systemMetadata?: Record<string, unknown>;
   readonly spans: readonly Span[];
   readonly status: 'running' | 'completed' | 'error';
 }
 
-/** A single span within a trace. */
+/**
+ * A single span within a trace.
+ *
+ * `attributes` and `events` are **optional in the type** as of the
+ * HC-012 ergonomics fix, so test fixtures and exporter mocks no
+ * longer need to spell out `{}` / `[]` literals. The TraceManager
+ * always populates them with empty containers when materialising a
+ * real Span, so production readers never observe `undefined`.
+ */
 export interface Span {
   readonly id: string;
   readonly traceId: string;
@@ -74,8 +88,8 @@ export interface Span {
   readonly name: string;
   readonly startTime: number;
   readonly endTime?: number;
-  readonly attributes: Record<string, unknown>;
-  readonly events: readonly SpanEvent[];
+  readonly attributes?: Record<string, unknown>;
+  readonly events?: readonly SpanEvent[];
   readonly status: 'running' | 'completed' | 'error';
 }
 

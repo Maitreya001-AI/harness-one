@@ -77,9 +77,13 @@ export function createBudgetTracker(options: BudgetTrackerOptions): BudgetTracke
     recordUsage(usage, model): BudgetSnapshot {
       const tokens = usage.inputTokens + usage.outputTokens;
       const tokensUsed = state.tokensUsed + tokens;
+      // FRICTION-RESOLVED 2026-04-26 (HC-005): traceId / model are now
+      // optional on `recordUsage()`; passing only the supplied model
+      // (when known) avoids polluting cost-by-trace / cost-by-model
+      // aggregations with the stub `'coding-agent'` / `'unknown'`
+      // sentinels we used to fabricate.
       const record = options.costTracker.recordUsage({
-        traceId: 'coding-agent',
-        model: model ?? 'unknown',
+        ...(model !== undefined && { model }),
         inputTokens: usage.inputTokens,
         outputTokens: usage.outputTokens,
         ...(usage.cacheReadTokens !== undefined && { cacheReadTokens: usage.cacheReadTokens }),

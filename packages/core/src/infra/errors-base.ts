@@ -165,6 +165,16 @@ export enum HarnessErrorCode {
   EVOLVE_COMPONENT_NOT_FOUND = 'EVOLVE_COMPONENT_NOT_FOUND',
   EVOLVE_TASTE_DUPLICATE = 'EVOLVE_TASTE_DUPLICATE',
   EVOLVE_TASTE_NOT_FOUND = 'EVOLVE_TASTE_NOT_FOUND',
+
+  // ── IO_* — filesystem safety primitives (`harness-one/io`) ──────────────
+  /** A user-supplied path resolves outside the configured root. */
+  IO_PATH_ESCAPE = 'IO_PATH_ESCAPE',
+  /** Path is empty, contains a NUL, or otherwise malformed. */
+  IO_PATH_INVALID = 'IO_PATH_INVALID',
+  /** The file's actual size exceeds the caller-supplied `maxBytes` cap. */
+  IO_FILE_TOO_LARGE = 'IO_FILE_TOO_LARGE',
+  /** A read was attempted against a non-regular file (directory, FIFO, etc.). */
+  IO_NOT_REGULAR_FILE = 'IO_NOT_REGULAR_FILE',
 }
 
 /**

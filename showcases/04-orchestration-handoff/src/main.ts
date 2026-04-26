@@ -80,28 +80,32 @@ async function runAgent(
   if (signal !== undefined) {
     Object.assign(opts, { signal });
   }
-  const result = await spawnSubAgent(opts);
-
-  // FRICTION-OBSERVED-2026-04-26: spawnSubAgent does NOT throw on
-  // adapter / loop errors. The AgentLoop emits an `error` event then
-  // a `done` event with `reason: 'error'`; spawnSubAgent records the
-  // done reason and returns normally. To surface the failure to the
-  // caller we MUST inspect `doneReason` ourselves and re-throw.
-  // See FRICTION_LOG.md "spawnSubAgent swallows errors" for full
-  // analysis — this is a candidate API change.
-  if (result.doneReason === 'error') {
-    throw new HarnessError(
-      `agent "${name}" failed`,
-      HarnessErrorCode.ADAPTER_ERROR,
-      'check the parent agent\'s adapter or downstream agents for the originating error',
-    );
-  }
-  if (result.doneReason === 'aborted') {
-    throw new HarnessError(
-      `agent "${name}" aborted`,
-      HarnessErrorCode.CORE_ABORTED,
-      'caller cancelled via AbortSignal',
-    );
+  // FRICTION-RESOLVED 2026-04-26: spawnSubAgent now throws HarnessError on
+  // doneReason 'error' or 'aborted' (was previously silent). The local
+  // re-throw scaffolding has been removed — callers can rely on Promise
+  // rejection semantics. We still wrap to prefix the agent `name` for
+  // chain debugging.
+  let result: Awaited<ReturnType<typeof spawnSubAgent>>;
+  try {
+    result = await spawnSubAgent(opts);
+  } catch (err) {
+    if (err instanceof HarnessError && err.code === HarnessErrorCode.CORE_ABORTED) {
+      throw new HarnessError(
+        `agent "${name}" aborted`,
+        HarnessErrorCode.CORE_ABORTED,
+        'caller cancelled via AbortSignal',
+        err,
+      );
+    }
+    if (err instanceof HarnessError && err.code === HarnessErrorCode.ADAPTER_ERROR) {
+      throw new HarnessError(
+        `agent "${name}" failed: ${err.message}`,
+        HarnessErrorCode.ADAPTER_ERROR,
+        'check the parent agent\'s adapter or downstream agents for the originating error',
+        err,
+      );
+    }
+    throw err;
   }
 
   const last = result.messages[result.messages.length - 1];

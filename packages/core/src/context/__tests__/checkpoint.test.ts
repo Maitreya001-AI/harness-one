@@ -7,15 +7,15 @@ import { HarnessError, HarnessErrorCode} from '../../core/errors.js';
 const msg = (role: string, content: string): Message =>
   ({ role, content }) as unknown as Message;
 
-describe('createCheckpointManager', () => {
+describe('createCheckpointManager (async since 0.3)', () => {
   const messages: readonly Message[] = [
     msg('user', 'hello'),
     msg('assistant', 'hi there'),
   ];
 
-  it('save() returns a frozen Checkpoint with correct fields', () => {
+  it('save() returns a frozen Checkpoint with correct fields', async () => {
     const mgr = createCheckpointManager();
-    const cp = mgr.save(messages, 'first', { key: 'value' });
+    const cp = await mgr.save(messages, 'first', { key: 'value' });
 
     expect(cp.id).toEqual(expect.any(String));
     expect(cp.label).toBe('first');
@@ -26,110 +26,104 @@ describe('createCheckpointManager', () => {
     expect(Object.isFrozen(cp)).toBe(true);
   });
 
-  it('restore() returns a fresh copy of messages', () => {
+  it('restore() returns a fresh copy of messages', async () => {
     const mgr = createCheckpointManager();
-    const cp = mgr.save(messages);
-    const restored = mgr.restore(cp.id);
+    const cp = await mgr.save(messages);
+    const restored = await mgr.restore(cp.id);
 
     expect(restored).toEqual(messages);
     expect(restored).not.toBe(messages);
     expect(restored).not.toBe(cp.messages);
   });
 
-  it('restore() throws CHECKPOINT_NOT_FOUND for unknown ID', () => {
+  it('restore() throws CHECKPOINT_NOT_FOUND for unknown ID', async () => {
     const mgr = createCheckpointManager();
-    expect(() => mgr.restore('nonexistent')).toThrow(HarnessError);
-    try {
-      mgr.restore('nonexistent');
-    } catch (e) {
-      expect((e as HarnessError).code).toBe(HarnessErrorCode.CONTEXT_CHECKPOINT_NOT_FOUND);
-    }
+    await expect(mgr.restore('nonexistent')).rejects.toBeInstanceOf(HarnessError);
+    await expect(mgr.restore('nonexistent')).rejects.toMatchObject({
+      code: HarnessErrorCode.CONTEXT_CHECKPOINT_NOT_FOUND,
+    });
   });
 
-  it('auto-prunes oldest when saving beyond maxCheckpoints', () => {
+  it('auto-prunes oldest when saving beyond maxCheckpoints', async () => {
     const mgr = createCheckpointManager({ maxCheckpoints: 2 });
-    const cp1 = mgr.save(messages, 'first');
-    mgr.save(messages, 'second');
-    mgr.save(messages, 'third');
+    const cp1 = await mgr.save(messages, 'first');
+    await mgr.save(messages, 'second');
+    await mgr.save(messages, 'third');
 
-    const list = mgr.list();
+    const list = await mgr.list();
     expect(list).toHaveLength(2);
     expect(list[0].label).toBe('second');
     expect(list[1].label).toBe('third');
-    expect(() => mgr.restore(cp1.id)).toThrow(HarnessError);
+    await expect(mgr.restore(cp1.id)).rejects.toBeInstanceOf(HarnessError);
   });
 
-  it('TEST-006: maxCheckpoints: 1 keeps only the most recent checkpoint', () => {
-    // Boundary: the smallest legal cap. Saving two checkpoints must leave
-    // exactly one entry — the newest.
+  it('TEST-006: maxCheckpoints: 1 keeps only the most recent checkpoint', async () => {
     const mgr = createCheckpointManager({ maxCheckpoints: 1 });
-    const cp1 = mgr.save(messages, 'first');
-    const cp2 = mgr.save(messages, 'second');
+    const cp1 = await mgr.save(messages, 'first');
+    const cp2 = await mgr.save(messages, 'second');
 
-    const list = mgr.list();
+    const list = await mgr.list();
     expect(list).toHaveLength(1);
     expect(list[0].label).toBe('second');
     expect(list[0].id).toBe(cp2.id);
-    // First checkpoint was evicted.
-    expect(() => mgr.restore(cp1.id)).toThrow(HarnessError);
+    await expect(mgr.restore(cp1.id)).rejects.toBeInstanceOf(HarnessError);
   });
 
-  it('list() returns checkpoints in insertion order', () => {
+  it('list() returns checkpoints in insertion order', async () => {
     const mgr = createCheckpointManager();
-    mgr.save(messages, 'a');
-    mgr.save(messages, 'b');
-    mgr.save(messages, 'c');
+    await mgr.save(messages, 'a');
+    await mgr.save(messages, 'b');
+    await mgr.save(messages, 'c');
 
-    const labels = mgr.list().map((cp) => cp.label);
+    const labels = (await mgr.list()).map((cp) => cp.label);
     expect(labels).toEqual(['a', 'b', 'c']);
   });
 
-  it('prune() by maxCheckpoints keeps newest', () => {
+  it('prune() by maxCheckpoints keeps newest', async () => {
     const mgr = createCheckpointManager({ maxCheckpoints: 10 });
-    mgr.save(messages, 'a');
-    mgr.save(messages, 'b');
-    mgr.save(messages, 'c');
+    await mgr.save(messages, 'a');
+    await mgr.save(messages, 'b');
+    await mgr.save(messages, 'c');
 
-    const pruned = mgr.prune({ maxCheckpoints: 1 });
+    const pruned = await mgr.prune({ maxCheckpoints: 1 });
     expect(pruned).toBe(2);
-    expect(mgr.list()).toHaveLength(1);
-    expect(mgr.list()[0].label).toBe('c');
+    const list = await mgr.list();
+    expect(list).toHaveLength(1);
+    expect(list[0].label).toBe('c');
   });
 
-  it('prune() by maxAge removes old checkpoints', () => {
+  it('prune() by maxAge removes old checkpoints', async () => {
     const mgr = createCheckpointManager();
     const now = Date.now();
 
-    // Save 'old' with timestamp 5s ago
     vi.spyOn(Date, 'now').mockReturnValue(now - 5000);
-    mgr.save(messages, 'old');
+    await mgr.save(messages, 'old');
 
-    // Save 'new' with current timestamp
     vi.mocked(Date.now).mockReturnValue(now);
-    mgr.save(messages, 'new');
+    await mgr.save(messages, 'new');
 
-    // Prune with maxAge 3000ms — 'old' (5s ago) should be pruned
-    const pruned = mgr.prune({ maxAge: 3000 });
+    const pruned = await mgr.prune({ maxAge: 3000 });
     vi.restoreAllMocks();
 
     expect(pruned).toBe(1);
-    expect(mgr.list()).toHaveLength(1);
-    expect(mgr.list()[0].label).toBe('new');
+    const list = await mgr.list();
+    expect(list).toHaveLength(1);
+    expect(list[0].label).toBe('new');
   });
 
-  it('dispose() clears all checkpoints', () => {
+  it('dispose() clears all checkpoints', async () => {
     const mgr = createCheckpointManager();
-    mgr.save(messages, 'a');
-    mgr.save(messages, 'b');
-    mgr.dispose();
+    await mgr.save(messages, 'a');
+    await mgr.save(messages, 'b');
+    await mgr.dispose();
 
-    expect(mgr.list()).toHaveLength(0);
+    expect(await mgr.list()).toHaveLength(0);
   });
 
-  it('uses custom countTokens when provided', () => {
+  it('uses custom countTokens when provided', async () => {
     const countTokens = vi.fn(() => 42);
     const mgr = createCheckpointManager({ countTokens });
-    const cp = mgr.save(messages);
+    const cp = await mgr.save(messages);
 
     expect(countTokens).toHaveBeenCalledWith(messages);
     expect(cp.tokenCount).toBe(42);
@@ -145,31 +139,29 @@ describe('createCheckpointManager', () => {
     }
   });
 
-  it('generates crypto-backed unique IDs', () => {
+  it('generates crypto-backed unique IDs', async () => {
     const mgr = createCheckpointManager();
-    const cp1 = mgr.save(messages, 'a');
-    const cp2 = mgr.save(messages, 'b');
-    // IDs should be unique
+    const cp1 = await mgr.save(messages, 'a');
+    const cp2 = await mgr.save(messages, 'b');
     expect(cp1.id).not.toBe(cp2.id);
-    // IDs use crypto-random suffix via prefixedSecureId('cp').
     expect(cp1.id).toMatch(/^cp-[a-f0-9]+$/);
     expect(cp2.id).toMatch(/^cp-[a-f0-9]+$/);
   });
 
-  it('uses custom storage backend when provided', () => {
+  it('uses custom storage backend when provided', async () => {
     const stored = new Map<string, Checkpoint>();
     const storage: CheckpointStorage = {
-      save: vi.fn((cp) => { stored.set(cp.id, cp); }),
-      load: vi.fn((id) => stored.get(id)),
-      list: vi.fn(() => [...stored.values()]),
-      delete: vi.fn((id) => stored.delete(id)),
+      save: vi.fn(async (cp) => { stored.set(cp.id, cp); }),
+      load: vi.fn(async (id) => stored.get(id)),
+      list: vi.fn(async () => [...stored.values()]),
+      delete: vi.fn(async (id) => stored.delete(id)),
     };
 
     const mgr = createCheckpointManager({ storage });
-    mgr.save(messages, 'test');
+    await mgr.save(messages, 'test');
 
     expect(storage.save).toHaveBeenCalled();
-    expect(mgr.list()).toHaveLength(1);
+    expect(await mgr.list()).toHaveLength(1);
     expect(storage.list).toHaveBeenCalled();
   });
 });

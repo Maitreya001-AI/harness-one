@@ -164,15 +164,26 @@ export function startRun(
 }
 
 /**
- * Emit a terminal event pair (`error` + `done`) without going through the
- * iteration runner. Used for the three pre-iteration exits (abort,
- * max_iterations, token_budget) where no iteration_start has been yielded.
+ * Emit a terminal event triple (`iteration_start` + `error` + `done`)
+ * without going through the iteration runner. Used for the four
+ * pre-iteration exits (abort, max_iterations, duration_budget,
+ * token_budget). The leading `iteration_start` keeps the event-stream
+ * contract uniform: every `done` is preceded by at least one
+ * `iteration_start` so consumers (orchestrator state machines,
+ * span trackers, observability exporters) can rely on it.
+ *
+ * The `attemptedIteration` argument is the iteration number that was
+ * *about to start* when the termination fired. For pre-abort with no
+ * iterations attempted yet, this is `1` (the first iteration would
+ * have run); for max_iterations it's `maxIterations + 1`; for budget
+ * exhaustion it's the iteration that triggered the limit.
  *
  * Sets `state.status = 'errored'` to distinguish abnormal terminals
- * (abort, max_iterations, token_budget) from a normal `end_turn` completion,
- * which goes through `AgentLoop.run` directly and lands on `'completed'`.
- * If `dispose()` has already flipped the state to `'disposed'`, the
- * terminal emit does NOT overwrite it — disposed is a sink state.
+ * from a normal `end_turn` completion. If `dispose()` has already
+ * flipped the state to `'disposed'`, the terminal emit does NOT
+ * overwrite it — disposed is a sink state.
+ *
+ * Closes HARNESS_LOG HC-010.
  */
 function* emitTerminal(
   state: CoordinatorState,
@@ -181,7 +192,15 @@ function* emitTerminal(
   reason: DoneReason,
   errorEvent: Extract<AgentEvent, { type: 'error' }>,
   usage: TokenUsage,
+  attemptedIteration: number,
 ): Generator<AgentEvent> {
+  // Synthesise iteration_start so consumers always see at least one
+  // before the terminal `done`. We do NOT call the full
+  // `startIteration` ceremony (no span, no hook fire, no conversation
+  // pruning) because the iteration is not actually going to run —
+  // this is a contract event, not a real iteration.
+  yield { type: 'iteration_start', iteration: attemptedIteration };
+
   if (ctx.iterationSpanId && tm) {
     annotateHarnessErrorSpan(tm, ctx.iterationSpanId, errorEvent.error);
     try { tm.endSpan(ctx.iterationSpanId, 'error'); } catch { /* defensive */ }
@@ -208,10 +227,16 @@ export function* checkPreIteration(
   setIteration: (next: number) => void,
   usage: TokenUsage,
 ): Generator<AgentEvent, boolean> {
+  // The "iteration that was about to start when termination fired".
+  // Used for the synthetic iteration_start emitted by emitTerminal so
+  // the event-stream contract stays uniform — every `done` is preceded
+  // by at least one `iteration_start`. See HARNESS_LOG HC-010.
+  const attemptedIteration = getIteration() + 1;
+
   // 1. Abort (external/internal).
   if (deps.abortController.signal.aborted) {
     yield* emitTerminal(state, ctx, tm, 'aborted',
-      { type: 'error', error: new AbortedError() }, usage);
+      { type: 'error', error: new AbortedError() }, usage, attemptedIteration);
     return true;
   }
 
@@ -231,6 +256,7 @@ export function* checkPreIteration(
           ),
         },
         usage,
+        attemptedIteration,
       );
       return true;
     }
@@ -242,7 +268,7 @@ export function* checkPreIteration(
   state.iterationObserved = next;
   if (next > deps.maxIterations) {
     yield* emitTerminal(state, ctx, tm, 'max_iterations',
-      { type: 'error', error: new MaxIterationsError(deps.maxIterations) }, usage);
+      { type: 'error', error: new MaxIterationsError(deps.maxIterations) }, usage, next);
     return true;
   }
 
@@ -251,7 +277,7 @@ export function* checkPreIteration(
   if (totalTokens > deps.maxTotalTokens) {
     yield* emitTerminal(state, ctx, tm, 'token_budget',
       { type: 'error', error: new TokenBudgetExceededError(totalTokens, deps.maxTotalTokens) },
-      usage);
+      usage, next);
     return true;
   }
 

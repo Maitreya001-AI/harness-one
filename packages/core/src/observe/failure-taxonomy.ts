@@ -80,7 +80,7 @@ function createBudgetExceededDetector(baseConfidence = 0.95): FailureDetector {
       const lastSpan = trace.spans[trace.spans.length - 1];
       if (lastSpan.status !== 'error') return null;
 
-      const errorCode = lastSpan.attributes['harness.error.code'];
+      const errorCode = (lastSpan.attributes ?? {})['harness.error.code'];
       if (errorCode === HarnessErrorCode.CORE_TOKEN_BUDGET_EXCEEDED) {
         return {
           confidence: baseConfidence,
@@ -176,7 +176,7 @@ function createAdapterRetryStormDetector(minErrors = 3): FailureDetector {
 
       const retryableSpans = trace.spans.filter((span) => {
         if (span.status !== 'error') return false;
-        const code = span.attributes['harness.error.code'];
+        const code = (span.attributes ?? {})['harness.error.code'];
         return typeof code === 'string' && isRetryableHarnessErrorCode(code);
       });
 
@@ -184,7 +184,7 @@ function createAdapterRetryStormDetector(minErrors = 3): FailureDetector {
 
       const codeHistogram: Record<string, number> = {};
       for (const span of retryableSpans) {
-        const code = span.attributes['harness.error.code'] as string;
+        const code = (span.attributes ?? {})['harness.error.code'] as string;
         codeHistogram[code] = (codeHistogram[code] ?? 0) + 1;
       }
 

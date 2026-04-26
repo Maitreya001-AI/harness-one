@@ -132,13 +132,16 @@ just zeroed metrics).
 explicitly in the scripted reply builder.
 
 **Feedback action**:
-- [ ] Issue: when `createStreamingMockAdapter` chunks contain no `usage`
-      on the terminal `done`, either (a) auto-fill from `config.usage`,
-      or (b) emit a warning. Silent zero metrics in tests is a footgun
-      because cost-related assertions look superficially fine.
-- [ ] Doc: the helper docstring shows a chunks example without usage —
-      add a one-line note that production providers attach usage to done
-      and tests should mirror that.
+- [x] **Resolved 2026-04-26** — implemented BOTH suggestions:
+      `createStreamingMockAdapter` now (a) auto-fills `config.usage`
+      onto any terminal `done` chunk that omits its own usage, and
+      (b) THROWS at construction time when neither source provides a
+      usage value. Silent zero metrics is no longer reachable.
+- [x] JSDoc updated with full contract description + 2 worked examples
+      (config.usage fallback + per-chunk override priority).
+- [x] Tests in `packages/core/src/testing/__tests__/streaming-mock-usage.test.ts`
+      lock all branches: auto-attach, per-chunk precedence, throw-on-missing,
+      passthrough of non-done chunks.
 
 **Severity**: medium — the failure mode is silent. Anyone wiring the mock
 into a cost assertion will get a false negative they may not chase down.

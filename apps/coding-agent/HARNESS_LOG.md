@@ -17,25 +17,25 @@
 
 | ID | Stage | Sev | Summary | Status |
 |---|---|---|---|---|
-| HC-001 | S3 | paper-cut | exactOptionalPropertyTypes friction with conditional `AbortSignal` | logged |
-| HC-002 | S3 | friction | macOS `/var → /private/var` realpath escape leaks into tool path math | logged |
-| HC-003 | S4 | paper-cut | `createPipeline` accepts `{name, guard}` items but a bare `Guardrail` typechecks loosely | logged |
+| HC-001 | S3 | paper-cut | exactOptionalPropertyTypes friction with conditional `AbortSignal` | **resolved 2026-04-26** |
+| HC-002 | S3 | friction | macOS `/var → /private/var` realpath escape leaks into tool path math | **resolved 2026-04-26** |
+| HC-003 | S4 | paper-cut | `createPipeline` accepts `{name, guard}` items but a bare `Guardrail` typechecks loosely | **resolved 2026-04-26** |
 | HC-004 | S5 | paper-cut | `validateMemoryEntry` discoverability — only via `harness-one/memory`, not the root barrel | logged |
-| HC-005 | S6 | friction | `CostTracker.recordUsage` requires `traceId` + `model` even when caller is single-task | logged |
-| HC-006 | S6 | paper-cut | `ToolSchema` lives in `harness-one/core`, not `harness-one/tools` (where consumers expect it) | logged |
-| HC-007 | S6 | paper-cut | `TokenUsage` lives in `harness-one/core`, not re-exported from `observe` | logged |
-| HC-008 | S6 | paper-cut | No `createDefaultLogger`; every consumer types `createLogger()` with no args | logged |
-| HC-009 | S6 | friction | `registry.execute` takes a `ToolCallRequest` not `(name, args, signal)` — surprises every caller | logged |
-| HC-010 | S6 | friction | AgentLoop pre-aborted signal yields no `iteration_start`; orchestrators that key on it stay in start state | logged |
+| HC-005 | S6 | friction | `CostTracker.recordUsage` requires `traceId` + `model` even when caller is single-task | **resolved 2026-04-26** |
+| HC-006 | S6 | paper-cut | `ToolSchema` lives in `harness-one/core`, not `harness-one/tools` (where consumers expect it) | **resolved 2026-04-26** |
+| HC-007 | S6 | paper-cut | `TokenUsage` lives in `harness-one/core`, not re-exported from `observe` | **resolved 2026-04-26** |
+| HC-008 | S6 | paper-cut | No `createDefaultLogger`; every consumer types `createLogger()` with no args | **resolved 2026-04-26** |
+| HC-009 | S6 | friction | `registry.execute` takes a `ToolCallRequest` not `(name, args, signal)` — surprises every caller | **resolved 2026-04-26** |
+| HC-010 | S6 | friction | AgentLoop pre-aborted signal yields no `iteration_start`; orchestrators that key on it stay in start state | **resolved 2026-04-26** |
 | HC-011 | S7 | friction | `readline` + `PassThrough` interactions emit `line` after `close` unpredictably under tests | logged |
-| HC-012 | S8 | paper-cut | `Span.attributes` non-nullable in the public type even though most call-sites would prefer optional | logged |
+| HC-012 | S8 | paper-cut | `Span.attributes` non-nullable in the public type even though most call-sites would prefer optional | **resolved 2026-04-26** |
 | HC-013 | S11 | paper-cut | tsup minify + `#!/usr/bin/env node` shebang preservation isn't documented; need explicit `minify: false` for bin entries | logged |
-| HC-014 | S12 | paper-cut | exactOptionalPropertyTypes again — empty arrays vs `undefined` for spread-conditional config (`tagFilter`, etc.) | logged |
+| HC-014 | S12 | paper-cut | exactOptionalPropertyTypes again — empty arrays vs `undefined` for spread-conditional config (`tagFilter`, etc.) | **resolved 2026-04-26** |
 | HC-015 | S13 | friction | No reusable JSON-RPC + LSP-framing primitive in `harness-one`; every tool integration re-implements it | logged |
 | HC-016 | S14 | paper-cut | tsup CJS output extension defaults to `.cjs` for `type: module` packages, but VS Code's `main` resolution needs `.js` — silent fail when forgotten | logged |
-| HC-017 | S14 | paper-cut | `harness-one-coding`'s `checkpointDir` option is the only test seam for the default `~/.harness-coding/` path; downstream apps' tests need an explicit override or they pollute the user's home | logged |
-| HC-018 | post-PR | friction | No `harness-one/io/safe-read` helper — TOCTOU `fs.stat` + `fs.open` race (CWE-367) recurs in every fs-reading tool downstream apps build | logged |
-| HC-019 | post-PR | friction | Cross-platform path separator handling — `path.sep` segmentation + `path.join` for `file://` URIs both broke on Windows-only CI | logged |
+| HC-017 | S14 | paper-cut | `harness-one-coding`'s `checkpointDir` option is the only test seam for the default `~/.harness-coding/` path; downstream apps' tests need an explicit override or they pollute the user's home | **resolved 2026-04-26** |
+| HC-018 | post-PR | friction | No `harness-one/io/safe-read` helper — TOCTOU `fs.stat` + `fs.open` race (CWE-367) recurs in every fs-reading tool downstream apps build | **resolved 2026-04-26** |
+| HC-019 | post-PR | friction | Cross-platform path separator handling — `path.sep` segmentation + `path.join` for `file://` URIs both broke on Windows-only CI | **resolved 2026-04-26** |
 
 ---
 
@@ -66,7 +66,12 @@
   `toFileUri`, `toPosix` helpers — every fs-touching tool and every
   LSP integration will need these. Same vertical-package case as
   HC-002 (workspace-containment) and HC-018 (safe-read).
-- **Status**: logged.
+- **Status**: **resolved 2026-04-26** in this session. New
+  `harness-one/io` subpath ships `splitPath`, `toPosix`, `toFileUri`
+  with comprehensive cross-platform tests. `apps/coding-agent`
+  consumes them: `tools/paths.ts.isSensitivePath` now uses `splitPath`,
+  `tools/lsp/client.ts.uri()` delegates to `toFileUri`. The duplicated
+  in-app implementations are deleted.
 
 ---
 
@@ -93,7 +98,14 @@
   same module that handles `path-safety`, since both protect against
   workspace-escape attacks). Same vertical-package candidate shape as
   HC-002 and HC-015.
-- **Status**: logged.
+- **Status**: **resolved 2026-04-26** in this session. Shipped
+  `safeReadFile(path, { maxBytes, requireFileKind, encoding,
+  truncateOnOverflow })` from `harness-one/io`. Opens the fd FIRST then
+  stats — TOCTOU-impossible by construction. New error codes
+  `IO_FILE_TOO_LARGE` / `IO_NOT_REGULAR_FILE` for actionable failure
+  branching. `apps/coding-agent` `read_file.ts` and `grep.ts` migrated
+  to consume it; per-tool `fs.open` + `fh.stat` + `fh.read` ceremony
+  deleted.
 
 ---
 
@@ -192,7 +204,14 @@
   in `harness-one/infra` (or a future `harness-one/fs-safety` subpath)
   with the realpath dance built in. Every coding-agent-shaped app will
   need this primitive.
-- **Status**: logged. App workaround is permanent; infra request is open.
+- **Status**: **resolved 2026-04-26** in this session. New
+  `harness-one/io` subpath exports `resolveWithinRoot(root, userPath)`
+  with the realpath-existing-prefix dance and a dedicated
+  `IO_PATH_ESCAPE` error code. `apps/coding-agent` `tools/paths.ts`
+  delegates to it; the in-app `realpathRoot` / `realpathExistingPrefix`
+  copies are deleted. macOS `/var → /private/var` and analogous
+  symlinked-temp-dir traps are now handled centrally — every
+  coding-agent-shaped app inherits the fix.
 
 ---
 

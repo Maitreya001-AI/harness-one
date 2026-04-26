@@ -32,3 +32,9 @@ export { analyzeCacheStability } from './cache-stability.js';
 
 // Checkpoint
 export { createCheckpointManager } from './checkpoint.js';
+
+// Filesystem-backed checkpoint storage (atomic-rename writes + index file).
+// Closes HARNESS_LOG showcase 03 — CheckpointManager + FsMemoryStore now
+// compose naturally via the async storage interface.
+export type { FsCheckpointStorageConfig } from './fs-checkpoint-storage.js';
+export { createFsCheckpointStorage } from './fs-checkpoint-storage.js';

@@ -109,9 +109,14 @@ export function defineWebFetchTool(
     description:
       'Download a single https:// URL, return its sanitized text body and best-effort title. ' +
       'Always run a guardrail check on the returned content before quoting it.',
-    // Readonly from the agent's POV — fetches a remote document but never
-    // mutates remote state. Same convention as web_search above.
-    capabilities: [ToolCapability.Readonly],
+    // Truthful capability declaration — readonly from the agent's POV
+    // (no remote mutation) but the call DOES leave the workspace
+    // (network egress). Earlier we under-declared as Readonly only to
+    // satisfy the registry's fail-closed default; the new
+    // HarnessConfigBase.tools.allowedCapabilities lets the harness-factory
+    // explicitly allow `network` so the truthful declaration sticks.
+    // Closes HARNESS_LOG research-collab L-001.
+    capabilities: [ToolCapability.Readonly, ToolCapability.Network],
     parameters: {
       type: 'object',
       properties: {

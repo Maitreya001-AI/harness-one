@@ -92,13 +92,43 @@ export function createFailingAdapter(
 /**
  * Create a mock streaming adapter that yields pre-configured chunks.
  *
+ * **Usage propagation contract**:
+ *
+ * Real streaming providers attach a `usage` payload to the terminal
+ * `done` chunk; AgentLoop's cumulative usage / cost tracker depend on
+ * that. To prevent the silent zero-metrics failure mode that bit
+ * showcase 01 (FRICTION_LOG `createStreamingMockAdapter doesn't
+ * auto-attach usage to done`), this helper:
+ *
+ *  1. **Auto-attaches `config.usage`** to any terminal `done` chunk
+ *     the caller passed *without* a `usage` field. The auto-attach is
+ *     non-destructive: chunks that already carry `usage` are passed
+ *     through verbatim.
+ *  2. **Throws at construction time** when neither the terminal
+ *     `done` chunk nor `config.usage` provides a usage value — the
+ *     resulting adapter would silently report zero tokens, which is
+ *     a footgun for cost-related test assertions.
+ *
  * @example
  * ```ts
+ * // Caller supplies config.usage; auto-attached to the terminal done.
  * const adapter = createStreamingMockAdapter({
+ *   usage: { inputTokens: 10, outputTokens: 5 },
  *   chunks: [
  *     { type: 'text_delta', text: 'Hello' },
  *     { type: 'text_delta', text: ' world' },
  *     { type: 'done' },
+ *   ],
+ * });
+ * ```
+ *
+ * @example
+ * ```ts
+ * // Per-chunk usage takes precedence — useful for varying per-call.
+ * const adapter = createStreamingMockAdapter({
+ *   chunks: [
+ *     { type: 'text_delta', text: 'x' },
+ *     { type: 'done', usage: { inputTokens: 1, outputTokens: 1 } },
  *   ],
  * });
  * ```
@@ -108,7 +138,30 @@ export function createStreamingMockAdapter(config: {
   usage?: TokenUsage;
 }): AgentAdapter & { calls: ChatParams[] } {
   const calls: ChatParams[] = [];
-  const usage: TokenUsage = config.usage ?? { inputTokens: 10, outputTokens: 5 };
+
+  // Walk the chunks and detect the contract violation: terminal `done`
+  // without usage AND no fallback `config.usage`. We do this at
+  // construction time so the loud failure happens as soon as a test
+  // wires the adapter, not at first call.
+  const lastDone = findLastDoneChunk(config.chunks);
+  const fallbackUsage = config.usage;
+  const lastDoneHasUsage = lastDone !== undefined && hasUsageField(lastDone);
+
+  if (lastDone !== undefined && !lastDoneHasUsage && fallbackUsage === undefined) {
+    throw new Error(
+      'createStreamingMockAdapter: terminal `done` chunk has no `usage` and `config.usage` is also undefined. '
+        + 'AgentLoop will report zero tokens / $0 cost, silently breaking any cost-related assertions. '
+        + 'Pass `config.usage = { inputTokens, outputTokens }` for the auto-attach fallback, '
+        + 'or set `usage` directly on the terminal done chunk.',
+    );
+  }
+
+  // Effective usage value used for both `chat()` non-streaming response
+  // and the auto-attach to a usage-less terminal `done`. Once we get
+  // here, at least one of the two sources has supplied the value.
+  const effectiveUsage: TokenUsage = lastDoneHasUsage
+    ? (lastDone as { usage: TokenUsage }).usage
+    : (fallbackUsage as TokenUsage);
 
   return {
     calls,
@@ -121,16 +174,34 @@ export function createStreamingMockAdapter(config: {
         .join('');
       return {
         message: { role: 'assistant', content: text },
-        usage,
+        usage: effectiveUsage,
       };
     },
     async *stream(params: ChatParams): AsyncIterable<StreamChunk> {
       calls.push(params);
       for (const chunk of config.chunks) {
-        yield chunk;
+        // Auto-attach usage to the terminal `done` if the caller
+        // didn't supply one. Non-terminal `done` chunks (rare) and
+        // any chunk that already carries usage pass through unchanged.
+        if (chunk === lastDone && !lastDoneHasUsage && fallbackUsage !== undefined) {
+          yield { ...chunk, usage: fallbackUsage } as StreamChunk;
+        } else {
+          yield chunk;
+        }
       }
     },
   };
+}
+
+function findLastDoneChunk(chunks: readonly StreamChunk[]): StreamChunk | undefined {
+  for (let i = chunks.length - 1; i >= 0; i--) {
+    if (chunks[i].type === 'done') return chunks[i];
+  }
+  return undefined;
+}
+
+function hasUsageField(chunk: StreamChunk): boolean {
+  return (chunk as { usage?: unknown }).usage !== undefined;
 }
 
 /**

@@ -82,6 +82,43 @@ export function createPipeline(config: {
 }): GuardrailPipeline {
   const defaultTimeoutMs = config.defaultTimeoutMs ?? 5000;
 
+  // Runtime entry-shape validation — TypeScript already requires
+  // `{ name, guard }` but callers can bypass with `as never` / dynamic
+  // arrays. The previous shape produced silent `passed: false` runtime
+  // failures (HARNESS_LOG HC-003); now the constructor throws
+  // GUARD_INVALID_PIPELINE up-front.
+  const validateEntries = (
+    entries: readonly { readonly name: string; guard: Guardrail; readonly timeoutMs?: number }[],
+    side: 'input' | 'output',
+  ): void => {
+    for (let i = 0; i < entries.length; i++) {
+      const e = entries[i] as unknown as Record<string, unknown> | null;
+      if (e === null || typeof e !== 'object') {
+        throw new HarnessError(
+          `createPipeline: ${side}[${i}] is not a {name, guard} entry — got ${e === null ? 'null' : typeof e}`,
+          HarnessErrorCode.GUARD_INVALID_PIPELINE,
+          'Pass entries shaped `{ name, guard, timeoutMs? }`. Bare guardrail functions are rejected to prevent silent fail-closed verdicts.',
+        );
+      }
+      if (typeof e.name !== 'string' || (e.name as string).length === 0) {
+        throw new HarnessError(
+          `createPipeline: ${side}[${i}].name must be a non-empty string`,
+          HarnessErrorCode.GUARD_INVALID_PIPELINE,
+          'Provide a stable identifier so trace exporters and logs can attribute verdicts.',
+        );
+      }
+      if (typeof e.guard !== 'function') {
+        throw new HarnessError(
+          `createPipeline: ${side}[${i}].guard must be a Guardrail function`,
+          HarnessErrorCode.GUARD_INVALID_PIPELINE,
+          'Pass a `(ctx) => Verdict | Promise<Verdict>` function. If you used `as never` to silence a type error, fix the upstream type instead.',
+        );
+      }
+    }
+  };
+  validateEntries(config.input ?? [], 'input');
+  validateEntries(config.output ?? [], 'output');
+
   // Apply default timeout to guards that don't specify their own
   const applyDefaults = (entries: readonly PipelineEntry[]): PipelineEntry[] =>
     entries.map((entry) => {
@@ -203,7 +240,13 @@ async function runGuardrails(
 ): Promise<PipelineResult> {
   const buffer = new BoundedEventBuffer(pipeline.maxResults);
   const results = buffer.results;
+  // Auto-fill `direction` first-class field — closes HARNESS_LOG L-002.
+  // Caller-supplied direction (rare; constructed contexts) wins so
+  // unit-test fixtures can simulate other phases.
   let currentCtx: GuardrailContext = ctx.meta ? { ...ctx, meta: { ...ctx.meta } } : { ...ctx };
+  if (currentCtx.direction === undefined) {
+    currentCtx = { ...currentCtx, direction };
+  }
   let lastModifyVerdict: GuardrailEvent['verdict'] | undefined;
   // Stryker disable next-line BooleanLiteral: equivalent mutant. The final
   // branch at line 338 gates on `hasModified && lastModifyVerdict`, and
@@ -442,4 +485,28 @@ async function runRagContextInternal(
     if (result.verdict.action !== 'allow') return result;
   }
   return lastResult;
+}
+
+/**
+ * Extract the human-readable rejection reason from a {@link PipelineResult}.
+ * Returns the verdict's `reason` when the verdict is `block` or `modify`,
+ * otherwise `undefined`.
+ *
+ * Centralises the verbose `'reason' in verdict.verdict ? ... : 'policy violation'`
+ * narrowing dance every call-site previously needed (showcase 02
+ * FRICTION_LOG `runInput verdict shape requires runtime 'reason' in
+ * verdict.verdict check`).
+ *
+ * @example
+ * ```ts
+ * const result = await pipeline.runInput({ content: x });
+ * if (!result.passed) {
+ *   logger.warn('Guardrail rejected:', getRejectionReason(result) ?? 'policy violation');
+ * }
+ * ```
+ */
+export function getRejectionReason(result: PipelineResult): string | undefined {
+  const v = result.verdict;
+  if (v.action === 'block' || v.action === 'modify') return v.reason;
+  return undefined;
 }

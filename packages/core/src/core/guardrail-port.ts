@@ -24,15 +24,54 @@ export type GuardrailVerdict =
 /** Permission level tiers for guardrail evaluation. */
 export type PermissionLevel = 'strict' | 'default' | 'permissive';
 
+/**
+ * Direction tag denoting which pipeline phase produced this context.
+ * Auto-filled by `runInput` / `runOutput` / `runToolOutput` /
+ * `runRagContext` so guardrails can branch without the caller wiring
+ * the value. Closes HARNESS_LOG research-collab L-002.
+ */
+export type GuardrailDirection = 'input' | 'output' | 'tool_output' | 'rag';
+
 /** Context passed to a guardrail for evaluation. */
 export interface GuardrailContext {
   content: string;
   meta?: Record<string, unknown>;
   permissionLevel?: PermissionLevel;
+  /**
+   * Pipeline-side direction tag (input/output/tool_output/rag). Filled
+   * automatically by the pipeline before each guardrail runs; user
+   * code that constructs a `GuardrailContext` directly may also set
+   * it. First-class field so guardrails can branch on it without
+   * digging into `meta`. Closes HARNESS_LOG research-collab L-002.
+   */
+  direction?: GuardrailDirection;
+  /**
+   * Free-form provenance tag — typically the URL / file / tool name
+   * that produced `content`. Surfaces into trace exporters via the
+   * pipeline's GuardrailEvent.
+   */
+  source?: string;
 }
 
 /** A guardrail function that evaluates content and returns a verdict. */
 export type Guardrail = (ctx: GuardrailContext) => Promise<GuardrailVerdict> | GuardrailVerdict;
+
+/**
+ * Narrower alias for guardrails that always return synchronously.
+ * Use this in factory return types (e.g. `createInjectionDetector():
+ * SyncGuardrail`) so callers can call them without the
+ * `instanceof Promise` narrowing dance. The pipeline still accepts
+ * the union {@link Guardrail} for both sync and async guards.
+ *
+ * Closes HARNESS_LOG research-collab L-003.
+ */
+export type SyncGuardrail = (ctx: GuardrailContext) => GuardrailVerdict;
+
+/**
+ * Narrower alias for guardrails that always return a Promise. Counterpart
+ * to {@link SyncGuardrail}; the pipeline still accepts {@link Guardrail}.
+ */
+export type AsyncGuardrail = (ctx: GuardrailContext) => Promise<GuardrailVerdict>;
 
 /** Event emitted when a guardrail runs. */
 export interface GuardrailEvent {

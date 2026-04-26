@@ -26,11 +26,22 @@ This repo uses [pnpm workspaces](https://pnpm.io/workspaces).
 git clone https://github.com/Maitreya001-AI/harness-one.git
 cd harness-one
 
-# 2. Install dependencies (workspace-aware)
-pnpm install
+# 2. One-shot bootstrap: install + build packages + typecheck + test
+pnpm fresh
+```
 
-# 3. Build and verify the full workspace
-pnpm build
+`pnpm fresh` runs `pnpm install`, then primes every `packages/*` `dist/`
+(downstream apps consume the dist via package.json `exports`, so the
+first `pnpm typecheck` will fail without this prime — see
+`apps/research-collab/HARNESS_LOG.md` entry L-008), then runs
+typecheck + tests. Use it for first-time setup and after pulling main.
+
+If you prefer the granular flow:
+
+```bash
+pnpm install
+pnpm -r --filter './packages/*' build   # required before first typecheck
+pnpm typecheck
 pnpm test
 ```
 
