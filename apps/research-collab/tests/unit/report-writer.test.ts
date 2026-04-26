@@ -1,6 +1,6 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -37,7 +37,7 @@ const sample = (overrides: Partial<RunReport> = {}): RunReport => ({
 describe('writeRunReport', () => {
   it('writes the JSON report to the dated subdir', async () => {
     const path = await writeRunReport(tmpDir, sample());
-    expect(path).toContain('runs/2026-04-26/run-1.json');
+    expect(path).toContain(['runs', '2026-04-26', 'run-1.json'].join(sep));
     const body = JSON.parse(await readFile(path, 'utf8')) as RunReport;
     expect(body.runId).toBe('run-1');
   });
