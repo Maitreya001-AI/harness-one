@@ -1,0 +1,45 @@
+{
+  "name": "harness-one-coding",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Autonomous coding agent built on harness-one. Long-horizon dogfood + reusable vertical package.",
+  "type": "module",
+  "bin": {
+    "harness-coding": "src/cli/bin.ts"
+  },
+  "exports": {
+    ".": "./src/agent/index.ts",
+    "./tools": "./src/tools/index.ts",
+    "./guardrails": "./src/guardrails/index.ts",
+    "./config": "./src/config/index.ts"
+  },
+  "scripts": {
+    "start": "tsx src/cli/bin.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/ tests/"
+  },
+  "dependencies": {
+    "harness-one": "workspace:*",
+    "@harness-one/preset": "workspace:*",
+    "@harness-one/anthropic": "workspace:*"
+  },
+  "peerDependencies": {
+    "@anthropic-ai/sdk": ">=0.30.0"
+  },
+  "peerDependenciesMeta": {
+    "@anthropic-ai/sdk": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@anthropic-ai/sdk": "^0.91.0",
+    "@vitest/coverage-v8": "^4.1.5",
+    "tsx": "^4.19.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.5"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
