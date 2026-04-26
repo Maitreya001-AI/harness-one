@@ -1,6 +1,6 @@
 {
   "name": "@harness-one/redis",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Redis-backed memory store for harness-one",
   "type": "module",
   "main": "./dist/index.cjs",

@@ -1,6 +1,6 @@
 {
   "name": "harness-one-coding",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Autonomous coding agent built on harness-one. Long-horizon dogfood + reusable vertical package.",
   "type": "module",
   "bin": {
