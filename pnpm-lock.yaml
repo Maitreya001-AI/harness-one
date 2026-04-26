@@ -160,6 +160,31 @@ importers:
         specifier: ^4.1.5
         version: 4.1.5(@opentelemetry/api@1.9.1)(@types/node@25.6.0)(@vitest/coverage-v8@4.1.5)(vite@6.4.2(@types/node@25.6.0)(tsx@4.21.0)(yaml@2.8.3))
 
+  apps/research-collab:
+    dependencies:
+      '@harness-one/anthropic':
+        specifier: workspace:*
+        version: link:../../packages/anthropic
+      '@harness-one/preset':
+        specifier: workspace:*
+        version: link:../../packages/preset
+      harness-one:
+        specifier: workspace:*
+        version: link:../../packages/core
+    devDependencies:
+      '@anthropic-ai/sdk':
+        specifier: ^0.91.0
+        version: 0.91.0(zod@4.3.6)
+      tsx:
+        specifier: ^4.19.0
+        version: 4.21.0
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: ^4.1.5
+        version: 4.1.5(@opentelemetry/api@1.9.1)(@types/node@25.6.0)(@vitest/coverage-v8@4.1.5)(vite@6.4.2(@types/node@25.6.0)(tsx@4.21.0)(yaml@2.8.3))
+
   examples:
     dependencies:
       '@harness-one/ajv':
