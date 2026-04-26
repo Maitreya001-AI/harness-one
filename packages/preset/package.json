@@ -1,6 +1,6 @@
 {
   "name": "@harness-one/preset",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "description": "Batteries-included harness-one preset with all integrations",
   "type": "module",
   "main": "./dist/index.cjs",

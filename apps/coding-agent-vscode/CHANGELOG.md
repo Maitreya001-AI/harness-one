@@ -1,4 +1,4 @@
-# @harness-one/dogfood
+# harness-one-coding-vscode
 
 ## 0.0.2
 
@@ -6,6 +6,7 @@
 
 - Updated dependencies [8a51ef1]
 - Updated dependencies [8a51ef1]
+- Updated dependencies [350749f]
 - Updated dependencies [8a51ef1]
 - Updated dependencies [8a51ef1]
 - Updated dependencies [8a51ef1]
@@ -21,21 +22,5 @@
 - Updated dependencies [8a51ef1]
 - Updated dependencies [8a51ef1]
   - harness-one@1.0.0
+  - harness-one-coding@0.1.0
   - @harness-one/anthropic@0.1.2
-  - @harness-one/preset@1.0.0
-
-## 0.0.1
-
-### Patch Changes
-
-- Updated dependencies [ef73133]
-- Updated dependencies [c731ee2]
-- Updated dependencies [d361733]
-- Updated dependencies [1dc2368]
-- Updated dependencies [fa42679]
-- Updated dependencies [fcd5582]
-- Updated dependencies [5576b88]
-- Updated dependencies [b72de7e]
-  - harness-one@0.2.0
-  - @harness-one/preset@0.2.0
-  - @harness-one/anthropic@0.1.1

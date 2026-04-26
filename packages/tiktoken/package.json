@@ -1,6 +1,6 @@
 {
   "name": "@harness-one/tiktoken",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Tiktoken tokenizer integration for harness-one",
   "type": "module",
   "main": "./dist/index.cjs",
