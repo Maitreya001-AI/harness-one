@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # `version-packages.yml` triggers this workflow via `gh workflow run --ref
+  # changeset-release/main` to satisfy the required-status-checks ruleset on
+  # the auto-generated bot PR. Without this, GITHUB_TOKEN-pushed commits on
+  # changeset-release/* would never run CI (recursion guard).
+  workflow_dispatch:
 
 # Top-level least-privilege: jobs that need more (build → id-token: write for
 # Codecov OIDC; size-limit → pull-requests: write to post size diff) opt in
