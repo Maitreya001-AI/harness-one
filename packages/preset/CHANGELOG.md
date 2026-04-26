@@ -1,5 +1,16 @@
 # @harness-one/preset
 
+## 1.0.1
+
+### Patch Changes
+
+- Updated dependencies [f3ad6ad]
+  - harness-one@1.0.1
+  - @harness-one/ajv@0.1.3
+  - @harness-one/anthropic@0.1.3
+  - @harness-one/devkit@2.0.1
+  - @harness-one/openai@0.1.3
+
 ## 1.0.0
 
 ### Patch Changes

@@ -1,5 +1,12 @@
 # @harness-one/cli
 
+## 0.1.3
+
+### Patch Changes
+
+- Updated dependencies [f3ad6ad]
+  - harness-one@1.0.1
+
 ## 0.1.2
 
 ### Patch Changes
