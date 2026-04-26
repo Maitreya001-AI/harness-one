@@ -1,0 +1,19 @@
+{
+  "name": "@harness-one/showcase-02-rag-support-bot",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Showcase 02 — single-turn RAG support bot. rag + context + prompt + guardrails.",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "harness-one": "workspace:*"
+  },
+  "devDependencies": {
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3"
+  },
+  "license": "MIT"
+}
