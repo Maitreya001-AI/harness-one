@@ -10,7 +10,7 @@
 | **S2** | 核心类型 + 状态机 | ✅ done | `src/agent/types.ts` / `src/agent/state-machine.ts` | 状态切换合法性单测 21 个全绿;`assertTransition` 抛 `CORE_INVALID_STATE` |
 | **S3** | MVP tools | ✅ done | `src/tools/{read_file,write_file,list_dir,grep,shell,run_tests,git_status}.ts` + `paths.ts` + `context.ts` + `registry.ts` | 101/101 单测绿;每个 tool 含 happy + edge + error + abort 用例 |
 | **S4** | Guardrails | ✅ done | `src/guardrails/{allowlist,policy,auditor}.ts` | 危险命令拦截、approval flow auto/allowlist/always-ask、命令策略 — 130/130 测试 |
-| **S5** | Memory + Checkpoint | ⬜ pending | `src/memory/{checkpoint,compaction}.ts` | `checkpoint → restore` 往返完整;损坏文件触发 schema 校验失败 |
+| **S5** | Memory + Checkpoint | ✅ done | `src/memory/{checkpoint,schema,compaction,store}.ts` | InMemory + FsMemoryStore round-trip;corrupt → MEMORY_CORRUPT;flush 策略覆盖 — 162/162 测试 |
 | **S6** | Agent core wiring | ⬜ pending | `src/agent/{index,loop,planner}.ts` | `createCodingAgent` 工厂 + `runTask` 在 mock adapter 下端到端跑通 |
 | **S7** | CLI | ⬜ pending | `src/cli/{bin,args,output,signals}.ts` | 全 flag 单测;SIGINT 干净退出 |
 | **S8** | Observability + Budget | ⬜ pending | `src/observability/{tracing,cost}.ts` + 三维 budget enforcement | budget 任一超限 graceful abort 且写 checkpoint |
@@ -55,5 +55,5 @@
 
 ## 当前状态
 
-**Active Stage**: S5
+**Active Stage**: S6
 **Last updated**: 2026-04-26

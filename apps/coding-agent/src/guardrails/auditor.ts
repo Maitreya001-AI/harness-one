@@ -25,6 +25,15 @@ import type {
 } from '../agent/types.js';
 import { DEFAULT_COMMAND_ALLOWLIST, evaluateCommandPolicy } from './allowlist.js';
 
+/**
+ * Narrowed listener interface — callers can plug in any object that
+ * supports the standard event-emitter shape, including `process.stdin`,
+ * `node:stream` `Readable` instances, or test doubles.
+ */
+type ApprovalReadable = NodeJS.EventEmitter & {
+  isTTY?: boolean;
+};
+
 export interface AuditorOptions {
   readonly mode: ApprovalMode;
   /** Static allowlist of `<toolName>:<fingerprint>` pairs auto-approved. */
@@ -32,7 +41,7 @@ export interface AuditorOptions {
   /** Static allowlist of shell command names auto-approved. */
   readonly autoAllowCommands?: readonly string[];
   /** Override stdin/stdout streams for tests. */
-  readonly input?: NodeJS.ReadableStream;
+  readonly input?: ApprovalReadable;
   readonly output?: NodeJS.WritableStream;
   /** When true, always-ask blocks instead of denying when stdin is not a TTY. */
   readonly nonInteractiveDeny?: boolean;
@@ -129,8 +138,8 @@ async function askInteractive(
   request: ApprovalRequest,
   options: AuditorOptions,
 ): Promise<ApprovalDecision> {
-  const input = options.input ?? process.stdin;
-  const output = options.output ?? process.stderr;
+  const input: ApprovalReadable = options.input ?? (process.stdin as unknown as ApprovalReadable);
+  const output: NodeJS.WritableStream = options.output ?? process.stderr;
   // Detect non-TTY environments (CI / piped stdin) and fail-closed unless
   // the caller explicitly opted into deny-when-piped behaviour.
   const isTty = (input as NodeJS.ReadStream).isTTY === true;
