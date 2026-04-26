@@ -1,6 +1,6 @@
 {
   "name": "@harness-one/showcase-02-rag-support-bot",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "private": true,
   "description": "Showcase 02 — single-turn RAG support bot. rag + context + prompt + guardrails.",
   "type": "module",
