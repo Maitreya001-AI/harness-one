@@ -372,23 +372,57 @@ export function createAdapterContractSuite(
     });
 
     it('stream() aborts mid-iteration when simulateTiming is on and signal fires', async () => {
-      const streamSimpleFixture = CONTRACT_FIXTURES.find((f) => f.name === 'stream-simple');
-      if (!streamSimpleFixture) return;
-      const controller = new AbortController();
-      const replay = createCassetteAdapter(join(options.cassetteDir, 'stream-simple.jsonl'), {
-        simulateTiming: true,
-      });
-      const streamFn = replay.stream;
-      if (!streamFn) return;
-      setTimeout(() => controller.abort(), 5);
-      await expect(async () => {
-        for await (const _ of streamFn.call(replay, {
-          ...streamSimpleFixture.params,
-          signal: controller.signal,
-        })) {
-          // unreachable after abort
-        }
-      }).rejects.toBeInstanceOf(Error);
+      // Use a self-contained cassette with chunks spaced WIDE enough
+      // that the abort window is observable on every platform. The
+      // shared `stream-simple.jsonl` fixture spans only ~15ms total;
+      // on Windows where `setTimeout` has a ~15ms minimum granularity,
+      // the entire cassette finishes before the abort timer fires,
+      // and the for-await loop completes normally — making the
+      // `.rejects` assertion flake. With chunks at 0/100/200/300ms
+      // and abort scheduled at 50ms, abort lands deterministically
+      // inside the second-chunk wait on every supported platform.
+      const fs = await import('node:fs/promises');
+      const os = await import('node:os');
+      const tmpDir = await fs.mkdtemp(join(os.tmpdir(), 'harness-cassette-'));
+      const tmpPath = join(tmpDir, 'paced-stream.jsonl');
+      const pacedRequest = {
+        messages: [{ role: 'user' as const, content: 'paced' }],
+      };
+      const { computeKey } = await import('../cassette/index.js');
+      const pacedEntry = {
+        kind: 'stream' as const,
+        version: 1 as const,
+        key: computeKey('stream', pacedRequest),
+        request: pacedRequest,
+        chunks: [
+          { offsetMs: 0, chunk: { type: 'text_delta' as const, text: 'a' } },
+          { offsetMs: 100, chunk: { type: 'text_delta' as const, text: 'b' } },
+          { offsetMs: 200, chunk: { type: 'text_delta' as const, text: 'c' } },
+          { offsetMs: 300, chunk: { type: 'done' as const, usage: { inputTokens: 1, outputTokens: 1 } } },
+        ],
+        recordedAtMs: Date.now(),
+      };
+      await fs.writeFile(tmpPath, JSON.stringify(pacedEntry) + '\n', 'utf8');
+      try {
+        const controller = new AbortController();
+        const replay = createCassetteAdapter(tmpPath, { simulateTiming: true });
+        const streamFn = replay.stream;
+        if (!streamFn) return;
+        // 50ms abort lands well inside the 100→200ms inter-chunk wait
+        // on every platform (Windows ~15ms timer granularity rounds
+        // 50ms up to 60ms — still inside the window).
+        setTimeout(() => controller.abort(), 50);
+        await expect(async () => {
+          for await (const _ of streamFn.call(replay, {
+            ...pacedRequest,
+            signal: controller.signal,
+          })) {
+            // unreachable after abort
+          }
+        }).rejects.toBeInstanceOf(Error);
+      } finally {
+        await fs.rm(tmpDir, { recursive: true, force: true });
+      }
     });
 
     // ── countTokens (optional capability) ────────────────────────────────
