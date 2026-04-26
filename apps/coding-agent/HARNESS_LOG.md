@@ -35,6 +35,38 @@
 | HC-016 | S14 | paper-cut | tsup CJS output extension defaults to `.cjs` for `type: module` packages, but VS Code's `main` resolution needs `.js` — silent fail when forgotten | logged |
 | HC-017 | S14 | paper-cut | `harness-one-coding`'s `checkpointDir` option is the only test seam for the default `~/.harness-coding/` path; downstream apps' tests need an explicit override or they pollute the user's home | logged |
 | HC-018 | post-PR | friction | No `harness-one/io/safe-read` helper — TOCTOU `fs.stat` + `fs.open` race (CWE-367) recurs in every fs-reading tool downstream apps build | logged |
+| HC-019 | post-PR | friction | Cross-platform path separator handling — `path.sep` segmentation + `path.join` for `file://` URIs both broke on Windows-only CI | logged |
+
+---
+
+## HC-019 · Cross-platform path-separator pitfalls
+
+- **Stage**: post-PR (Windows-only CI surfaced two regressions the
+  macOS+Linux matrix missed)
+- **Severity**: friction
+- **Summary**: Two Windows-only test failures on PR #33's `build
+  (windows-latest, 22)` job:
+  1. `isSensitivePath` split on `path.sep` (which is `\\` on Windows),
+     so a forward-slash path like `home/.aws/credentials` came through
+     as a single segment and the deny patterns silently missed it.
+  2. `LspClient.uri()` used `path.join(workspace, rel)` to concatenate
+     workspace + relative path, producing `file://\tmp\ws\a.ts` on
+     Windows. LSP servers refuse backslash-separated URIs.
+- **Details**: Both bugs exist because Node's `path` module is
+  intentionally OS-aware. Tools that operate on workspace-relative
+  paths the LLM hands them must normalise separators before applying
+  patterns, and any path that ends up in a `file://` URI must be
+  POSIX-shaped regardless of host.
+- **Repro**: Run on Windows and call
+  `isSensitivePath('home/.aws/credentials')` → returns `false`. Same
+  shape for `LspClient.uri('a.ts')` on Windows.
+- **Workaround**: split on `/[\\/]/` for pattern matching; replace `\\`
+  with `/` and prefix `///` for absolute Windows paths in URI building.
+- **Requested fix**: Ship `harness-one/io/path-utils` with `splitPath`,
+  `toFileUri`, `toPosix` helpers — every fs-touching tool and every
+  LSP integration will need these. Same vertical-package case as
+  HC-002 (workspace-containment) and HC-018 (safe-read).
+- **Status**: logged.
 
 ---
 
