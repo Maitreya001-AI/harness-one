@@ -42,8 +42,9 @@ Every box below has a CI workflow or a directory of tests as evidence.
 - **Layer 8 Examples-as-tests** — `tools/run-examples.mjs` + `check:readme`
   snippet extractor run in CI.
 - **Layer 9 Dogfood** — `apps/dogfood/` (Issue Triage Bot) plus the three
-  differentiated showcases under `examples/showcases/`. See [Showcases] in
-  the README.
+  differentiated examples at `examples/` (`codebase-qa.ts`,
+  `autoresearch-loop.ts`, `evolve-check-demo.ts`). See [Examples] in the
+  README.
 - **Layer 10 Security** — `audit.yml`, `scorecard.yml`, `secret-scan.yml`,
   `sbom.yml`, `fuzz.yml`, and 12 STRIDE threat-model docs in
   `docs/security/`.

@@ -274,17 +274,68 @@ harness-one 的质量承诺全部写进 `.github/workflows/`，总计 15 个 CI 
 - [`docs/security/`](./docs/security/)——每个 L3 子系统一份 STRIDE 威胁模型 + OpenSSF Best Practices 自评（项目 ID `12635`，passing 级通过）。
 - [`docs/adr/`](./docs/adr/)——10 份 MADR 4.0 格式的架构决策记录。
 
+## Examples
+
+轻量参考实现。读代码学习如何用某个子系统或组合。确定性运行，无需 API key
+（`pnpm examples:smoke` 在 CI 跑）。
+
+- [`examples/codebase-qa.ts`](./examples/codebase-qa.ts)——RAG 检索 +
+  对每个检索 chunk 跑 fail-closed injection guardrail + mock AgentLoop
+  reader 产出带引用的回答。
+- [`examples/autoresearch-loop.ts`](./examples/autoresearch-loop.ts)——
+  置信度门控外层循环，用 harness-one 的 `createFallbackAdapter` 和
+  标准化的 `computeBackoffMs`。
+- [`examples/evolve-check-demo.ts`](./examples/evolve-check-demo.ts)——
+  ComponentRegistry、DriftDetector、TasteCodingRegistry 组合成一次
+  "代码一直对"巡检。
+
+完整索引见 [`examples/README.md`](./examples/README.md)。
+
 ## Showcases
 
-四个可直接跑的差异化 demo。Triage Bot 每天在本仓真实驱动；其余三个在
-`examples:smoke` 下确定性运行（无需 API key）。
+形态压力实验，严格按
+[`docs/harness-one-showcase-method.md`](./docs/harness-one-showcase-method.md)
+的 7 阶段方法论执行。每个 showcase 含
+PLAN/HYPOTHESIS/FRICTION_LOG/OBSERVATIONS/HARVEST/FEEDBACK，并在归档进 CI
+作为 cassette replay 之前真 API 跑过至少 10 次。
 
-| Showcase | 文件 | 验证了什么 |
-|---|---|---|
-| Issue Triage Bot（dogfood） | [`apps/dogfood/`](./apps/dogfood/) | `createSecurePreset` + tools + guardrails 在每个新 issue 上真实跑；报告写入 `dogfood-reports/`。 |
-| 带引用的 Codebase Q&A | [`examples/showcases/codebase-qa.ts`](./examples/showcases/codebase-qa.ts) | RAG + 对每个 chunk 跑 fail-closed guardrail + `file:line` 引用。 |
-| Autoresearch（Ralph 风格） | [`examples/showcases/autoresearch-loop.ts`](./examples/showcases/autoresearch-loop.ts) | 置信度门控循环 + 主 search 失败 → 指数退避 → fallback。 |
-| Evolve-check 审计 | [`examples/showcases/evolve-check-demo.ts`](./examples/showcases/evolve-check-demo.ts) | `ComponentRegistry` + `DriftDetector` + `TasteCodingRegistry` 组合成一次"代码一直对"巡检。 |
+当前已交付 MVP build（7 阶段方法论的第 3 阶段——可跑、确定性、每个 6 份
+markdown 产出物）：
+
+- [`showcases/01-streaming-cli`](./showcases/01-streaming-cli)——`core`
+  streaming + `session` + `observe` lifecycle
+- [`showcases/02-rag-support-bot`](./showcases/02-rag-support-bot)——
+  `rag` 多租户隔离 + injection guardrails
+- [`showcases/03-memory-checkpoint-stress`](./showcases/03-memory-checkpoint-stress)
+  ——`FsMemoryStore` 在 SIGKILL 崩溃注入下的恢复
+- [`showcases/04-orchestration-handoff`](./showcases/04-orchestration-handoff)
+  ——多 agent `spawnSubAgent` + 错误 / abort 传播
+
+任意 showcase 可用 `pnpm -C showcases/<name> start` 跑。每个都带
+[`PLAN.md`](./docs/showcase-plans/) + `HYPOTHESIS.md` + `FRICTION_LOG.md`，
+记录写代码前的预测和实施过程中遇到的真实摩擦。第 4 阶段（真 API ≥10 次跑）
+和之后的阶段是后续工作。
+
+完整覆盖矩阵见
+[`showcases/README.md`](./showcases/README.md) 和
+[`docs/harness-one-form-coverage.md`](./docs/harness-one-form-coverage.md)。
+
+## Apps
+
+基于 harness-one 构建的真实 agent 应用。生产级代码，持续运行或对应 vertical
+package 规划。
+
+- [`apps/dogfood/`](./apps/dogfood/)——Issue triage bot，每个新 issue 上跑，
+  报告写入 `dogfood-reports/`。
+- `apps/coding-agent/`（规划中）——自主编码 agent，同时发布为
+  `harness-one-coding` vertical package
+  ([design](./docs/app-designs/coding-agent-DESIGN.md))。
+- `apps/research-collab/`（规划中）——多 agent 研究协作流水线
+  ([design](./docs/app-designs/research-collab-DESIGN.md))。
+
+apps 通过 `HARNESS_LOG.md`（持续）和季度 `RETRO/` 回顾向 harness-one 反哺。
+机制见
+[`docs/harness-one-app-feedback-loop.md`](./docs/harness-one-app-feedback-loop.md)。
 
 ## 文档
 
