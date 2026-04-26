@@ -20,6 +20,93 @@
 
 ---
 
+## L-2026-04-26-008 · 跨 workspace 的 typecheck 必须先 `pnpm build` 才能跑
+
+- **子系统**：`@harness-one/preset` + 所有 `packages/*` 的发布配置
+- **现象**：`apps/research-collab` 第一次 `pnpm typecheck` 直接报
+  `Cannot find module '@harness-one/preset' or its corresponding type
+  declarations.`。原因是 `packages/preset/package.json` 把
+  `types: "./dist/index.d.ts"` 指向构建产物，但 monorepo 默认 install
+  完不会触发 build。`vitest.config.ts` 用 alias 绕过了这个（直接指向
+  `src/`），但 `tsc` 没有同款 alias 机制。
+- **影响**：任何新 app 第一次接入都会撞这个错。已经习惯这个 monorepo
+  的人 5 秒就懂；新 contributor 会卡很久。
+- **临时绕过**：`pnpm -r --filter '!@harness-one/research-collab' build`
+  跑一遍，dist 出来后再 typecheck 通过。
+- **建议反哺**：要么在 root `tsconfig.base.json` 配上
+  `paths` 把 workspace 包 alias 到 src（和 vitest config 对齐）；要么在
+  `apps/dogfood/README.md` + `apps/research-collab/README.md` 顶部就放一
+  句 "first-time setup 必须 `pnpm build` 一次"。
+- **Status**: workaround
+- **Owner**: 主仓库 DX
+
+---
+
+## L-2026-04-26-007 · `HandoffPayload` 实际字段是 `metadata` / `context`，没有 `details`
+
+- **子系统**：`harness-one/orchestration`（`types.ts` 的 HandoffPayload）
+- **现象**：实现 pipeline orchestrator 时按直觉写了
+  `handoff.send(from, to, { summary: '...', details: {...} })` —
+  TypeScript 报 `'details' does not exist in type 'HandoffPayload'`。
+  实际 schema 是 `{ summary, artifacts?, concerns?,
+  acceptanceCriteria?, context?, metadata?, priority? }`。
+- **影响**：花了一次 typecheck 失败 + 翻 source 才弄清字段名。
+  `summary + metadata + context + artifacts + concerns +
+  acceptanceCriteria` 是个相当宽的 schema —— 没看 source 不会知道；
+  README 里也没有现成的 worked example。
+- **临时绕过**：把 `details` 改成 `metadata`。
+- **建议反哺**：在 `harness-one/orchestration` 的 README 加一段
+  "Handoff payload 的常见字段及用法"，最少要演示 `summary + metadata`
+  的最小例子；或在 `HandoffPayload` 上加 `@example` JSDoc。
+- **Status**: workaround
+- **Owner**: 主仓库 docs
+
+---
+
+## L-2026-04-26-006 · `CostTracker` 没有 ModelPricing 时静默返回 \$0，没有 fallback / warning
+
+- **子系统**：`harness-one/observe`（`createCostTracker` + `ModelPricing`）
+- **现象**：测试期望 `cost.usd > 0`，实际为 0。`createSecurePreset`
+  在没有 `pricing` 字段时直接调 `createCostTracker({ budget })` —— 没有
+  默认 pricing 表，也不警告 caller "你的成本永远会是 0"。下游一旦做
+  budget gating 就会出问题（成本算不上来 → budget 永远不会触发）。
+- **影响**：本 app 多个测试只能从 `> 0` 改成 `>= 0`，验收时无法
+  验证成本聚合的正确性，只能验证 schema 有 `cost.perAgent` 三栏。生产
+  路径 `RESEARCH_BUDGET_USD` 也因此实际不生效（budget 永不达到 0）。
+- **临时绕过**：在测试里降级断言，并在 METRICS.md 里把
+  `mean_cost_usd` 标为"需要 caller 自行配置 pricing"。
+- **建议反哺**：
+  - 选项 A：`createSecurePreset` 默认带一个常见模型的 pricing 表
+    （Claude / GPT 主流型号），跟 `guardrailLevel` 一样属于 "secure
+    default"。
+  - 选项 B：当 `budget` 设了但 `pricing` 没设时，`createSecurePreset`
+    构造期 `safeWarn` "budget will never trip without pricing config"。
+  - 任意一种都比当前的"静默 \$0"好。
+- **Status**: open（影响生产正确性，不只是 ergonomic）
+- **Owner**: 主仓库
+
+---
+
+## L-2026-04-26-005 · `HarnessConfig` 不暴露工具 registry 注入点（L-001 的兄弟问题）
+
+- **子系统**：`@harness-one/preset` 整体
+- **现象**：L-001 是"capability 白名单不可覆盖"，更上一层的问题是：
+  `HarnessConfigBase` 完全没有 `tools?: { registry?: ToolRegistry }`
+  字段。即使 capability 白名单允许 network，app 也没办法注入一个**预
+  配置好的** registry（比如带 middleware / 自定义 timeout / 自定义
+  permission checker 的）。所有 app 都只能用 preset 内部硬编码的
+  `createRegistry({ validator })`。
+- **影响**：本 app 想给 web tool 加自定义 retry middleware 没辙。
+  本次 MVP 不依赖，但后续要做的 rate-limit-aware fetch 就会被卡。
+- **临时绕过**：当前不做。等需求到了再说。
+- **建议反哺**：`HarnessConfigBase` 加 `tools?: { registry?: ToolRegistry;
+  allowedCapabilities?: ToolCapabilityValue[] }`。两个字段互斥（前者
+  完全自带，后者只是配置默认 registry）。
+- **Status**: open
+- **Owner**: 主仓库
+
+---
+
 ## L-2026-04-26-001 · 工具注册的 capability 白名单无法在 Harness 层覆盖
 
 - **子系统**：`harness-one/tools` + `@harness-one/preset`
