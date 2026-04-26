@@ -34,6 +34,34 @@
 | HC-015 | S13 | friction | No reusable JSON-RPC + LSP-framing primitive in `harness-one`; every tool integration re-implements it | logged |
 | HC-016 | S14 | paper-cut | tsup CJS output extension defaults to `.cjs` for `type: module` packages, but VS Code's `main` resolution needs `.js` — silent fail when forgotten | logged |
 | HC-017 | S14 | paper-cut | `harness-one-coding`'s `checkpointDir` option is the only test seam for the default `~/.harness-coding/` path; downstream apps' tests need an explicit override or they pollute the user's home | logged |
+| HC-018 | post-PR | friction | No `harness-one/io/safe-read` helper — TOCTOU `fs.stat` + `fs.open` race (CWE-367) recurs in every fs-reading tool downstream apps build | logged |
+
+---
+
+## HC-018 · No `safe-read` helper — every fs-reading tool re-discovers the TOCTOU trap
+
+- **Stage**: post-PR (CodeQL high-severity alerts on #33)
+- **Severity**: friction
+- **Summary**: GitHub's CodeQL `js/file-system-race` (CWE-367) flagged
+  both `read_file` and `grep` tools for the classic `fs.stat()` →
+  `fs.open()/readFile()` race. The tools used `stat` to (a) confirm the
+  target was a regular file, or (b) check size against a cap, then
+  read the contents in a separate syscall. An attacker who controls
+  the workspace can swap the path between the two calls.
+- **Details**: We fixed both call-sites by opening first and statting
+  the file descriptor. The same pattern will recur in every coding-
+  agent-shaped tool that wants to enforce "this is a regular file"
+  or "this is under N bytes" before reading. A `harness-one/io/
+  safeReadFile(path, { maxBytes, requireFileKind })` helper would
+  centralise the fd-first idiom.
+- **Repro**: see `apps/coding-agent/src/tools/{read_file,grep}.ts`
+  commits before/after the post-PR fix.
+- **Workaround**: open → `fh.stat()` → `fh.read*()` per call-site.
+- **Requested fix**: Ship `harness-one/io/safe-read` (or fold into the
+  same module that handles `path-safety`, since both protect against
+  workspace-escape attacks). Same vertical-package candidate shape as
+  HC-002 and HC-015.
+- **Status**: logged.
 
 ---
 
