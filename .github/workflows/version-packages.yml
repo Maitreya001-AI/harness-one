@@ -1,26 +1,46 @@
 name: Version Packages
 
-# Manages the "Version Packages" pull request lane via @changesets/action.
+# Manages the "Version Packages" pull request lane.
 #
-# Two modes, both decided by what's in `.changeset/`:
-#   1. Pending changesets present → opens or updates a "Version Packages"
-#      PR with version bumps + changelog entries. The PR is rebased on
-#      every push to main, so contributors only ever see one open PR.
-#   2. No pending changesets → no-op (action exits cleanly).
+# DESIGN NOTES (2026-04 rewrite — was using @changesets/action):
 #
-# The action does NOT run npm publish here. Actual publishing is owned
-# by `release.yml`, which fires on `release: published` and uses OIDC
-# trusted publishing + SLSA provenance per docs/release.md. After the
-# maintainer merges the Version Packages PR, they cut a GitHub Release
-# (`gh release create v<x.y.z> --generate-notes`) which fires that
-# canonical publish lane.
+# The previous implementation called `changesets/action` with the
+# default `GITHUB_TOKEN` to push the version-bump commit. That
+# stacked TWO blockers on the resulting PR:
+#
+#   1. `required_signatures` ruleset on `main` rejected the commit —
+#      `GITHUB_TOKEN`-pushed commits cannot be signed.
+#   2. `required_status_checks` couldn't be satisfied — GitHub
+#      deliberately does NOT trigger downstream workflows on
+#      `GITHUB_TOKEN` pushes (recursion guard), so the required
+#      `build (ubuntu-latest, 22)` etc. never even ran on the bot PR.
+#
+# Result: every release required a manual cherry-pick + signed
+# re-push (#34→#39, #42→#43). This rewrite eliminates both blockers
+# without any maintainer-side GitHub setup (no App, no PAT, no
+# ruleset bypass):
+#
+#   1. Commits are made via the GraphQL `createCommitOnBranch`
+#      mutation. GitHub server-side signs these commits — they
+#      appear as **verified** in the UI and satisfy
+#      `required_signatures`.
+#
+#   2. After the bot PR is opened/updated, this workflow explicitly
+#      calls `gh workflow run --ref changeset-release/main` on each
+#      required CI workflow. Those runs produce check-runs at the
+#      bot PR's HEAD SHA, which satisfies `required_status_checks`.
+#      The required workflows must declare a `workflow_dispatch`
+#      trigger; this PR adds it where missing.
+#
+# Net result: maintainer just clicks "Squash and merge" on the bot
+# PR. No local script, no manual steps. The interim
+# `tools/sign-changeset-release-pr.sh` (added in #44) remains as a
+# documented escape hatch if this workflow ever fails.
 
 on:
   push:
     branches: [main]
 
-# Top-level least-privilege; the version-pr job opts up to write where
-# changesets/action needs to push the branch and open the PR.
 permissions:
   contents: read
 
@@ -28,13 +48,14 @@ jobs:
   version-pr:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      pull-requests: write
+      contents: write       # createCommitOnBranch + create branch
+      pull-requests: write  # gh pr create / gh pr edit
+      actions: write        # gh workflow run --ref
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          # changesets/action reads the existing tags + git log to compute
+          # changeset version reads existing tags + git log to compute
           # version bumps and to detect when no pending changesets remain.
           fetch-depth: 0
 
@@ -48,17 +69,200 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Open / update Version Packages PR
-        uses: changesets/action@e0145edc7d9d8679003495b11f87bd8ef63c0cba # v1.5.3
+      - name: Detect pending changesets
+        id: detect
+        run: |
+          # Anything in `.changeset/*.md` other than README.md counts.
+          PENDING=$(find .changeset -maxdepth 1 -name '*.md' ! -name 'README.md' | wc -l | tr -d ' ')
+          echo "count=${PENDING}" >> "$GITHUB_OUTPUT"
+          if [ "${PENDING}" -eq 0 ]; then
+            echo "No pending changesets — exiting."
+            echo "pending=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Found ${PENDING} pending changeset(s)."
+            echo "pending=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run `changeset version`
+        if: steps.detect.outputs.pending == 'true'
+        run: pnpm exec changeset version
+
+      - name: Commit + push to changeset-release/main via verified GraphQL commit
+        if: steps.detect.outputs.pending == 'true'
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v8.0.0
         with:
-          # `version` is the only command we wire. `publish` is intentionally
-          # left empty so this workflow stays a *version-PR-only* lane: the
-          # OIDC + SLSA + provenance publish happens exclusively in
-          # release.yml when a GitHub Release is published. Wiring publish
-          # here would split the publish surface across two workflows and
-          # bypass the trusted-publisher record that's bound to release.yml.
-          version: pnpm exec changeset version
-          commit: 'chore: version packages'
-          title: 'chore: version packages'
+          script: |
+            const fs = require('fs');
+            const { execSync } = require('child_process');
+
+            const branch = 'changeset-release/main';
+            const message = 'chore: version packages';
+
+            // 1. Get current main SHA — every release branch is reset to this
+            //    so the PR is always a clean diff vs main (no merge commits).
+            const { data: mainRef } = await github.rest.git.getRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: 'heads/main',
+            });
+            const parentSha = mainRef.object.sha;
+            core.info(`main SHA: ${parentSha}`);
+
+            // 2. Ensure the changeset-release/main branch exists, pointed at main.
+            //    If it already exists with stale content, force-reset it to main
+            //    so createCommitOnBranch's expectedHeadOid check passes.
+            try {
+              const { data: existing } = await github.rest.git.getRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `heads/${branch}`,
+              });
+              if (existing.object.sha !== parentSha) {
+                await github.rest.git.updateRef({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: `heads/${branch}`,
+                  sha: parentSha,
+                  force: true,
+                });
+                core.info(`Reset ${branch} to main (${parentSha.slice(0,7)}).`);
+              } else {
+                core.info(`${branch} already at main.`);
+              }
+            } catch (err) {
+              if (err.status === 404) {
+                await github.rest.git.createRef({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: `refs/heads/${branch}`,
+                  sha: parentSha,
+                });
+                core.info(`Created ${branch} at main.`);
+              } else {
+                throw err;
+              }
+            }
+
+            // 3. Walk `git status --porcelain` to build the FileChanges payload.
+            //    `createCommitOnBranch` accepts an `additions` array (files to
+            //    create or update, with base64 contents) and a `deletions`
+            //    array (paths only).
+            const lines = execSync('git status --porcelain', { encoding: 'utf8' })
+              .split('\n')
+              .map(l => l.replace(/\r$/, ''))
+              .filter(Boolean);
+
+            const additions = [];
+            const deletions = [];
+            for (const line of lines) {
+              // Porcelain format: XY <path> (with X = staged, Y = unstaged).
+              const status = line.slice(0, 2);
+              const path = line.slice(3).trim().replace(/^"|"$/g, '');
+              if (status.includes('D')) {
+                deletions.push({ path });
+              } else if (status.includes('R')) {
+                // Rename — porcelain shows `R  old -> new`. Treat as
+                // delete-old + add-new for the API's flat schema.
+                const [from, to] = path.split(' -> ');
+                deletions.push({ path: from });
+                additions.push({
+                  path: to,
+                  contents: fs.readFileSync(to).toString('base64'),
+                });
+              } else {
+                additions.push({
+                  path,
+                  contents: fs.readFileSync(path).toString('base64'),
+                });
+              }
+            }
+            core.info(`Staging ${additions.length} additions + ${deletions.length} deletions.`);
+
+            if (additions.length === 0 && deletions.length === 0) {
+              core.warning('No file changes detected — `changeset version` was a no-op?');
+              return;
+            }
+
+            // 4. createCommitOnBranch — the resulting commit is GitHub-signed
+            //    (verified). Satisfies the `required_signatures` ruleset.
+            const result = await github.graphql(`
+              mutation Commit($input: CreateCommitOnBranchInput!) {
+                createCommitOnBranch(input: $input) {
+                  commit { url oid }
+                }
+              }
+            `, {
+              input: {
+                branch: {
+                  repositoryNameWithOwner: `${context.repo.owner}/${context.repo.repo}`,
+                  branchName: branch,
+                },
+                message: { headline: message },
+                fileChanges: { additions, deletions },
+                expectedHeadOid: parentSha,
+              },
+            });
+            const commitUrl = result.createCommitOnBranch.commit.url;
+            const commitOid = result.createCommitOnBranch.commit.oid;
+            core.info(`Created verified commit ${commitOid.slice(0,7)} → ${commitUrl}`);
+            core.setOutput('head_sha', commitOid);
+
+      - name: Open or update bot PR
+        if: steps.detect.outputs.pending == 'true'
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          BRANCH=changeset-release/main
+
+          # Read the freshly-bumped version from packages/core/package.json
+          # so the PR title shows the target tag (operator-friendly).
+          NEXT_VERSION=$(node -p "require('./packages/core/package.json').version")
+          TITLE="chore: version packages → v${NEXT_VERSION}"
+
+          BODY=$(cat <<'EOF'
+          Auto-generated version-bump PR. Each commit on this branch is
+          GitHub-server-signed via `createCommitOnBranch` (verified ✓),
+          so it satisfies the `required_signatures` ruleset on `main`
+          without any maintainer-side signing setup.
+
+          The required CI workflows are explicitly triggered on this
+          branch by the `Version Packages` workflow itself (since
+          `GITHUB_TOKEN` pushes don't trigger downstream workflows).
+
+          Just hit "Squash and merge" — no manual cherry-pick, no local
+          script, no GPG-key dance.
+          EOF
+          )
+
+          PR_NUMBER=$(gh pr list --head "${BRANCH}" --base main --state open --json number --jq '.[0].number // empty')
+          if [ -z "${PR_NUMBER}" ]; then
+            gh pr create --base main --head "${BRANCH}" \
+              --title "${TITLE}" \
+              --body "${BODY}"
+            echo "Opened bot PR for ${BRANCH}."
+          else
+            gh pr edit "${PR_NUMBER}" --title "${TITLE}" --body "${BODY}"
+            echo "Updated existing bot PR #${PR_NUMBER}."
+          fi
+
+      - name: Trigger required CI on the bot branch
+        if: steps.detect.outputs.pending == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # The required-status-checks ruleset on `main` lists
+          # `build (ubuntu-latest, 22)`, `api-extractor`,
+          # `Analyze (javascript-typescript)`, plus a few jobs from CI itself.
+          # Each lives in a workflow file below — we explicitly trigger them
+          # via workflow_dispatch on the bot branch's HEAD so the produced
+          # check-runs land at the right SHA and satisfy the ruleset.
+          #
+          # Note: `--ref` accepts a branch name. The workflow runs at the
+          # branch's tip, which is the just-pushed verified commit.
+          for wf in ci.yml api-check.yml codeql.yml; do
+            echo "Triggering ${wf} on changeset-release/main…"
+            gh workflow run "${wf}" --ref changeset-release/main || \
+              echo "::warning::workflow_dispatch trigger failed for ${wf} — confirm the workflow declares 'workflow_dispatch:' in its 'on:' block."
+          done

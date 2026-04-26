@@ -12,6 +12,8 @@ name: API Check
 on:
   pull_request:
     branches: [main]
+  # See `version-packages.yml` — required for the bot PR's check-runs.
+  workflow_dispatch:
 
 permissions:
   contents: read

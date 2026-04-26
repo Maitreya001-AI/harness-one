@@ -13,6 +13,8 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # See `version-packages.yml` — required for the bot PR's check-runs.
+  workflow_dispatch:
   schedule:
     # Tuesdays 05:30 UTC — off-peak for Maitreya001-AI runners, before
     # the maintainer's working hours, one day after the GitHub Advisory
