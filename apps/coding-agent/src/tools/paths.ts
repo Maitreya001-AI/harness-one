@@ -34,7 +34,10 @@ const SENSITIVE_BASENAME_PATTERNS: readonly RegExp[] = Object.freeze([
 
 /** Returns `true` when `relPath` (or any of its segments) is sensitive. */
 export function isSensitivePath(relPath: string): boolean {
-  for (const segment of relPath.split(path.sep)) {
+  // Split on BOTH separators so the predicate stays correct cross-platform —
+  // on Windows `path.sep` is `\\` but callers (tests, configs, LLM-emitted
+  // arguments) routinely pass forward-slash paths.
+  for (const segment of relPath.split(/[\\/]/)) {
     for (const pattern of SENSITIVE_BASENAME_PATTERNS) {
       if (pattern.test(segment)) return true;
     }

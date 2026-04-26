@@ -144,7 +144,13 @@ export function createLspClient(options: LspClientOptions): LspClient {
     const abs = path.isAbsolute(relativePath)
       ? relativePath
       : path.join(options.workspace, relativePath);
-    return `file://${abs}`;
+    // LSP `file://` URIs must use forward slashes regardless of the host OS.
+    // On Windows `path.join` emits `\` separators which break LSP servers
+    // and produce malformed URIs like `file://\tmp\ws\a.ts`.
+    const posix = abs.replace(/\\/g, '/');
+    // Windows absolute paths look like `C:/foo`; LSP prefixes them with an
+    // extra `/` so the URI authority component stays empty.
+    return posix.startsWith('/') ? `file://${posix}` : `file:///${posix}`;
   }
 
   async function request<T = unknown>(method: string, params?: unknown): Promise<T> {
