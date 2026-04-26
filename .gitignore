@@ -4,7 +4,12 @@ coverage/
 coverage-temp/
 *.tsbuildinfo
 tsup.config.bundled_*.mjs
-.claude/
+.claude/*
+# Friction-logging automation (see docs/harness-one-feedback-automation.md)
+# is shared across contributors — keep its files tracked even though the
+# rest of .claude/ (worktrees, scheduled_tasks.lock, local caches) stays local.
+!.claude/feedback-instructions.md
+!.claude/commands/
 tmp/
 
 # api-extractor scratch dir (contents regenerated on each
