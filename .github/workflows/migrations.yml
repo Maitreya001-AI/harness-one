@@ -17,6 +17,9 @@ on:
     branches: [main]
   push:
     branches: [main]
+  # See `version-packages.yml` — required for the auto-merging bot PR's
+  # `check-migrations` check-run.
+  workflow_dispatch:
 
 permissions:
   contents: read

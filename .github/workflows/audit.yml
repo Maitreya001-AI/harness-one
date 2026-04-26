@@ -10,6 +10,9 @@ on:
     branches: [main]
   push:
     branches: [main]
+  # See `version-packages.yml` — required for the auto-merging bot PR's
+  # `pnpm-audit` check-run.
+  workflow_dispatch:
   schedule:
     # Mondays 06:00 UTC — catches advisories disclosed over the weekend.
     - cron: '0 6 * * 1'

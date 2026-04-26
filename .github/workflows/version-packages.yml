@@ -261,7 +261,19 @@ jobs:
           #
           # Note: `--ref` accepts a branch name. The workflow runs at the
           # branch's tip, which is the just-pushed verified commit.
-          for wf in ci.yml api-check.yml codeql.yml; do
+          # Each required check name in the `main` ruleset maps to exactly
+          # one workflow file. If you add or remove a required check, update
+          # this list AND ensure the workflow declares `workflow_dispatch:`
+          # in its `on:` block. Current required checks (verified
+          # 2026-04-26):
+          #   ci.yml          → zero-deps, examples-smoke, dx-quality,
+          #                     build (ubuntu-latest, 22)
+          #   api-check.yml   → api-extractor
+          #   codeql.yml      → Analyze (javascript-typescript)
+          #   audit.yml       → pnpm-audit
+          #   migrations.yml  → check-migrations
+          #   release-pack.yml→ check-pack
+          for wf in ci.yml api-check.yml codeql.yml audit.yml migrations.yml release-pack.yml; do
             echo "Triggering ${wf} on changeset-release/main…"
             gh workflow run "${wf}" --ref changeset-release/main || \
               echo "::warning::workflow_dispatch trigger failed for ${wf} — confirm the workflow declares 'workflow_dispatch:' in its 'on:' block."
