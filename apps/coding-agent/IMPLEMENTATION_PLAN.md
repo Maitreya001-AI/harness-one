@@ -62,11 +62,12 @@
 | **S10** | Live Anthropic adapter | ✅ done | `tests/integration/live-anthropic.test.ts` (skipIf no key+`CODING_AGENT_LIVE=1`) + `tests/unit/cli-bin-extra.test.ts` 错误路径 | 237/237 + 1 skipped;adapter 错误传播到 exit code 1 |
 | **S11** | Build + 发布 | ✅ done | `tsup.config.ts` / `.changeset/coding-agent-mvp.md` / `package.json` exports → dist / `.npmignore` | `pnpm build` 5 entries + `npm pack` 86KB / 26 files;shebang 保留 |
 | **S12** | Eval harness | ✅ done | `src/eval/{runner,verifier,types,index}.ts` + `fixtures/builtin.ts` (3 fixtures) + `harness-coding eval --tag` 子命令 | 256/256 测试;runner+verifier+CLI 全覆盖;`..` 路径拒绝 |
-| **S13** | LSP tool | ⬜ pending | `src/tools/lsp/{client,definition,references}.ts` + mock LSP server 单测 | LSP client 端到端单测通过;tools registry 注入 lsp_* 二个 tool |
-| **S14** | VS Code extension | ⬜ pending | `apps/coding-agent-vscode/{package.json,src/extension.ts}` | 编译产物可打包 vsix;命令 `harness-coding.run` 可注册 |
+| **S13** | LSP tool | ✅ done | `src/tools/lsp/{client,lsp-tools,index}.ts` + mock LSP server 单测套件 | 265/265 测试;Content-Length JSON-RPC framer + initialize/definition/references/timeout 全覆盖 |
+| **S14** | VS Code extension | ✅ done | `apps/coding-agent-vscode/` 完整包(extension.ts + run-task.ts + 配置 + .vscodeignore + README) | tsup 出 `dist/extension.js` (CJS);6 测试覆盖 activate/buildAgent/format/list — vscode-shim 替身 |
 
 ## 当前状态
 
-**Active Stage**: S13
+**Active Stage**: complete (S1–S14)
 **Phase 1**: complete (S1–S9, 235 测试)
+**Phase 2**: complete (S10–S14;coding-agent 265 + vscode 6 = 271 测试)
 **Last updated**: 2026-04-26

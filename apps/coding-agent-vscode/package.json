@@ -1,0 +1,108 @@
+{
+  "name": "harness-one-coding-vscode",
+  "version": "0.0.1",
+  "private": true,
+  "displayName": "Harness Coding Agent",
+  "description": "Run the harness-one-coding autonomous coding agent inside VS Code.",
+  "publisher": "harness-one",
+  "engines": {
+    "vscode": "^1.85.0",
+    "node": ">=22"
+  },
+  "categories": [
+    "Programming Languages",
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "type": "module",
+  "activationEvents": [
+    "onCommand:harness-coding.run",
+    "onCommand:harness-coding.resume",
+    "onCommand:harness-coding.list"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "harness-coding.run",
+        "title": "Harness Coding: Run Task",
+        "category": "Harness"
+      },
+      {
+        "command": "harness-coding.resume",
+        "title": "Harness Coding: Resume Task",
+        "category": "Harness"
+      },
+      {
+        "command": "harness-coding.list",
+        "title": "Harness Coding: List Checkpoints",
+        "category": "Harness"
+      }
+    ],
+    "configuration": {
+      "title": "Harness Coding",
+      "properties": {
+        "harnessCoding.model": {
+          "type": "string",
+          "default": "claude-sonnet-4-20250514",
+          "description": "Model name passed to the Anthropic adapter."
+        },
+        "harnessCoding.maxTokens": {
+          "type": "integer",
+          "default": 200000,
+          "minimum": 1000
+        },
+        "harnessCoding.maxIterations": {
+          "type": "integer",
+          "default": 100,
+          "minimum": 1
+        },
+        "harnessCoding.maxDurationMinutes": {
+          "type": "integer",
+          "default": 30,
+          "minimum": 1
+        },
+        "harnessCoding.approval": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "always-ask",
+            "allowlist"
+          ],
+          "default": "always-ask"
+        },
+        "harnessCoding.dryRun": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/ tests/",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "harness-one-coding": "workspace:*",
+    "harness-one": "workspace:*",
+    "@harness-one/anthropic": "workspace:*"
+  },
+  "peerDependencies": {
+    "@anthropic-ai/sdk": ">=0.30.0"
+  },
+  "peerDependenciesMeta": {
+    "@anthropic-ai/sdk": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@anthropic-ai/sdk": "^0.91.0",
+    "@types/vscode": "^1.85.0",
+    "tsup": "^8.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.5"
+  }
+}
