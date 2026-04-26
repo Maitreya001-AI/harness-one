@@ -186,93 +186,85 @@ see mismatched attestations and reject the release.
 
 ---
 
-## Unblocking the Version Packages PR (interim workaround)
+## How the Version Packages PR auto-merges
 
-The `Version Packages` PR opened by `changesets/action` (e.g. PR
-#34, #42) is **always blocked** on the `required_signatures`
-ruleset for `main`, because:
+The `Version Packages` PR is opened by `.github/workflows/version-packages.yml`
+(rewritten in 2026-04 — was previously calling `changesets/action`).
 
-1. The action pushes its bumps using the workflow's
-   `GITHUB_TOKEN`, which cannot sign commits.
-2. GitHub Actions deliberately does NOT trigger downstream
-   workflows on commits pushed via `GITHUB_TOKEN` — so the
-   `required_status_checks` matrix never even runs on the bot's
-   PR, leaving it doubly blocked.
+The rewrite eliminates the historical "bot PR is blocked on `required_signatures`
++ `required_status_checks`" problem so a maintainer can squash-merge the PR
+straight from the GitHub UI. **No local script, no GPG-key dance, no GitHub
+App provisioning.**
 
-### Quick interim fix (one command)
+### Why the old setup was blocked
 
-A maintainer with a configured GPG/SSH signing key can re-issue
-the bot's commit signed in one shot:
+`changesets/action` pushed its bumps using the workflow's `GITHUB_TOKEN`,
+which compounds two GitHub Actions invariants:
 
-```bash
-tools/sign-changeset-release-pr.sh <bot-pr-number>
-```
+1. **`GITHUB_TOKEN` cannot sign commits** → every push is rejected by the
+   `required_signatures` ruleset on `main`.
+2. **`GITHUB_TOKEN` pushes do not trigger downstream workflows** (recursion
+   guard) → the `required_status_checks` matrix (`build (ubuntu-latest, 22)`,
+   `api-extractor`, `Analyze (javascript-typescript)`, …) never even ran on
+   the bot's PR, so it stayed `BLOCKED` indefinitely.
 
-The script:
+Both blockers had to be removed at once. The rewrite addresses each at the
+workflow layer, with no maintainer-side configuration:
 
-1. Cherry-picks the bot commit onto a fresh `changeset-release/signed-<ts>`
-   branch with `-S`.
-2. Pushes it (which triggers fresh CI naturally — non-bot push).
-3. Opens a superseding PR and enables auto-merge with `--squash`.
-4. Closes the original bot PR.
+### How the new workflow gets around each blocker
 
-After auto-merge lands the version bump on `main`, the
-`auto-release.yml` workflow detects the `chore: version packages`
-commit message, creates the matching `vX.Y.Z` tag + GitHub
-Release, and `release.yml` fires the OIDC trusted-publish lane.
+1. **Verified commits via GraphQL `createCommitOnBranch`.** The workflow
+   walks `git status --porcelain` after `pnpm exec changeset version`,
+   builds a `FileChanges` payload (additions with base64 content +
+   deletions), then calls `createCommitOnBranch` with `expectedHeadOid`
+   for optimistic concurrency. Commits made via this API are
+   **server-side signed by GitHub** — they appear as **verified** in the
+   UI and satisfy `required_signatures`. No GPG key, no App, no PAT.
 
-### Permanent fix (one-time maintainer setup)
+2. **Required CI explicitly dispatched at the bot SHA.** After the bot PR
+   is opened/updated, the workflow runs:
 
-Pick **one** of:
+   ```bash
+   for wf in ci.yml api-check.yml codeql.yml; do
+     gh workflow run "$wf" --ref changeset-release/main
+   done
+   ```
 
-#### Option A — GitHub App (recommended)
+   Each `workflow_dispatch` produces check-runs at the bot PR's HEAD SHA,
+   satisfying `required_status_checks`. The dispatched workflows are
+   architecturally identical to their `pull_request`-triggered runs;
+   only the trigger event differs.
 
-The cleanest, most production-grade path. Commits made by a
-GitHub App via `createCommitOnBranch` are automatically
-**verified** by GitHub, and pushes from an App's installation
-token DO trigger downstream workflows.
+   Required workflows (`ci.yml`, `api-check.yml`, `codeql.yml`) declare
+   `workflow_dispatch:` in their `on:` block. This is a no-op for
+   ordinary contributors — only `version-packages.yml` invokes it.
 
-1. Create a new GitHub App on the maintainer org (Settings →
-   Developer settings → GitHub Apps → New).
-2. Permissions: `Contents: write`, `Pull requests: write`,
-   `Metadata: read`.
-3. Install the App on the `harness-one` repository.
-4. Save `APP_ID` and `PRIVATE_KEY` as repository secrets.
-5. Update `.github/workflows/version-packages.yml` to mint a
-   token via [`actions/create-github-app-token`](https://github.com/actions/create-github-app-token)
-   and pass it as `GITHUB_TOKEN` to `changesets/action`.
+### Operator workflow
 
-#### Option B — Bypass actor on the ruleset
+1. Land normal feature PRs that include `.changeset/*.md` files (no
+   workflow change here).
+2. After each merge to `main`, `version-packages.yml` runs. If pending
+   changesets exist, it opens or updates a "Version Packages" PR.
+3. Open the bot PR, confirm the version bumps + CHANGELOG entries look
+   right, click **Squash and merge**.
+4. The merge fires `auto-release.yml`, which creates the matching
+   `vX.Y.Z` tag + GitHub Release, which fires `release.yml`'s OIDC
+   trusted-publish lane to npm.
 
-Faster but slightly looser security — relax the
-`required_signatures` ruleset to allow `github-actions[bot]` to
-push unsigned commits to `changeset-release/*` branches only:
+No manual cherry-picks, no local scripts, no maintainer-side secrets
+beyond `NODE_AUTH_TOKEN` (already configured for `release.yml`).
 
-```bash
-# Requires admin scope on the repo.
-gh api -X PATCH repos/Maitreya001-AI/harness-one/rulesets/15516811 \
-  -f 'bypass_actors[][actor_id]=15368' \
-  -f 'bypass_actors[][actor_type]=Integration' \
-  -f 'bypass_actors[][bypass_mode]=always'
-```
+### Escape hatches if the workflow breaks
 
-Note: the `Integration` actor type with `actor_id=15368` is the
-GitHub Actions app. This permits ALL Actions runs to bypass the
-signature requirement on `main`, not just changesets/action — a
-broader exemption than Option A.
+If `createCommitOnBranch` ever fails (API change, file-size limit hit,
+auth scope shift), open an issue and use one of:
 
-#### Option C — Personal Access Token
-
-If the maintainer has [vigilant signing](https://docs.github.com/en/authentication/managing-commit-signature-verification/displaying-verification-statuses-for-all-of-your-commits)
-enabled on their account, a fine-grained PAT with `Contents: write`
-+ `Pull requests: write` will produce verified commits via the
-SSH key bound to the maintainer's account.
-
-1. Create the PAT scoped to `harness-one`.
-2. Save as `RELEASE_BOT_PAT`.
-3. Replace `secrets.GITHUB_TOKEN` with `secrets.RELEASE_BOT_PAT`
-   in `version-packages.yml`.
-
-The downside vs Option A: PATs expire and are tied to a single
-human, which fails an audit-trail bus-factor check. Use only as a
-stop-gap.
+- **GitHub App + `actions/create-github-app-token`** — replaces
+  `GITHUB_TOKEN` everywhere. App-token pushes are auto-verified AND
+  trigger downstream workflows. Most production-grade.
+- **Personal Access Token** from an account with [vigilant signing](https://docs.github.com/en/authentication/managing-commit-signature-verification/displaying-verification-statuses-for-all-of-your-commits)
+  enabled. Stop-gap only — PATs expire and are tied to one human.
+- **`bypass_actors` on the ruleset** for the GitHub Actions Integration
+  (`actor_id=15368`). Broader exemption than the workflow-level fix
+  above; admin scope required. Only use if both options above are
+  unavailable.
