@@ -31,6 +31,7 @@
 | HC-012 | S8 | paper-cut | `Span.attributes` non-nullable in the public type even though most call-sites would prefer optional | logged |
 | HC-013 | S11 | paper-cut | tsup minify + `#!/usr/bin/env node` shebang preservation isn't documented; need explicit `minify: false` for bin entries | logged |
 | HC-014 | S12 | paper-cut | exactOptionalPropertyTypes again — empty arrays vs `undefined` for spread-conditional config (`tagFilter`, etc.) | logged |
+| HC-015 | S13 | friction | No reusable JSON-RPC + LSP-framing primitive in `harness-one`; every tool integration re-implements it | logged |
 
 ---
 
@@ -84,6 +85,30 @@
   with the realpath dance built in. Every coding-agent-shaped app will
   need this primitive.
 - **Status**: logged. App workaround is permanent; infra request is open.
+
+---
+
+## HC-015 · No reusable JSON-RPC + LSP-framing primitive
+
+- **Stage**: S13 (LSP tools)
+- **Severity**: friction
+- **Summary**: Implementing `lsp_definition` / `lsp_references` required
+  hand-rolling the Content-Length-prefixed JSON-RPC over stdio framer
+  in 200+ lines (`src/tools/lsp/client.ts`). Other coding-agent-shaped
+  apps (Cursor / Aider / Cline analogues) will all need the same
+  primitive — vertical-package candidate.
+- **Details**: The framing isn't hard, but pending-request tracking,
+  timeout-with-cleanup, error-class mapping, and exit-on-disconnect
+  semantics all involve fiddly subprocess-lifecycle logic. Consolidating
+  this into a `harness-one/io/jsonrpc-stdio` module would let
+  downstream apps focus on tool semantics, not transport plumbing.
+- **Repro**: see the size of `apps/coding-agent/src/tools/lsp/client.ts`
+  vs the high-level tool definitions in `lsp-tools.ts`.
+- **Workaround**: ship per-app implementation.
+- **Requested fix**: After 2+ apps need this primitive, promote to
+  `harness-one/io` with a full test suite. Same shape as
+  `harness-one/redact` — small, focused, reusable, type-safe.
+- **Status**: logged.
 
 ---
 

@@ -27,3 +27,14 @@ export type { GitStatusOptions } from './git_status.js';
 
 export { buildMvpToolSet } from './registry.js';
 export type { BuildToolsOptions, BuiltTools } from './registry.js';
+
+export {
+  createLspClient,
+  createLspToolset,
+} from './lsp/index.js';
+export type {
+  LspClient,
+  LspClientOptions,
+  LspToolset,
+  LspToolsetOptions,
+} from './lsp/index.js';
