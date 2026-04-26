@@ -1,5 +1,12 @@
 # @harness-one/devkit
 
+## 2.0.1
+
+### Patch Changes
+
+- Updated dependencies [f3ad6ad]
+  - harness-one@1.0.1
+
 ## 2.0.0
 
 ### Patch Changes
