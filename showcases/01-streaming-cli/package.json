@@ -1,0 +1,20 @@
+{
+  "name": "@harness-one/showcase-01-streaming-cli",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Showcase 01 — streaming CLI chat. core (streaming) + session + observe (lifecycle).",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "start:replay": "tsx src/main.ts --replay",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "harness-one": "workspace:*"
+  },
+  "devDependencies": {
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3"
+  },
+  "license": "MIT"
+}
