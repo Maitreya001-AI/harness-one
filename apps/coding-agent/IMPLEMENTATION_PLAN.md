@@ -11,7 +11,7 @@
 | **S3** | MVP tools | ✅ done | `src/tools/{read_file,write_file,list_dir,grep,shell,run_tests,git_status}.ts` + `paths.ts` + `context.ts` + `registry.ts` | 101/101 单测绿;每个 tool 含 happy + edge + error + abort 用例 |
 | **S4** | Guardrails | ✅ done | `src/guardrails/{allowlist,policy,auditor}.ts` | 危险命令拦截、approval flow auto/allowlist/always-ask、命令策略 — 130/130 测试 |
 | **S5** | Memory + Checkpoint | ✅ done | `src/memory/{checkpoint,schema,compaction,store}.ts` | InMemory + FsMemoryStore round-trip;corrupt → MEMORY_CORRUPT;flush 策略覆盖 — 162/162 测试 |
-| **S6** | Agent core wiring | ⬜ pending | `src/agent/{index,loop,planner}.ts` | `createCodingAgent` 工厂 + `runTask` 在 mock adapter 下端到端跑通 |
+| **S6** | Agent core wiring | ✅ done | `src/agent/{index,loop,planner,budget,ids}.ts` | `createCodingAgent` 工厂 + 三维 budget + 状态机持久化 + mock-adapter integration test 跑通 — 182/182 测试 |
 | **S7** | CLI | ⬜ pending | `src/cli/{bin,args,output,signals}.ts` | 全 flag 单测;SIGINT 干净退出 |
 | **S8** | Observability + Budget | ⬜ pending | `src/observability/{tracing,cost}.ts` + 三维 budget enforcement | budget 任一超限 graceful abort 且写 checkpoint |
 | **S9** | Integration + 文档 | ⬜ pending | `tests/integration/*.test.ts` / `README.md` / `HARNESS_LOG.md` / `METRICS.md` | 端到端 mock-llm 任务跑通;coverage ≥ 90% |
@@ -55,5 +55,5 @@
 
 ## 当前状态
 
-**Active Stage**: S6
+**Active Stage**: S7
 **Last updated**: 2026-04-26

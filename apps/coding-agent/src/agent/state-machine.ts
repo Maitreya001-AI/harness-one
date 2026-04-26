@@ -23,8 +23,12 @@ import type { TaskState } from './types.js';
  * {@link assertTransition} rather than enumerated here.
  */
 const TRANSITIONS: Readonly<Record<TaskState, readonly TaskState[]>> = Object.freeze({
+  // `executing` may end the task by going straight to `reviewing` when the
+  // LLM produces a final answer without running tests — e.g. a docs-only
+  // change, a single-file rename, or a task the model declines. The
+  // canonical happy path is still `executing → testing → reviewing`.
   planning: ['executing'],
-  executing: ['executing', 'testing'],
+  executing: ['executing', 'testing', 'reviewing'],
   testing: ['executing', 'reviewing'],
   reviewing: ['done'],
   done: [],

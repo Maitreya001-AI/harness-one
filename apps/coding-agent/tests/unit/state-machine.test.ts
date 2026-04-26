@@ -59,6 +59,10 @@ describe('state-machine.isLegalTransition', () => {
     expect(isLegalTransition('planning', 'done')).toBe(false);
   });
 
+  it('allows executing → reviewing for tasks that need no test phase', () => {
+    expect(isLegalTransition('executing', 'reviewing')).toBe(true);
+  });
+
   it('terminal states have no outgoing transitions other than (none)', () => {
     for (const target of ALL_STATES) {
       expect(isLegalTransition('done', target)).toBe(false);
@@ -106,7 +110,7 @@ describe('state-machine.nextStates', () => {
     expect(nextStates('aborted')).toEqual([]);
   });
 
-  it('lists self-loop + advance from executing', () => {
-    expect(nextStates('executing')).toEqual(['executing', 'testing', 'aborted']);
+  it('lists self-loop + advance from executing (including direct → reviewing)', () => {
+    expect(nextStates('executing')).toEqual(['executing', 'testing', 'reviewing', 'aborted']);
   });
 });
