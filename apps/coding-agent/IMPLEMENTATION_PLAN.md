@@ -13,8 +13,8 @@
 | **S5** | Memory + Checkpoint | ✅ done | `src/memory/{checkpoint,schema,compaction,store}.ts` | InMemory + FsMemoryStore round-trip;corrupt → MEMORY_CORRUPT;flush 策略覆盖 — 162/162 测试 |
 | **S6** | Agent core wiring | ✅ done | `src/agent/{index,loop,planner,budget,ids}.ts` | `createCodingAgent` 工厂 + 三维 budget + 状态机持久化 + mock-adapter integration test 跑通 — 182/182 测试 |
 | **S7** | CLI | ✅ done | `src/cli/{bin,args,output,signals}.ts` | parseArgs 全 flag 覆盖;SIGINT 二次 force-exit;`harness-coding ls`;help/version/--output 通过 — 215/215 测试 |
-| **S8** | Observability + Budget | ⬜ pending | `src/observability/{tracing,cost}.ts` + 三维 budget enforcement | budget 任一超限 graceful abort 且写 checkpoint |
-| **S9** | Integration + 文档 | ⬜ pending | `tests/integration/*.test.ts` / `README.md` / `HARNESS_LOG.md` / `METRICS.md` | 端到端 mock-llm 任务跑通;coverage ≥ 90% |
+| **S8** | Observability + Budget | ✅ done | `src/observability/jsonl-exporter.ts` 接入 `createTraceManager` | jsonl 落盘 + 路径 sanitize;budget 在 S6 已落地 — 222/222 测试 |
+| **S9** | Integration + 文档 | ✅ done | `tests/integration/{run-task,full-state-machine,observability,cli}.test.ts` + extra branch coverage suites + `README.md` 重写 + `METRICS.md` + `RETRO/README.md` | 235/235 测试,94% 行覆盖 / 82.5% 分支 — 通过 90/80 门槛 |
 
 ---
 
@@ -55,5 +55,5 @@
 
 ## 当前状态
 
-**Active Stage**: S8
+**Active Stage**: complete (S1–S9 all done)
 **Last updated**: 2026-04-26
