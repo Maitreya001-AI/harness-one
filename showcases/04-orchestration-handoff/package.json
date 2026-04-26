@@ -1,6 +1,6 @@
 {
   "name": "@harness-one/showcase-04-orchestration-handoff",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "private": true,
   "description": "Showcase 04 — orchestration handoff boundary. spawnSubAgent + tracing + cascade abort.",
   "type": "module",

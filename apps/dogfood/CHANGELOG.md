@@ -1,5 +1,14 @@
 # @harness-one/dogfood
 
+## 0.0.3
+
+### Patch Changes
+
+- Updated dependencies [f3ad6ad]
+  - harness-one@1.0.1
+  - @harness-one/anthropic@0.1.3
+  - @harness-one/preset@1.0.1
+
 ## 0.0.2
 
 ### Patch Changes

@@ -1,6 +1,6 @@
 {
   "name": "@harness-one/anthropic",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Anthropic SDK adapter for harness-one",
   "type": "module",
   "main": "./dist/index.cjs",

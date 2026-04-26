@@ -1,6 +1,6 @@
 {
   "name": "@harness-one/dogfood",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "private": true,
   "description": "Dogfood agent — issue triage bot that runs harness-one against real GitHub issues so adapter / guardrail / RAG regressions surface in production, not in user bug reports.",
   "type": "module",
