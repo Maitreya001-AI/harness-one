@@ -15,8 +15,18 @@ import type { Logger } from 'harness-one/observe';
 import {
   createCostTracker,
   createLogger,
+  createTraceManager,
 } from 'harness-one/observe';
-import type { CostTracker, ModelPricing } from 'harness-one/observe';
+import type {
+  CostTracker,
+  ModelPricing,
+  TraceExporter,
+  TraceManager,
+} from 'harness-one/observe';
+
+import {
+  createJsonlTraceExporter,
+} from '../observability/index.js';
 
 import { createAuditor } from '../guardrails/auditor.js';
 import type { Auditor, AuditorOptions } from '../guardrails/auditor.js';
@@ -65,6 +75,14 @@ export interface CreateCodingAgentOptions {
   readonly pricing?: readonly ModelPricing[];
   /** Custom logger; defaults to harness-one/observe `createDefaultLogger`. */
   readonly logger?: Logger;
+  /**
+   * Trace exporters appended to the trace manager. Defaults to a JSONL
+   * exporter writing to `<traceDir>` (or `~/.harness-coding/traces`).
+   * Pass `[]` to disable filesystem tracing entirely.
+   */
+  readonly traceExporters?: readonly TraceExporter[];
+  /** Override the JSONL exporter directory. Ignored if `traceExporters` is set. */
+  readonly traceDir?: string;
   /** Inject a memory store; defaults to FsMemoryStore at `checkpointDir`. */
   readonly checkpointStore?: FsMemoryStore;
   /** Stdin/stdout for the auditor (test seam). */
@@ -82,9 +100,10 @@ export interface CodingAgent {
   readonly workspace: string;
   readonly limits: BudgetLimits;
   readonly checkpoints: CheckpointManager;
+  readonly traces: TraceManager;
   runTask(input: RunTaskInput): Promise<TaskResult>;
   listCheckpoints(limit?: number): ReturnType<CheckpointManager['list']>;
-  /** Idempotent shutdown — flushes the cost tracker, etc. */
+  /** Idempotent shutdown — flushes the trace manager, etc. */
   shutdown(): Promise<void>;
 }
 
@@ -130,6 +149,17 @@ export async function createCodingAgent(options: CreateCodingAgentOptions): Prom
     createCostTracker({
       ...(options.pricing !== undefined && { pricing: [...options.pricing] }),
     });
+
+  const exporters: TraceExporter[] =
+    options.traceExporters !== undefined
+      ? [...options.traceExporters]
+      : [
+          createJsonlTraceExporter({
+            ...(options.traceDir !== undefined && { directory: options.traceDir }),
+          }),
+        ];
+  const traces = createTraceManager({ exporters, logger });
+
   const store = options.checkpointStore ?? createCheckpointStore({
     ...(options.checkpointDir !== undefined && { directory: options.checkpointDir }),
     logger: { warn: (msg, meta) => logger.warn(msg, meta) },
@@ -175,6 +205,7 @@ export async function createCodingAgent(options: CreateCodingAgentOptions): Prom
     workspace,
     limits,
     checkpoints,
+    traces,
     async runTask(input): Promise<TaskResult> {
       changedFiles.clear();
       const taskId = input.resumeTaskId ?? createTaskId();
@@ -201,8 +232,15 @@ export async function createCodingAgent(options: CreateCodingAgentOptions): Prom
     },
     listCheckpoints: (limit) => checkpoints.list(limit),
     async shutdown(): Promise<void> {
-      // CostTracker has no required dispose; logger flush is best-effort.
-      // Future: flush trace exporters wired via S8.
+      // Flush trace exporters; CostTracker has no required dispose.
+      for (const exporter of exporters) {
+        await exporter.flush().catch((err: unknown) => {
+          logger.warn('[coding-agent] trace exporter flush failed', {
+            exporter: exporter.name,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+      }
     },
   };
 }
