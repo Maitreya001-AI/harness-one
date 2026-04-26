@@ -124,11 +124,14 @@ build should know about:
   two new workflows `.github/workflows/dogfood-triage.yml` and
   `.github/workflows/dogfood-weekly.yml`. Downstream consumers can ignore
   this unless they want to copy the pattern.
-- **New showcases under `examples/showcases/`** (`codebase-qa.ts`,
+- **New examples at `examples/`** (`codebase-qa.ts`,
   `autoresearch-loop.ts`, `evolve-check-demo.ts`). All three run
   deterministically under `pnpm examples:smoke` with `HARNESS_MOCK=1`; no
-  API key required. Documented in the new Showcases section of the
-  README + `README.zh-CN.md`.
+  API key required. Documented in the new Examples section of the
+  README + `README.zh-CN.md`. (Originally landed at
+  `examples/showcases/`; relocated to `examples/` root when the
+  three-layer architecture — examples / showcases / apps — was
+  introduced. See `docs/harness-one-form-coverage.md`.)
 - **`docs/ROADMAP.md` published** with v0.1 / v0.2 / v1.0 scopes. The
   roadmap is the contract for what "public API change" means from this
   point on.

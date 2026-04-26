@@ -9,8 +9,35 @@ Then pick a path:
    interface. External deps never leak past the integration file.
 2. **Subsystem quickstarts** — show how to use a harness-one primitive on its
    own, no third-party SDK required.
+3. **Multi-subsystem compositions** — three end-to-end demos that wire
+   several primitives together with mock adapters. Deterministic, no API
+   key required (`pnpm examples:smoke`):
+   - [`codebase-qa.ts`](./codebase-qa.ts) — RAG retrieval + fail-closed
+     injection guardrails on each chunk + mock AgentLoop reader producing
+     citations.
+   - [`autoresearch-loop.ts`](./autoresearch-loop.ts) — confidence-gated
+     outer loop using `createFallbackAdapter` + `computeBackoffMs` from
+     `harness-one/advanced`.
+   - [`evolve-check-demo.ts`](./evolve-check-demo.ts) — `ComponentRegistry`
+     + `DriftDetector` + `TasteCodingRegistry` composed for a "code keeps
+     being right" pass.
 
 All files typecheck via `pnpm -C examples typecheck` (see `TYPECHECK.md`).
+
+## Where do examples / showcases / apps live?
+
+The repository ships three layers around the main code, **separated by
+purpose, not by size**:
+
+| Layer | Purpose | Audience | Lives at |
+|---|---|---|---|
+| **examples** (this directory) | Learn how to use a subsystem or composition | Future library users | `examples/` |
+| **showcases** | Calibrate the library itself via 7-stage form-pressure experiments | harness-one maintainers | `showcases/<n>/` |
+| **apps** | Real, continuously-running agent applications | The project + dogfood observers | `apps/<name>/` |
+
+Authoritative spec: [`docs/harness-one-form-coverage.md`](../docs/harness-one-form-coverage.md).
+Guidance for adding new content to each layer is in that document's
+"Three-layer judgement rules" section.
 
 ## Pattern
 

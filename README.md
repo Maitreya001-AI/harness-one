@@ -139,19 +139,70 @@ API reference (with code samples for each subpath) is in
 | [`@harness-one/ajv`](./packages/ajv/) / [`@harness-one/tiktoken`](./packages/tiktoken/) | SchemaValidator / Tokenizer |
 | [`@harness-one/redis`](./packages/redis/) / [`@harness-one/langfuse`](./packages/langfuse/) / [`@harness-one/opentelemetry`](./packages/opentelemetry/) | MemoryStore / TraceExporter |
 
+## Examples
+
+Lightweight reference implementations. Read the code to learn how to use a
+specific subsystem or composition. Deterministic, no API key needed
+(`pnpm examples:smoke` in CI).
+
+- [`examples/codebase-qa.ts`](./examples/codebase-qa.ts) — RAG retrieval +
+  fail-closed injection guardrails on retrieved chunks, with a mock
+  AgentLoop reader producing citations.
+- [`examples/autoresearch-loop.ts`](./examples/autoresearch-loop.ts) —
+  Confidence-gated outer loop using harness-one `createFallbackAdapter` and
+  standardized `computeBackoffMs`.
+- [`examples/evolve-check-demo.ts`](./examples/evolve-check-demo.ts) —
+  ComponentRegistry, DriftDetector, TasteCodingRegistry composed for a
+  "code keeps being right" pass.
+
+See [`examples/README.md`](./examples/README.md) for the full index.
+
 ## Showcases
 
-Four runnable demos that exercise harness-one end-to-end. The first drives a
-real GitHub repo every day; the others run deterministically under
-`examples:smoke` (no API key required) so you can read them first and wire a
-real adapter after.
+Form-pressure experiments following the 7-stage method in
+[`docs/harness-one-showcase-method.md`](./docs/harness-one-showcase-method.md).
+Each showcase ships PLAN/HYPOTHESIS/FRICTION_LOG/OBSERVATIONS/HARVEST/FEEDBACK
+and is run against a live API at least 10 times before archival into CI as
+cassette replay.
 
-| Showcase | File | What it proves |
-|---|---|---|
-| Issue Triage Bot (dogfood) | [`apps/dogfood/`](./apps/dogfood/) | `createSecurePreset` + tools + guardrails running on every new issue in this repo. Reports land in `dogfood-reports/`. |
-| Codebase Q&A with citations | [`examples/showcases/codebase-qa.ts`](./examples/showcases/codebase-qa.ts) | RAG pipeline + fail-closed guardrail scanning every retrieved chunk + `file:line` citations. |
-| Autoresearch (Ralph-style) | [`examples/showcases/autoresearch-loop.ts`](./examples/showcases/autoresearch-loop.ts) | Confidence-gated loop with primary-search failure → exponential backoff → fallback adapter. |
-| Evolve-check audit | [`examples/showcases/evolve-check-demo.ts`](./examples/showcases/evolve-check-demo.ts) | `ComponentRegistry` + `DriftDetector` + `TasteCodingRegistry` composed into one "code keeps being right" pass. |
+Currently shipped at MVP build (Stage 3 of the 7-stage method —
+runnable, deterministic, 6 markdown artifacts each):
+
+- [`showcases/01-streaming-cli`](./showcases/01-streaming-cli) — `core`
+  streaming + `session` + `observe` lifecycle
+- [`showcases/02-rag-support-bot`](./showcases/02-rag-support-bot) —
+  `rag` + multi-tenant scoping + injection guardrails
+- [`showcases/03-memory-checkpoint-stress`](./showcases/03-memory-checkpoint-stress)
+  — `FsMemoryStore` under SIGKILL crash injection
+- [`showcases/04-orchestration-handoff`](./showcases/04-orchestration-handoff)
+  — multi-agent `spawnSubAgent` + error / abort propagation
+
+Run any of them with `pnpm -C showcases/<name> start`. Each carries a
+[`PLAN.md`](./docs/showcase-plans/) + `HYPOTHESIS.md` + `FRICTION_LOG.md`
+documenting predictions made before code was written and the friction
+encountered while building. Stage 4 (`≥10 real-API runs`) and beyond
+are open work.
+
+See [`showcases/README.md`](./showcases/README.md) and
+[`docs/harness-one-form-coverage.md`](./docs/harness-one-form-coverage.md)
+for the full coverage matrix.
+
+## Apps
+
+Real agent applications built on harness-one. Production-grade code,
+either continuously running or maturing into a vertical package.
+
+- [`apps/dogfood/`](./apps/dogfood/) — Issue triage bot, runs on every new
+  issue, reports land in `dogfood-reports/`.
+- `apps/coding-agent/` (planned) — Autonomous coding agent, also published
+  as the `harness-one-coding` vertical package
+  ([design](./docs/app-designs/coding-agent-DESIGN.md)).
+- `apps/research-collab/` (planned) — Multi-agent research collaboration
+  pipeline ([design](./docs/app-designs/research-collab-DESIGN.md)).
+
+Apps feed back to harness-one through `HARNESS_LOG.md` (continuous) and
+quarterly `RETRO/` reviews. See
+[`docs/harness-one-app-feedback-loop.md`](./docs/harness-one-app-feedback-loop.md).
 
 ## Architecture
 

@@ -1,0 +1,20 @@
+{
+  "name": "@harness-one/showcase-03-memory-checkpoint-stress",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Showcase 03 — memory + checkpoint stress test. Crash injection across FsMemoryStore.",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "child": "tsx src/child.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "harness-one": "workspace:*"
+  },
+  "devDependencies": {
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3"
+  },
+  "license": "MIT"
+}
