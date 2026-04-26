@@ -32,6 +32,54 @@
 | HC-013 | S11 | paper-cut | tsup minify + `#!/usr/bin/env node` shebang preservation isn't documented; need explicit `minify: false` for bin entries | logged |
 | HC-014 | S12 | paper-cut | exactOptionalPropertyTypes again — empty arrays vs `undefined` for spread-conditional config (`tagFilter`, etc.) | logged |
 | HC-015 | S13 | friction | No reusable JSON-RPC + LSP-framing primitive in `harness-one`; every tool integration re-implements it | logged |
+| HC-016 | S14 | paper-cut | tsup CJS output extension defaults to `.cjs` for `type: module` packages, but VS Code's `main` resolution needs `.js` — silent fail when forgotten | logged |
+| HC-017 | S14 | paper-cut | `harness-one-coding`'s `checkpointDir` option is the only test seam for the default `~/.harness-coding/` path; downstream apps' tests need an explicit override or they pollute the user's home | logged |
+
+---
+
+## HC-017 · `checkpointDir` is the only seam for sandboxing tests
+
+- **Stage**: S14 (VS Code extension tests)
+- **Severity**: paper-cut
+- **Summary**: When unit tests build a `CodingAgent` they must remember
+  to pass `checkpointDir` — otherwise the test pollutes
+  `~/.harness-coding/checkpoints` with junk entries that subsequently
+  contaminate tests like "no checkpoints found" assertions.
+- **Details**: The first iteration of the VS Code extension's
+  `collectListReport` test failed because real checkpoints from
+  unrelated runs were already on disk. The fix is to pipe an explicit
+  `checkpointDir: tempdir` through every test, but downstream apps
+  building on top of `harness-one-coding` will all hit this trap.
+- **Repro**: see `apps/coding-agent-vscode/tests/extension.test.ts` —
+  every test now creates a temp checkpoint dir.
+- **Workaround**: every test creates a temp dir + passes
+  `checkpointDir`.
+- **Requested fix**: Either default `checkpointDir` to a process-scoped
+  temp dir when `NODE_ENV === 'test'`, OR document the gotcha
+  prominently in the README "Configuration knobs" table.
+- **Status**: logged.
+
+---
+
+## HC-016 · tsup CJS output extension defaults to `.cjs` for ESM-typed packages
+
+- **Stage**: S14 (VS Code extension build)
+- **Severity**: paper-cut
+- **Summary**: When `package.json` declares `"type": "module"` (so the
+  source is treated as ESM), tsup emits CJS output as `.cjs`. VS Code
+  resolves the extension's `main` field via legacy CommonJS rules and
+  refuses `.cjs`, requiring `.js` even for CJS bundles.
+- **Details**: Silent fail — the extension just doesn't activate, no
+  diagnostic. Discovered only because we typed `dist/extension.js` in
+  the manifest and saw the build output `extension.cjs` instead.
+- **Repro**: see `apps/coding-agent-vscode/tsup.config.ts` —
+  `outExtension: () => ({ js: '.js' })` is the workaround.
+- **Workaround**: explicit `outExtension` override.
+- **Requested fix**: Document this trap in the form-coverage doc that
+  covers vertical-package CLIs / extensions. Possibly factor a shared
+  `extensionTsupConfig` helper into a tooling package once 2+
+  extensions exist.
+- **Status**: logged.
 
 ---
 
