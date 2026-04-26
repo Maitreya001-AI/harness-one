@@ -27,10 +27,12 @@ import type { CreateCodingAgentOptions } from '../agent/index.js';
 import { HELP_TEXT, parseArgs, type ParsedArgs } from './args.js';
 import {
   renderCheckpointList,
+  renderEvalReport,
   renderJsonReport,
   renderResult,
 } from './output.js';
 import { installSignalHandlers } from './signals.js';
+import { builtinFixtures, runEval } from '../eval/index.js';
 
 interface MainEnv {
   readonly argv: readonly string[];
@@ -65,6 +67,10 @@ export async function main(opts: MainEnv): Promise<number> {
 
   if (parsed.listMode) {
     return runList(parsed, stdout, stderr);
+  }
+
+  if (parsed.evalMode) {
+    return runEvalCommand(parsed, opts, stdout, stderr);
   }
 
   const wantsRun = parsed.prompt.length > 0 || parsed.resume !== undefined;
@@ -118,6 +124,32 @@ export async function main(opts: MainEnv): Promise<number> {
     return 1;
   } finally {
     signals.cleanup();
+  }
+}
+
+async function runEvalCommand(
+  parsed: ParsedArgs,
+  opts: MainEnv,
+  stdout: NodeJS.WritableStream,
+  stderr: NodeJS.WritableStream,
+): Promise<number> {
+  try {
+    const factory = opts.adapterFactory ?? defaultAdapterFactory;
+    const tagFilter = parsed.evalTags;
+    const report = await runEval({
+      fixtures: builtinFixtures,
+      ...(tagFilter.length > 0 && { tagFilter }),
+      adapterFor: () => factory(parsed.model, opts.env['ANTHROPIC_API_KEY']),
+    });
+    stdout.write(renderEvalReport(report));
+    if (parsed.output) {
+      await fs.writeFile(parsed.output, JSON.stringify(report, null, 2), 'utf8');
+      stderr.write(`Wrote eval report to ${parsed.output}\n`);
+    }
+    return report.failCount === 0 ? 0 : 1;
+  } catch (err) {
+    stderr.write(`${humanize(err)}\n`);
+    return 1;
   }
 }
 

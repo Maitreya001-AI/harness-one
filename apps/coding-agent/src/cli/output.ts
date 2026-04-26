@@ -9,6 +9,7 @@
 
 import type { TaskResult } from '../agent/types.js';
 import type { CheckpointSummary } from '../memory/checkpoint.js';
+import type { EvalRunResult } from '../eval/types.js';
 
 export function renderResult(result: TaskResult): string {
   const lines: string[] = [
@@ -42,6 +43,24 @@ export function renderCheckpointList(summaries: readonly CheckpointSummary[]): s
 
 export function renderJsonReport(result: TaskResult): string {
   return `${JSON.stringify(result, null, 2)}\n`;
+}
+
+export function renderEvalReport(report: EvalRunResult): string {
+  const lines: string[] = [
+    '',
+    `Eval: ${report.passCount}/${report.cases.length} pass (${(report.passRate * 100).toFixed(1)}%)`,
+    `Total cost: $${report.totalCostUsd.toFixed(4)}    Tokens: ${report.totalTokens}    Duration: ${formatDuration(report.totalDurationMs)}`,
+    '',
+  ];
+  for (const c of report.cases) {
+    const tag = c.pass ? 'PASS' : 'FAIL';
+    lines.push(
+      `  [${tag}] ${c.fixtureId} (${formatDuration(c.durationMs)}, $${c.result.cost.usd.toFixed(4)})`,
+    );
+    if (!c.pass && c.reason) lines.push(`         ↳ ${c.reason}`);
+  }
+  lines.push('');
+  return lines.join('\n');
 }
 
 function truncate(s: string, n: number): string {

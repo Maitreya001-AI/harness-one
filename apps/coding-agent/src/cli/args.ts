@@ -39,6 +39,10 @@ export interface ParsedArgs {
   readonly version: boolean;
   /** `harness-coding ls` command — list checkpoints. */
   readonly listMode: boolean;
+  /** `harness-coding eval` command — run the eval harness. */
+  readonly evalMode: boolean;
+  /** Tag filter applied to `harness-coding eval`. Repeatable. */
+  readonly evalTags: readonly string[];
 }
 
 export const HELP_TEXT = `harness-coding — autonomous coding agent built on harness-one.
@@ -46,6 +50,7 @@ export const HELP_TEXT = `harness-coding — autonomous coding agent built on ha
 Usage:
   harness-coding [options] "<task description>"
   harness-coding ls                          # list checkpoints
+  harness-coding eval [--tag <name>]         # run the eval harness
   harness-coding --resume <taskId>           # resume a checkpoint
 
 Options:
@@ -82,6 +87,8 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
   let help = false;
   let version = false;
   let listMode = false;
+  let evalMode = false;
+  const evalTags: string[] = [];
   const positional: string[] = [];
 
   for (let i = 0; i < argv.length; i++) {
@@ -128,6 +135,9 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
       case '--resume':
         resume = takeValue(argv, ++i, token);
         break;
+      case '--tag':
+        evalTags.push(takeValue(argv, ++i, token));
+        break;
       default:
         if (token.startsWith('--')) {
           throw err(`Unknown option: ${token}`);
@@ -138,6 +148,9 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
 
   if (positional[0] === 'ls') {
     listMode = true;
+    positional.shift();
+  } else if (positional[0] === 'eval') {
+    evalMode = true;
     positional.shift();
   }
 
@@ -159,6 +172,8 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
     help,
     version,
     listMode,
+    evalMode,
+    evalTags,
   };
 }
 
