@@ -25,6 +25,7 @@ import { PromptBuilder } from 'harness-one/prompt';
 import { RedisStoreConfig } from '@harness-one/redis';
 import { SchemaValidator } from 'harness-one/tools';
 import { SessionManager } from 'harness-one/session';
+import { ToolCapabilityValue } from 'harness-one/tools';
 import { ToolRegistry } from 'harness-one/tools';
 import { TraceExporter } from 'harness-one/observe';
 import { TraceManager } from 'harness-one/observe';
@@ -145,6 +146,13 @@ export interface HarnessConfigBase {
         encode(text: string): {
             length: number;
         };
+    };
+    readonly tools?: {
+        readonly registry: ToolRegistry;
+        readonly allowedCapabilities?: never;
+    } | {
+        readonly allowedCapabilities: readonly ToolCapabilityValue[];
+        readonly registry?: never;
     };
 }
 

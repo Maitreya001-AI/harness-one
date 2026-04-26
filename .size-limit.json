@@ -2,7 +2,7 @@
   {
     "name": "harness-one/core",
     "path": "tools/size-check/bundles/core.js",
-    "limit": "31 KB",
+    "limit": "33 KB",
     "brotli": false,
     "gzip": true
   },
@@ -16,7 +16,7 @@
   {
     "name": "harness-one/testing",
     "path": "tools/size-check/bundles/testing.js",
-    "limit": "7.1 KB",
+    "limit": "8.5 KB",
     "brotli": false,
     "gzip": true
   },

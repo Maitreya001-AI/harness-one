@@ -22,7 +22,6 @@ import {
 } from 'harness-one/tools';
 import type { ToolDefinition } from 'harness-one/tools';
 import { safeReadFile } from 'harness-one/io';
-import { HarnessError, HarnessErrorCode } from 'harness-one/core';
 
 import type { ToolContext } from './context.js';
 import { isSensitivePath, resolveSafePath } from './paths.js';
@@ -156,15 +155,12 @@ export function defineGrepTool(ctx: ToolContext): ToolDefinition<GrepInput> {
               truncateOnOverflow: false,
             });
             content = result.content;
-          } catch (err) {
+          } catch {
             // Oversize / non-regular / unreadable — skip, don't fail
             // the whole grep. Errors here are common (broken symlinks,
-            // /proc-style virtual files on Linux, etc.).
-            if (err instanceof HarnessError
-                && (err.code === HarnessErrorCode.IO_FILE_TOO_LARGE
-                    || err.code === HarnessErrorCode.IO_NOT_REGULAR_FILE)) {
-              continue;
-            }
+            // /proc-style virtual files on Linux, oversize log files
+            // we deliberately skip via MAX_FILE_BYTES, etc.). All
+            // failure modes collapse to "skip this file".
             continue;
           }
           const lines = content.split('\n');

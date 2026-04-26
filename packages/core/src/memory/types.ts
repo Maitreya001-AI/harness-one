@@ -38,8 +38,8 @@ export interface MemoryEntry {
    * key by domain identifier (`user:42:preferences`), not the
    * synthetic storage handle.
    *
-   * Closes showcase 03 FRICTION_LOG `MemoryEntry.write requires an
-   * explicit key distinct from id`.
+   * Closes showcase 03 FRICTION_LOG entry "MemoryEntry.write requires
+   * an explicit key distinct from id".
    */
   readonly key: string;
   readonly content: string;
