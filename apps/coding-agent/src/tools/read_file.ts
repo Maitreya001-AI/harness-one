@@ -55,17 +55,21 @@ export function defineReadFileTool(ctx: ToolContext): ToolDefinition<ReadFileInp
       const cap = Math.min(params.maxBytes ?? 64 * 1024, ctx.maxOutputBytes);
       const safe = await resolveSafePath(ctx.workspace, params.path);
       try {
-        const stat = await fs.stat(safe);
-        if (!stat.isFile()) {
-          return toolError(
-            `Not a regular file: ${path.relative(ctx.workspace, safe)}`,
-            'validation',
-            'Pass a path to a file, not a directory or symlink target',
-          );
-        }
-        // Read up to `cap + 1` bytes so we can detect truncation.
+        // Open first, then stat the resulting file descriptor — eliminates
+        // the TOCTOU race between `stat()` and `open()` (CWE-367) where
+        // the path could be replaced with a different file or a symlink
+        // that escapes the workspace between the two calls.
         const fh = await fs.open(safe, 'r');
         try {
+          const stat = await fh.stat();
+          if (!stat.isFile()) {
+            return toolError(
+              `Not a regular file: ${path.relative(ctx.workspace, safe)}`,
+              'validation',
+              'Pass a path to a file, not a directory or symlink target',
+            );
+          }
+          // Read up to `cap + 1` bytes so we can detect truncation.
           const buf = Buffer.alloc(cap + 1);
           const { bytesRead } = await fh.read(buf, 0, cap + 1, 0);
           const truncated = bytesRead > cap;

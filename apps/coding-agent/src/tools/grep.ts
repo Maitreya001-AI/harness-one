@@ -139,16 +139,20 @@ export function defineGrepTool(ctx: ToolContext): ToolDefinition<GrepInput> {
             truncated = true;
             break;
           }
-          let stat;
+          // Open first, then stat the file descriptor — eliminates the
+          // TOCTOU race (CWE-367) between `stat()` and `readFile()` where
+          // a malicious actor could swap the path with a symlink between
+          // the two calls and bypass `MAX_FILE_BYTES`.
+          let content: string;
           try {
-            stat = await fs.stat(filePath);
-          } catch {
-            continue;
-          }
-          if (stat.size > MAX_FILE_BYTES) continue;
-          let content;
-          try {
-            content = await fs.readFile(filePath, 'utf8');
+            const fh = await fs.open(filePath, 'r');
+            try {
+              const stat = await fh.stat();
+              if (stat.size > MAX_FILE_BYTES) continue;
+              content = await fh.readFile({ encoding: 'utf8' });
+            } finally {
+              await fh.close();
+            }
           } catch {
             continue;
           }
