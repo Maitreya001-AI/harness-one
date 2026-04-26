@@ -1,6 +1,6 @@
 {
   "name": "@harness-one/devkit",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "Developer-time toolkit for harness-one: evaluation runners, scorers, component registry, drift detection",
   "type": "module",
   "main": "./dist/index.cjs",

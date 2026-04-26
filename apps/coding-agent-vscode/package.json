@@ -1,6 +1,6 @@
 {
   "name": "harness-one-coding-vscode",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "private": true,
   "displayName": "Harness Coding Agent",
   "description": "Run the harness-one-coding autonomous coding agent inside VS Code.",
