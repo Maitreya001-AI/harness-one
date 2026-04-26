@@ -186,17 +186,7 @@ export async function safeReadFile(
     }
 
     const buf = Buffer.alloc(readCap);
-    const { bytesRead } = await fh.read(buf, 0, readCap, 0);
-    // Short-read recovery: keep reading until we either fill the buffer
-    // or the file reports EOF. Some filesystems (NFS, FUSE) legally
-    // return short reads even when more bytes are available.
-    let cursor = bytesRead;
-    while (cursor < readCap) {
-      const next = await fh.read(buf, cursor, readCap - cursor, cursor);
-      if (next.bytesRead === 0) break;
-      cursor += next.bytesRead;
-    }
-    const finalBytes = cursor;
+    const finalBytes = await readWithRecovery(fh, buf, readCap);
     const slice = buf.subarray(0, finalBytes);
     const content: string | Buffer = encoding === 'buffer' ? slice : slice.toString('utf8');
     return Object.freeze({
@@ -210,6 +200,45 @@ export async function safeReadFile(
       /* close failure is non-fatal — the read either succeeded or threw above */
     });
   }
+}
+
+/**
+ * Minimal FileHandle subset needed by {@link readWithRecovery}.
+ * Carved out so the helper is unit-testable without a real fs handle.
+ */
+export interface ReadableFileHandle {
+  read(
+    buffer: Buffer,
+    offset: number,
+    length: number,
+    position: number,
+  ): Promise<{ bytesRead: number; buffer: Buffer }>;
+}
+
+/**
+ * Read up to `readCap` bytes from `fh` into `buf`, recovering from
+ * short reads. Some filesystems (NFS, FUSE, slow stdin pipes)
+ * legally return fewer bytes than requested even when more bytes are
+ * available — the loop keeps issuing reads until either the buffer
+ * is full or `fh.read` reports EOF (`bytesRead === 0`).
+ *
+ * Exported for unit testing — local FS rarely short-reads, so the
+ * loop is exercised against a synthetic FileHandle in the test
+ * suite.
+ */
+export async function readWithRecovery(
+  fh: ReadableFileHandle,
+  buf: Buffer,
+  readCap: number,
+): Promise<number> {
+  const { bytesRead } = await fh.read(buf, 0, readCap, 0);
+  let cursor = bytesRead;
+  while (cursor < readCap) {
+    const next = await fh.read(buf, cursor, readCap - cursor, cursor);
+    if (next.bytesRead === 0) break;
+    cursor += next.bytesRead;
+  }
+  return cursor;
 }
 
 /**

@@ -163,6 +163,72 @@ describe('safeReadFile — truncateOnOverflow', () => {
   });
 });
 
+describe('readWithRecovery — short-read defence (NFS / FUSE behaviour)', () => {
+  // Local filesystems rarely short-read, so we exercise the loop
+  // against a synthetic FileHandle stub. The contract: keep issuing
+  // reads until the buffer fills or EOF is reported.
+  it('issues a single read when fh.read fills the buffer at once', async () => {
+    const { readWithRecovery } = await import('../safe-read.js');
+    const buf = Buffer.alloc(4);
+    let calls = 0;
+    const fh = {
+      async read(out: Buffer, offset: number, length: number) {
+        calls += 1;
+        Buffer.from('abcd').copy(out, offset, 0, length);
+        return { bytesRead: 4, buffer: out };
+      },
+    };
+    const total = await readWithRecovery(fh, buf, 4);
+    expect(total).toBe(4);
+    expect(calls).toBe(1);
+    expect(buf.toString('utf8')).toBe('abcd');
+  });
+
+  it('re-issues fh.read on short reads until the buffer fills', async () => {
+    const { readWithRecovery } = await import('../safe-read.js');
+    const buf = Buffer.alloc(8);
+    const payload = Buffer.from('ABCDEFGH');
+    let cursor = 0;
+    let calls = 0;
+    const fh = {
+      async read(out: Buffer, offset: number, length: number) {
+        calls += 1;
+        // Always return ONE byte at a time so we force the recovery loop.
+        if (cursor >= payload.length) return { bytesRead: 0, buffer: out };
+        out[offset] = payload[cursor];
+        cursor += 1;
+        void length;
+        return { bytesRead: 1, buffer: out };
+      },
+    };
+    const total = await readWithRecovery(fh, buf, 8);
+    expect(total).toBe(8);
+    expect(calls).toBe(8);
+    expect(buf.toString('utf8')).toBe('ABCDEFGH');
+  });
+
+  it('breaks on EOF (bytesRead === 0) and returns whatever was read so far', async () => {
+    const { readWithRecovery } = await import('../safe-read.js');
+    const buf = Buffer.alloc(10);
+    let calls = 0;
+    const fh = {
+      async read(out: Buffer, offset: number, length: number) {
+        calls += 1;
+        if (calls === 1) {
+          Buffer.from('xyz').copy(out, offset, 0, length);
+          return { bytesRead: 3, buffer: out };
+        }
+        // EOF on second call
+        return { bytesRead: 0, buffer: out };
+      },
+    };
+    const total = await readWithRecovery(fh, buf, 10);
+    expect(total).toBe(3);
+    expect(calls).toBe(2);
+    expect(buf.subarray(0, 3).toString('utf8')).toBe('xyz');
+  });
+});
+
 describe('describeKind — synthetic stat predicates', () => {
   // The directory branch is exercised via `safeReadFile(dir)` above.
   // FIFO / socket / device files cannot be created portably on every
