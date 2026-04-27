@@ -1,0 +1,1152 @@
+# =============================================================================
+# Design Ontology Spec (DOS) — harness-one
+# =============================================================================
+# Extracted from /Users/xrensiu/development/owner/harness-one on 2026-04-27 via
+# the dos-extract skill (auto mode). The companion `decisions.md` records every
+# non-trivial judgment that produced this file.
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# 0. Meta
+# -----------------------------------------------------------------------------
+meta:
+  dos_version: "0.1.0"
+  product: "harness-one"
+  bounded_context: "Harness Engineering Library (TypeScript runtime + sibling adapters)"
+  owner: "XRenSiu"          # Inferred from git config; please confirm.
+  status: "draft"
+  last_reviewed: "2026-04-27"
+  related_docs:
+    - "README.md"
+    - "docs/ARCHITECTURE.md"
+    - "docs/architecture/00-overview.md"
+    - "docs/adr/0001-no-graph-dsl.md"
+    - "docs/adr/0003-factory-functions-not-classes.md"
+    - "docs/adr/0006-fail-closed-guardrail-default.md"
+    - "docs/adr/0008-adapter-conformance-not-mocks.md"
+    - "docs/adr/0010-observe-port-vs-implementation.md"
+    - "docs/provider-spec.md"
+
+
+# -----------------------------------------------------------------------------
+# 1. Scope
+# -----------------------------------------------------------------------------
+scope:
+  in_scope: |
+    harness-one is a TypeScript library that provides universal harness primitives
+    for AI agent products: the Agent Loop (LLM calling, tool dispatch, safety
+    valves), prompt/context engineering, guardrails (injection / content /
+    PII / schema / rate-limit), observability (trace / cost / token), session
+    management, graded memory, RAG retrieval, multi-agent orchestration, and
+    the evolve-check architecture rule engine. The library covers 9 layers of
+    the harness reference architecture; sibling packages (@harness-one/preset,
+    /cli, /devkit) provide opinionated wiring, scaffolding, and dev-time
+    tooling on top of the core primitives.
+
+  out_of_scope: |
+    - Workflow engines, graph DSLs, or pipeline orchestration of arbitrary
+      compute stages (ADR-0001 explicitly rejects this).
+    - LLM provider implementations (only ports are defined; concrete adapters
+      ship in @harness-one/anthropic, /openai, etc.).
+    - End-user UI surface — there are no React/UI primitives in this library.
+    - Persistent multi-process session / memory infrastructure (in-memory and
+      filesystem are the only first-party stores; Redis is a sibling adapter).
+    - Application-domain ontologies (apps/dogfood, apps/coding-agent,
+      apps/research-collab each have their own domain terms — RecentIssue,
+      TaskPlan, Citation — that are NOT part of this DOS).
+    - Evaluation, drift detection, taste-coding rules — these live in
+      @harness-one/devkit (a sibling downstream context).
+    - Production deployment, tenancy, or billing concerns.
+
+  audience:
+    - "AI agent application developers (primary consumers)"
+    - "Provider-adapter authors (implementing AgentAdapter, MemoryStore, Retriever, EmbeddingModel, ChunkingStrategy)"
+    - "AI agents (Claude Code, Cursor) generating code on top of harness-one"
+    - "harness-one maintainers reviewing PRs"
+
+  success_criteria: |
+    A new contributor can read this DOS in 30 minutes and correctly answer:
+    "If I add a new feature, where does its code live, and which existing
+    objects/relationships does it use?" — without consulting the source
+    tree first. Mechanical correlate: every public API in `harness-one/<subpath>`
+    can be located on the dependency edges between the 7 core objects.
+
+
+# -----------------------------------------------------------------------------
+# 2. Reuse
+# -----------------------------------------------------------------------------
+reuse:
+  internal_references:
+    - name: "harness-one provider-spec"
+      url: "docs/provider-spec.md"
+      adopted_concepts: ["AgentAdapter", "TokenUsage", "ChatParams", "StreamChunk"]
+
+    - name: "harness-one retriever-spec / embedding-spec / chunking-spec"
+      url: "docs/retriever-spec.md"
+      adopted_concepts: ["Retriever", "EmbeddingModel", "ChunkingStrategy", "Document", "DocumentChunk"]
+
+  external_references:
+    - name: "Anthropic Messages API (claude tool_use shape)"
+      url: "https://docs.anthropic.com/claude/reference/messages_post"
+      adopted_concepts: ["assistant tool_use blocks → Message.toolCalls translation"]
+
+    - name: "OpenAI Chat Completions tool / function calling"
+      url: "https://platform.openai.com/docs/api-reference/chat"
+      adopted_concepts: ["function_call → ToolCall translation", "ChatCompletionMessageParam shape"]
+
+    - name: "OpenTelemetry tracing semantic conventions"
+      url: "https://opentelemetry.io/docs/specs/semconv/general/trace/"
+      adopted_concepts: ["Span / SpanEvent / attributes shape (loose)"]
+
+    - name: "JSON Schema (Draft 7 subset)"
+      url: "https://json-schema.org/"
+      adopted_concepts: ["Tool.parameters validation contract"]
+
+  deliberate_divergence:
+    - from: "LangGraph / Haystack / Swarm-style graph DSLs"
+      reason: |
+        ADR-0001: harness-one runs the agent as an explicit `async function*`
+        loop, not a graph of nodes/edges. Stack traces, abort propagation, and
+        streaming are first-class because the user owns the call site.
+
+    - from: "Class-first APIs (e.g. `new SessionManager(config)`)"
+      reason: |
+        ADR-0003: public primitives are exposed through `create*` factory
+        functions; the implementing class stays internal. AgentLoop is the
+        single documented exception (class is exported for `instanceof` narrowing).
+
+    - from: "Mock-based per-adapter unit tests"
+      reason: |
+        ADR-0008: every multi-impl interface ships a runner-agnostic shared
+        conformance suite; mocks reflect the author's interpretation, not the
+        contract. AgentAdapter has a written specification (provider-spec.md)
+        plus per-adapter regression tests until an executable suite lands.
+
+    - from: "Vendor-SDK-as-port (e.g. directly importing @opentelemetry/api in core)"
+      reason: |
+        ADR-0010: core defines minimal ports (MetricsPort, InstrumentationPort,
+        TraceExporter, Logger). Concrete backends ship in sibling packages —
+        keeps core's runtime dependencies at zero (ADR-0004).
+
+
+# -----------------------------------------------------------------------------
+# 3. Core objects (7)
+# -----------------------------------------------------------------------------
+objects:
+  Message:
+    description: |
+      A single utterance in a conversation. The universal communication unit
+      between application, AgentLoop, AgentAdapter, and Tools.
+    type: "value_object"
+    properties:
+      role:
+        type: "enum: 'system' | 'user' | 'assistant' | 'tool'"
+        required: true
+        description: "Discriminator. Defines the four sub-shapes (SystemMessage / UserMessage / AssistantMessage / ToolMessage)."
+      content:
+        type: "string"
+        required: true
+      toolCalls:
+        type: "ToolCallRequest[]"
+        required: false
+        description: "Present on assistant messages that request tool invocations."
+      meta:
+        type: "MessageMeta"
+        required: false
+        description: "pinned, isFailureTrace, timestamp, tokens."
+      _trust:
+        type: "Symbol (process-local brand)"
+        required: false
+        description: |
+          Present only on system messages minted via createTrustedSystemMessage().
+          Stripped on JSON serialisation; missing-on-restore downgrades the
+          message to role='user' (ADR-0007 — anti-prompt-injection).
+    identity_rule: |
+      Structural identity (no globally unique id by default). ToolMessages are
+      tied to the originating ToolCall via toolCallId.
+    lifecycle: |
+      Created by application / AgentLoop / Adapter / Tool — immutable thereafter.
+      May be persisted (Session, MemoryEntry) or transmitted (AgentAdapter).
+      System messages without the `_trust` brand are downgraded on restore.
+
+  AgentLoop:
+    description: |
+      The runtime primitive that turns a Model + AgentAdapter + Tools +
+      Guardrails into a running agent. The single core abstraction
+      (ADR-0001) — not a graph DSL, not a workflow engine.
+    type: "aggregate_root"
+    properties:
+      config:
+        type: "AgentLoopConfig"
+        required: true
+        description: "Flat single-form config. All concerns (limits, hooks, pipelines, observability, resilience, execution) on one struct."
+      adapter:
+        type: "AgentAdapter"
+        required: true
+      inputPipeline:
+        type: "GuardrailPipeline"
+        required: false
+      outputPipeline:
+        type: "GuardrailPipeline"
+        required: false
+      tools:
+        type: "ToolRegistry"
+        required: false
+      hooks:
+        type: "AgentLoopHook[]"
+        required: false
+        description: "onIterationStart / onToolCall / onTokenUsage / onIterationEnd. Observer-only by contract — hooks cannot change next state."
+      status:
+        type: "enum: 'idle' | 'running' | 'completed' | 'errored' | 'disposed'"
+        required: true
+      usage:
+        type: "TokenUsage"
+        required: true
+        description: "Cumulative token usage across run(). Exposed via getMetrics()."
+    identity_rule: |
+      Object identity. Each `createAgentLoop()` produces a new instance.
+      `run()` is non-re-entrant — concurrent calls on the same instance throw
+      HarnessError(CORE_INVALID_STATE).
+    lifecycle: |
+      idle (constructed) → running (run() executing) →
+      one of { completed (end_turn), errored (aborted/max_iterations/
+      token_budget/guardrail block/adapter or tool error) }.
+      `dispose()` transitions to `disposed`, which is terminal and cannot be
+      flipped back even by concurrent in-flight terminals.
+      Yields AgentEvent stream (9 variants: iteration_start, text_delta,
+      tool_call_delta, tool_call, tool_result, message, warning, error,
+      guardrail_blocked, done) during run().
+
+  AgentAdapter:
+    description: |
+      The port to an LLM provider. The single seam between harness-one and
+      the outside world for model inference. Implementations live in L4
+      sibling packages (@harness-one/anthropic, /openai).
+    type: "entity"     # interface; each registered adapter has identity-by-config
+    properties:
+      chat:
+        type: "(params: ChatParams) => Promise<ChatResponse>"
+        required: true
+        description: "REQUIRED. The synchronous (non-streaming) inference call."
+      stream:
+        type: "(params: ChatParams) => AsyncGenerator<StreamChunk>"
+        required: false
+        description: "OPTIONAL. Streaming inference. AgentLoop falls back to chat() if absent."
+      countTokens:
+        type: "(messages: Message[]) => Promise<number>"
+        required: false
+      name:
+        type: "string"
+        required: false
+        description: "For trace/log attribution."
+    identity_rule: |
+      Each adapter instance is identified by its provider configuration
+      (model, client, capabilities). Conformance to docs/provider-spec.md
+      determines which calls are valid.
+    lifecycle: |
+      Constructed once (often via the L4 package's factory:
+      createAnthropicAdapter, createOpenAIAdapter), reused across many
+      AgentLoop runs. May expose dispose() to release SDK clients.
+
+  Tool:
+    description: |
+      A capability the model can invoke. Definitions are immutable (frozen
+      by defineTool); a ToolRegistry composes them under capability and
+      rate-limit policies.
+    type: "entity"
+    properties:
+      name:
+        type: "string"
+        required: true
+        description: "Globally unique within a registry. Used as the LLM-facing identifier."
+      description:
+        type: "string"
+        required: true
+      parameters:
+        type: "JsonSchema"
+        required: true
+        description: "Validated against the LLM's tool arguments at runtime."
+      execute:
+        type: "(params: TParams, signal?: AbortSignal) => Promise<ToolResult>"
+        required: true
+      capabilities:
+        type: "ToolCapability[]"
+        required: false
+        description: "['readonly' | 'filesystem' | 'network' | 'shell' | 'destructive'] — declarative; registry's allowedCapabilities gates registration (default ['readonly'], fail-closed)."
+      sequential:
+        type: "boolean"
+        required: false
+        description: "Forces sequential execution within an iteration's parallel batch."
+      middleware:
+        type: "ToolMiddleware[]"
+        required: false
+        description: "Onion wrap: retry / auth / circuit-breaker."
+    identity_rule: |
+      Identified by `name` within a ToolRegistry. Definitions are frozen
+      (Object.freeze) at definition time.
+    lifecycle: |
+      Defined → registered (registry validates schema, capability allow-list)
+      → invoked zero or more times per AgentLoop iteration → optionally
+      rate-limited (maxCallsPerTurn / maxCallsPerSession) → outcome
+      returned as ToolResult (success/error). Not "deleted" — registries
+      can be torn down whole.
+
+  Guardrail:
+    description: |
+      A safety check applied to messages, tool arguments, tool outputs, or
+      RAG context. Composed via GuardrailPipeline; defaults to fail-closed
+      (ADR-0006).
+    type: "entity"
+    properties:
+      name:
+        type: "string"
+        required: true
+        description: "Used in GuardrailVerdict.reason for dashboard attribution."
+      scan:
+        type: "(input, context: GuardrailContext) => Promise<GuardrailVerdict>"
+        required: true
+        description: "Returns allow / block / redact / transform with a reason field."
+      kind:
+        type: "string"
+        required: false
+        description: "Built-in flavors: injection / content / pii / schema / rate-limit. Custom guardrails are first-class."
+    identity_rule: |
+      Identified by `name` within a GuardrailPipeline. Multiple guardrails
+      with the same name in one pipeline are an error.
+    lifecycle: |
+      Created via factory (createInjectionDetector, createPIIDetector,
+      createContentFilter, createSchemaValidator, createRateLimiter, or
+      a user-supplied implementation), registered into a Pipeline, invoked
+      synchronously per scan-point. Pipelines can be reset, replaced, or
+      disposed; individual Guardrails are stateless except for rate-limiter
+      (which holds its sliding window).
+
+  Trace:
+    description: |
+      The persistent observable record of one logical workflow (typically
+      one AgentLoop.run() and everything fanning out from it). Aggregate
+      root of the observability subsystem. Trace, cost, and token are
+      unified by the same traceId (ADR-0005).
+    type: "aggregate_root"
+    properties:
+      traceId:
+        type: "TraceId (branded crypto-secure id)"
+        required: true
+      spans:
+        type: "Span[] (tree)"
+        required: true
+        description: "Each span has start/end times, attributes, events, and an optional parent span."
+      tokenUsage:
+        type: "TokenUsage (aggregated)"
+        required: true
+        description: "Sum across spans, used to enforce token budgets and compute cost."
+      cost:
+        type: "number (USD, derived via ModelPricing)"
+        required: false
+      attributes:
+        type: "Record<string, unknown>"
+        required: false
+        description: "Redacted by default via the configured Redactor."
+      sampled:
+        type: "boolean"
+        required: true
+        description: "Sampling decision locked at startTrace() (Math.random() < rate)."
+    identity_rule: |
+      `traceId` (prefixed crypto-secure). Trace-id propagates to all child
+      spans, cost records, and token-usage records.
+    lifecycle: |
+      Started at the start of a logical operation (typically AgentLoop.run() or
+      orchestrator delegation) → spans opened/closed under it → flushed via
+      TraceExporters → optionally LRU-evicted on TraceManager when maxTraces
+      reached. Eviction cascades to spans (intrusive doubly-linked list +
+      Map for O(1) move-to-tail).
+
+  MemoryEntry:
+    description: |
+      A graded persistent record outside the conversation buffer. Aggregate
+      of the memory subsystem.
+    type: "entity"
+    properties:
+      id:
+        type: "string"
+        required: true
+      key:
+        type: "string"
+        required: true
+        description: "Application-scoped identifier; commonly sessionId-prefixed."
+      content:
+        type: "unknown (validated at boundary via _schemas.ts)"
+        required: true
+      grade:
+        type: "enum: 'critical' | 'useful' | 'ephemeral'"
+        required: true
+        description: "Drives compaction priority (gradeWeights in CompactionPolicy)."
+      tags:
+        type: "string[]"
+        required: false
+      metadata:
+        type: "Record<string, unknown>"
+        required: false
+      createdAt:
+        type: "timestamp"
+        required: true
+      updatedAt:
+        type: "timestamp"
+        required: true
+      embedding:
+        type: "number[]"
+        required: false
+        description: "Optional vector for searchByVector() backends."
+    identity_rule: |
+      `id` (auto-generated on write). `key` is application-meaningful but not
+      unique by itself.
+    lifecycle: |
+      write → optional update → optional searchByVector indexing →
+      optional compaction-evicted (per CompactionPolicy on grade weights and
+      maxAge / maxEntries). Filesystem store guarantees atomic write per
+      entry; multi-file operations (writeBatch / clear / compact) are
+      reconciliable but not transactional — see ARCHITECTURE.md "Filesystem
+      memory store — crash-safety contract".
+
+
+# -----------------------------------------------------------------------------
+# 4. Relationships
+# -----------------------------------------------------------------------------
+relationships:
+  # AgentLoop ↔ AgentAdapter
+  - subject: "AgentLoop"
+    verb: "CALLS"
+    object: "AgentAdapter"
+    cardinality: "1:1"
+    inverse: "INVOKED_BY"
+    description: |
+      Each AgentLoop is wired to exactly one AgentAdapter at construction
+      time. The loop calls adapter.chat() or adapter.stream() once per
+      iteration; the adapter performs the model inference and returns
+      messages + token usage.
+
+  # AgentLoop ↔ Message
+  - subject: "AgentLoop"
+    verb: "CONSUMES"
+    object: "Message"
+    cardinality: "1:N"
+    inverse: "CONSUMED_BY"
+    description: |
+      AgentLoop.run(messages) takes an ordered list of Messages as input.
+
+  - subject: "AgentLoop"
+    verb: "PRODUCES"
+    object: "Message"
+    cardinality: "1:N"
+    inverse: "PRODUCED_BY"
+    description: |
+      Each iteration appends an assistant Message (and possibly tool result
+      ToolMessages) to the conversation, yielded as `message` AgentEvents.
+
+  # AgentLoop ↔ Tool
+  - subject: "AgentLoop"
+    verb: "DISPATCHES"
+    object: "Tool"
+    cardinality: "1:N"
+    inverse: "INVOKED_BY"
+    description: |
+      When the LLM returns ToolCallRequests, AgentLoop validates each against
+      its Tool's parameters schema and capability allow-list, then dispatches
+      via the configured ExecutionStrategy (sequential or parallel pool).
+
+  # AgentLoop ↔ Guardrail (via Pipeline composition)
+  - subject: "AgentLoop"
+    verb: "ENFORCES"
+    object: "Guardrail"
+    cardinality: "1:N"
+    inverse: "GUARDS"
+    description: |
+      Guardrails compose into input/output/tool-output/RAG pipelines.
+      AgentLoop runs them at fixed scan-points:
+        1. input — before adapter call
+        2. tool_args — after adapter returns tool_calls, before yield
+        3. tool_output — after tool execution
+        4. output — after assistant final answer
+      A `block` verdict is fail-closed and aborts the loop iteration with a
+      `guardrail_blocked` AgentEvent + HarnessError(GUARD_BLOCKED).
+
+  # AgentLoop ↔ Trace
+  - subject: "AgentLoop"
+    verb: "EMITS"
+    object: "Trace"
+    cardinality: "1:1"
+    inverse: "RECORDS"
+    description: |
+      One AgentLoop.run() emits exactly one Trace (when a TraceManager is
+      configured). Spans are opened per iteration, per adapter call, per
+      tool call, per guardrail run.
+
+  # Trace ↔ Span / TokenUsage
+  - subject: "Trace"
+    verb: "CONTAINS"
+    object: "Span"
+    cardinality: "1:N"
+    inverse: "BELONGS_TO"
+    description: |
+      Spans form a tree under a Trace. Span IS modelled as a sub-entity of
+      Trace, not a top-level object — its lifecycle is bound to the Trace's.
+
+  - subject: "Trace"
+    verb: "AGGREGATES"
+    object: "TokenUsage"
+    cardinality: "1:N"
+    inverse: "RECORDED_IN"
+    description: |
+      Each adapter call records TokenUsage on its Span; the Trace aggregates
+      cumulative input/output tokens across the run. Exceeding maxTotalTokens
+      raises TokenBudgetExceededError.
+
+  # AgentAdapter ↔ Message
+  - subject: "AgentAdapter"
+    verb: "TRANSLATES"
+    object: "Message"
+    cardinality: "N:N"
+    inverse: "TRANSLATED_BY"
+    description: |
+      Adapter implementations translate harness-one Messages to/from
+      provider-specific shapes (Anthropic MessageParam, OpenAI
+      ChatCompletionMessageParam) at the call boundary.
+
+  # Tool ↔ ToolCall / ToolResult (value objects)
+  - subject: "Tool"
+    verb: "PRODUCES"
+    object: "ToolResult"
+    cardinality: "1:N"
+    inverse: "EMITTED_BY"
+    description: |
+      Each invocation of Tool.execute() produces exactly one ToolResult
+      (success or error). The result is appended to the conversation as a
+      ToolMessage and yielded as a `tool_result` AgentEvent.
+
+  # Guardrail ↔ GuardrailVerdict
+  - subject: "Guardrail"
+    verb: "RETURNS"
+    object: "GuardrailVerdict"
+    cardinality: "1:1"
+    inverse: "EMITTED_BY"
+    description: |
+      Each scan call returns exactly one verdict. The discriminated union
+      (allow / block / redact / transform) carries a `reason` field
+      distinguishing fail-closed dropouts from real blocks.
+
+  # Session ↔ Message (composition relationship — Session is composition, not core object)
+  - subject: "Session"
+    verb: "HOLDS"
+    object: "Message"
+    cardinality: "1:N"
+    inverse: "BELONGS_TO"
+    description: |
+      A Session (in-memory conversation lifecycle) holds an ordered
+      Message[] under TTL/LRU/lock semantics. Session itself is a
+      composition, not a core object.
+
+  # MemoryEntry persistence
+  - subject: "MemoryEntry"
+    verb: "PERSISTS_VIA"
+    object: "MemoryStore"
+    cardinality: "N:1"
+    inverse: "STORES"
+    description: |
+      MemoryStore is a port; concrete implementations are InMemoryStore
+      (default), FileSystemStore (atomic per-entry write), or sibling-
+      package adapters like RedisMemoryStore. Per ADR-0008, every
+      implementation must pass `runMemoryStoreConformance`.
+
+  # AgentLoop authors MemoryEntries (typical usage path)
+  - subject: "AgentLoop"
+    verb: "AUTHORS"
+    object: "MemoryEntry"
+    cardinality: "1:N"
+    inverse: "WRITTEN_BY"
+    description: |
+      An AgentLoop run can produce MemoryEntries (e.g. via tools that call
+      memory.write, or through ContextRelay state during a run handoff).
+
+  # RAG flow (produces Messages via composition)
+  - subject: "Document"
+    verb: "CHUNKED_INTO"
+    object: "DocumentChunk"
+    cardinality: "1:N"
+    inverse: "DERIVES_FROM"
+    description: |
+      A ChunkingStrategy turns a Document into DocumentChunks. Both
+      Document and DocumentChunk are RAG-pipeline value objects, not
+      core ontology entries.
+
+  - subject: "Retriever"
+    verb: "RETRIEVES"
+    object: "DocumentChunk"
+    cardinality: "1:N"
+    inverse: "RETRIEVED_BY"
+    description: |
+      Retriever.retrieve(query) returns ranked DocumentChunks (with score
+      and token-estimate); these become content for a Message that the
+      AgentLoop CONSUMES.
+
+
+# -----------------------------------------------------------------------------
+# 5. Rules (constitution)
+# -----------------------------------------------------------------------------
+rules:
+  - id: "R001"
+    statement: "Every Message has exactly one role from { 'system', 'user', 'assistant', 'tool' }; the role discriminates the message sub-shape."
+    rationale: |
+      Without a single, closed role enum, downstream tool-call gating and
+      trust semantics break. ADR-0007's brand-on-system-message defense
+      assumes role is the discriminator.
+    enforced_by: "system"   # type-level + provider-spec validation
+
+  - id: "R002"
+    statement: "A SystemMessage is treated as authoritative ONLY if it carries the process-local _trust brand minted by createTrustedSystemMessage(). On restore from any persistent store, missing-brand system messages are downgraded to role='user'."
+    rationale: |
+      Defends against (a) prompt-injection via user-input concatenation into
+      system prompts and (b) storage round-tripping where a writer with disk
+      access forges system-role rows. Constitutional — if removed, harness-one
+      stops being safe-by-default in the multi-adapter, multi-store deployment
+      it's designed for. (ADR-0007.)
+    enforced_by: "system"
+
+  - id: "R003"
+    statement: "Tool definitions are immutable after defineTool() — Object.freeze is applied so the registered shape cannot be mutated by subsequent code."
+    rationale: |
+      Tools are referenced by name across a long run; mutation would invalidate
+      the parameters schema clients have already cached and create undefined
+      behavior in downstream LLM tool_use protocols.
+    enforced_by: "system"
+
+  - id: "R004"
+    statement: "GuardrailPipelines default to fail-closed (failClosed: true). When a Guardrail throws an exception, the pipeline blocks the request and emits a verdict whose reason field marks it as a fail-closed dropout."
+    rationale: |
+      A naïve fail-open pipeline turns a flaky detector into a silent safety
+      bypass. Fail-closed makes the failure visible and conservative. (ADR-0006.)
+      Constitutional — if removed, the security posture of every preset/harness
+      built on this changes.
+    enforced_by: "system"
+
+  - id: "R005"
+    statement: "Tools with capability outside the registry's allowedCapabilities (default ['readonly']) cannot be registered. Capability is a declarative contract, not a sandbox — host code must still validate at the syscall boundary."
+    rationale: |
+      Fail-closed by analogy with R004. The default ['readonly'] makes the
+      typical preset deployment safe-by-default; broader capabilities require
+      explicit opt-in via createPermissiveRegistry() or
+      createRegistry({ allowedCapabilities: [...] }).
+    enforced_by: "system"
+
+  - id: "R006"
+    statement: "AgentLoop.run() is non-re-entrant on the same instance. A second concurrent call throws HarnessError(CORE_INVALID_STATE)."
+    rationale: |
+      The loop holds mutable per-run state (status, accumulated usage, abort
+      controller, active span). Concurrent runs would corrupt this state.
+      Constitutional in the design — relaxing it would require redesigning the
+      core state machine.
+    enforced_by: "system"
+
+  - id: "R007"
+    statement: "trace, cost, and token counts share the same traceId across an AgentLoop run."
+    rationale: |
+      Without unified traceId, dashboards cannot correlate cost spikes with
+      specific runs. ADR-0005 makes this a constitutional commitment so that
+      observability tooling can assume the join key exists.
+    enforced_by: "system"
+
+  - id: "R008"
+    statement: "Every interface with ≥2 implementations (MemoryStore, Retriever, EmbeddingModel, ChunkingStrategy, AgentAdapter) ships an executable conformance suite. Implementations MUST run the suite as part of their CI; mocks are insufficient evidence of contract compliance."
+    rationale: |
+      Prevents interface semantic drift, where adapter A and B both pass
+      type-checks but disagree on runtime semantics. (ADR-0008.) For
+      AgentAdapter specifically, the suite is currently the written
+      provider-spec.md plus per-adapter regression tests.
+    enforced_by: "user_workflow"
+
+  - id: "R009"
+    statement: "Stream size limits (MAX_STREAM_BYTES, MAX_TOOL_ARG_BYTES, MAX_TOOL_CALLS) are HARD errors when exceeded — the stream is aborted, not warned. Counts are tracked in UTF-8 bytes."
+    rationale: |
+      A silent overflow can balloon memory and exfiltrate the LLM's context
+      budget. ADR-0009: the harness commits to crashing visibly rather than
+      degrading invisibly. Stream byte counters do NOT reset across failed
+      attempts (so repeated short-stream errors cannot bypass the budget).
+    enforced_by: "system"
+
+  - id: "R010"
+    statement: "Tool failures are returned as data (ToolResult with success: false), not raised as exceptions. Stack traces are stripped before the structured error reaches the LLM. Only programming errors are HarnessError."
+    rationale: |
+      Errors as data (ADR-0001 / README design principle) lets the LLM
+      self-correct on structured feedback. Surfacing stack traces would leak
+      internal paths/types to the model context.
+    enforced_by: "system"
+
+  - id: "R011"
+    statement: "L3 feature subsystems (orchestration, observe, guardrails, memory, tools, prompt, context, rag, session, evolve-check) MUST NOT import from each other — not even type-only. Shared abstractions belong in L2 core."
+    rationale: |
+      Keeps the dependency graph acyclic and ensures that "where this code
+      lives" maps directly to "what this code is about". Enforced in
+      eslint.config.js via no-restricted-imports. (ADR-0002.) Constitutional
+      — relaxing it would force every reviewer to re-trace the dependency
+      graph by hand on each PR.
+    enforced_by: "system"
+
+  - id: "R012"
+    statement: "The harness-one core package has zero runtime dependencies. Sibling packages may depend on vendor SDKs, but core does not."
+    rationale: |
+      Keeps core's install graph trivial to audit (relevant to OpenSSF
+      Scorecard, Sigstore, SBOM workflows). ADR-0004. Crossing this line
+      would force every consumer to re-evaluate their supply chain.
+    enforced_by: "system"
+
+  - id: "R013"
+    statement: "Public primitives are constructed through `create*` factory functions. The implementing class, if any, stays internal. AgentLoop is the single documented exception (its class is exported for `instanceof` narrowing)."
+    rationale: |
+      Closure-scoped state is genuinely unreachable; the factory can return
+      different concrete shapes per options without breaking the public type.
+      ADR-0003.
+    enforced_by: "user_workflow"  # convention enforced by code review + lint
+
+
+# -----------------------------------------------------------------------------
+# 6. Composition
+# -----------------------------------------------------------------------------
+composition:
+  Session:
+    description: "In-memory conversation lifecycle: TTL + LRU + lock + GC around an ordered Message list."
+    derived_from:
+      - "Message[] (the conversation buffer)"
+      - "Session metadata (id, status: active|locked|expired, lastAccessedAt)"
+      - "SessionManager config (maxSessions default 100, ttlMs default 5min, gcIntervalMs default 60s)"
+    is_persistent: true
+    notes: |
+      `ConversationStore` is the underlying interface (in-memory by default).
+      `AuthContext` lives on Session.metadata when auth is configured.
+
+  GuardrailPipeline:
+    description: "Ordered composition of Guardrails for one of four scan-points."
+    derived_from:
+      - "Guardrail[]"
+      - "Pipeline config: failClosed (default true), timeoutMs, scanPoint (input/output/tool_output/rag_context)"
+    is_persistent: false
+
+  ToolRegistry:
+    description: "Composition of Tools with rate-limit and capability gating."
+    derived_from:
+      - "Tool[] (registered)"
+      - "Registry config: allowedCapabilities (default ['readonly']), maxCallsPerTurn, maxCallsPerSession, validator"
+    is_persistent: false
+
+  RAGPipeline:
+    description: "Document → DocumentChunk → embedding → indexed Retriever → query-time retrieval inserted as Message context."
+    derived_from:
+      - "DocumentLoader.load() → Document[]"
+      - "ChunkingStrategy.chunk(doc) → DocumentChunk[] (with CJK + emoji-surrogate-pair safe boundaries)"
+      - "EmbeddingModel.embed(texts) → number[][]"
+      - "Retriever.index(chunks); Retriever.retrieve(query) → RetrievalResult[]"
+      - "Per-chunk Guardrail scanning (rag_context scan-point)"
+    is_persistent: false
+    notes: |
+      RetrievalResult.tokens is a heuristic (content.length / 4) so callers
+      can fit retrieved context into a TokenBudget.
+
+  Orchestration:
+    description: "Multi-agent coordination: AgentPool + Handoff + ContextBoundary + SharedContext + Orchestrator."
+    derived_from:
+      - "AgentLoop instances (managed in AgentPool with min/max/idleTimeout/maxAge)"
+      - "Handoff messages (HandoffPayload with artifacts, concerns, acceptanceCriteria)"
+      - "SharedContext key-value store (NFKC+casefold normalized keys; SEC-fix)"
+      - "ContextBoundary advisory ACL on SharedContext access"
+      - "Orchestrator routing: register, send, delegate, BFS-cycle-detect"
+    is_persistent: false
+    notes: |
+      All starter strategies (createBasicRoundRobinStrategy / random /
+      firstAvailable) are baselines, not production-grade schedulers.
+
+  ObservabilityStack:
+    description: "TraceManager + CostTracker + Logger + MetricsPort + HarnessLifecycle composed for default observability."
+    derived_from:
+      - "Trace + Span + SpanEvent (TraceManager state)"
+      - "TokenUsageRecord buffer + ModelPricing (CostTracker state)"
+      - "TraceExporter chain (console / langfuse / opentelemetry; sibling packages)"
+      - "Default Redactor on logger / span attrs / langfuse exporter"
+    is_persistent: false
+    notes: |
+      Sampling decision is locked at startTrace() (Math.random() < rate).
+
+  Context-engineering helpers:
+    description: "Token budgets, packing, compression, cache stability — produce the Message[] passed to AgentLoop."
+    derived_from:
+      - "TokenBudget (segmented; HEAD/MID/TAIL pack layout)"
+      - "CompressionStrategy + adapter-summarizer for over-budget conversations"
+      - "Checkpoint snapshots for restore/resume"
+      - "analyzeCacheStability for KV-cache hit-rate analysis"
+    is_persistent: false
+
+
+# -----------------------------------------------------------------------------
+# 7. Behaviors (cause-effect chains for AI agents)
+# -----------------------------------------------------------------------------
+behaviors:
+  - trigger: "AgentLoop.run(messages)"
+    effects:
+      - "status flips idle → running"
+      - "TraceManager opens a Trace + root Span"
+      - "Per iteration: input pipeline runs (block → bailGuardrail), then adapter.chat()/stream(), then output pipeline, then tool dispatch (with tool_args input pipeline + tool_output pipeline), then onIterationEnd hook"
+      - "Each iteration yields AgentEvents in order"
+      - "Cumulative TokenUsage compared against maxTotalTokens (TokenBudgetExceededError if over)"
+      - "Iteration counter compared against maxIterations (MaxIterationsError if over)"
+      - "AbortSignal can fire AbortedError"
+      - "Terminal states close the root Span and flip status to completed/errored"
+    notes: |
+      Hooks MUST NOT throw — the loop continues as if the hook had returned
+      normally. (Per agent-loop-types.ts doc comment.) Use strictHooks for
+      explicit error isolation.
+
+  - trigger: "GuardrailPipeline.runInput / runOutput / runToolOutput / runRagContext"
+    effects:
+      - "Each Guardrail.scan() called in registered order"
+      - "First non-allow verdict short-circuits the pipeline (default behavior)"
+      - "On exception (and failClosed: true, the default): pipeline returns block with reason='detector_error'"
+      - "On timeout: pipeline returns block (failClosed) or allow-with-reason (failClosed: false)"
+      - "Returning verdict with action='block' fires hard-block in AgentLoop: yield guardrail_blocked, yield error, abortController.abort('guardrail_violation'), return"
+
+  - trigger: "AdapterCaller.call() (each adapter call)"
+    effects:
+      - "Records adapter_retry span events on each retry attempt"
+      - "Computes exponential backoff via infra/backoff.ts"
+      - "Optional CircuitBreaker fires on consecutive failures"
+      - "TokenUsage from response gets recorded on the active Span"
+      - "Failure category propagates via error-classifier (categorizeAdapterError) to GUARDRAIL_VIOLATION → retryable: false"
+
+  - trigger: "Tool.execute() returns ToolResult"
+    effects:
+      - "On success: ToolMessage appended to conversation; tool_result AgentEvent yielded; tool_output guardrails run on the result"
+      - "On error: structured ToolFeedback returned to LLM as ToolMessage content (errors as data); LLM sees retryable / suggestedAction fields"
+      - "On timeout (toolTimeoutMs): execution aborted via signal, ToolFeedback with category='timeout'"
+
+  - trigger: "MemoryStore.write(entry)"
+    effects:
+      - "FileSystemStore: atomic write of entry file (write-temp → rename) + atomic _index.json update"
+      - "InMemoryStore: Map insertion + tag/grade index update"
+      - "Returns full MemoryEntry with id and timestamps"
+
+  - trigger: "Trace eviction (TraceManager LRU at maxTraces)"
+    effects:
+      - "trace-lru-list pop-head"
+      - "Cascades to all child spans (cleared from sibling Map)"
+      - "TraceExporter.exportTrace fires before discard (in-flight tracking ensures flush waits)"
+
+  - trigger: "createSecurePreset({ provider, client, model })"
+    effects:
+      - "AgentLoop wired with input + output + tool-output guardrail pipelines (all fail-closed)"
+      - "ToolRegistry created with allowedCapabilities=['readonly']"
+      - "Logger and TraceManager wired with default redaction patterns"
+      - "Provider registry sealed after construction (no further mutations)"
+      - "HarnessLifecycle state machine auto-created with health checks"
+      - "MetricsPort wired (no-op by default; swap in OTel for real metrics)"
+      - "Config validation catches typos and invalid values at construction time"
+
+
+# -----------------------------------------------------------------------------
+# 8. Bounded Contexts
+# -----------------------------------------------------------------------------
+bounded_contexts:
+  current_context: "harness-one core (TypeScript runtime library)"
+
+  upstream_contexts:
+    - name: "LLM Provider Context"
+      provides:
+        - "Inference (Anthropic Messages, OpenAI Chat Completions, etc.)"
+        - "Provider-specific message shapes (MessageParam, ChatCompletionMessageParam)"
+        - "Provider-specific tool/function shapes"
+        - "Provider-specific token-counting"
+      translation_notes: |
+        Translation happens entirely inside L4 sibling packages
+        (@harness-one/anthropic, @harness-one/openai). The harness-one core
+        contract is `AgentAdapter` (see docs/provider-spec.md). Provider
+        shapes never leak into harness-one's public ontology — Message is
+        the canonical form.
+
+  downstream_contexts:
+    - name: "DevKit Context (@harness-one/devkit)"
+      consumes:
+        - "AgentLoop (subject of evaluation)"
+        - "Tool (registry inspection for component drift)"
+        - "Trace (input to drift detection)"
+      translation_notes: |
+        DevKit has its own ontology — EvalCase, EvalReport, Scorer,
+        ComponentMeta, DriftReport, TasteCodingRule, BaselineMetric. These are
+        not part of harness-one core. A dedicated DevKit DOS is a future
+        candidate.
+
+    - name: "Application Context (apps/dogfood, apps/coding-agent, apps/research-collab)"
+      consumes:
+        - "AgentLoop (or createSecurePreset/createHarness compositions)"
+        - "Tool, Guardrail, Trace, MemoryEntry"
+      translation_notes: |
+        Each app has its own domain — RecentIssue and Invocation in dogfood;
+        TaskPlan, ApprovalDecision, BudgetState in coding-agent; FetchedPage,
+        Citation in research-collab. None of these belong in core.
+
+    - name: "Showcase Context (showcases/01-04)"
+      consumes:
+        - "AgentLoop, MemoryStore, Orchestration primitives"
+      translation_notes: |
+        Calibration projects with ephemeral types (StressOutcome, ChainResult,
+        AskResult). Their FRICTION_LOG.md feeds back into harness-one but
+        their ontology does not.
+
+
+# -----------------------------------------------------------------------------
+# 9. Agent guidelines
+# -----------------------------------------------------------------------------
+agent_guidelines:
+  must:
+    - "When adding a new public primitive, expose it through a `create*` factory function. Keep the implementing class internal (R013 / ADR-0003)."
+    - "Validate every cross-boundary input via the documented schema helper (validateMemoryEntry, validateToolCall, parseJsonSafe). Never `JSON.parse(...) as T`."
+    - "Use HarnessError + a HarnessErrorCode constant (`CORE_*` / `TOOL_*` / `GUARD_*` / etc.) for programming errors. Use ToolResult.success=false for expected tool failures (R010)."
+    - "Add a witness test for every documented invariant. Coverage bar is near-100% on core; CI enforces it."
+    - "When adding an L3 subsystem feature: place new symbols inside that subsystem's directory. Do NOT import from sibling L3 subsystems (R011)."
+    - "When adding behavior to AgentLoop iteration, edit the explicit iteration-runner.ts call site, NOT add a 'node' or 'stage' abstraction (ADR-0001)."
+    - "Every new MemoryStore / Retriever / EmbeddingModel / ChunkingStrategy / AgentAdapter implementation MUST run the corresponding `run*Conformance` suite as part of its tests (R008 / ADR-0008)."
+    - "Run `pnpm -r test`, `pnpm -r typecheck`, and the eslint suite locally before opening a PR. The repository has 15+ CI workflows — pre-flight catches almost all of them."
+
+  should:
+    - "Prefer extending an existing relationship over inventing a new verb. The set of canonical verbs (CALLS, DISPATCHES, CONSUMES, PRODUCES, EMITS, ENFORCES, RETURNS, CONTAINS, AGGREGATES, TRANSLATES, HOLDS, AUTHORS, PERSISTS_VIA, RETRIEVES, CHUNKED_INTO) covers most additions."
+    - "Treat unknown subsystem traffic as a signal to LIFT a shared abstraction down to L2 (`core/core/`), not as license to cross-import."
+    - "Re-mint trusted system messages on every restore from persistence (don't trust deserialized bytes)."
+    - "Update docs/architecture/<subsystem>.md and docs/adr/ when a constitutional change lands. Friction-logging belongs in apps/*/HARNESS_LOG.md."
+    - "When integrating a new vendor SDK, ship it as a sibling package (@harness-one/<vendor>), not by adding the dep to core (R012 / ADR-0010)."
+
+  must_not:
+    - "Do NOT introduce a graph DSL, workflow engine, or pipeline-of-stages abstraction at the AgentLoop level. ADR-0001 is the constitutional rejection."
+    - "Do NOT use `Node`, `Edge`, `Graph`, `Stage`, `Workflow`, `Pipeline` (outside of guardrails) as ontology terms. They imply a model harness-one explicitly does not adopt."
+    - "Do NOT reach into `harness-one/src/**` from sibling packages. Use the published subpath barrels (`harness-one/core`, `/observe`, etc.) only."
+    - "Do NOT import from `harness-one/testing` in production code. Test doubles must not appear on the production import graph."
+    - "Do NOT set `guardrailsManagedExternally: true` on `AgentLoopConfig` unless the outer wrapper genuinely runs the guardrail pipeline. The flag is a contract declaration, not a behavior switch — silently bypassing fail-closed safety with no replacement is a red-flag PR."
+    - "Do NOT relax `failClosed` on a GuardrailPipeline without a compelling reason documented in the PR. `createSecurePreset` exposes no opt-out (R004 / ADR-0006)."
+    - "Do NOT add `as any` on a public boundary. If TypeScript fights you, that's often a signal that the type model needs updating, not a license to escape."
+    - "Do NOT use `Object.freeze` only on the top-level — frozen objects with mutable nested arrays are a footgun the team has seen (use `structuredClone` or recursive freeze for metadata)."
+    - "Do NOT bake business policy (rate limits per tier, free-tier ceilings, model selection per pricing) into harness-one rules. Policies live in the consuming application; the DOS holds constitution only."
+    - "Do NOT add a `Conversation` aggregate object — conversations are `Message[]` carried by Session/AgentLoop. The team has explicitly avoided this aggregate."
+    - "Do NOT promote a `Run` object as a top-level entity. The persistent record of a run IS the Trace; the run itself is ephemeral state on AgentLoop."
+
+
+# -----------------------------------------------------------------------------
+# 10. Anti-patterns the codebase has stewarded against
+# -----------------------------------------------------------------------------
+anti_patterns:
+  - pattern: "Splitting `Post` / `Tweet` / `Message` into separate objects."
+    why_bad: |
+      In harness-one's domain, the equivalent error would be splitting
+      SystemMessage / UserMessage / AssistantMessage / ToolMessage into
+      separate top-level objects. Each one would multiply rules, type
+      definitions, and downstream filter conditionals.
+    correct_approach: |
+      One Message object, role-discriminated. SystemMessage carries the
+      _trust brand as a sub-shape feature, not a separate type.
+    historical_context: |
+      Anti-pattern Pattern 3 (Synonym Sprawl) from the methodology — preempted
+      from inception. `core/types.ts` uses TypeScript's discriminated unions
+      so the role field narrows the rest at the type level.
+
+  - pattern: "Promoting graph/node/edge concepts into the core ontology."
+    why_bad: |
+      Several agent frameworks (LangGraph, Haystack, Swarm) model the agent
+      as a directed graph of nodes. Importing that vocabulary would make
+      stack traces confusing (which `Node` failed?), undermine
+      mid-iteration streaming, and turn a control-flow question into a data-
+      structure-inspection question.
+    correct_approach: |
+      Explicit `async function*` AgentLoop yielding AgentEvents. Hooks and
+      middleware are the extension points, not nodes.
+    historical_context: |
+      ADR-0001 codifies the rejection. The temptation reappears whenever
+      someone proposes "let's model declarative branching" — the answer is
+      always "compose with createOrchestrator + spawnSubAgent + Handoff at one
+      layer up, leave the loop singular".
+
+  - pattern: "Reaching into a sibling L3 subsystem's internals."
+    why_bad: |
+      Two L3 subsystems coupling via `import from '../<other>/...'` creates
+      an undeclared dependency edge that breaks the layering contract and
+      makes future refactors expensive.
+    correct_approach: |
+      Lift the shared abstraction down to L2 (`packages/core/src/core/`). If
+      the abstraction doesn't deserve L2 status, the cross-import probably
+      shouldn't exist.
+    historical_context: |
+      Enforced via eslint `no-restricted-imports` and the ADR-0002 layering
+      contract. Pre-existing violations were the primary debt cleared in the
+      L3 isolation Wave (see git log around the date of ADR-0002).
+
+  - pattern: "Class-first APIs (`new SessionManager(config)`, `new TraceManager(config)`)."
+    why_bad: |
+      `private` fields are not actually private (still enumerable on the
+      instance, accessible via `(obj as any).field`); class hierarchies tempt
+      inheritance where composition would do; and discriminated-union
+      returns are awkward through constructors.
+    correct_approach: |
+      Public primitives are factory functions returning interface-typed
+      objects. The implementing class is internal. AgentLoop is the single
+      documented exception (ADR-0003).
+    historical_context: |
+      Several primitives were originally classes (TraceManager among them)
+      and were refactored to factories during the early hardening waves.
+
+  - pattern: "Mocking the conformance contract instead of running it."
+    why_bad: |
+      Per-adapter mocks reflect the author's interpretation of an interface,
+      not the contract itself. Two adapters can both pass mock-based tests
+      while diverging on real behavior; consumers that swap adapters then
+      hit latent bugs.
+    correct_approach: |
+      Every multi-impl interface ships an executable conformance suite
+      (`runMemoryStoreConformance`, `runRetrieverConformance`, etc.). Each
+      adapter's CI runs the suite against its concrete implementation. The
+      in-memory implementations dogfood the same suite (ADR-0008).
+    historical_context: |
+      Memory and RAG conformance suites landed as part of the L3 isolation
+      work; AgentAdapter conformance is currently a written spec
+      (`docs/provider-spec.md`) plus regression tests until an executable
+      harness ships.
+
+  - pattern: "Fail-open guardrail pipelines."
+    why_bad: |
+      A flaky moderation API or detector exception silently turns into
+      an `allow` verdict. The user pays for the failure mode (jailbroken
+      model, leaked PII) without ever seeing the missed safety check.
+    correct_approach: |
+      Pipelines default fail-closed. The verdict reason field
+      (`pipeline_timeout`, `detector_error`) distinguishes fail-closed
+      dropouts from real blocks so dashboards can split malicious-block
+      from misfire-block (ADR-0006).
+    historical_context: |
+      `createSecurePreset` deliberately offers no fail-open opt-out; callers
+      who need that must drop down to `createHarness` and accept responsibility.
+
+  - pattern: "Stack-trace leakage in tool error feedback to the LLM."
+    why_bad: |
+      A `Tool.execute()` that surfaces its raw exception to the LLM as
+      tool feedback leaks internal file paths, type names, and sometimes
+      secret values. Models also condition on stack-trace shapes, which
+      makes them less likely to self-correct."
+    correct_approach: |
+      Tool failures are returned as ToolResult { success: false, error: ToolFeedback }
+      with stripped stack traces. Only programming errors raise HarnessError
+      (which never leaves the harness boundary). 'Errors as data', 'Errors
+      as feedback' (R010, README design principles).
+    historical_context: |
+      Established at design time; reinforced in the lint-error-messages
+      checker (`tools/lint-error-messages/check.mjs`).
+
+
+# -----------------------------------------------------------------------------
+# 11. Open questions
+# -----------------------------------------------------------------------------
+open_questions:
+  - id: "Q001"
+    question: "Should `Agent` (in orchestration) become a top-level core object once multi-agent usage matures, or stay a 'role' that AgentLoop plays?"
+    raised_at: "2026-04-27"
+    raised_by: "dos-extract (auto)"
+    owner: "TBD (recommend: harness-one orchestration maintainer)"
+    deadline: "TBD"
+    impact_if_unresolved: |
+      Today, Agent is encoded as 'AgentLoop registered with an Orchestrator'.
+      Once the orchestration subsystem grows handoff-history, role-policy, or
+      tenant-scoped lifecycles distinct from AgentLoop's, the model will hit
+      the Pattern-9 boundary (a Container-with-Contents that has its own
+      identity and rules). Splitting late is more painful than splitting
+      proactively, but splitting too early adds an empty object.
+    candidates:
+      - "Promote Agent to core ontology when AgentRegistration carries fields not derivable from AgentLoop."
+      - "Keep Agent as composition until the orchestration subsystem reaches v1."
+
+  - id: "Q002"
+    question: "Should `Document` and `DocumentChunk` be promoted to core objects when RAG matures into the dominant deployment shape?"
+    raised_at: "2026-04-27"
+    raised_by: "dos-extract (auto)"
+    owner: "TBD (recommend: rag subsystem maintainer)"
+    deadline: "TBD"
+    impact_if_unresolved: |
+      RAG is currently scoped to a single subsystem and a single composition
+      (RAGPipeline). If most production deployments will be RAG-first,
+      Document / DocumentChunk should arguably sit alongside Message as
+      first-class. Today, the 7-object cap bites: promoting Document would
+      push to 8 unless something else demotes.
+    candidates:
+      - "Add as 8th object (justified exception under the simplicity rule)."
+      - "Stay as composition; carry the cost of documentation-only promotion."
+      - "Merge MemoryEntry and Document into a 'KnowledgeArtifact' supertype."
+
+  - id: "Q003"
+    question: "Can the AgentAdapter conformance suite become executable (rather than written-spec-only) before more L4 packages ship?"
+    raised_at: "2026-04-27"
+    raised_by: "dos-extract (auto)"
+    owner: "TBD (recommend: provider/adapter maintainer)"
+    deadline: "TBD"
+    impact_if_unresolved: |
+      ADR-0008 commits to executable conformance for ≥2-impl interfaces.
+      AgentAdapter has 2+ implementations (Anthropic, OpenAI) but only a
+      written spec today. The longer this gap persists, the larger the
+      surface area for adapter semantic drift across providers.
+    candidates:
+      - "Ship runAgentAdapterConformance() in `harness-one/testing` with stubbed providers."
+      - "Defer until Provider 3 (Groq/Together?) lands and the cost of drift is concrete."
+
+  - id: "Q004"
+    question: "How should DevKit's DOS relate to harness-one core's DOS — sibling document or single merged ontology?"
+    raised_at: "2026-04-27"
+    raised_by: "dos-extract (auto)"
+    owner: "TBD (recommend: devkit maintainer)"
+    deadline: "TBD"
+    impact_if_unresolved: |
+      Today DevKit is treated as a downstream Bounded Context. Its objects
+      (EvalCase, Scorer, ComponentMeta, DriftReport, TasteCodingRule) are
+      load-bearing for the 'evolution' layer of the reference architecture
+      but absent from this DOS. When developers consume both core + devkit,
+      they'd benefit from one consolidated ontology document; when
+      maintaining either independently, separate DOSes are simpler.
+    candidates:
+      - "Author a separate devkit DOS; cross-reference from this DOS's bounded_contexts.downstream_contexts."
+      - "Merge after first user-validation cycle if cross-references prove painful."
+
+  - id: "Q005"
+    question: "Should `Session` and `MemoryEntry` consolidate around a unified 'persistence' aggregate, or stay separate?"
+    raised_at: "2026-04-27"
+    raised_by: "dos-extract (auto)"
+    owner: "TBD (recommend: memory + session maintainers)"
+    deadline: "TBD"
+    impact_if_unresolved: |
+      The two have different lifecycles (Session: TTL/LRU, in-memory; MemoryEntry:
+      graded compaction, often persistent) but overlapping use cases (long-term
+      conversation memory). The convergence question becomes acute when a
+      consumer wants to bridge `Session.messages` into `MemoryEntry.content`
+      automatically. Today this is plumbed via `ContextRelay` — a third
+      composition.
+    candidates:
+      - "Keep separate; ContextRelay is the documented bridge."
+      - "Introduce a higher-level 'AgentMemory' aggregate that wraps both."
+
+
+# -----------------------------------------------------------------------------
+# 12. Evolution log
+# -----------------------------------------------------------------------------
+evolution_log:
+  - version: "0.1.0"
+    date: "2026-04-27"
+    author: "XRenSiu (via dos-extract auto mode)"
+    change_type: "initial"
+    summary: "Extracted from harness-one monorepo via dos-extract skill."
+    rationale: |
+      Reverse-engineered baseline DOS from the existing codebase, README,
+      ARCHITECTURE.md, ADRs, and per-subsystem architecture docs. Consolidates
+      52 candidate business nouns into 7 core objects with explicit
+      Judgment-2/3/4 reasoning recorded in `decisions.md`. Pending team review.
+    breaking: false
+
+
+# =============================================================================
+# End of DOS
+# =============================================================================
