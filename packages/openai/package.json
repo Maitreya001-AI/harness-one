@@ -33,7 +33,7 @@
     "openai": ">=4.0.0"
   },
   "devDependencies": {
-    "openai": "^6.34.0",
+    "openai": "^6.38.0",
     "tsup": "^8.0.0",
     "typescript": "^6.0.3",
     "vitest": "^4.1.5"
