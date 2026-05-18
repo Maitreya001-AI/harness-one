@@ -57,7 +57,7 @@
     "@anthropic-ai/sdk": "^0.91.0",
     "@vitest/coverage-v8": "^4.1.5",
     "tsup": "^8.0.0",
-    "tsx": "^4.19.0",
+    "tsx": "^4.22.2",
     "typescript": "^6.0.3",
     "vitest": "^4.1.5"
   },
