@@ -196,17 +196,15 @@ jobs:
         run: pnpm check:tree-shake
 
       - name: Error-message action-item lint
-        # Non-blocking: the first scan after this lands will surface 15+
-        # pre-existing cases (see Track L PR description). Flip to
-        # blocking once the owner has batched the fix.
+        # Blocking (2026-07-03): the pre-existing violations have been
+        # batched-fixed; every HarnessError-family throw now carries an
+        # action verb, suggestion arg, or doc anchor. Regressions fail CI.
         run: pnpm lint:errors
-        continue-on-error: true
 
       - name: TSDoc @example coverage on public factories
-        # Non-blocking for the same reason — 12 public `createXxx` factories
-        # are missing @example today. Listed in the PR description.
+        # Blocking (2026-07-03): all public `createXxx` factories now carry
+        # an @example block. A new factory without one fails CI.
         run: pnpm lint:tsdoc
-        continue-on-error: true
 
   size-limit:
     # Bundle-size regression gate (Track L1). Runs only on PRs so the

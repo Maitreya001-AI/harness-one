@@ -25,9 +25,10 @@ export default tseslint.config(
         allowHigherOrderFunctions: true,
       }],
       // Prevent accidental floating promises — requires typed linting
-      // (parserOptions.project). Kept 'off' at the global level; enable in
-      // package-level configs that wire up project references. The rule is
-      // documented as a code-review standard even when not lint-enforced.
+      // (parserOptions.project). Kept 'off' at the global level because most
+      // linted files (tests, fixtures) are not wired into a build tsconfig;
+      // turned ON as 'error' for `packages/*/src/**` production source in the
+      // type-aware block below, where the project service supplies type info.
       '@typescript-eslint/no-floating-promises': 'off',
       // Allow unused vars prefixed with _
       '@typescript-eslint/no-unused-vars': ['error', {
@@ -50,6 +51,39 @@ export default tseslint.config(
       '@typescript-eslint/no-invalid-void-type': 'off',
       // Disallow console in library source code (use structured logging)
       'no-console': ['warn', { allow: ['warn', 'debug'] }],
+    },
+  },
+  // Type-aware linting — production source only.
+  //
+  // `no-floating-promises` needs the TypeScript type checker to tell a
+  // Promise-returning call from a synchronous one, so it only works under
+  // typed linting. We wire up typescript-eslint's project service (its
+  // LSP-style, per-file tsconfig resolver) for `packages/*/src/**` non-test
+  // files and turn the rule ON as an error there.
+  //
+  // Scope rationale: typed linting is the expensive part of ESLint. Limiting
+  // it to production source (243 files, all already covered by each
+  // package's build `tsconfig.json`) keeps lint time bounded. Tests and lint
+  // fixtures are deliberately excluded — they are not part of any package's
+  // build tsconfig (`exclude: ["**/*.test.ts"]`), so the project service has
+  // no type info for them, and a floating promise inside a test body is
+  // low-risk. Enabling repo-wide typed linting would additionally type-check
+  // every test + fixture file for little safety gain.
+  {
+    files: ['packages/*/src/**/*.{ts,tsx}'],
+    ignores: [
+      '**/__tests__/**',
+      '**/*.test.ts',
+      '**/__lint-fixtures__/**',
+    ],
+    languageOptions: {
+      parserOptions: {
+        projectService: true,
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+    rules: {
+      '@typescript-eslint/no-floating-promises': 'error',
     },
   },
   // Forbid reaching into harness-one's infra/ internals from outside

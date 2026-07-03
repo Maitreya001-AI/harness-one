@@ -40,6 +40,16 @@ jobs:
       - name: Verify api.md snapshots match committed ones
         run: pnpm api:check
 
+      - name: Public-symbol removal gate
+        # Runs AFTER api:check, so the working-tree *.api.md is guaranteed to
+        # match a fresh api-extractor run (base-vs-worktree == base-vs-regen).
+        # Fails if any exported symbol present in the base branch's api.md is
+        # gone from the PR's, unless the base declaration was @deprecated or
+        # MIGRATION.md's "## Unreleased" section names the symbol.
+        env:
+          API_REMOVALS_BASE_REF: ${{ github.event.pull_request.base.sha }}
+        run: node tools/check-api-removals.mjs
+
       - name: PR-body rationale gate for api.md diffs
         # Fails the PR if any packages/*/etc/*.api.md differs vs base and
         # the PR body lacks a "## API change rationale" section.

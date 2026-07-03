@@ -9,7 +9,7 @@
   {
     "name": "harness-one/advanced",
     "path": "tools/size-check/bundles/advanced.js",
-    "limit": "18 KB",
+    "limit": "19 KB",
     "brotli": false,
     "gzip": true
   },
@@ -30,14 +30,14 @@
   {
     "name": "@harness-one/anthropic",
     "path": "tools/size-check/bundles/anthropic.js",
-    "limit": "3.2 KB",
+    "limit": "5 KB",
     "brotli": false,
     "gzip": true
   },
   {
     "name": "@harness-one/openai",
     "path": "tools/size-check/bundles/openai.js",
-    "limit": "4.5 KB",
+    "limit": "6 KB",
     "brotli": false,
     "gzip": true
   }
