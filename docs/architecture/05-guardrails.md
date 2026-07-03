@@ -65,7 +65,7 @@ guardrails 模块实现 AI 安全层：通过 Pipeline 将多个护栏串联执�
 | `GuardrailVerdict` | `{ action: 'allow' } \| { action: 'block'; reason } \| { action: 'modify'; modified; reason }` |
 | `GuardrailContext` | 护栏输入：content + meta |
 | `Guardrail` | 护栏函数签名：`(ctx) => Promise<GuardrailVerdict> \| GuardrailVerdict` |
-| `GuardrailEvent` | 护栏执行事件：guardrail、direction、verdict、latencyMs |
+| `GuardrailEvent` | 护栏执行事件：guardrail、direction(完整四值 `input`/`output`/`tool_output`/`rag`——`runToolOutput` 标记 `tool_output`,`runRagContext` 标记 `rag`,不再折叠为 output/input)、verdict、latencyMs |
 | `PipelineResult` | Pipeline 执行结果：passed、verdict、results、modifiedContent? |
 | `GuardrailPipeline` | Pipeline 不透明类型（branded） |
 

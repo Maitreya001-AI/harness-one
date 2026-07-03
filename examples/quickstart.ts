@@ -14,7 +14,7 @@ import { createSecurePreset } from '@harness-one/preset';
 const harness = createSecurePreset({
   provider: 'anthropic',
   client: new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }),
-  model: 'claude-sonnet-4-20250514',
+  model: 'claude-sonnet-5',
 });
 
 for await (const event of harness.run([

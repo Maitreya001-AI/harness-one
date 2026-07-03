@@ -26,10 +26,10 @@ try {
 | `CORE_INVALID_CONFIG` | Construction-time configuration rejected (missing adapter, invalid budget, malformed provider string, NaN/Infinity in pricing, …) | Read `err.message` — it names the offending field. Typical cases: missing `client` / `model` / `provider`, passing `{}` as `langfuse`, passing a non-positive `maxIterations`. |
 | `ADAPTER_AUTH` | Provider rejected the API key (401 / "unauthorized" / "api key") | Check `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` env var. The adapter does not retry auth failures — they are non-retryable by default. |
 | `ADAPTER_RATE_LIMIT` | Provider returned 429 / "rate" / "too many requests" | Retryable by default (in `retryableErrors`). If it exhausts retries, add a `createRateLimiter` guard on input or back off at the application layer. |
-| `ADAPTER_UNAVAILABLE` | 502 / 503 / 504 / "bad gateway" / "service unavailable" | Transient upstream failure. Retried by default with exponential backoff. Consider wiring a `createFallbackAdapter` to a secondary provider. |
+| `ADAPTER_UNAVAILABLE` | 502 / 503 / 504 / "bad gateway" / "service unavailable" | Transient upstream failure. **Not retried by default** — the default `retryableErrors` is `['ADAPTER_RATE_LIMIT']` only; add `'ADAPTER_UNAVAILABLE'` to widen. Consider wiring a `createFallbackAdapter` to a secondary provider. |
 | `ADAPTER_NETWORK` | `timeout` / `econnrefused` / "fetch" / "network" | **Not** retryable by default — classifier prioritises 5xx over generic network failures. Widen `retryableErrors` to include `ADAPTER_NETWORK` if your upstream is flaky. |
 | `ADAPTER_PARSE` | Provider returned unparseable body | Usually a provider outage. Not retryable. File a provider-side bug. |
-| `ADAPTER_CIRCUIT_OPEN` | Circuit breaker is OPEN — too many consecutive failures | Breaker will close after its cooldown. To tune: `createAgentLoop({ circuitBreaker: { failureThreshold, cooldownMs } })`. |
+| `ADAPTER_CIRCUIT_OPEN` | Circuit breaker is OPEN — too many consecutive failures | Breaker half-opens after its cooldown and probes automatically. Construct/tune via `createCircuitBreaker(config)` from `harness-one/advanced` and wrap the downstream call yourself — `AgentLoopConfig` has no `circuitBreaker` field. See [resilience.md](./resilience.md). |
 | `ADAPTER_PAYLOAD_OVERSIZED` | Stream cumulatively exceeded `maxStreamBytes` or a tool-call arg exceeded `maxToolArgBytes` | Shrink the model output (tighter prompt) or raise the ceiling via `AgentLoopConfig`. |
 | `CORE_MAX_ITERATIONS` | Loop hit `maxIterations` without the model choosing `end_turn` | Model is stuck. Raise the ceiling, or add an explicit stop criterion via guardrails / tools. |
 | `CORE_TOKEN_BUDGET_EXCEEDED` | Cumulative `inputTokens + outputTokens` crossed `maxTotalTokens` | Expected when you budget-cap; trim the conversation (`pruneConversation`) or raise the ceiling. |
@@ -54,6 +54,26 @@ Most likely a tool-loop. Confirm:
   model interprets as "try again" (`GUARDRAIL_VIOLATION:<name>` stubs are the
   signal — you'll see them in the `tool_call_result` events).
 
+### "Warning: AgentLoop has no token or duration budget"
+`maxTotalTokens` defaults to `Infinity`; with no `maxDurationMs` either,
+only `maxIterations` bounds a run — there is no real cost ceiling. The
+loop surfaces that once per instance. Set `maxTotalTokens` and/or
+`maxDurationMs` in the config, or route the warning logger-side if the
+unbounded default is intentional.
+
+### "Warning: streaming adapter reported no token usage"
+The adapter's stream ended without a usage-carrying `{type:'done'}` chunk
+(or with a zeroed one). The loop estimates tokens heuristically so
+`maxTotalTokens` stays enforceable, but estimates are approximate — fix
+the adapter to emit real usage on the final `done` chunk (see
+[`docs/provider-spec.md`](../provider-spec.md), "TokenUsage reporting").
+
+### "Which resilience mechanism do I reach for?"
+harness-one ships four overlapping ones — in-loop retry, fallback adapter,
+resilient loop, circuit breaker. The [resilience selection
+guide](./resilience.md) has the decision table, composition order, and the
+retry-multiplication warning.
+
 ### "Fallback adapter never recovers to primary"
 By design — the breaker advances one-way. See
 [`fallback.md`](./fallback.md) for active-health-check and periodic-reset
@@ -73,6 +93,26 @@ rule `harness-one/no-type-only-harness-error-code` catches this.
 The model produced unparseable JSON. Default policy is **warn + substitute
 `{}`**. Tighten by passing `{ onMalformedToolUse: 'throw' }` to the
 adapter factory.
+
+### "Cache-hit metrics always 0"
+`TokenUsage.cacheReadTokens` / `cacheWriteTokens` are reported correctly,
+but Anthropic only *populates* them when the request carries `cache_control`
+breakpoints — and the adapter emits none by default (so the request shape
+stays unchanged unless you opt in). Enable prompt caching on the adapter:
+
+```ts
+createAnthropicAdapter({
+  client,
+  promptCaching: { system: true, lastMessage: true },
+});
+```
+
+`system: true` caches the system prompt; `lastMessage: true` caches the
+growing conversation prefix (ideal in an agent loop). See the adapter-specific
+"Prompt caching (optional)" section in
+[`docs/provider-spec.md`](../provider-spec.md). If the metrics remain 0
+*after* enabling, verify the adapter's `toTokenUsage()` mapping surfaces
+`cache_read_input_tokens` / `cache_creation_input_tokens`.
 
 ### "I'm getting `ERR_PACKAGE_PATH_NOT_EXPORTED` on `harness-one/<path>`"
 The subpath either doesn't exist or is newer than the installed build.

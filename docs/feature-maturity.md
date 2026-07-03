@@ -18,7 +18,7 @@ production-ready vs. what requires additional work.
 | RAG Pipeline | Production | Loaders, chunking, in-memory retriever |
 | Prompt Engineering | Production | Builder, registry, skill engine |
 | Context Engineering | Production | Budget, packing, compression, checkpoints |
-| Multi-Agent Orchestration | Production | Agent pool, handoff, context boundaries |
+| Multi-Agent Orchestration | Advisory | Agent pool, handoff, context boundaries — but single-process and in-memory only: no agent-state persistence (pool empties on restart), in-memory-only handoff inbox/receipts, advisory-only context boundaries (bypassable via the raw SharedContext), opt-in cycle detection (`delegatedFrom` is a metadata convention). See [12-orchestration-multi-agent.md § 已知限制](./architecture/12-orchestration-multi-agent.md#已知限制) for the full list. |
 | Fallback Adapter | Production | Circuit-breaker with mutual exclusion |
 | Circuit Breaker | Production | Prevents cascade failures when LLM provider is down |
 | Graceful Shutdown | Production | SIGTERM/SIGINT → drain → dispose handler |

@@ -27,7 +27,7 @@ export function createLLMJudge(config: {
   criteria?: string;
 }): Scorer {
   const client = new Anthropic({ apiKey: config.apiKey });
-  const model = config.model ?? 'claude-sonnet-4-20250514';
+  const model = config.model ?? 'claude-sonnet-5';
   const criteria =
     config.criteria ??
     'accuracy, completeness, clarity, and helpfulness';

@@ -1,6 +1,7 @@
 {
   "name": "harness-one-monorepo",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "packageManager": "pnpm@10.24.0",
   "engines": {

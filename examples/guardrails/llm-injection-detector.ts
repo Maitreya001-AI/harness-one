@@ -30,7 +30,7 @@ export function createLLMInjectionDetector(config: {
   threshold?: number;
 }): { name: string; guard: Guardrail } {
   const client = new Anthropic({ apiKey: config.apiKey });
-  const model = config.model ?? 'claude-sonnet-4-20250514';
+  const model = config.model ?? 'claude-sonnet-5';
   const threshold = config.threshold ?? 0.7; // Block if confidence >= threshold
 
   const guard: Guardrail = async (ctx: GuardrailContext): Promise<GuardrailVerdict> => {

@@ -8,8 +8,8 @@ either continuously running or maturing into a vertical package.
 | App | Status | Feedback path |
 |---|---|---|
 | [`dogfood/`](./dogfood/) | running | [`HARNESS_LOG.md`](./dogfood/HARNESS_LOG.md) + `dogfood-reports/` + [`RETRO/`](./dogfood/RETRO/) |
-| `coding-agent/` | planned | Same as `harness-one-coding` vertical package — see [design](../docs/app-designs/coding-agent-DESIGN.md) |
-| `research-collab/` | planned | Multi-agent research collaboration — see [design](../docs/app-designs/research-collab-DESIGN.md) |
+| [`coding-agent/`](./coding-agent/) | built · feeding friction loop | [`HARNESS_LOG.md`](./coding-agent/HARNESS_LOG.md) (19 entries). Also ships as the `harness-one-coding` vertical package — see [design](../docs/app-designs/coding-agent-DESIGN.md) |
+| [`research-collab/`](./research-collab/) | built · feeding friction loop | [`HARNESS_LOG.md`](./research-collab/HARNESS_LOG.md) (8 entries). Multi-agent research collaboration — see [design](../docs/app-designs/research-collab-DESIGN.md) |
 
 ## How is this different from `examples/` and `showcases/`?
 

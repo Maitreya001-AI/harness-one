@@ -11,7 +11,7 @@ import { createFallbackAdapter } from 'harness-one/advanced';
 // import { createOpenAIAdapter } from '@harness-one/openai';
 
 // In production, create real adapters:
-// const primary = createAnthropicAdapter({ client, model: 'claude-sonnet-4-20250514' });
+// const primary = createAnthropicAdapter({ client, model: 'claude-sonnet-5' });
 // const fallback = createOpenAIAdapter({ client, model: 'gpt-4o' });
 
 // For this example, we use mock adapters to demonstrate the pattern:

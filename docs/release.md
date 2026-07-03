@@ -41,6 +41,23 @@ and is a deliberate, out-of-band step.
      Rekor transparency log.
    - Publishes each tarball to npm via OIDC — no secret involved.
 
+## Pre-release checklist
+
+Before merging the "Version Packages" PR, run these data-freshness checks.
+They guard against shipping *stale reference data* — bytes that build and
+test green but are wrong about the outside world.
+
+- [ ] **Re-verify `defaultModelPricing`.** The static pricing snapshot in
+      `packages/core/src/observe/default-pricing.ts` is exactly that — a
+      snapshot ([ADR-0013](adr/0013-model-pricing-freshness.md)). Check each
+      entry against the vendor's current public price sheet. If anything
+      moved, update the numbers **and** bump `DEFAULT_PRICING_SNAPSHOT_DATE`
+      to today; if nothing moved, bump the date anyway to record that the
+      table was re-verified this cycle. The runtime guard for *unpriced*
+      models is `warnUnpricedModels` (default-on on `createCostTracker`) —
+      but it cannot catch a price that is present-but-wrong, which is why
+      this manual step exists.
+
 ## One-time npm configuration (owner only)
 
 Each published package needs a **trusted publisher** record on npm.

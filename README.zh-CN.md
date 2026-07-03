@@ -62,7 +62,7 @@ import { createSecurePreset } from '@harness-one/preset';
 const harness = createSecurePreset({
   provider: 'anthropic',
   client: new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }),
-  model: 'claude-sonnet-4-20250514',
+  model: 'claude-sonnet-5',
   // guardrailLevel 默认是 'standard'
 });
 ```
@@ -110,7 +110,7 @@ import { createHarness } from '@harness-one/preset';
 const harness = createHarness({
   provider: 'anthropic',
   client: new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }),
-  model: 'claude-sonnet-4-20250514',
+  model: 'claude-sonnet-5',
   budget: 5.0,  // 生产必填，否则构造时打 warn
 });
 
@@ -327,10 +327,12 @@ package 规划。
 
 - [`apps/dogfood/`](./apps/dogfood/)——Issue triage bot，每个新 issue 上跑，
   报告写入 `dogfood-reports/`。
-- `apps/coding-agent/`（规划中）——自主编码 agent，同时发布为
+- [`apps/coding-agent/`](./apps/coding-agent/)——自主编码 agent，已构建并在
+  持续反哺 friction loop（`HARNESS_LOG.md` 19 条），同时发布为
   `harness-one-coding` vertical package
   ([design](./docs/app-designs/coding-agent-DESIGN.md))。
-- `apps/research-collab/`（规划中）——多 agent 研究协作流水线
+- [`apps/research-collab/`](./apps/research-collab/)——多 agent 研究协作流水线，
+  已构建并在持续反哺 friction loop（`HARNESS_LOG.md` 8 条）
   ([design](./docs/app-designs/research-collab-DESIGN.md))。
 
 apps 通过 `HARNESS_LOG.md`（持续）和季度 `RETRO/` 回顾向 harness-one 反哺。

@@ -6,7 +6,7 @@
 
 core 模块（`packages/core/src/core/`）定义了 harness-one 的共享类型契约
 （Message、TokenUsage、AgentAdapter 等）、错误层级（`HarnessError` 基类
-+ 5 个子类）、事件系统（`AgentEvent` 判别联合，9 个变体）、AgentLoop
++ 5 个子类）、事件系统（`AgentEvent` 判别联合，11 个变体）、AgentLoop
 工厂，以及两个跨切 port（`MetricsPort`、`InstrumentationPort`）与
 `pricing` 计算。所有 L3 功能模块通过类型导入依赖 core，但 core 自身
 仅依赖 `infra/`（L1 叶子层）。
@@ -74,7 +74,7 @@ core 模块（`packages/core/src/core/`）定义了 harness-one 的共享类型�
 |------|------|--------|
 | `src/core/types.ts` | 共享类型定义：`Message`、`AgentAdapter`、`ToolSchema`、`ExecutionStrategy` 等 | 263 |
 | `src/core/errors.ts` | 5 个 `HarnessError` 子类（基类与 `HarnessErrorCode` 已下沉到 `infra/errors-base.ts`） | 106 |
-| `src/core/events.ts` | `AgentEvent` 判别联合（**9 个变体**）+ `DoneReason` + `assertNever` | 68 |
+| `src/core/events.ts` | `AgentEvent` 判别联合（**11 个变体**）+ `DoneReason` + `assertNever` | 74 |
 | `src/core/metrics-port.ts` | `MetricsPort` 接口 + `createNoopMetricsPort` | 58 |
 | `src/core/instrumentation-port.ts` | `InstrumentationPort` 薄 tracing 接口（RAG 等子系统使用） | 42 |
 | `src/core/pricing.ts` | `priceUsage`、`hasNonFiniteTokens`、`ModelPricing` 计算 | 91 |
@@ -93,7 +93,8 @@ core 模块（`packages/core/src/core/`）定义了 harness-one 的共享类型�
 | 类型 | 说明 |
 |------|------|
 | `Role` | `'system' \| 'user' \| 'assistant' \| 'tool'` |
-| `Message` | 对话消息，含 role、content、toolCalls、meta |
+| `Message` | 对话消息，含 role、content、blocks?、toolCalls、meta |
+| `ContentBlock` | RFC-0001 内容块联合：`TextBlock` / `ThinkingBlock` / `RedactedThinkingBlock` / `ImageBlock`；`content` 恒为文本投影（`blocksText()` 辅助函数） |
 | `MessageMeta` | 消息元数据：pinned、isFailureTrace、timestamp、tokens |
 | `SystemMessage` / `UserMessage` / `AssistantMessage` / `ToolMessage` | role 细分的消息类型 |
 | `TrustedSystemBrand` | 可信 system 消息 brand（防止 memory/session 回填被提权） |
@@ -104,10 +105,10 @@ core 模块（`packages/core/src/core/`）定义了 harness-one 的共享类型�
 | `ResponseFormat` | 结构化输出声明 |
 | `ChatParams` | `chat()` 入参：messages + tools + signal + config?（LLMConfig） |
 | `ChatResponse` | `chat()` 返回：message + usage |
-| `StreamChunk` | 流式响应片段：`text_delta` / `tool_call_delta` / `done` |
+| `StreamChunk` | 流式响应片段：`text_delta` / `thinking_delta` / `tool_call_delta` / `done` |
 | `ToolSchema` | 工具的 JSON Schema 描述 |
 | `JsonSchema` / `JsonSchemaType` | JSON Schema 支持子集 |
-| `AgentEvent` | 9 种事件的判别联合（见下） |
+| `AgentEvent` | 11 种事件的判别联合（见下） |
 | `DoneReason` | `'end_turn' \| 'max_iterations' \| 'token_budget' \| 'aborted' \| 'error'` |
 | `ToolExecutionResult` | 工具批量执行的单条结果：toolCallId + result |
 | `ExecutionStrategy` | 工具执行策略接口：`execute(calls, handler, options)`；可选 `dispose()` |
@@ -115,13 +116,13 @@ core 模块（`packages/core/src/core/`）定义了 harness-one 的共享类型�
 | `AgentLoopHook` | 生命周期 hook 接口：`onIterationStart` / `onIterationEnd` 等 |
 | `AgentLoopStatus` | `'idle' \| 'running' \| 'completed' \| 'errored' \| 'disposed'` |
 
-### AgentEvent 变体（9 个）
+### AgentEvent 变体（11 个）
 
-`iteration_start` / `text_delta` / `tool_call_delta` / `tool_call` /
-`tool_result` / `message` / `warning` / `error` / `guardrail_blocked` /
-`done`（实际 10 个 literal：`warning` 是 soft event，`error` 和
-`guardrail_blocked` 是错误路径，其余是正常数据流）。用 `assertNever` 做
-exhaustive switch。
+`iteration_start` / `text_delta` / `thinking_delta` / `tool_call_delta` /
+`tool_call` / `tool_result` / `message` / `warning` / `error` /
+`guardrail_blocked` / `done`（`warning` 是 soft event，`error` 和
+`guardrail_blocked` 是错误路径，`thinking_delta` 为 RFC-0001 推理增量，
+其余是正常数据流）。用 `assertNever` 做 exhaustive switch。
 
 ### 错误类
 
@@ -287,7 +288,7 @@ AgentLoop 在超出 token 预算时裁剪历史对话（委托
 | 属性 | 值示例 | 用途 |
 |---|---|---|
 | `iteration` | `1` | 聚合同一迭代索引的 span（工具循环识别） |
-| `adapter` | `"anthropic:claude-sonnet-4"` | 按 adapter 切片延迟 / 错误率 |
+| `adapter` | `"anthropic:claude-sonnet-5"` | 按 adapter 切片延迟 / 错误率 |
 | `conversationLength` | `42` | 压缩压力信号 |
 | `streaming` | `false` | 区分 chat() vs stream() 路径 |
 | `toolCount` | `3` | 一次迭代返回的工具调用数（工具爆炸预警） |
@@ -317,6 +318,13 @@ span event，属性含 `attempt`、`errorCategory`、`path`（`'chat'` 或
 - 通过 `signal` (AbortSignal) 实现外部取消控制
 - 通过 `executionStrategy` 传入自定义工具执行策略（如依赖感知、优先级调度）
 - 通过 `parallel: true` 启用内置并行执行策略
+- 通过 `clock?: Clock` 注入可测试的墙钟（B8）。`Clock` 是 `infra/clock.ts`
+  的单方法端口（`now(): number`），默认 `systemClock`（= `Date.now()`）。
+  `AgentLoopConfig.clock` 经 `resolveAgentLoopConfig` 解析后穿过
+  `CoordinatorDeps`（`runStartTimeMs` 与 `maxDurationMs` 时长预算）与
+  `AdapterCallerConfig`（重试计时 `totalDurationMs`）。注入假时钟即可在不真实
+  等待的前提下断言时长预算/计时逻辑。从 `harness-one/advanced` 与
+  `harness-one/infra` 导出。
 
 ## 设计决策
 
@@ -325,6 +333,10 @@ span event，属性含 `attempt`、`errorCategory`、`path`（`'chat'` 或
 3. **token 非负 clamp**——`Math.max(0, ...)` 防止恶意 adapter 通过负数绕过预算检查
 4. **HarnessError 层级**——每个子类携带 `.code`（程序判断）+ `.suggestion`（人类可读修复建议）
 5. **Iteration coordinator 拆分**——事件状态机与 AgentLoop 解耦，便于单元测试
+6. **Clock 端口（B8）**——`Date.now()` 曾散落在 adapter-caller（~8 处）与
+   iteration-coordinator（~3 处），使时长预算/计时无法在不用 fake timers 的情况下
+   测试。抽出 `Clock` 端口后，内部 deps bag 上字段为可选（`?? systemClock`
+   兜底），对外 `AgentLoopConfig.clock` 亦可选——默认行为逐字节不变。
 
 ## 已知限制
 

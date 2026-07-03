@@ -11,7 +11,7 @@ context 模块处理 LLM 上下文窗口的工程问题：通过 TokenBudget 分
 | 文件 | 职责 | 约行数 |
 |------|------|--------|
 | `src/context/types.ts` | 类型定义：Segment、TokenBudget、ContextLayout、CompressionStrategy、Checkpoint 等 | 163 |
-| `src/context/count-tokens.ts` | `countTokens` + `registerTokenizer`——委托 `infra/token-estimator.ts` | 73 |
+| `src/context/count-tokens.ts` | `countTokens`（可选 `tokenizerRegistry` 注入）+ `registerTokenizer` + `createTokenizerRegistry`——委托 `infra/token-estimator.ts` | 73 |
 | `src/context/budget.ts` | `createBudget` 工厂——分段 token 预算管理 | 161 |
 | `src/context/pack.ts` | `packContext`——HEAD/MID/TAIL 打包 | 73 |
 | `src/context/compress.ts` | `compress` + 4 种内置策略 + `compactIfNeeded` 条件压缩 + `createAdapterSummarizer` | 434 |
@@ -41,11 +41,22 @@ function createBudget(config: BudgetConfig): TokenBudget
 ```
 TokenBudget 接口：`remaining(segment)`, `allocate(segment, tokens)`, `reset(segment)`, `needsTrimming()`, `trimOrder()`.
 
-**countTokens(model, messages)** / **registerTokenizer(model, tokenizer)**
+**countTokens(model, messages, tokenizerRegistry?)** / **registerTokenizer(model, tokenizer)** / **createTokenizerRegistry()**
 ```ts
-function countTokens(model: string, messages: readonly Message[]): number
+function countTokens(
+  model: string,
+  messages: readonly Message[],
+  tokenizerRegistry?: TokenizerRegistry,
+): number
 function registerTokenizer(model: string, tokenizer: Tokenizer): void
+function createTokenizerRegistry(): TokenizerRegistry // { register, estimate }
 ```
+
+`registerTokenizer` 写入**进程级默认注册表**（`@harness-one/tiktoken` 也走这条
+全局路径）。库作者应改用 `createTokenizerRegistry()` 拿到实例级注册表，避免同一
+进程内两个消费者互相覆盖；再把它通过 `countTokens(..., tokenizerRegistry)` 注入
+（B7）。注入自定义注册表时，`countTokens` 会**跳过按消息缓存的 WeakMap**——该缓存
+只按 `(message, model)` 建键，无法区分注册表，若复用会造成跨注册表污染。
 
 **packContext(layout, model?)**
 ```ts
@@ -122,7 +133,10 @@ packContext 先从总预算中减去 `budget.responseReserve`，再计算 MID �
 ## 扩展点
 
 - 实现 `CompressionStrategy` 接口自定义压缩策略，传入 compress() 的 strategy 参数
-- 通过 `registerTokenizer()` 注册精确的模型 tokenizer（如 tiktoken）
+- 通过 `registerTokenizer()` 注册精确的模型 tokenizer（如 tiktoken）到全局默认注册表
+- 通过 `createTokenizerRegistry()` 创建实例级注册表并注入 `countTokens`（B7，库作者推荐）
+- 通过 `CheckpointManagerConfig.clock?: Clock` 注入墙钟，使 `timestamp` 与
+  `prune({ maxAge })` 的 cutoff 可确定性测试（B8，默认 `systemClock`）
 - `preserve` 回调允许按业务规则保护特定消息
 
 ## 设计决策

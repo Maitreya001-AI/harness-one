@@ -18,7 +18,7 @@ This repo uses [pnpm workspaces](https://pnpm.io/workspaces).
 **Prerequisites** (enforced by `engines` in `package.json` and a
 `preinstall` check):
 
-- Node.js `>= 18` (Node 20 LTS recommended).
+- Node.js `>= 22` (matches the root `package.json` `engines` field).
 - pnpm `>= 9`. Install with `corepack enable` or `npm i -g pnpm@9`.
 
 ```bash

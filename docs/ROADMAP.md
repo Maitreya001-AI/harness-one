@@ -52,8 +52,8 @@ Every box below has a CI workflow or a directory of tests as evidence.
   under `packages/core/tests/type-level/`.
 - **Layer 12 DX** — `size-limit` gate, tree-shake verifier, error-message
   lint (`tools/lint-error-messages`), TSDoc lint (`tools/lint-tsdoc`).
-- **Layer 13 Docs** — `lychee` link checker, `typedoc` build, 10 ADRs
-  under `docs/adr/`.
+- **Layer 13 Docs** — `lychee` link checker, `typedoc` build, 14 ADRs
+  under `docs/adr/`, RFC process scaffold under `docs/rfc/`.
 - **Layer 14 Mutation** — Stryker with a 80% break threshold, weekly run
   via `.github/workflows/mutation.yml`.
 - **Layer 15 Release** — reproducible `pnpm pack`, SLSA provenance, OIDC
@@ -76,6 +76,15 @@ Driven by dogfood + first-user feedback, not speculation.
   contract suite (layer 3). Cassettes + nightly drift.
 - **`@harness-one/bedrock`** — the enterprise checkbox adapter; only
   merges once it passes the same contract suite as the other two.
+
+### MCP interop
+
+- **`@harness-one/mcp`** — a sibling **bridge** package (per
+  [ADR-0011](adr/0011-mcp-position.md)) that translates Model Context
+  Protocol server tool definitions into `defineTool()` / `ToolSchema` and
+  MCP resources into `memory` / `rag` loaders. Core stays MCP-agnostic and
+  zero-dep ([ADR-0004](adr/0004-zero-runtime-deps-in-core.md)); the
+  bridge owns all protocol churn.
 
 ### Dogfood-signal-driven fixes
 

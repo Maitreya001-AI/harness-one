@@ -134,7 +134,7 @@ export function createAnthropicAdapter(config: {
   maxRetries?: number;
 }): AgentAdapter {
   const client = new Anthropic({ apiKey: config.apiKey, maxRetries: config.maxRetries });
-  const model = config.model ?? 'claude-sonnet-4-20250514';
+  const model = config.model ?? 'claude-sonnet-5';
 
   return {
     // -----------------------------------------------------------------------

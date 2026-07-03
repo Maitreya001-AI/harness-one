@@ -96,6 +96,42 @@ Rules:
 - Zero-token fallbacks MUST emit a one-time `console.warn` — they
   indicate an adapter bug or an API change.
 
+### Prompt caching (optional, adapter-specific)
+
+Reporting `cacheReadTokens` / `cacheWriteTokens` is required *when the
+provider exposes them*, but **activating** provider-side prompt caching is
+an adapter-specific concern, not part of the cross-provider contract. Some
+providers (e.g. Anthropic) cache only when the request carries explicit
+cache-breakpoint markers; without them the cache-token fields stay `0`
+even though the reporting plumbing works.
+
+Adapters MAY expose an opt-in configuration to place those breakpoints.
+The reference implementation is `@harness-one/anthropic`'s `promptCaching`
+factory option:
+
+```ts
+createAnthropicAdapter({
+  client,
+  // Default: undefined (off) — request shape unchanged, cache tokens stay 0.
+  promptCaching: {
+    system?: boolean;       // cache the system prompt (breakpoint on the
+                            // last system block)
+    lastMessage?: boolean;  // cache the whole conversation prefix
+                            // (breakpoint on the last block of the final
+                            // message — ideal for agent loops)
+  },
+});
+```
+
+Rules for any adapter that adds such an option:
+
+- **Off by default.** Omitting the option MUST NOT change the request shape
+  or behaviour.
+- **Respect provider breakpoint caps.** Anthropic allows at most 4
+  `cache_control` breakpoints; the reference adapter sets at most 2.
+- The option is **not** part of the `AgentAdapter` interface — it lives on
+  the adapter's own config type and is documented per-adapter.
+
 ## `name` convention
 
 The adapter's `name` is used as the `adapter` attribute on iteration
@@ -105,7 +141,7 @@ spans (see `AgentLoop`'s span enrichment). Format:
 <provider>:<model>
 ```
 
-Examples: `anthropic:claude-sonnet-4`, `openai:gpt-4o`.
+Examples: `anthropic:claude-sonnet-5`, `openai:gpt-4o`.
 
 This allows trace backends to slice latency/error rate by the specific
 model variant.
@@ -115,12 +151,13 @@ model variant.
 Yields `StreamChunk`s as the provider emits them. The canonical
 `StreamChunk` type is exported from `harness-one/core`; the repo source
 (`packages/core/src/core/types.ts`) declares it as a flat interface
-discriminated by `type`. The three variants adapters actually emit are:
+discriminated by `type`. The four variants adapters actually emit are:
 
 ```ts
 // Shape accepted by the harness — only the fields relevant to `type` are set.
 type StreamChunk =
   | { type: 'text_delta'; text: string }
+  | { type: 'thinking_delta'; thinking?: string; signature?: string; redactedData?: string }
   | { type: 'tool_call_delta'; toolCall: Partial<ToolCallRequest> }
   | { type: 'done'; usage: TokenUsage };
 ```
@@ -141,6 +178,32 @@ Rules:
   substitute `{}` and log, never `as Record`.
 - Adapters MUST propagate `params.signal` to the streaming SDK so that
   `loop.abort()` cancels the in-flight stream promptly.
+- `thinking_delta` (RFC-0001) carries extended-thinking content:
+  `thinking` is an incremental reasoning fragment; `signature` may arrive
+  on any chunk of the block (the harness keeps the last one); each
+  `redactedData` payload becomes one `RedactedThinkingBlock` on the
+  reconstructed message. Providers without reasoning output never emit
+  this variant.
+
+## Content blocks (RFC-0001)
+
+`Message` carries an optional `blocks?: readonly ContentBlock[]`
+(`text` / `thinking` / `redacted_thinking` / `image`). Adapter rules:
+
+- **Parse**: when a provider response contains non-text blocks
+  (reasoning, redacted reasoning), populate `Message.blocks` in provider
+  order and keep `content` equal to the text projection
+  (`blocksText(blocks)` — concatenated `text` blocks). Text-only
+  responses SHOULD omit `blocks` entirely.
+- **Replay**: assistant messages carrying `blocks` MUST be replayed
+  verbatim to providers that require it (Anthropic rejects thinking +
+  tool-use turns whose thinking blocks or signatures were altered).
+- **Degrade**: a provider that cannot transport a block type MUST NOT
+  throw — drop or stub the block deterministically and warn once per
+  adapter instance (e.g. OpenAI cannot carry another provider's thinking
+  blocks; tool-result images degrade to a text marker).
+- **Images**: `ImageBlock` in user messages and tool results maps to the
+  provider's native image content where supported.
 
 ## OPTIONAL: `countTokens(messages)`
 

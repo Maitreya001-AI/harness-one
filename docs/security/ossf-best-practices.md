@@ -119,7 +119,7 @@ days for high-severity issues.
 ### 16. `build` — Project builds from source
 
 ✅ `pnpm install --frozen-lockfile && pnpm build` rebuilds all packages.
-Matrix-tested on Ubuntu, macOS, Windows (Node 18/20/22) in `ci.yml`.
+Matrix-tested on Ubuntu and Windows (Node 22) in `ci.yml`.
 
 ### 17. `build_common_tools` — Standard build tools
 

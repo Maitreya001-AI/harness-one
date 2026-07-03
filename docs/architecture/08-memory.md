@@ -51,6 +51,9 @@ memory 模块提供 Agent 长期记忆能力：MemoryStore 接口定义 CRUD + �
 | `clear()` | 清空所有条目 |
 | `writeBatch?(entries)` | 批量写入，当 `capabilities.atomicBatch` 为 true 时原子 |
 | `searchByVector?(options)` | 可选：向量相似度搜索，返回 `Array<MemoryEntry & { score }>` |
+| `setWithTtl?(key, value, ttlMs)` | 可选：按逻辑 key 写入带 TTL 的值 |
+| `updateWithVersion?(key, expectedVersion, updater)` | 可选：按逻辑 key 做 CAS 更新，版本不符抛 `STORE_VERSION_CONFLICT` |
+| `getVersion?(key)` | 可选：返回逻辑 key 的当前乐观锁版本（从未写入为 0） |
 
 **MemoryStoreCapabilities**
 
@@ -80,10 +83,14 @@ memory 模块提供 Agent 长期记忆能力：MemoryStore 接口定义 CRUD + �
 ### 工厂函数
 
 ```ts
-function createInMemoryStore(): MemoryStore
+function createInMemoryStore(config?: { maxEntries?: number; clock?: Clock }): MemoryStore
 function createFileSystemStore(config: { directory: string; indexFile?: string }): MemoryStore
 function createRelay(config: { store: MemoryStore; relayKey?: string }): ContextRelay
 ```
+
+`createInMemoryStore` 的可选 `clock`（B8，默认 `systemClock` = `Date.now()`）驱动
+`createdAt`/`updatedAt`、`mem_<time>_<rand>` id 前缀,以及 `setWithTtl` 的到期判定。
+注入假时钟即可在不真实等待、不用 `vi.useFakeTimers()` 的前提下确定性地测试 TTL 过期。
 
 ## 内部实现
 
@@ -102,6 +109,15 @@ CompactionPolicy 通过 gradeWeights 控制清理优先级（默认 critical: 1.
 `update(id, updates)` 在互斥锁内完成读取-修改-写回三步操作。锁保证整个 update 过程的原子性，并发 update 调用不会出现写覆盖（last-write-wins 导致更新丢失）问题。
 
 compact() 使用批量删除（Promise.all，每批 50 个文件）并行执行文件删除，代替逐个串行删除。
+
+### 乐观锁版本跨路径一致性
+
+内存存储对每个逻辑 key 维护一个乐观锁版本（`versionIndex`）。**所有**变更路径——`write` / `update` / `delete` / 容量淘汰 / `compact`——都会推进该版本,而不只有 `updateWithVersion` 自身。否则普通路径的写入可以绕过并发 CAS 调用者而不触发版本冲突(经典 lost update)。设计要点:
+
+- 版本严格单调递增;`setWithTtl` 不再重置版本(避免版本回卷导致陈旧 CAS 意外成功)。
+- TTL 到期清除**不**推进版本:过期值读作不存在,到期前发起的 CAS 可以合法地重建该 key。
+- `clear()` 清空整个版本索引(全量重置为 0),文档化行为。
+- 普通路径写入后,CAS 调用者可通过 `getVersion(key)` 获取当前版本再重试。
 
 ### 向量维度校验
 
@@ -145,6 +161,7 @@ query 支持多条件组合过滤：按 grade、tags（OR 匹配）、since（�
 - 在反序列化路径上调用公开的 `validateMemoryEntry` / `validateIndex`，避免与核心契约偏离
 - CompactionPolicy.gradeWeights 自定义各级别的保留权重
 - ContextRelay 通过 relayKey 隔离不同接力上下文
+- 通过 `createInMemoryStore({ clock })` 注入墙钟，使 TTL 到期可确定性测试（B8）
 
 ## 合规测试套件
 

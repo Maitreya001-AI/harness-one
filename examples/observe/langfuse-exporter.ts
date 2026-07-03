@@ -147,7 +147,7 @@ async function demo() {
   const traceId = tm.startTrace('user-request', { userId: 'u123' });
   const spanId = tm.startSpan(traceId, 'llm-call');
   tm.setSpanAttributes(spanId, {
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-sonnet-5',
     inputTokens: 150,
     outputTokens: 80,
   });

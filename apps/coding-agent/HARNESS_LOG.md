@@ -129,7 +129,7 @@
 - **Requested fix**: Either default `checkpointDir` to a process-scoped
   temp dir when `NODE_ENV === 'test'`, OR document the gotcha
   prominently in the README "Configuration knobs" table.
-- **Status**: logged.
+- **Status**: **resolved 2026-04-26**.
 
 ---
 
@@ -177,7 +177,7 @@
   whether `exactOptionalPropertyTypes` is worth the friction it adds for
   every "I have an `AbortSignal | undefined`" call-site. Option (a) is the
   least-disruptive.
-- **Status**: logged.
+- **Status**: **resolved 2026-04-26**.
 
 ---
 
@@ -258,7 +258,7 @@
   `compact` helper in `harness-one/infra` so call-sites read cleanly.
   Possibly even codemod existing call-sites in `apps/dogfood`,
   `apps/coding-agent`.
-- **Status**: logged.
+- **Status**: **resolved 2026-04-26**.
 
 ---
 
@@ -300,7 +300,7 @@
 - **Requested fix**: Mark `attributes` and `events` optional in
   `observe/types.ts` and default them to `{}` / `[]` at trace-manager
   level. Same for `Trace.userMetadata` / `systemMetadata`.
-- **Status**: logged.
+- **Status**: **resolved 2026-04-26**.
 
 ---
 
@@ -347,7 +347,7 @@
   one `iteration_start` event before aborting, OR (b) document the
   empty-event-stream case in `AgentLoopHook` so consumers know to
   handle it.
-- **Status**: logged.
+- **Status**: **resolved 2026-04-26**.
 
 ---
 
@@ -369,7 +369,7 @@
 - **Requested fix**: Add an `executeByName(name, args, options?)`
   convenience method on the registry that handles the JSON
   serialisation internally.
-- **Status**: logged.
+- **Status**: **resolved 2026-04-26**.
 
 ---
 
@@ -389,7 +389,7 @@
 - **Requested fix**: Either expose `createDefaultLogger` publicly or
   rename the existing `createLogger` factory to make the "with sane
   defaults" intent obvious.
-- **Status**: logged.
+- **Status**: **resolved 2026-04-26**.
 
 ---
 
@@ -409,7 +409,7 @@
 - **Workaround**: dual import.
 - **Requested fix**: Re-export `TokenUsage` from `harness-one/observe`
   as a type-only re-export (zero runtime cost).
-- **Status**: logged.
+- **Status**: **resolved 2026-04-26**.
 
 ---
 
@@ -425,7 +425,7 @@
   the bridge code that builds the schema list lives in user code.
 - **Workaround**: dual import.
 - **Requested fix**: Re-export `ToolSchema` from `harness-one/tools`.
-- **Status**: logged.
+- **Status**: **resolved 2026-04-26**.
 
 ---
 
@@ -446,7 +446,7 @@
 - **Requested fix**: Make `traceId` and `model` optional on
   `recordUsage`. The tracker has reasonable fallbacks already
   (`'unknown'` model bucket).
-- **Status**: logged.
+- **Status**: **resolved 2026-04-26**.
 
 ---
 
@@ -496,7 +496,7 @@
   is a TS error, OR auto-wrap bare functions as
   `{ name: 'anonymous', guard }`. The second form is more forgiving and
   matches what most callers will reach for first.
-- **Status**: logged.
+- **Status**: **resolved 2026-04-26**.
 
 ---
 

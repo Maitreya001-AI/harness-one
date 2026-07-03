@@ -130,3 +130,7 @@ system does today; ADRs explain **why** that's the shape.
 | [0008](./0008-adapter-conformance-not-mocks.md)  | Test adapters with shared conformance suites                           | Accepted |
 | [0009](./0009-streaming-hard-limits.md)          | Treat streaming size limits as hard caps, not warnings                 | Accepted |
 | [0010](./0010-observe-port-vs-implementation.md) | Define `MetricsPort` in core; ship implementations as sibling packages | Accepted |
+| [0011](./0011-mcp-position.md)                   | Keep core MCP-agnostic; ship MCP interop as a sibling bridge package    | Accepted |
+| [0012](./0012-durable-execution-stance.md)       | Treat the agent loop as in-memory; durable execution is out of core scope | Accepted |
+| [0013](./0013-model-pricing-freshness.md)        | Treat `defaultModelPricing` as a dated snapshot, not a live source      | Accepted |
+| [0014](./0014-root-barrel-18-slots.md)           | Demote `createSecurePreset` from the root barrel; keep 18 value slots   | Accepted |

@@ -1,14 +1,18 @@
 # Migration Guide
 
-`harness-one` is pre-release. No version has shipped to npm yet — any
-change on `main` may break downstream consumers without a deprecation
-window. The git log carries the actual history; pin by SHA if you need
-stability.
+`harness-one` is published but pre-1.0. The current release line is `0.2.x`
+on npm (confirm with `npm view harness-one version`), cut and versioned by
+`@changesets/cli` (see `.changeset/config.json`); every workspace package is
+fixed-version with it. While the project is on `0.x`, any minor bump may
+break consumers — but because versions now exist on npm, pin by semver range
+(e.g. `^0.2.0`) rather than by git SHA.
 
-Once the first release ships (driven by `@changesets/cli`, see
-`.changeset/config.json`), this file will document version-to-version
-migration steps — API renames, removed symbols, behaviour changes.
-Until then, read the source.
+This file documents the breaking and observable changes between published
+versions — API renames, removed symbols, behaviour changes — so downstream
+consumers can upgrade deliberately. The git log remains the finest-grained
+history; the sections below are the human-readable upgrade notes. The
+`## Unreleased` section collects changes landed on `main` that have not yet
+been cut into a version.
 
 ## Release blockers
 
@@ -22,25 +26,47 @@ aliases.
 
 Concretely, before the first release:
 
-- [ ] Re-export `createRoundRobinStrategy` / `createRandomStrategy` /
+- [x] Re-export `createRoundRobinStrategy` / `createRandomStrategy` /
       `createFirstAvailableStrategy` from `harness-one/orchestration`
       as `@deprecated` aliases of their `createBasic*` counterparts.
-- [ ] Re-export `createFixedSizeChunking` /
+      done 2026-07-03 — `packages/core/src/orchestration/strategies.ts`
+      (identity aliases) + re-exported from `orchestration/index.ts`.
+- [x] Re-export `createFixedSizeChunking` /
       `createParagraphChunking` / `createSlidingWindowChunking` from
       `harness-one/rag` as `@deprecated` aliases of their `createBasic*`
       counterparts.
-- [ ] Re-export `createRelevanceScorer` / `createFaithfulnessScorer` /
+      done 2026-07-03 — `packages/core/src/rag/chunking.ts` +
+      `rag/index.ts`.
+- [x] Re-export `createRelevanceScorer` / `createFaithfulnessScorer` /
       `createLengthScorer` from `@harness-one/devkit` eval module as
       `@deprecated` aliases of their `createBasic*` counterparts.
-- [ ] Re-export `withSelfHealing` from `harness-one/guardrails` as a
+      done 2026-07-03 — `packages/devkit/src/eval/scorers.ts` +
+      `eval/index.ts` (surfaced from the devkit root via `export *`).
+- [x] Re-export `withSelfHealing` from `harness-one/guardrails` as a
       `@deprecated` alias of `withGuardrailRetry`.
-- [ ] Leave the `hallucination` failure-mode string recognised as an
+      done 2026-07-03 — `packages/core/src/guardrails/self-healing.ts` +
+      `guardrails/index.ts`.
+- [x] Leave the `hallucination` failure-mode string recognised as an
       alias for `repeated_tool_failure` in consumer detectors (or
       document the rename as a breaking change in the first release
       notes — pick one, decide before shipping).
-- [ ] Add an eslint rule or API-extractor gate that fails CI if any
+      done 2026-07-03 — chose the **recognition alias** (consumer-friendly
+      option). `FailureMode` is an open union (`FailureMode | string`) with
+      zero exhaustive switches, so normalising the string is not
+      disproportionate. `normalizeFailureMode('hallucination')` →
+      `'repeated_tool_failure'`, wired into `registerDetector()` and the
+      `FailureTaxonomyConfig.detectors` keys in
+      `packages/core/src/observe/failure-taxonomy.ts`; exported from
+      `observe/index.ts`. `@deprecated` TSDoc on the alias map.
+- [x] Add an eslint rule or API-extractor gate that fails CI if any
       new public symbol is removed without a matching `@deprecated`
       alias, so future renames can't silently regress this policy.
+      done 2026-07-03 — `tools/check-api-removals.mjs` (dependency-free
+      Node), wired into `.github/workflows/api-check.yml` after the
+      `api:check` extractor diff. Fails if a symbol present in the base
+      branch's `packages/*/etc/*.api.md` is absent from the PR's, unless
+      the base declaration carried `@deprecated` or MIGRATION.md's
+      `## Unreleased` section names the symbol.
 
 The grace aliases should live for one full major version after first
 release, then be removed in the following major.

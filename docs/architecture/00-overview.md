@@ -8,7 +8,7 @@
 >
 > ```ts
 > import { createSecurePreset } from '@harness-one/preset';
-> const harness = createSecurePreset({ provider: 'anthropic', client, model: 'claude-sonnet-4-20250514' });
+> const harness = createSecurePreset({ provider: 'anthropic', client, model: 'claude-sonnet-5' });
 > ```
 >
 > 当前版本仍为 pre-release（`0.x` — 任何 minor bump 都可能 break），
@@ -34,7 +34,7 @@ harness-one 是一个 TypeScript 工具库，为 AI Agent 产品提供 Harness E
 | 运行时依赖（core 包） | 0 |
 | 模块数 | 12 核心子系统 + 7 适配器包 + preset + cli + devkit |
 | 包结构 | pnpm monorepo，11 个 `packages/*` 工作区 |
-| 构建目标 | Node.js >= 18（20 LTS 推荐），ESM + CJS |
+| 构建目标 | Node.js >= 22（与根 `package.json` `engines` 一致），ESM + CJS |
 | CI 门禁 | 15 个 workflow（`.github/workflows/`）—— lint/typecheck、coverage、api-extractor 快照、link-check、audit、gitleaks、Scorecard、mutation、perf、fuzz、cassette-drift、migrations、reproducible pack、Sigstore 发布、SBOM |
 
 ## 包清单
@@ -80,6 +80,12 @@ import { createEvalRunner } from '@harness-one/devkit';
 **重要**：`HarnessErrorCode` 是字符串枚举，必须**值导入**（`import { HarnessErrorCode }`）。`import type` 会静默丢失运行时 `Object.values()` 记录；自定义 lint 规则 `harness-one/no-type-only-harness-error-code` 会在 lint 时拦截。
 
 ## 9 层参考架构映射
+
+> **9 vs 12**：这里的"9 层"指的是行业 harness *参考架构*的层次；
+> harness-one 把它们**交付**为 12 个模块子系统（9 层 + prompt / session /
+> RAG / CLI 等横切能力）。README 的
+> [「12+ Layer Reference Architecture」](../../README.md#12-layer-reference-architecture)
+> 表是模块编号的权威口径；下表只是把参考架构的 9 层映射回具体模块。
 
 | 层 | 参考架构 | harness-one 模块 | 子路径 |
 |----|---------|-----------------|--------|
@@ -244,6 +250,10 @@ ADR 采用 MADR 4.0 格式。每一条记录一个非显然的设计决定 + 被
 | [0008](../adr/0008-adapter-conformance-not-mocks.md) | adapter 用共享 conformance suite 测，不是 mock |
 | [0009](../adr/0009-streaming-hard-limits.md) | stream size 超限是硬错，不是 warn |
 | [0010](../adr/0010-observe-port-vs-implementation.md) | `MetricsPort` 在 core 定义，实现留给兄弟包 |
+| [0011](../adr/0011-mcp-position.md) | core 保持 MCP-agnostic；MCP 互通作为兄弟 bridge 包 `@harness-one/mcp` |
+| [0012](../adr/0012-durable-execution-stance.md) | AgentLoop 是内存态 AsyncGenerator，不做 durable/replay；持久化走 checkpoint + memory seam |
+| [0013](../adr/0013-model-pricing-freshness.md) | `defaultModelPricing` 是静态快照；带快照日期 + 发布期复核 + `warnUnpricedModels` 守卫 |
+| [0014](../adr/0014-root-barrel-18-slots.md) | 根桶保留 18 个值槽位；`createSecurePreset` 因三角循环风险下放到 `@harness-one/preset` |
 
 新增决定的起草模板：[`0000-adr-template.md`](../adr/0000-adr-template.md)。
 

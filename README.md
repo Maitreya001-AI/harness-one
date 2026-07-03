@@ -50,8 +50,10 @@ returns; every other workspace package is fixed-version with it.
 # À la carte — the core package (tree-shakeable submodules).
 npm install harness-one
 
-# Batteries-included preset — core + all integrations wired.
-npm install @harness-one/preset @anthropic-ai/sdk
+# Batteries-included preset — add the adapter for your provider (only the
+# selected provider is loaded at runtime, so install just the one you use).
+npm install @harness-one/preset @harness-one/anthropic @anthropic-ai/sdk
+# OpenAI instead: npm install @harness-one/preset @harness-one/openai openai
 ```
 
 ### Secure preset (recommended for production)
@@ -63,7 +65,7 @@ import Anthropic from '@anthropic-ai/sdk';
 const harness = createSecurePreset({
   provider: 'anthropic',
   client: new Anthropic({ apiKey: process.env.ANTHROPIC_KEY }),
-  model: 'claude-sonnet-4-20250514',
+  model: 'claude-sonnet-5',
   // guardrailLevel defaults to 'standard' (injection + contentFilter + PII)
 });
 ```
@@ -194,11 +196,14 @@ either continuously running or maturing into a vertical package.
 
 - [`apps/dogfood/`](./apps/dogfood/) — Issue triage bot, runs on every new
   issue, reports land in `dogfood-reports/`.
-- `apps/coding-agent/` (planned) — Autonomous coding agent, also published
-  as the `harness-one-coding` vertical package
+- [`apps/coding-agent/`](./apps/coding-agent/) — Autonomous coding agent,
+  built and actively feeding the friction loop (19 `HARNESS_LOG.md`
+  entries). Also ships as the `harness-one-coding` vertical package
   ([design](./docs/app-designs/coding-agent-DESIGN.md)).
-- `apps/research-collab/` (planned) — Multi-agent research collaboration
-  pipeline ([design](./docs/app-designs/research-collab-DESIGN.md)).
+- [`apps/research-collab/`](./apps/research-collab/) — Multi-agent research
+  collaboration pipeline, built and actively feeding the friction loop
+  (8 `HARNESS_LOG.md` entries)
+  ([design](./docs/app-designs/research-collab-DESIGN.md)).
 
 Apps feed back to harness-one through `HARNESS_LOG.md` (continuous) and
 quarterly `RETRO/` reviews. See
@@ -290,12 +295,13 @@ Full command reference: [`packages/cli/README.md`](./packages/cli/README.md).
 See [`docs/guides/troubleshooting.md`](./docs/guides/troubleshooting.md)
 for the full error-code table and common foot-guns. Highlights:
 
+- **Which resilience mechanism?** — in-loop retry vs. fallback adapter vs. resilient loop vs. circuit breaker: see the [resilience selection guide](./docs/guides/resilience.md) for the decision table and composition order.
 - **Fallback adapter never recovers to primary** — by design. The breaker advances one-way. See [`docs/guides/fallback.md`](./docs/guides/fallback.md) for periodic-reset and active-health-check patterns.
 - **Fallback switched but I have no logs** — there is no `adapter_switched` event on `AgentLoop`. Wrap each inner adapter to log via `categorizeAdapterError()`; see `examples/observe/error-handling.ts`.
 - **All adapter errors classified as `ADAPTER_ERROR`** — `categorizeAdapterError()` inspects `err.message`, not `.code`. Ensure your provider SDK surfaces readable messages, or classify upstream.
 - **Guardrails don't block in tests** — `createPipeline({ failClosed: true })` blocks *on error*; explicit `block` verdicts still require the guard to match. Use `sensitivity: 'high'` on `createInjectionDetector` to widen coverage.
 - **Costs reported as 0** — the model has no registered pricing. Enable `warnUnpricedModels: true` (default) on `createCostTracker` and watch for the one-time warning.
-- **Cache-hit metrics always 0** — the adapter isn't forwarding `cacheReadTokens` / `cacheWriteTokens`. Check the adapter's `toTokenUsage()` mapping.
+- **Cache-hit metrics always 0** — prompt caching is opt-in. The adapter reports `cacheReadTokens` / `cacheWriteTokens` correctly, but Anthropic only *populates* them when the request carries `cache_control` breakpoints. Enable them via `createAnthropicAdapter({ promptCaching: { system: true, lastMessage: true } })`. (If they're still 0 after enabling, check the adapter's `toTokenUsage()` mapping.)
 
 More runbooks in [`docs/guides/`](./docs/guides/).
 
@@ -329,7 +335,7 @@ Supporting material — all reviewable in-repo:
 - [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md) — Contributor Covenant v2.1.
 - [`.github/CODEOWNERS`](./.github/CODEOWNERS) — review routing per package.
 - [`docs/security/`](./docs/security/) — STRIDE threat models per subsystem (`core`, `prompt`, `context`, `tools`, `guardrails`, `observe`, `session`, `memory`, `rag`, `redact`) plus the OpenSSF Best Practices self-assessment.
-- [`docs/adr/`](./docs/adr/) — Architecture Decision Records (ADR-0001 through ADR-0010, MADR 4.0 format).
+- [`docs/adr/`](./docs/adr/) — Architecture Decision Records (ADR-0001 through ADR-0014, MADR 4.0 format).
 
 ## Docs
 
@@ -369,7 +375,7 @@ harness-one is a `pnpm` monorepo. `npm` / `yarn` will not work — the
 to resolve internal `workspace:*` links.
 
 ```bash
-# Prerequisites: Node >= 20, pnpm >= 9.
+# Prerequisites: Node >= 22, pnpm >= 9.
 corepack enable             # or: npm i -g pnpm@9
 
 pnpm install                # workspace install (frozen lockfile on CI)
@@ -395,4 +401,4 @@ pnpm docs:api                                    # TypeDoc public-API report
 
 ## License
 
-Apache-2.0. See [`LICENSE`](./LICENSE) and [`NOTICE`](./NOTICE).
+MIT. See [`LICENSE`](./LICENSE) and [`NOTICE`](./NOTICE).

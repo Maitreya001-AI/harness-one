@@ -13,13 +13,59 @@
 
 ## Active (not yet resolved)
 
-(None yet — `apps/dogfood/` is the only app currently running. Cross-app
-overlap will become visible once `coding-agent` or `research-collab`
-ship and accumulate at least one quarter of `HARNESS_LOG` entries.)
+(None currently open. The two cross-app themes surfaced during the
+`coding-agent` + `research-collab` build-out were both resolved on
+2026-04-26 — see "Resolved (historical)" below. `apps/dogfood/` remains
+the only continuously *running* app; `coding-agent` and `research-collab`
+are built and feeding the loop via `HARNESS_LOG.md` but are not yet on a
+cron/event trigger.)
 
 ## Resolved (historical)
 
-(None yet.)
+### exactOptionalPropertyTypes conditional-spread tax
+
+- **Affected apps**: `apps/coding-agent` (HC-001 · S3, HC-014 · S12),
+  `apps/research-collab` (L-2026-04-26-004).
+- **First reported**: 2026-04-26 (coding-agent HC-001, tool/shell wiring).
+- **Root cause**: the repo-wide `exactOptionalPropertyTypes: true` forces a
+  `...(v !== undefined && { field: v })` conditional-spread at every
+  call-site that assigns an `X | undefined` to an optional `field?: X`.
+  Both apps independently re-derived the same boilerplate — the same
+  friction leaking through two different usage modes, which is what makes
+  it harness-level rather than a per-app annoyance.
+- **Status / resolution (2026-04-26)**: `harness-one/infra` now exports
+  `omitUndefined<T>(obj)` plus the `WithoutUndefined<T>` type. Call-sites
+  in `apps/research-collab/src/pipeline/run.ts` (6×) and
+  `apps/coding-agent/src/cli/args.ts` (9×) migrated off the conditional
+  spread. The helper is additive (no breaking change). No numbered
+  issue/PR — resolved in-session; evidence lives in the per-app log
+  entries above.
+
+### Cost / observability ergonomics (silent $0, stubbed identifiers)
+
+- **Affected apps**: `apps/coding-agent` (HC-005 · `recordUsage` requires
+  `traceId`+`model`, HC-007 · `TokenUsage` not re-exported from `observe`,
+  HC-012 · `Span.attributes` non-optional), `apps/research-collab`
+  (L-2026-04-26-006 · `CostTracker` silently returns $0 with no pricing),
+  `showcases/01-streaming-cli` (FRICTION_LOG · `ModelPricing` field names +
+  `createStreamingMockAdapter` not auto-attaching `usage`, so cumulative
+  cost stayed silently at 0).
+- **First reported**: 2026-04-26.
+- **Root cause**: the cost/observability surface let the zero-cost /
+  stubbed-identifier failure mode stay *silent* and reachable from three
+  independent entry points — a preset with no pricing table, a mock adapter
+  with no `usage`, and a single-task caller with no `traceId`/`model`.
+- **Status / resolution (2026-04-26, mostly resolved)**:
+  `harness-one/observe` adds opt-in `defaultModelPricing` (with
+  `DEFAULT_PRICING_SNAPSHOT_DATE`), and `createCostTracker` now `safeWarn`s
+  when `budget > 0` but no pricing is configured (`warnUnpricedModels`
+  default-on is the runtime guard); `recordUsage`'s `traceId`/`model` are
+  relaxed with `'unknown'` fallbacks; `TokenUsage` is re-exported from
+  `harness-one/observe`; `Span.attributes`/`events` are optional; and
+  `createStreamingMockAdapter` auto-fills `config.usage` onto a terminal
+  `done` chunk that omits it. Recorded as *mostly* resolved — the
+  ergonomics gaps are closed; remaining follow-ups are discoverability /
+  doc polish rather than API changes.
 
 ---
 

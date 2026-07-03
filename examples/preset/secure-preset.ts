@@ -23,7 +23,7 @@ async function main(): Promise<void> {
   const harness: SecureHarness = createSecurePreset({
     provider: 'anthropic',
     client,
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-sonnet-5',
     guardrailLevel: 'standard',
     // Override individual guardrails without losing the preset:
     guardrails: {
@@ -59,7 +59,7 @@ async function main(): Promise<void> {
   //    back lazy instruments; call `.add()` / `.record()` on the result.
   //    Swap in an OTel adapter from `@harness-one/opentelemetry` in production.
   const runCounter = harness.metrics.counter('demo.runs');
-  runCounter.add(1, { model: 'claude-sonnet-4-20250514' });
+  runCounter.add(1, { model: 'claude-sonnet-5' });
 
   // ── Graceful shutdown ────────────────────────────────────────────────────
   // drain() flushes in-flight traces/costs and refuses new work; default

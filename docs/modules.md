@@ -225,7 +225,7 @@ import { createHarness } from '@harness-one/preset';
 const harness = createHarness({
   provider: 'anthropic',
   client: anthropicClient,
-  model: 'claude-sonnet-4-20250514',
+  model: 'claude-sonnet-5',
   guardrails: {
     injection: { sensitivity: 'medium' }, // or true for defaults
     rateLimit: { max: 10, windowMs: 60_000 },
