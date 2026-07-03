@@ -22,7 +22,59 @@ import type {
 } from 'harness-one/core';
 import { HarnessError, HarnessErrorCode } from 'harness-one/core';
 import type { Logger } from 'harness-one/observe';
-import { safeWarn } from 'harness-one/observe';
+import { isWarnActive, safeWarn } from 'harness-one/observe';
+
+/**
+ * Per-adapter-instance "warn once" surface for the block degradations that
+ * OpenAI's Chat Completions API cannot represent (assistant reasoning blocks,
+ * tool-result images). Created once per `createOpenAIAdapter` call so one
+ * tenant's degrade warning does not silence another instance's first-touch
+ * alert for the same condition.
+ */
+export interface BlockDegradeWarner {
+  /** Warn (once per instance) that assistant thinking / redacted_thinking blocks were dropped. */
+  thinkingDropped(): void;
+  /** Warn (once per instance) that images in a tool result were replaced with a text marker. */
+  toolImageDropped(): void;
+}
+
+/**
+ * Build a {@link BlockDegradeWarner} bound to `logger`, deduped per instance.
+ * Mirrors the warn-once discipline used elsewhere in this package: the flag is
+ * only consumed when the configured level would actually emit the warning
+ * (`isWarnActive`), so a silenced logger never permanently suppresses a later
+ * warning for the same condition.
+ */
+export function createBlockDegradeWarner(
+  logger: Pick<Logger, 'warn' | 'error'>,
+): BlockDegradeWarner {
+  const warned = new Set<string>();
+  function once(key: string, message: string): void {
+    if (warned.has(key)) return;
+    if (!isWarnActive(logger)) return;
+    warned.add(key);
+    logger.warn(message);
+  }
+  return {
+    thinkingDropped() {
+      once(
+        'thinking',
+        '[harness-one/openai] Dropped thinking / redacted_thinking block(s) from an assistant ' +
+          "message — OpenAI's Chat Completions API cannot transport reasoning blocks produced by " +
+          'another provider. Keep conversations provider-consistent: do not replay another ' +
+          "provider's extended-thinking turns through OpenAI. (This warning is emitted once per adapter instance.)",
+      );
+    },
+    toolImageDropped() {
+      once(
+        'tool-image',
+        '[harness-one/openai] Replaced image block(s) in a tool result with the marker ' +
+          '"[image omitted: not representable in OpenAI tool results]" — OpenAI tool-role messages ' +
+          'are text-only, so images cannot be represented. (This warning is emitted once per adapter instance.)',
+      );
+    },
+  };
+}
 
 /**
  * Keys that `LLMConfig.extra` may carry into the OpenAI Chat Completions API.
@@ -107,16 +159,55 @@ export function filterExtra(
   return accepted;
 }
 
-/** Convert a harness-one Message to OpenAI's chat completion message format. */
+/** The literal marker substituted for an image inside an OpenAI tool result. */
+const TOOL_IMAGE_OMITTED_MARKER = '[image omitted: not representable in OpenAI tool results]';
+
+/**
+ * Convert a harness-one Message to OpenAI's chat completion message format.
+ *
+ * Content blocks (RFC-0001) are honoured where OpenAI can represent them and
+ * degraded gracefully where it cannot:
+ *
+ * - **User image blocks** → an OpenAI content-parts array (`text` +
+ *   `image_url`; base64 sources become `data:` URLs). Messages without an
+ *   image block keep today's plain-string `content` path for perf and
+ *   prompt-cache stability.
+ * - **Assistant thinking / redacted_thinking blocks** → dropped (OpenAI cannot
+ *   transport reasoning blocks from another provider); `content` already
+ *   carries the text projection. Warns once per adapter instance.
+ * - **Tool-result image blocks** → replaced with a literal text marker
+ *   appended to the text content (OpenAI tool-role messages are text-only).
+ *   Warns once per adapter instance.
+ *
+ * @param warner - optional per-instance warn-once surface for the two
+ *   degradation paths above (see {@link createBlockDegradeWarner}).
+ */
 export function toOpenAIMessage(
   msg: Message,
+  warner?: BlockDegradeWarner,
 ): OpenAI.Chat.Completions.ChatCompletionMessageParam {
+  // Assistant reasoning blocks cannot ride over the Chat Completions API.
+  // `content` is the text projection, so dropping the blocks loses no text —
+  // just warn once so operators notice a provider-inconsistent conversation.
+  if (
+    msg.role === 'assistant' &&
+    msg.blocks?.some((b) => b.type === 'thinking' || b.type === 'redacted_thinking')
+  ) {
+    warner?.thinkingDropped();
+  }
+
   if (msg.role === 'tool' && msg.toolCallId) {
-    return {
-      role: 'tool',
-      tool_call_id: msg.toolCallId,
-      content: msg.content,
-    };
+    const imageCount = msg.blocks?.reduce((n, b) => (b.type === 'image' ? n + 1 : n), 0) ?? 0;
+    if (imageCount > 0) {
+      // Tool-role messages are text-only; append one marker per dropped image.
+      warner?.toolImageDropped();
+      const pieces = [
+        msg.content,
+        ...Array.from({ length: imageCount }, () => TOOL_IMAGE_OMITTED_MARKER),
+      ].filter((p) => p.length > 0);
+      return { role: 'tool', tool_call_id: msg.toolCallId, content: pieces.join('\n') };
+    }
+    return { role: 'tool', tool_call_id: msg.toolCallId, content: msg.content };
   }
 
   if (msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0) {
@@ -140,6 +231,27 @@ export function toOpenAIMessage(
 
   if (msg.role === 'assistant') {
     return { role: 'assistant', content: msg.content };
+  }
+
+  // User message. Only switch to the OpenAI content-parts shape when an image
+  // block is present — otherwise keep the plain-string path so non-multimodal
+  // turns don't change wire shape (perf + prompt-cache stability).
+  if (msg.role === 'user' && msg.blocks?.some((b) => b.type === 'image')) {
+    const parts: OpenAI.Chat.Completions.ChatCompletionContentPart[] = [];
+    for (const block of msg.blocks) {
+      if (block.type === 'text') {
+        parts.push({ type: 'text', text: block.text });
+      } else if (block.type === 'image') {
+        const url =
+          block.source.kind === 'base64'
+            ? `data:${block.source.mediaType};base64,${block.source.data}`
+            : block.source.url;
+        parts.push({ type: 'image_url', image_url: { url } });
+      }
+      // thinking / redacted_thinking on a user message contribute no
+      // representable content — skip.
+    }
+    return { role: 'user', content: parts };
   }
 
   return { role: 'user', content: msg.content };

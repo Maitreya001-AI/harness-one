@@ -30,7 +30,7 @@
     "harness-one": "workspace:*"
   },
   "peerDependencies": {
-    "openai": ">=4.0.0"
+    "openai": ">=4.67.0"
   },
   "devDependencies": {
     "openai": "^6.34.0",

@@ -44,11 +44,16 @@ jobs:
             peer: '@anthropic-ai/sdk@0.40.0'
           - adapter: anthropic
             peer: '@anthropic-ai/sdk@latest'
-          # OpenAI: range is >=4.0.0.
+          # OpenAI: range is >=4.67.0. The floor is the first release that
+          # ships BOTH features the adapter depends on: `stream_options`
+          # (openai@4.42.0) and `CompletionUsage.prompt_tokens_details`
+          # (openai@4.67.0) — see the peer floor rationale in the package's
+          # CHANGELOG / changeset. Floor + mid bracket that floor; latest
+          # catches new-major drift (5.x/6.x).
           - adapter: openai
-            peer: 'openai@4.0.0'
+            peer: 'openai@4.67.0'
           - adapter: openai
-            peer: 'openai@4.50.0'
+            peer: 'openai@5.20.0'
           - adapter: openai
             peer: 'openai@latest'
 

@@ -23,6 +23,7 @@ import { createDefaultLogger, isWarnActive } from 'harness-one/observe';
 import { MAX_TOOL_ARG_BYTES, MAX_TOOL_CALLS } from 'harness-one/advanced';
 
 import {
+  createBlockDegradeWarner,
   filterExtra,
   toHarnessMessage,
   toOpenAIMessage,
@@ -142,6 +143,122 @@ function getStreamController(s: unknown): { abort?: () => void } | undefined {
 }
 
 /**
+ * Detect a caller-initiated cancellation vs. a genuine provider failure.
+ *
+ * Mirrors the abort contract of `@harness-one/anthropic`
+ * (`packages/anthropic/src/adapter.ts`, the `finalMessage()` catch): the most
+ * reliable signal is an already-aborted `params.signal`; next is the SDK's own
+ * `APIUserAbortError` (reachable because `openai` is a value import here); and
+ * finally the platform `AbortError` / `code === 'ABORT_ERR'` shapes. The
+ * `typeof … === 'function'` guard keeps a structural fallback if a future SDK
+ * stops exposing the class.
+ */
+function isAbortError(err: unknown, signal?: AbortSignal): boolean {
+  if (signal?.aborted === true) return true;
+  if (typeof OpenAI.APIUserAbortError === 'function' && err instanceof OpenAI.APIUserAbortError) {
+    return true;
+  }
+  if (err instanceof Error) {
+    if (err.name === 'AbortError') return true;
+    if ((err as { code?: unknown }).code === 'ABORT_ERR') return true;
+  }
+  return false;
+}
+
+/**
+ * Best-effort HTTP status extraction. Prefers the SDK's typed `APIError` (value
+ * import) and falls back to a structural `status` probe so re-thrown / proxied
+ * error shapes still classify.
+ */
+function errorStatus(err: unknown): number | undefined {
+  if (typeof OpenAI.APIError === 'function' && err instanceof OpenAI.APIError) {
+    return typeof err.status === 'number' ? err.status : undefined;
+  }
+  if (typeof err === 'object' && err !== null) {
+    const status = (err as { status?: unknown }).status;
+    if (typeof status === 'number') return status;
+  }
+  return undefined;
+}
+
+/** True for connection / timeout failures that carry no HTTP status. */
+function isConnectionError(err: unknown): boolean {
+  if (typeof OpenAI.APIConnectionError === 'function' && err instanceof OpenAI.APIConnectionError) {
+    return true;
+  }
+  if (err instanceof Error) {
+    const code = (err as { code?: unknown }).code;
+    if (code === 'ECONNRESET' || code === 'ECONNREFUSED' || code === 'ETIMEDOUT' || code === 'ENOTFOUND') {
+      return true;
+    }
+    if (/timeout|econnreset|econnrefused|network|socket hang up|fetch failed/i.test(err.message)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Translate an OpenAI SDK error into a typed {@link HarnessError} following the
+ * Error-mapping table in `docs/provider-spec.md`:
+ *
+ *   401 → `ADAPTER_AUTH` · 429 → `ADAPTER_RATE_LIMIT` ·
+ *   5xx → `ADAPTER_UNAVAILABLE` · timeout / network → `ADAPTER_NETWORK` ·
+ *   anything else → `ADAPTER_ERROR`.
+ *
+ * The original error is preserved as `cause` so operators can debug. Values
+ * that are already a `HarnessError` (e.g. a strict `extra` rejection, or the
+ * no-choices guard) pass through untouched so a deliberate code is never
+ * relabeled.
+ */
+function normalizeOpenAIError(err: unknown): HarnessError {
+  if (err instanceof HarnessError) return err;
+  const cause = err instanceof Error ? err : undefined;
+  const status = errorStatus(err);
+
+  if (status === 401) {
+    return new HarnessError(
+      'OpenAI request failed authentication (HTTP 401)',
+      HarnessErrorCode.ADAPTER_AUTH,
+      'Check the apiKey / OPENAI_API_KEY passed to createOpenAIAdapter is valid and not revoked.',
+      cause,
+    );
+  }
+  if (status === 429) {
+    return new HarnessError(
+      'OpenAI rate limit exceeded (HTTP 429)',
+      HarnessErrorCode.ADAPTER_RATE_LIMIT,
+      'Retry with backoff, or reduce request concurrency / token throughput.',
+      cause,
+    );
+  }
+  if (status !== undefined && status >= 500 && status <= 599) {
+    return new HarnessError(
+      `OpenAI service is unavailable (HTTP ${status})`,
+      HarnessErrorCode.ADAPTER_UNAVAILABLE,
+      'Retry with backoff; check the OpenAI status page if the failure persists.',
+      cause,
+    );
+  }
+  if (isConnectionError(err)) {
+    return new HarnessError(
+      'OpenAI request failed with a network or timeout error',
+      HarnessErrorCode.ADAPTER_NETWORK,
+      'Check network connectivity and any proxy/firewall, then retry if transient.',
+      cause,
+    );
+  }
+  return new HarnessError(
+    status !== undefined
+      ? `OpenAI request failed (HTTP ${status})`
+      : 'OpenAI request failed with an unclassified provider error',
+    HarnessErrorCode.ADAPTER_ERROR,
+    'Inspect the underlying cause; verify the model name, request payload, and provider status.',
+    cause,
+  );
+}
+
+/**
  * Create an AgentAdapter backed by the OpenAI SDK.
  *
  * Supports chat(), stream(), and tool_calls handling.
@@ -178,35 +295,49 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
   // so a single tenant's "rare model" warn does not silence every other
   // tenant's first-touch alert for the same model.
   const zeroUsageWarned = createInstanceWarnedState();
+  // Per-instance warn-once for RFC-0001 block degradations (assistant thinking
+  // dropped, tool-result images replaced with a text marker). Scoped to the
+  // instance for the same tenant-isolation reason as `zeroUsageWarned`.
+  const blockWarner = createBlockDegradeWarner(logger);
 
   return {
     name: `openai:${model}`,
     async chat(params: ChatParams): Promise<ChatResponse> {
-      const response = await client.chat.completions.create({
-        model,
-        messages: params.messages.map(toOpenAIMessage),
-        ...(params.tools && { tools: params.tools.map((t) => toOpenAITool(t, logger)) }),
-        ...(params.config?.temperature !== undefined && { temperature: params.config.temperature }),
-        ...(params.config?.topP !== undefined && { top_p: params.config.topP }),
-        ...(params.config?.maxTokens !== undefined && { max_tokens: params.config.maxTokens }),
-        ...(params.config?.stopSequences !== undefined && { stop: params.config.stopSequences as string[] }),
-        ...(params.responseFormat?.type === 'json_object' && { response_format: { type: 'json_object' as const } }),
-        ...(params.responseFormat?.type === 'json_schema' && {
-          response_format: {
-            type: 'json_schema' as const,
-            json_schema: {
-              name: 'response',
-              schema: toOpenAIParameters(params.responseFormat.schema, logger),
-              ...(params.responseFormat.strict !== undefined && { strict: params.responseFormat.strict }),
+      let response: OpenAI.Chat.Completions.ChatCompletion;
+      try {
+        response = await client.chat.completions.create({
+          model,
+          messages: params.messages.map((m) => toOpenAIMessage(m, blockWarner)),
+          ...(params.tools && { tools: params.tools.map((t) => toOpenAITool(t, logger)) }),
+          ...(params.config?.temperature !== undefined && { temperature: params.config.temperature }),
+          ...(params.config?.topP !== undefined && { top_p: params.config.topP }),
+          ...(params.config?.maxTokens !== undefined && { max_tokens: params.config.maxTokens }),
+          ...(params.config?.stopSequences !== undefined && { stop: params.config.stopSequences as string[] }),
+          ...(params.responseFormat?.type === 'json_object' && { response_format: { type: 'json_object' as const } }),
+          ...(params.responseFormat?.type === 'json_schema' && {
+            response_format: {
+              type: 'json_schema' as const,
+              json_schema: {
+                name: 'response',
+                schema: toOpenAIParameters(params.responseFormat.schema, logger),
+                ...(params.responseFormat.strict !== undefined && { strict: params.responseFormat.strict }),
+              },
             },
-          },
-        }),
-        // Spec: LLMConfig.extra MUST be forwarded to the provider. Merge LAST
-        // so caller-supplied unknown keys win over base params (per provider-spec.md).
-        // Filtered against OPENAI_EXTRA_ALLOW_LIST; unknown keys are
-        // dropped-with-warn, or raise ADAPTER_INVALID_EXTRA under strictExtra.
-        ...filterExtra(params.config?.extra, strictExtra, logger),
-      }, { signal: params.signal });
+          }),
+          // Spec: LLMConfig.extra MUST be forwarded to the provider. Merge LAST
+          // so caller-supplied unknown keys win over base params (per provider-spec.md).
+          // Filtered against OPENAI_EXTRA_ALLOW_LIST; unknown keys are
+          // dropped-with-warn, or raise ADAPTER_INVALID_EXTRA under strictExtra.
+          ...filterExtra(params.config?.extra, strictExtra, logger),
+        }, { signal: params.signal });
+      } catch (err) {
+        // Caller-initiated aborts propagate unchanged so the loop's abort
+        // machinery (CORE_ABORTED) still recognises them; every other SDK
+        // failure is normalised to a typed HarnessError with `cause` preserved
+        // (per docs/provider-spec.md Error mapping).
+        if (isAbortError(err, params.signal)) throw err;
+        throw normalizeOpenAIError(err);
+      }
 
       const choice = response.choices[0];
       if (!choice) {
@@ -238,43 +369,60 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
     },
 
     async *stream(params: ChatParams): AsyncIterable<StreamChunk> {
-      const stream = await client.chat.completions.create({
-        model,
-        messages: params.messages.map(toOpenAIMessage),
-        ...(params.tools && { tools: params.tools.map((t) => toOpenAITool(t, logger)) }),
-        ...(params.config?.temperature !== undefined && { temperature: params.config.temperature }),
-        ...(params.config?.topP !== undefined && { top_p: params.config.topP }),
-        ...(params.config?.maxTokens !== undefined && { max_tokens: params.config.maxTokens }),
-        ...(params.config?.stopSequences !== undefined && { stop: params.config.stopSequences as string[] }),
-        ...(params.responseFormat?.type === 'json_object' && { response_format: { type: 'json_object' as const } }),
-        ...(params.responseFormat?.type === 'json_schema' && {
-          response_format: {
-            type: 'json_schema' as const,
-            json_schema: {
-              name: 'response',
-              schema: toOpenAIParameters(params.responseFormat.schema, logger),
-              ...(params.responseFormat.strict !== undefined && { strict: params.responseFormat.strict }),
-            },
-          },
-        }),
-        stream: true,
-        stream_options: { include_usage: true },
-        // Spec: LLMConfig.extra MUST be forwarded to the provider. Merge LAST
-        // so caller-supplied unknown keys win over base params.
-        // Filtered against OPENAI_EXTRA_ALLOW_LIST; unknown keys are
-        // dropped-with-warn, or raise ADAPTER_INVALID_EXTRA under strictExtra.
-        ...filterExtra(params.config?.extra, strictExtra, logger),
-      }, { signal: params.signal });
-
-      const toolCallAccum = new Map<
-        string,
-        { id: string; name: string; arguments: string }
-      >();
-      // Secondary map: index -> ID, so continuation chunks without an id field
-      // can be resolved to the correct accumulator entry via their positional index.
-      const indexToId = new Map<number, string>();
-
+      // Captured once the stream is open so the `finally` block can release the
+      // HTTP connection without holding the `stream` binding in outer scope —
+      // `stream` stays a `const` inside the try so TS keeps the streaming
+      // overload's return type (and thus the `for await` typing).
+      let releaseStream: (() => void) | undefined;
       try {
+        const stream = await client.chat.completions.create({
+          model,
+          messages: params.messages.map((m) => toOpenAIMessage(m, blockWarner)),
+          ...(params.tools && { tools: params.tools.map((t) => toOpenAITool(t, logger)) }),
+          ...(params.config?.temperature !== undefined && { temperature: params.config.temperature }),
+          ...(params.config?.topP !== undefined && { top_p: params.config.topP }),
+          ...(params.config?.maxTokens !== undefined && { max_tokens: params.config.maxTokens }),
+          ...(params.config?.stopSequences !== undefined && { stop: params.config.stopSequences as string[] }),
+          ...(params.responseFormat?.type === 'json_object' && { response_format: { type: 'json_object' as const } }),
+          ...(params.responseFormat?.type === 'json_schema' && {
+            response_format: {
+              type: 'json_schema' as const,
+              json_schema: {
+                name: 'response',
+                schema: toOpenAIParameters(params.responseFormat.schema, logger),
+                ...(params.responseFormat.strict !== undefined && { strict: params.responseFormat.strict }),
+              },
+            },
+          }),
+          stream: true,
+          stream_options: { include_usage: true },
+          // Spec: LLMConfig.extra MUST be forwarded to the provider. Merge LAST
+          // so caller-supplied unknown keys win over base params.
+          // Filtered against OPENAI_EXTRA_ALLOW_LIST; unknown keys are
+          // dropped-with-warn, or raise ADAPTER_INVALID_EXTRA under strictExtra.
+          ...filterExtra(params.config?.extra, strictExtra, logger),
+        }, { signal: params.signal });
+
+        // Capture the abort handle immediately so an early consumer `break`
+        // (which triggers the generator's `finally`) still frees the socket.
+        // Use a guarded narrow (`getStreamController`) so SDK drift — a rename,
+        // removal, or type change of the private `controller` field — surfaces
+        // as a safe no-op rather than a silent type-lie.
+        const ctrl = getStreamController(stream);
+        if (ctrl && typeof ctrl.abort === 'function') {
+          // Bind so the later `finally` call keeps `this === controller`
+          // (the SDK's abort is an AbortController method).
+          releaseStream = ctrl.abort.bind(ctrl);
+        }
+
+        const toolCallAccum = new Map<
+          string,
+          { id: string; name: string; arguments: string }
+        >();
+        // Secondary map: index -> ID, so continuation chunks without an id field
+        // can be resolved to the correct accumulator entry via their positional index.
+        const indexToId = new Map<number, string>();
+
         for await (const chunk of stream) {
           const delta = chunk.choices[0]?.delta;
           if (!delta) continue;
@@ -346,20 +494,27 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): AgentAdapter {
           type: 'done' as const,
           usage: { inputTokens: 0, outputTokens: 0 },
         };
+      } catch (err) {
+        // A create()-time rejection (e.g. 401/429 before the first chunk) OR a
+        // mid-flight stream failure lands here. Align with the anthropic
+        // adapter (`packages/anthropic/src/adapter.ts`, the `finalMessage()`
+        // catch): a caller abort surfaces as a clean terminal zero-usage
+        // `done` so downstream iteration ends without a throw; every other
+        // failure becomes a typed HarnessError mapped per
+        // docs/provider-spec.md, with `cause` preserved.
+        if (isAbortError(err, params.signal)) {
+          yield { type: 'done', usage: { inputTokens: 0, outputTokens: 0 } };
+          return;
+        }
+        throw normalizeOpenAIError(err);
       } finally {
-        // Ensure underlying stream resources are released on early consumer return.
-        // The OpenAI SDK stream exposes a controller that can be aborted to free
-        // the HTTP connection when the consumer breaks out of the async iterator.
-        //
-        // Use a guarded narrow (`getStreamController`) so SDK drift — e.g. a
-        // rename, removal, or type change of the private `controller` field —
-        // surfaces as a safe no-op rather than a silent type-lie that would
-        // explode at runtime the next time we dereference it.
+        // Release underlying stream resources on any exit path (normal end,
+        // early consumer `break`, abort, or error). `releaseStream` was
+        // captured right after the stream opened; a broken-out consumer still
+        // frees the HTTP connection because the generator's `finally` runs on
+        // `return()`. Non-fatal if it throws — GC eventually reclaims the socket.
         try {
-          const ctrl = getStreamController(stream);
-          if (ctrl && typeof ctrl.abort === 'function') {
-            ctrl.abort();
-          }
+          releaseStream?.();
         } catch {
           // Stream controller cleanup failed — HTTP connection may linger until server timeout.
           // This is non-fatal; the GC will eventually collect the stream.
