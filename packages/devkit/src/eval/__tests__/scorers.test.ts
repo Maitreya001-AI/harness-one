@@ -4,6 +4,9 @@ import {
   createBasicFaithfulnessScorer,
   createBasicLengthScorer,
   createCustomScorer,
+  createRelevanceScorer,
+  createFaithfulnessScorer,
+  createLengthScorer,
 } from '../scorers.js';
 
 describe('createBasicRelevanceScorer', () => {
@@ -183,5 +186,23 @@ describe('createCustomScorer', () => {
     });
     expect(scorer.name).toBe('test-scorer');
     expect(scorer.description).toBe('Test description');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Deprecated grace aliases
+// ---------------------------------------------------------------------------
+
+describe('deprecated scorer aliases', () => {
+  it('createRelevanceScorer is the exact createBasicRelevanceScorer', () => {
+    expect(createRelevanceScorer).toBe(createBasicRelevanceScorer);
+  });
+
+  it('createFaithfulnessScorer is the exact createBasicFaithfulnessScorer', () => {
+    expect(createFaithfulnessScorer).toBe(createBasicFaithfulnessScorer);
+  });
+
+  it('createLengthScorer is the exact createBasicLengthScorer', () => {
+    expect(createLengthScorer).toBe(createBasicLengthScorer);
   });
 });

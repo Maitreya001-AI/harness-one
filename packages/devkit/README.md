@@ -14,7 +14,7 @@ subpath. The runtime architecture-checker stays in core under
 pnpm add -D @harness-one/devkit
 ```
 
-`harness-one` is a peer dependency. Node 18+.
+`harness-one` is a peer dependency. Node 22+.
 
 ## Eval
 

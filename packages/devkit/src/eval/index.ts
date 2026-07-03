@@ -24,6 +24,10 @@ export {
   createBasicFaithfulnessScorer,
   createBasicLengthScorer,
   createCustomScorer,
+  // Deprecated grace aliases (removed one major after first release).
+  createRelevanceScorer,
+  createFaithfulnessScorer,
+  createLengthScorer,
 } from './scorers.js';
 
 // Generator-Evaluator

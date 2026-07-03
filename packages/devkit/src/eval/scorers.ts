@@ -173,6 +173,23 @@ export function createCustomScorer(config: {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Deprecated aliases (release grace window)
+// ---------------------------------------------------------------------------
+// Pre-`createBasic*` names renamed during the thin-harness naming cleanup
+// (see MIGRATION.md § Naming cleanup). Runtime-working aliases so pre-release
+// SHA-pinned consumers are not broken by the rename. Remove one full major
+// version after first release.
+
+/** @deprecated Use {@link createBasicRelevanceScorer} instead. Will be removed one major after first release. */
+export const createRelevanceScorer = createBasicRelevanceScorer;
+
+/** @deprecated Use {@link createBasicFaithfulnessScorer} instead. Will be removed one major after first release. */
+export const createFaithfulnessScorer = createBasicFaithfulnessScorer;
+
+/** @deprecated Use {@link createBasicLengthScorer} instead. Will be removed one major after first release. */
+export const createLengthScorer = createBasicLengthScorer;
+
 /** Tokenize text into lowercase words, filtering out stopwords. */
 function tokenize(text: string): string[] {
   const stopwords = new Set([

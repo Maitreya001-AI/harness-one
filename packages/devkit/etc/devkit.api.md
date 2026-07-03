@@ -76,6 +76,15 @@ export function createDriftDetector(config?: DriftDetectorConfig): DriftDetector
 // @public
 export function createEvalRunner(config: EvalConfig): EvalRunner;
 
+// @public @deprecated (undocumented)
+export const createFaithfulnessScorer: typeof createBasicFaithfulnessScorer;
+
+// @public @deprecated (undocumented)
+export const createLengthScorer: typeof createBasicLengthScorer;
+
+// @public @deprecated (undocumented)
+export const createRelevanceScorer: typeof createBasicRelevanceScorer;
+
 // @public
 export function createTasteCodingRegistry(): TasteCodingRegistry;
 
