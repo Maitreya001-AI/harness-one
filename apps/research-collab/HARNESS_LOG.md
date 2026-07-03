@@ -20,6 +20,31 @@
 
 ---
 
+## L-2026-07-03-009 · `tools.register` 需要 `as unknown as` 双重 cast 才能注册 `defineTool` 结果
+
+- **子系统**：`harness-one/tools`（`ToolDefinition` / `ToolRegistry.register`）
+- **现象**：`registerSpecialistTools` 里把 `defineTool<{ query; limit? }>(...)`
+  的结果直接传给 `harness.tools.register(...)`，TypeScript 报
+  `ToolDefinition<{...}>` 不能赋值给 `ToolDefinition<unknown>`
+  （`exactOptionalPropertyTypes` 下更明显）。根因是 `ToolDefinition<T>` 在
+  `execute(params: T)` 里让 `T` 处于逆变位置，`strictFunctionTypes` 下
+  `ToolDefinition<具体类型>` 不是 `ToolDefinition<unknown>` 的子类型。
+- **影响**：web_search / web_fetch 两个 tool 都得写
+  `tool as unknown as Parameters<typeof harness.tools.register>[0]`，双重
+  cast 把类型安全整个抹掉，注册错 tool 也不会报错。dogfood 里一模一样的写
+  法，说明是跨 app 的系统性 ergonomics 摩擦。
+- **临时绕过**：`harness.tools.register(x as unknown as Parameters<...>[0])`。
+- **建议反哺**：`register` 应接受一个 variance-safe 的父类型，让任意
+  `defineTool<...>` 结果零 cast 注册。
+- **Status**: resolved 2026-07-03 — 本次批量 tools typing 修复中根治：新增
+  `AnyToolDefinition = ToolDefinition<never>`（`never` 在逆变位可赋给任意
+  `T`），`ToolRegistry.register` 改收 `AnyToolDefinition`；两处双重 cast 已删，
+  app typecheck 通过。同批还加了 `FromSchema<S>` 让 `as const` schema 直接推出
+  params 类型。尚无 issue/PR 号（本 session 内修）。
+- **Owner**: 主仓库 tools ✅
+
+---
+
 ## L-2026-04-26-008 · 跨 workspace 的 typecheck 必须先 `pnpm build` 才能跑
 
 - **子系统**：`@harness-one/preset` + 所有 `packages/*` 的发布配置

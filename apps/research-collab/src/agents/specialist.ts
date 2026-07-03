@@ -60,8 +60,8 @@ export function registerSpecialistTools(
   harness: SecureHarness,
   tools: SpecialistTools,
 ): void {
-  harness.tools.register(tools.webSearch as unknown as Parameters<typeof harness.tools.register>[0]);
-  harness.tools.register(tools.webFetch as unknown as Parameters<typeof harness.tools.register>[0]);
+  harness.tools.register(tools.webSearch);
+  harness.tools.register(tools.webFetch);
 }
 
 export async function runSpecialist(

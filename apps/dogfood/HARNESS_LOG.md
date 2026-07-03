@@ -12,6 +12,42 @@
 
 ---
 
+## 2026-07-03 — `tools.register` 需要 `as unknown as` 双重 cast 才能注册 `defineTool` 结果
+
+**Friction**: `entry.ts` registers a read-only issue-search tool via
+`harness.tools.register(defineSearchRecentIssuesTool(...))`, but TypeScript
+rejects it: `ToolDefinition<{ query; topK? }>` is not assignable to
+`ToolDefinition<unknown>` (loudest under `exactOptionalPropertyTypes`). Root
+cause: `ToolDefinition<T>` places `T` in the contravariant `execute(params: T)`
+position, so under `strictFunctionTypes` a concrete tool type is *not* a
+subtype of `ToolDefinition<unknown>`, which is what `register()` accepted.
+research-collab's specialist hit the identical wall — cross-app friction.
+
+**Current workaround**:
+```ts
+harness.tools.register(
+  defineSearchRecentIssuesTool({ gh, repository }) as unknown as Parameters<
+    typeof harness.tools.register
+  >[0],
+);
+```
+
+**Feedback action**:
+- [x] Fixed in this session — tools typing batch: `register` now accepts the
+  variance-safe `AnyToolDefinition` (`ToolDefinition<never>`), so any
+  `defineTool<...>` result registers with zero casts. Both app double-casts
+  removed; `pnpm --filter @harness-one/dogfood typecheck` passes. Same batch
+  added `FromSchema<S>` so an `as const` schema infers `params`. No issue/PR #
+  yet.
+
+**Severity**: medium
+
+**Suspected root cause**: `packages/core/src/tools` — the `register` boundary
+took `ToolDefinition<unknown>`, which contravariance makes unreachable for
+concrete tool params. Fixed by widening to `ToolDefinition<never>`.
+
+---
+
 (No entries yet. The artifact was added when the three-layer
 architecture standardized app-level feedback. The first friction
 encountered after that should land **above this paragraph**, using the

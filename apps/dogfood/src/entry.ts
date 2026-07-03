@@ -146,11 +146,7 @@ export async function main(env: NodeJS.ProcessEnv = process.env): Promise<RunRep
   const harness = buildTriageHarness({ adapter, model: envCfg.model, budgetUsd: envCfg.budgetUsd });
 
   try {
-    harness.tools.register(
-      defineSearchRecentIssuesTool({ gh, repository: envCfg.repository }) as unknown as Parameters<
-        typeof harness.tools.register
-      >[0],
-    );
+    harness.tools.register(defineSearchRecentIssuesTool({ gh, repository: envCfg.repository }));
 
     const result = await runTriage(harness, {
       number: issue.number,
