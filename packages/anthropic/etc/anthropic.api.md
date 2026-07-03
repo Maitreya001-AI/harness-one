@@ -15,15 +15,28 @@ export interface AnthropicAdapterConfig {
     readonly logger?: Pick<Logger, 'warn' | 'error'>;
     readonly model?: string;
     readonly onMalformedToolUse?: AnthropicMalformedToolUsePolicy;
+    readonly promptCaching?: AnthropicPromptCachingConfig;
     readonly streamLimits?: {
         readonly maxToolCalls?: number;
         readonly maxToolArgBytes?: number;
     };
     readonly strictExtraAllowList?: boolean;
+    readonly thinking?: AnthropicThinkingConfig;
 }
 
 // @public
 export type AnthropicMalformedToolUsePolicy = 'warn' | 'throw' | ((raw: string, err: Error) => Record<string, unknown> | null | undefined);
+
+// @public
+export interface AnthropicPromptCachingConfig {
+    readonly lastMessage?: boolean;
+    readonly system?: boolean;
+}
+
+// @public
+export interface AnthropicThinkingConfig {
+    readonly budgetTokens: number;
+}
 
 // @public
 export function createAnthropicAdapter(config: AnthropicAdapterConfig): AgentAdapter;

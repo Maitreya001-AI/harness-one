@@ -14,6 +14,8 @@
 export type {
   AnthropicAdapterConfig,
   AnthropicMalformedToolUsePolicy,
+  AnthropicPromptCachingConfig,
+  AnthropicThinkingConfig,
 } from './adapter.js';
 export { createAnthropicAdapter } from './adapter.js';
 

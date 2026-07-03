@@ -784,7 +784,12 @@ describe('createAnthropicAdapter', () => {
         await drain();
       } catch (err) {
         expect(err).toBeInstanceOf(HarnessError);
-        expect((err as HarnessError).code).toBe(HarnessErrorCode.ADAPTER_ERROR);
+        // Error-normalization (C1a): the message "Network broke" is classified
+        // by message content (no HTTP status on a plain Error) as a generic
+        // network failure → ADAPTER_NETWORK, per docs/provider-spec.md's error
+        // table. (Previously the adapter hard-coded ADAPTER_ERROR for every
+        // finalMessage() failure.)
+        expect((err as HarnessError).code).toBe(HarnessErrorCode.ADAPTER_NETWORK);
         // cause must be preserved so operators can trace the real failure
         expect((err as HarnessError).cause).toBe(rootCause);
       }
