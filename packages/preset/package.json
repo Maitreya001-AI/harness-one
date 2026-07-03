@@ -28,10 +28,23 @@
   },
   "dependencies": {
     "harness-one": "workspace:*",
+    "@harness-one/ajv": "workspace:*"
+  },
+  "peerDependencies": {
     "@harness-one/anthropic": "workspace:*",
     "@harness-one/openai": "workspace:*",
-    "@harness-one/ajv": "workspace:*",
     "@harness-one/devkit": "workspace:*"
+  },
+  "peerDependenciesMeta": {
+    "@harness-one/anthropic": {
+      "optional": true
+    },
+    "@harness-one/openai": {
+      "optional": true
+    },
+    "@harness-one/devkit": {
+      "optional": true
+    }
   },
   "optionalDependencies": {
     "@harness-one/redis": "workspace:*",

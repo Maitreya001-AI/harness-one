@@ -4,7 +4,9 @@
  * Wraps {@link createHarness} with opinionated secure defaults:
  * - Guardrail pipeline is non-empty by default (injection + contentFilter + pii)
  * - Logger defaults to `createDefaultLogger` from `harness-one/observe` (redaction on)
- * - OpenAI provider registry is sealed after construction
+ * - OpenAI provider registry is sealed after construction — when the optional
+ *   `@harness-one/openai` peer is installed; otherwise there is no registry to
+ *   seal and the step is skipped.
  *
  * There is no "guardrails off" escape hatch. Callers who need that must use
  * {@link createHarness} directly and accept responsibility for insecure config.
@@ -12,13 +14,16 @@
  * @module
  */
 
-import { sealProviders } from '@harness-one/openai';
 import { createDefaultLogger } from 'harness-one/observe';
 import { createHarnessLifecycle, createNoopMetricsPort } from 'harness-one/observe';
 import type { HarnessLifecycle, MetricsPort } from 'harness-one/observe';
 
 import { createHarness, type Harness, type HarnessConfig } from './index.js';
 import { validateHarnessConfig } from './validate-config.js';
+import { tryLoadOptional } from './build-harness/optional-dep.js';
+
+// Type-only view of the optional `@harness-one/openai` peer; erased at runtime.
+type OpenAIModule = typeof import('@harness-one/openai');
 
 /**
  * Preset levels for the default guardrail pipeline.
@@ -65,7 +70,8 @@ export interface SecureHarness extends Harness {
  * 2. `logger` defaults to `createDefaultLogger` from `harness-one/observe` (redaction on).
  * 3. `sealProviders()` is invoked after the adapter is constructed so
  *    `registerProvider` cannot be called with attacker-controlled
- *    configuration later in the process lifetime.
+ *    configuration later in the process lifetime. This is a no-op when the
+ *    optional `@harness-one/openai` peer is not installed (nothing to seal).
  *
  * Tool registry security (default `allowedCapabilities: ['readonly']`) and
  * logger/trace-manager redaction defaults are inherited from core-level
@@ -109,9 +115,15 @@ export function createSecurePreset(config: HarnessConfig & SecurePresetOptions):
   const harness = createHarness(mergedConfig);
 
   if (config.skipProviderSeal !== true) {
-    // Idempotent: second call is a no-op, so invoking createSecurePreset
+    // Seal the OpenAI provider registry so `registerProvider` cannot be called
+    // with attacker-controlled config later. `@harness-one/openai` is now an
+    // OPTIONAL peer, so load it lazily and degrade gracefully when it is absent:
+    // an anthropic-only (or pre-built-adapter) deployment has no OpenAI provider
+    // registry to seal, so skipping is correct rather than fatal.
+    // Idempotent: a second call is a no-op, so invoking createSecurePreset
     // multiple times in one process is safe.
-    sealProviders();
+    const openai = tryLoadOptional<OpenAIModule>('@harness-one/openai');
+    openai?.sealProviders();
   }
 
   // Wire lifecycle state machine with core component health checks.

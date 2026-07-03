@@ -15,9 +15,49 @@ import { runInput, runOutput } from 'harness-one/guardrails';
 
 import { createSecurePreset } from '../secure.js';
 
-// Each test gets a fresh module so `_providersSealed` starts false.
+// `@harness-one/openai` is now an OPTIONAL peer that `secure.ts` loads lazily
+// through the `optional-dep` seam (`tryLoadOptional`) before sealing. That seam
+// uses `createRequire`, which bypasses vitest's module mocks and the src-alias,
+// so we mock the seam itself with a controllable fake openai module. This keeps
+// the seal assertions verifying preset behavior ("secure preset calls
+// sealProviders on the loaded openai module unless skipped, and degrades
+// gracefully when the package is absent") without depending on the real
+// provider registry's process-global seal latch.
+const sealMock = vi.hoisted(() => {
+  let sealed = false;
+  let available = true;
+  const openaiModule = {
+    sealProviders: vi.fn(() => {
+      sealed = true;
+    }),
+    isProvidersSealed: () => sealed,
+  };
+  return {
+    openaiModule,
+    isAvailable: () => available,
+    setAvailable: (v: boolean) => {
+      available = v;
+    },
+    reset: () => {
+      sealed = false;
+      available = true;
+      openaiModule.sealProviders.mockClear();
+    },
+  };
+});
+
+vi.mock('../build-harness/optional-dep.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../build-harness/optional-dep.js')>();
+  return {
+    ...actual,
+    tryLoadOptional: (pkg: string) =>
+      pkg === '@harness-one/openai' && sealMock.isAvailable() ? sealMock.openaiModule : null,
+  };
+});
+
 beforeEach(() => {
   vi.resetModules();
+  sealMock.reset();
 });
 
 function stubAdapter(): AgentAdapter {
@@ -114,24 +154,28 @@ describe('createSecurePreset', () => {
     expect(piiFinding).toBeUndefined();
   });
 
-  it('sealProviders is invoked after construction (default)', async () => {
-    const openai = await import('@harness-one/openai');
-    expect(openai.isProvidersSealed()).toBe(false);
+  it('sealProviders is invoked after construction (default)', () => {
+    expect(sealMock.openaiModule.isProvidersSealed()).toBe(false);
 
-    const { createSecurePreset: factory } = await import('../secure.js');
-    factory({ adapter: stubAdapter() });
+    createSecurePreset({ adapter: stubAdapter() });
 
-    expect(openai.isProvidersSealed()).toBe(true);
+    expect(sealMock.openaiModule.sealProviders).toHaveBeenCalledTimes(1);
+    expect(sealMock.openaiModule.isProvidersSealed()).toBe(true);
   });
 
-  it('skipProviderSeal=true leaves registry unsealed', async () => {
-    const openai = await import('@harness-one/openai');
-    expect(openai.isProvidersSealed()).toBe(false);
+  it('skipProviderSeal=true leaves registry unsealed', () => {
+    createSecurePreset({ adapter: stubAdapter(), skipProviderSeal: true });
 
-    const { createSecurePreset: factory } = await import('../secure.js');
-    factory({ adapter: stubAdapter(), skipProviderSeal: true });
+    expect(sealMock.openaiModule.sealProviders).not.toHaveBeenCalled();
+    expect(sealMock.openaiModule.isProvidersSealed()).toBe(false);
+  });
 
-    expect(openai.isProvidersSealed()).toBe(false);
+  it('degrades gracefully when @harness-one/openai is not installed (no seal, no throw)', () => {
+    // Optional peer absent: nothing to seal, so construction must not throw.
+    sealMock.setAvailable(false);
+
+    expect(() => createSecurePreset({ adapter: stubAdapter() })).not.toThrow();
+    expect(sealMock.openaiModule.sealProviders).not.toHaveBeenCalled();
   });
 
   it('calling createSecurePreset twice is safe (sealProviders is idempotent)', () => {

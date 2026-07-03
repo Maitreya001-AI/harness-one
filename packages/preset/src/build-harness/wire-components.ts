@@ -32,7 +32,10 @@ import type { GuardrailPipeline } from 'harness-one/guardrails';
 import { createSessionManager, createInMemoryConversationStore } from 'harness-one/session';
 import type { SessionManager, ConversationStore } from 'harness-one/session';
 import type { MemoryStore } from 'harness-one/memory';
-import { createEvalRunner, createBasicRelevanceScorer } from '@harness-one/devkit';
+// `@harness-one/devkit` is an OPTIONAL peer dependency (dev-time eval tooling).
+// It is loaded lazily via `createLazyEvalRunner` below so the production harness
+// never drags eval/scoring code into its bundle when `harness.eval` is unused.
+// The type import is erased at compile time and does not load the package.
 import type { EvalRunner } from '@harness-one/devkit';
 
 import { createAjvValidator } from '@harness-one/ajv';
@@ -58,6 +61,46 @@ import { createAdapter } from './adapter.js';
 import { createExporters } from './exporters.js';
 import { createMemory } from './memory.js';
 import { createGuardrails } from './guardrails.js';
+import { requireForFeature } from './optional-dep.js';
+
+// Type-only view of the optional devkit module; erased at runtime. Also declares
+// the dynamic-import dependency for `tools/verify-deps.ts`.
+type DevkitModule = typeof import('@harness-one/devkit');
+
+/**
+ * Build an {@link EvalRunner} that defers loading `@harness-one/devkit` until one
+ * of its methods is actually called.
+ *
+ * - **Not requested** (the harness is built but `harness.eval` is never used):
+ *   devkit is never loaded — graceful degradation with no eval wiring cost.
+ * - **Requested with devkit installed**: the real runner is constructed once
+ *   (memoized) with the default relevance scorer and delegated to.
+ * - **Requested without devkit installed**: an actionable {@link HarnessError}
+ *   is thrown naming the exact install command.
+ *
+ * Returning a plain object (not a getter/Proxy) keeps it spread-safe: `secure.ts`
+ * spreads the harness (`{ ...harness }`) without triggering a devkit load.
+ */
+function createLazyEvalRunner(): EvalRunner {
+  let real: EvalRunner | undefined;
+  const resolve = (): EvalRunner => {
+    if (real) return real;
+    const devkit = requireForFeature<DevkitModule>('@harness-one/devkit', {
+      feature: 'harness.eval (agent evaluation)',
+      install: 'npm install @harness-one/devkit',
+    });
+    real = devkit.createEvalRunner({ scorers: [devkit.createBasicRelevanceScorer()] });
+    return real;
+  };
+  return {
+    // `async` so a missing-devkit throw from `resolve()` surfaces as a rejected
+    // promise, matching the declared `Promise<...>` return contract.
+    run: async (cases, generate) => resolve().run(cases, generate),
+    runSingle: async (evalCase, output) => resolve().runSingle(evalCase, output),
+    // Declared synchronous; a missing-devkit throw propagates synchronously.
+    checkGate: (report) => resolve().checkGate(report),
+  };
+}
 
 /**
  * Every component the preset harness instantiates. `buildHarness`
@@ -201,8 +244,9 @@ export function wireComponents(config: HarnessConfig): WiredComponents {
   // 11. Prompt builder
   const prompts = createPromptBuilder();
 
-  // 12. Eval runner (default relevance scorer)
-  const evalRunner = createEvalRunner({ scorers: [createBasicRelevanceScorer()] });
+  // 12. Eval runner — lazily backed by the optional `@harness-one/devkit` peer.
+  //     devkit is only loaded when a `harness.eval` method is actually invoked.
+  const evalRunner = createLazyEvalRunner();
 
   // 13. Logger — no longer depends on the deleted eventBus stub.
   const logger = config.logger ?? createLogger();

@@ -11,24 +11,43 @@ directly.
 
 ## Install
 
+The preset bundles **no provider adapters** — install the adapter for the
+provider you use alongside its SDK. Only the selected provider is loaded at
+runtime, so an Anthropic deployment never pulls in the OpenAI adapter (or the
+`openai` SDK), and vice-versa.
+
 ```bash
-pnpm add @harness-one/preset @anthropic-ai/sdk
-# Or for OpenAI:
-pnpm add @harness-one/preset openai
+# Anthropic
+npm install @harness-one/preset @harness-one/anthropic @anthropic-ai/sdk
+
+# OpenAI
+npm install @harness-one/preset @harness-one/openai openai
 ```
 
 ## Peer / Required Dependencies
 
-Bundled (direct deps): `harness-one`, `@harness-one/anthropic`,
-`@harness-one/openai`, `@harness-one/ajv`.
+Bundled (direct deps): `harness-one`, `@harness-one/ajv`.
 
-Optional: `@harness-one/redis`, `@harness-one/langfuse`,
+**Provider adapters — optional peers; install the one you use:**
+
+- `@harness-one/anthropic` + `@anthropic-ai/sdk` — for `provider: 'anthropic'`
+  (or when injecting a pre-built Anthropic client)
+- `@harness-one/openai` + `openai` — for `provider: 'openai'`
+
+Selecting a provider whose package is not installed throws an actionable
+`HarnessError` naming the exact `npm install` command. Injecting a pre-built
+`adapter` needs neither provider package.
+
+**Eval tooling — optional peer:**
+
+- `@harness-one/devkit` — powers `harness.eval` (agent evaluation / scoring).
+  It is **not** installed by default so the production harness stays lean;
+  `harness.eval` loads it lazily on first use and throws an actionable
+  `HarnessError` if it is missing. Building a harness without it is fine — the
+  eval surface simply stays dormant until called.
+
+Optional integrations: `@harness-one/redis`, `@harness-one/langfuse`,
 `@harness-one/opentelemetry`, `@harness-one/tiktoken`.
-
-You must install exactly one provider SDK:
-
-- `@anthropic-ai/sdk` (when `provider: 'anthropic'` or injecting an Anthropic client)
-- `openai` (when `provider: 'openai'`)
 
 ## Quick Start (secure preset, recommended for production)
 

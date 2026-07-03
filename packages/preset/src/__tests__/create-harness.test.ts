@@ -96,6 +96,22 @@ vi.mock('@harness-one/openai', () => ({
   createOpenAIAdapter: mocks.createOpenAIAdapter,
 }));
 
+// Provider adapters now load lazily through the preset-internal `optional-dep`
+// seam (createRequire under the hood), which bypasses vitest's module mocks.
+// Mock the seam so provider dispatch + argument assertions observe the mocked
+// factories. `tryLoadOptional`/other exports keep their real implementation.
+vi.mock('../build-harness/optional-dep.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../build-harness/optional-dep.js')>();
+  return {
+    ...actual,
+    requireForFeature: (pkg: string) => {
+      if (pkg === '@harness-one/anthropic') return { createAnthropicAdapter: mocks.createAnthropicAdapter };
+      if (pkg === '@harness-one/openai') return { createOpenAIAdapter: mocks.createOpenAIAdapter };
+      throw new Error(`unexpected optional package requested in test: ${pkg}`);
+    },
+  };
+});
+
 vi.mock('@harness-one/langfuse', () => ({
   createLangfuseExporter: mocks.createLangfuseExporter,
   createLangfuseCostTracker: mocks.createLangfuseCostTracker,
