@@ -93,7 +93,10 @@ export function createExportHealth(config: ExportHealthConfig): ExportHealth {
       }
     });
     pendingFlushes.add(tracked);
-    tracked.finally(() => {
+    // Fire-and-forget cleanup: the settle handler only prunes the pending
+    // set, so the derived promise is intentionally not awaited. `void`
+    // documents that for the no-floating-promises lint.
+    void tracked.finally(() => {
       pendingFlushes.delete(tracked);
     });
     return tracked as Promise<T>;

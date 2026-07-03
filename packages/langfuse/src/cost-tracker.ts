@@ -308,8 +308,10 @@ export function createLangfuseCostTracker(config: LangfuseCostTrackerConfig): La
       // counted so operators can observe degraded export health.
       //
       // `exportHealth.trackFlush` owns the pending-promise set + the
-      // safe `handleExportError` routing.
-      exportHealth.trackFlush(client.flushAsync());
+      // safe `handleExportError` routing. Fire-and-forget by design — the
+      // pending flush is drained on dispose(), not awaited here; `void`
+      // documents that for the no-floating-promises lint.
+      void exportHealth.trackFlush(client.flushAsync());
 
       // F18c: Use the snapshot taken at entry, not the live `budget` variable.
       if (budgetSnapshot !== undefined) {
