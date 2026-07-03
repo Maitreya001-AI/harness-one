@@ -164,4 +164,31 @@ describe('createCheckpointManager (async since 0.3)', () => {
     expect(await mgr.list()).toHaveLength(1);
     expect(storage.list).toHaveBeenCalled();
   });
+
+  describe('injectable clock (B8)', () => {
+    it('stamps checkpoint.timestamp from the injected clock', async () => {
+      let t = 10_000;
+      const mgr = createCheckpointManager({ clock: { now: () => t } });
+      const cp1 = await mgr.save(messages, 'a');
+      expect(cp1.timestamp).toBe(10_000);
+      t += 250;
+      const cp2 = await mgr.save(messages, 'b');
+      expect(cp2.timestamp).toBe(10_250);
+    });
+
+    it('prune({ maxAge }) uses the injected clock for the cutoff — deterministic', async () => {
+      let t = 1_000;
+      const mgr = createCheckpointManager({ clock: { now: () => t } });
+      await mgr.save(messages, 'old'); // timestamp 1000
+      t += 5_000; // now = 6000
+      await mgr.save(messages, 'new'); // timestamp 6000
+
+      // cutoff = now(6000) - maxAge(3000) = 3000; only 'old' (1000) is older.
+      const pruned = await mgr.prune({ maxAge: 3_000 });
+      expect(pruned).toBe(1);
+      const remaining = await mgr.list();
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0].timestamp).toBe(6_000);
+    });
+  });
 });

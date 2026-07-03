@@ -76,7 +76,13 @@ export type AsyncGuardrail = (ctx: GuardrailContext) => Promise<GuardrailVerdict
 /** Event emitted when a guardrail runs. */
 export interface GuardrailEvent {
   guardrail: string;
-  direction: 'input' | 'output';
+  /**
+   * Which pipeline phase produced this event. Carries the full
+   * {@link GuardrailDirection} union so observability can distinguish a
+   * tool-output or RAG-chunk block from a final-answer block (previously
+   * collapsed into `'output'` / `'input'`).
+   */
+  direction: GuardrailDirection;
   verdict: GuardrailVerdict;
   latencyMs: number;
 }

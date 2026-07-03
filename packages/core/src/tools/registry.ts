@@ -7,6 +7,7 @@
 import type { ToolCallRequest, ToolSchema } from '../core/types.js';
 import type {
   ToolDefinition,
+  AnyToolDefinition,
   ToolResult,
   SchemaValidator,
   ToolCapabilityValue,
@@ -46,7 +47,13 @@ export interface ResolvedRegistryConfig {
 
 /** A registry that manages tool definitions and executes tool calls. */
 export interface ToolRegistry {
-  register(tool: ToolDefinition): void;
+  /**
+   * Register a tool definition. Accepts {@link AnyToolDefinition} — the
+   * variance-safe `ToolDefinition<never>` supertype — so a strongly-typed
+   * `defineTool<{ q: string }>(...)` result registers with zero casts. Params
+   * remain validated against `tool.parameters` at execution time.
+   */
+  register(tool: AnyToolDefinition): void;
   get(name: string): ToolDefinition | undefined;
   list(namespace?: string): ToolDefinition[];
   schemas(): ToolSchema[];
@@ -141,7 +148,7 @@ export function createRegistry(config?: CreateRegistryConfig): ToolRegistry {
   // cumulative arg bytes consumed this turn.
   let turnArgBytes = 0;
 
-  function register(tool: ToolDefinition): void {
+  function register(tool: AnyToolDefinition): void {
     if (!TOOL_NAME_RE.test(tool.name)) {
       throw new HarnessError(
         `Invalid tool name "${tool.name}": must match /^[a-zA-Z][a-zA-Z0-9_.]*$/`,
@@ -191,7 +198,13 @@ export function createRegistry(config?: CreateRegistryConfig): ToolRegistry {
       }
     }
 
-    tools.set(tool.name, tool);
+    // Variance bridge: `AnyToolDefinition` (`ToolDefinition<never>`) is the
+    // supertype we accept at the public boundary; the internal map stores
+    // `ToolDefinition<unknown>` so `execute(params: unknown)` calls typecheck
+    // downstream. The widening is safe — the registry validates every call's
+    // params against `tool.parameters` before invoking `execute`. Not `any`,
+    // not on a public boundary.
+    tools.set(tool.name, tool as ToolDefinition);
   }
 
   function get(name: string): ToolDefinition | undefined {

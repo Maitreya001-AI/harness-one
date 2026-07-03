@@ -28,6 +28,12 @@ export type {
   ToolMessage,
   MessageMeta,
   MessageProvenance,
+  ContentBlock,
+  TextBlock,
+  ThinkingBlock,
+  RedactedThinkingBlock,
+  ImageBlock,
+  ImageMediaType,
   ToolCallRequest,
   TokenUsage,
   AgentAdapter,
@@ -42,6 +48,8 @@ export type {
   ToolExecutionResult,
   ExecutionStrategy,
 } from './types.js';
+// Text-projection helper for ContentBlock lists (RFC-0001).
+export { blocksText } from './types.js';
 
 // ─── Errors (every consumer catches these) ────────────────────────────────
 export {

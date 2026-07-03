@@ -15,7 +15,8 @@ export type {
 } from './types.js';
 
 // Token counting
-export { countTokens, registerTokenizer } from './count-tokens.js';
+export { countTokens, registerTokenizer, createTokenizerRegistry } from './count-tokens.js';
+export type { TokenizerRegistry } from './count-tokens.js';
 
 // Budget
 export { createBudget } from './budget.js';

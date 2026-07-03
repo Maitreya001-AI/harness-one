@@ -25,6 +25,9 @@ describe('harness-one/infra public surface', () => {
         // exactOptionalPropertyTypes conditional-spread workaround
         // (HARNESS_LOG HC-001 / HC-014 / research-collab L-004).
         'omitUndefined',
+        // systemClock — default of the injectable Clock port (B8). Type-only
+        // `Clock` is not a runtime symbol, so it does not appear here.
+        'systemClock',
       ].sort(),
     );
   });

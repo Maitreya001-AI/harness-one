@@ -19,12 +19,13 @@ import {
   HarnessErrorCode,
   TokenBudgetExceededError,
 } from './errors.js';
-import type { Message, TokenUsage } from './types.js';
+import type { AgentLoopStatus, Message, TokenUsage } from './types.js';
 import type { AgentLoopTraceManager } from './trace-interface.js';
 import type { IterationContext } from './iteration-runner.js';
 import { pruneConversation } from './conversation-pruner.js';
 import { annotateHarnessErrorSpan } from './error-span-attributes.js';
 import { safeWarn } from '../infra/safe-log.js';
+import { systemClock, type Clock } from '../infra/clock.js';
 import type { AgentLoopLogger } from './agent-loop-config.js';
 
 /** Minimal view the coordinator needs on the owning AgentLoop instance. */
@@ -45,6 +46,13 @@ export interface CoordinatorDeps {
   readonly maxDurationMs?: number;
   /** Optional hard cap on messages carried between turns. */
   readonly maxConversationMessages?: number;
+  /**
+   * Injectable wall-clock. Drives the run-start timestamp and every
+   * duration-budget / `durationSoFarMs` computation. Defaults to
+   * {@link systemClock} when omitted, so runtime behaviour is unchanged —
+   * inject a fake clock to test duration budgets without real waiting.
+   */
+  readonly clock?: Clock;
   /** Adapter name, attached as a span attribute for filtering. */
   readonly adapterName: string;
   /** Whether streaming is enabled; attached as a span attribute. */
@@ -67,6 +75,8 @@ export interface CoordinatorDeps {
 export interface CoordinatorState {
   /** Whether the "no pipeline" warning has already fired on this instance. */
   noPipelineWarned: boolean;
+  /** Whether the "no cost ceiling" warning has already fired on this instance. */
+  noBudgetWarned: boolean;
   /**
    * Public-facing lifecycle status. The coordinator flips it to `'running'`
    * on `startRun` and to either `'completed'` (normal `end_turn`) or
@@ -74,7 +84,7 @@ export interface CoordinatorState {
    * adapter or tool error) on terminal. `dispose()` flips it to
    * `'disposed'` and any later terminal emit must respect that.
    */
-  status: 'idle' | 'running' | 'completed' | 'errored' | 'disposed';
+  status: AgentLoopStatus;
   /**
    * Observable iteration counter exposed via `AgentLoop.getMetrics()`.
    * Mirrors the local `iteration` variable in `run()` and is bumped by
@@ -128,6 +138,24 @@ export function startRun(
     }
   }
 
+  // One-time cost-ceiling warning: with `maxTotalTokens` left at Infinity
+  // and no `maxDurationMs`, only `maxIterations` bounds a run — there is
+  // no real token/cost ceiling. Mirror of the no-pipeline warning above.
+  if (
+    !state.noBudgetWarned
+    && !Number.isFinite(deps.maxTotalTokens)
+    && deps.maxDurationMs === undefined
+  ) {
+    state.noBudgetWarned = true;
+    const msg = 'AgentLoop has no token or duration budget — runs are bounded only by maxIterations';
+    const meta = { hint: 'set maxTotalTokens and/or maxDurationMs in the AgentLoop config' };
+    if (deps.logger) {
+      try { deps.logger.warn(msg, meta); } catch { /* logger failure non-fatal */ }
+    } else {
+      safeWarn(undefined, msg, meta);
+    }
+  }
+
   // External signal listener — attached at run() start so finalizeRun can
   // always remove it, even if dispose() is never called.
   if (deps.externalSignal) {
@@ -156,7 +184,7 @@ export function startRun(
     traceId,
     cumulativeUsage: { inputTokens: 0, outputTokens: 0 },
     toolCallCounter: { value: 0 },
-    runStartTimeMs: Date.now(),
+    runStartTimeMs: (deps.clock ?? systemClock).now(),
     iterationEndFired: { value: false },
   };
 
@@ -241,7 +269,7 @@ export function* checkPreIteration(
   }
 
   if (deps.maxDurationMs !== undefined) {
-    const durationSoFarMs = Date.now() - ctx.runStartTimeMs;
+    const durationSoFarMs = (deps.clock ?? systemClock).now() - ctx.runStartTimeMs;
     if (ctx.iterationSpanId && tm) {
       tm.setSpanAttributes(ctx.iterationSpanId, { durationSoFarMs });
     }
@@ -325,7 +353,7 @@ export function* startIteration(
       adapter: deps.adapterName,
       conversationLength: ctx.conversation.length,
       streaming: deps.streaming,
-      durationSoFarMs: Date.now() - ctx.runStartTimeMs,
+      durationSoFarMs: (deps.clock ?? systemClock).now() - ctx.runStartTimeMs,
     });
   }
 

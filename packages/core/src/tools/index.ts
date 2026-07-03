@@ -3,6 +3,7 @@
 // Types
 export type {
   ToolDefinition,
+  AnyToolDefinition,
   ToolMiddleware,
   ToolFeedback,
   ToolResult,
@@ -17,6 +18,9 @@ export { toolSuccess, toolError, ToolCapability, ALL_TOOL_CAPABILITIES } from '.
 
 // defineTool
 export { defineTool } from './define-tool.js';
+
+// Type-level schema → params inference (zero runtime cost)
+export type { FromSchema, ReadonlyJsonSchema, DeepReadonly } from './schema-infer.js';
 
 // Validation
 export { validateToolCall } from './validate.js';

@@ -14,6 +14,7 @@ import type { AgentEvent } from './events.js';
 import { HarnessError, HarnessErrorCode } from './errors.js';
 import { categorizeAdapterError } from './error-classifier.js';
 import { StreamAggregator } from './stream-aggregator.js';
+import { estimateTokens, type TokenizerRegistry } from '../infra/token-estimator.js';
 
 /**
  * Discriminated union returned by {@link StreamHandler.handle}. The
@@ -52,6 +53,14 @@ export interface StreamHandlerConfig {
    * across iterations.
    */
   readonly maxCumulativeStreamBytes: number;
+  /**
+   * Optional instance-scoped {@link TokenizerRegistry} for the
+   * usage-fallback estimate (fired only when a streaming adapter reports no
+   * token usage). Defaults to the process-wide default registry via
+   * `estimateTokens`. Inject to keep estimation isolated from the global
+   * tokenizer state.
+   */
+  readonly tokenizerRegistry?: TokenizerRegistry;
 }
 
 /** Public surface of the stream handler. */
@@ -159,6 +168,34 @@ export function createStreamHandler(config: Readonly<StreamHandlerConfig>): Stre
       }
 
       const { message, bytesRead } = aggregator.getMessage(usage);
+      if (usage.inputTokens === 0 && usage.outputTokens === 0) {
+        // The adapter never reported usage (no `done` chunk, or a zeroed
+        // one). Without this fallback the loop would accumulate 0 tokens
+        // and `maxTotalTokens` could never trip — the budget would be
+        // silently unenforceable. Mirror provider-spec.md: estimate from
+        // the token-estimator heuristic rather than report zeros, and
+        // surface a warning so the adapter bug is visible.
+        const model = config.adapter.name ?? 'unknown';
+        const inputText = conversation.map((m) => m.content).join('\n');
+        const toolArgText = message.role === 'assistant' && message.toolCalls
+          ? message.toolCalls.map((c) => c.arguments).join('')
+          : '';
+        // Use the injected registry when present, else the process-wide
+        // default (`estimateTokens`). Both share the same heuristic fallback.
+        const estimate = config.tokenizerRegistry
+          ? (m: string, t: string): number => config.tokenizerRegistry!.estimate(m, t)
+          : estimateTokens;
+        usage = {
+          inputTokens: estimate(model, inputText),
+          outputTokens: estimate(model, message.content + toolArgText),
+        };
+        yield {
+          type: 'warning',
+          message: `Streaming adapter "${model}" reported no token usage; `
+            + 'values were estimated heuristically — emit usage on the final '
+            + "{type:'done'} chunk for accurate token budgets",
+        };
+      }
       return { ok: true, message, usage, bytesRead };
     },
   };

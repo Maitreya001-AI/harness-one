@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { createFailureTaxonomy } from '../failure-taxonomy.js';
-import type { Trace, Span } from '../types.js';
+import { createFailureTaxonomy, normalizeFailureMode } from '../failure-taxonomy.js';
+import type { Trace, Span, FailureDetector } from '../types.js';
 import { HarnessErrorCode } from '../../core/errors.js';
 
 function makeSpan(overrides: Partial<Span>): Span {
@@ -476,5 +476,49 @@ describe('createFailureTaxonomy', () => {
       const results = taxonomy.classify(trace);
       expect(results.find(r => r.mode === 'tool_loop')).toBeDefined();
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Deprecated failure-mode alias: 'hallucination' -> 'repeated_tool_failure'
+// ---------------------------------------------------------------------------
+
+describe('normalizeFailureMode (deprecated alias recognition)', () => {
+  it("normalises 'hallucination' to 'repeated_tool_failure'", () => {
+    expect(normalizeFailureMode('hallucination')).toBe('repeated_tool_failure');
+  });
+
+  it('leaves the canonical name unchanged', () => {
+    expect(normalizeFailureMode('repeated_tool_failure')).toBe('repeated_tool_failure');
+  });
+
+  it('leaves unknown / custom modes unchanged', () => {
+    expect(normalizeFailureMode('my_custom_mode')).toBe('my_custom_mode');
+  });
+
+  it("registerDetector('hallucination', d) overrides the built-in repeated_tool_failure detector", () => {
+    const sentinel: FailureDetector = {
+      detect: () => ({ confidence: 0.99, evidence: 'hallucination-alias override' }),
+    };
+    const taxonomy = createFailureTaxonomy();
+    // Registered under the deprecated name — must land on the canonical key.
+    taxonomy.registerDetector('hallucination', sentinel);
+    const results = taxonomy.classify(makeTrace({ spans: [makeSpan({})] }));
+    const hit = results.find((r) => r.mode === 'repeated_tool_failure');
+    expect(hit).toBeDefined();
+    expect(hit!.confidence).toBeCloseTo(0.99);
+    expect(hit!.evidence).toBe('hallucination-alias override');
+    // No dead 'hallucination' mode leaked into the output.
+    expect(results.find((r) => r.mode === 'hallucination')).toBeUndefined();
+  });
+
+  it("config detectors keyed on 'hallucination' target the canonical key", () => {
+    const sentinel: FailureDetector = {
+      detect: () => ({ confidence: 0.97, evidence: 'config alias override' }),
+    };
+    const taxonomy = createFailureTaxonomy({ detectors: { hallucination: sentinel } });
+    const results = taxonomy.classify(makeTrace({ spans: [makeSpan({})] }));
+    expect(results.find((r) => r.mode === 'repeated_tool_failure')?.confidence).toBeCloseTo(0.97);
+    expect(results.find((r) => r.mode === 'hallucination')).toBeUndefined();
   });
 });

@@ -627,9 +627,10 @@ describe('pipeline.ts — total-timeout event latency + direction', () => {
 });
 
 describe('pipeline.ts — runRagContext direction tag', () => {
-  // StringLiteral mutant line 412 empties `'input'`; pin the direction
-  // on events emitted via runRagContext.
-  it('runRagContext events carry direction=input', async () => {
+  // StringLiteral mutant empties the direction literal; pin the direction
+  // on events emitted via runRagContext. It runs the *input* guard set but
+  // tags context + events with the real 'rag' phase.
+  it('runRagContext events carry direction=rag', async () => {
     const events: GuardrailEvent[] = [];
     const pipeline = createPipeline({
       input: [{ name: 'g', guard: allow }],
@@ -637,7 +638,7 @@ describe('pipeline.ts — runRagContext direction tag', () => {
       defaultTimeoutMs: 0,
     });
     await runRagContext(pipeline, ['chunk']);
-    expect(events[0]?.direction).toBe('input');
+    expect(events[0]?.direction).toBe('rag');
   });
 });
 

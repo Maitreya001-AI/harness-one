@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { estimateTokens, registerTokenizer } from '../token-estimator.js';
+import {
+  estimateTokens,
+  registerTokenizer,
+  createTokenizerRegistry,
+  clearTokenizerRegistry,
+} from '../token-estimator.js';
 import type { Tokenizer } from '../token-estimator.js';
 
 describe('token-estimator', () => {
@@ -135,6 +140,57 @@ describe('token-estimator', () => {
       };
       registerTokenizer('test-model', newTokenizer);
       expect(estimateTokens('test-model', 'anything')).toBe(42);
+    });
+  });
+
+  describe('createTokenizerRegistry (instance-scoped, B7)', () => {
+    const wordTokenizer: Tokenizer = {
+      encode: (t) => ({ length: t.split(/\s+/).filter(Boolean).length }),
+    };
+    const charTokenizer: Tokenizer = {
+      encode: (t) => ({ length: t.length }),
+    };
+
+    it('register() returns true for a new model and false on overwrite', () => {
+      const reg = createTokenizerRegistry();
+      expect(reg.register('m', wordTokenizer)).toBe(true);
+      expect(reg.register('m', charTokenizer)).toBe(false);
+    });
+
+    it('estimate() uses the registered tokenizer, else the heuristic', () => {
+      const reg = createTokenizerRegistry();
+      reg.register('m', wordTokenizer);
+      expect(reg.estimate('m', 'one two three')).toBe(3);
+      const heuristic = reg.estimate('unregistered', 'one two three');
+      expect(heuristic).toBeGreaterThan(0);
+      expect(heuristic).not.toBe(3);
+    });
+
+    it('two registries do not cross-talk', () => {
+      const a = createTokenizerRegistry();
+      const b = createTokenizerRegistry();
+      a.register('shared', wordTokenizer); // 1 token / word
+      b.register('shared', charTokenizer); // 1 token / char
+      expect(a.estimate('shared', 'a bb ccc')).toBe(3); // 3 words
+      expect(b.estimate('shared', 'a bb ccc')).toBe(8); // 8 chars
+    });
+
+    it('an instance registry does not leak into the module-level default', () => {
+      const reg = createTokenizerRegistry();
+      // Fixed sentinel length that the heuristic can never produce, so a leak
+      // would be unambiguous.
+      reg.register('isolated-model-xyz', { encode: () => ({ length: 4242 }) });
+      expect(estimateTokens('isolated-model-xyz', 'abcdef')).not.toBe(4242);
+    });
+
+    it('the module-level default stays backward compatible', () => {
+      expect(registerTokenizer('bc-default-model', charTokenizer)).toBe(true);
+      expect(estimateTokens('bc-default-model', 'abcd')).toBe(4);
+      // Re-registering the same model reports the overwrite via `false`.
+      expect(registerTokenizer('bc-default-model', wordTokenizer)).toBe(false);
+      // clearTokenizerRegistry() resets the default → heuristic fallback returns.
+      clearTokenizerRegistry();
+      expect(estimateTokens('bc-default-model', 'abcd')).not.toBe(4);
     });
   });
 });

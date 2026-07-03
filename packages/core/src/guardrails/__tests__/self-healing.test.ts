@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { withGuardrailRetry } from '../self-healing.js';
+import { withGuardrailRetry, withSelfHealing } from '../self-healing.js';
 import type { Guardrail } from '../types.js';
 
 describe('withGuardrailRetry', () => {
@@ -966,5 +966,15 @@ describe('withGuardrailRetry', () => {
       // Each called once → consistent totalTokens
       expect(estimateTokens).toHaveBeenCalled();
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Deprecated grace alias
+// ---------------------------------------------------------------------------
+
+describe('withSelfHealing (deprecated alias)', () => {
+  it('is the exact withGuardrailRetry function', () => {
+    expect(withSelfHealing).toBe(withGuardrailRetry);
   });
 });

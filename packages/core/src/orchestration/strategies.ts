@@ -87,3 +87,20 @@ export function createBasicFirstAvailableStrategy(): DelegationStrategy {
     },
   };
 }
+
+// ---------------------------------------------------------------------------
+// Deprecated aliases (release grace window)
+// ---------------------------------------------------------------------------
+// These pre-`createBasic*` names were renamed during the thin-harness naming
+// cleanup (see MIGRATION.md § Naming cleanup). They ship as runtime-working
+// aliases so consumers who pinned by SHA before the first npm release are not
+// broken by the rename. Remove one full major version after first release.
+
+/** @deprecated Use {@link createBasicRoundRobinStrategy} instead. Will be removed one major after first release. */
+export const createRoundRobinStrategy = createBasicRoundRobinStrategy;
+
+/** @deprecated Use {@link createBasicRandomStrategy} instead. Will be removed one major after first release. */
+export const createRandomStrategy = createBasicRandomStrategy;
+
+/** @deprecated Use {@link createBasicFirstAvailableStrategy} instead. Will be removed one major after first release. */
+export const createFirstAvailableStrategy = createBasicFirstAvailableStrategy;

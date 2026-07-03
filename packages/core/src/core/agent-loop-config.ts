@@ -16,6 +16,7 @@ import type { AgentLoopTraceManager } from './trace-interface.js';
 import type { GuardrailPipeline } from './guardrail-port.js';
 import { createSequentialStrategy, createParallelStrategy } from './execution-strategies.js';
 import { validateAgentLoopConfig } from './agent-loop-validation.js';
+import { systemClock, type Clock } from '../infra/clock.js';
 
 /**
  * Per-iteration cap on the accumulated stream content (10 MB) that
@@ -60,6 +61,12 @@ export interface ResolvedAgentLoopConfig {
 
   readonly streaming: boolean;
   readonly executionStrategy: ExecutionStrategy;
+  /**
+   * Resolved wall-clock. Always concrete ({@link systemClock} when the raw
+   * config omitted `clock`) so downstream consumers never branch on
+   * `undefined`.
+   */
+  readonly clock: Clock;
 
   readonly limits: {
     readonly maxIterations: number;
@@ -150,6 +157,7 @@ export function resolveAgentLoopConfig(
     adapter: raw.adapter,
     streaming: raw.streaming ?? false,
     executionStrategy,
+    clock: raw.clock ?? systemClock,
     limits: Object.freeze(limits),
     hooks: Object.freeze({
       registered: Object.freeze([...(raw.hooks ?? [])]) as readonly AgentLoopHook[],

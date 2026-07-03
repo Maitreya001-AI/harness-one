@@ -95,6 +95,18 @@ export class CircuitOpenError extends HarnessError {
 /**
  * Create a circuit breaker.
  *
+ * **When to use this vs. the alternatives:** reach for the circuit breaker to
+ * protect a **downstream dependency you call yourself** (a tool's HTTP
+ * endpoint, a vector store, an internal service) from cascading failure —
+ * wrap the call in `execute()`. Unlike the fallback adapter's one-way breaker,
+ * this one **auto-recovers** via a half-open probe. For LLM-provider failover
+ * use `createFallbackAdapter`; for transient same-provider blips use
+ * `AgentLoopConfig`'s in-loop retry. Note: this primitive is not yet wired into
+ * `AgentLoopConfig`, so it does not circuit-break the loop's adapter call on
+ * its own.
+ *
+ * @see docs/guides/resilience.md — selection guide for all four resilience mechanisms
+ *
  * @example
  * ```ts
  * const cb = createCircuitBreaker({ failureThreshold: 3, resetTimeoutMs: 10_000 });

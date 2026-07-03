@@ -20,6 +20,7 @@ import type {
 } from './types.js';
 import type { AgentLoopTraceManager } from './trace-interface.js';
 import type { GuardrailPipeline } from './guardrail-port.js';
+import type { Clock } from '../infra/clock.js';
 
 // `AgentLoopConfig` is a single flat shape. There is no nested V2.
 
@@ -116,6 +117,14 @@ export interface AgentLoopConfig {
   readonly maxDurationMs?: number;
   readonly signal?: AbortSignal;
   /**
+   * Injectable wall-clock source. Drives the run-start timestamp and every
+   * duration-budget computation (`maxDurationMs`) plus the adapter-caller
+   * retry-timing metrics. Defaults to the platform clock (`Date.now()`);
+   * inject a virtual clock to make duration budgets testable without real
+   * waiting. See `harness-one/advanced` → `Clock` / `systemClock`.
+   */
+  readonly clock?: Clock;
+  /**
    * Callback invoked when the LLM requests a tool call.
    *
    * Returns `Promise<unknown>` intentionally: tool results are inherently
@@ -191,6 +200,16 @@ export interface AgentLoopConfig {
    *
    * Defaults to 0 (no retries). Set to a positive number to enable automatic
    * retry with exponential backoff for retryable errors.
+   *
+   * **When to use this vs. the alternatives:** in-loop retry is for transient
+   * **same-provider** blips (a `429`, a flaky socket) — it retries the exact
+   * call in place, leaving the conversation untouched. It cannot rescue a
+   * provider that is fully down (use `createFallbackAdapter`), a run that
+   * poisoned its own context (use `createResilientLoop`), or a non-LLM
+   * downstream dependency (use `createCircuitBreaker`). Keep the count modest
+   * (1–2): retrying rate-limits amplifies the load you're already shedding.
+   *
+   * @see docs/guides/resilience.md — selection guide for all four resilience mechanisms
    */
   readonly maxAdapterRetries?: number;
   /**

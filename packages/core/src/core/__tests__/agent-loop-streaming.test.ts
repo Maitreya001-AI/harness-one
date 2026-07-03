@@ -389,7 +389,11 @@ describe('Streaming: post-call budget check with streaming', () => {
 });
 
 describe('Streaming: done chunk without usage', () => {
-  it('uses zero usage when done chunk has no usage field', async () => {
+  it('estimates usage and warns when done chunk has no usage field', async () => {
+    // Previously the loop accumulated {0,0} here, making maxTotalTokens
+    // silently unenforceable for adapters that never report usage. The
+    // handler now falls back to the token-estimator heuristic and yields
+    // a warning event (provider-spec: estimate rather than report zeros).
     const adapter: AgentAdapter = {
       async chat() { throw new Error('Should not be called'); },
       async *stream() {
@@ -403,7 +407,11 @@ describe('Streaming: done chunk without usage', () => {
 
     const msg = events.find((e) => e.type === 'message') as Extract<AgentEvent, { type: 'message' }>;
     expect(msg).toBeDefined();
-    expect(msg.usage).toEqual({ inputTokens: 0, outputTokens: 0 });
+    expect(msg.usage.inputTokens).toBeGreaterThan(0);
+    expect(msg.usage.outputTokens).toBeGreaterThan(0);
+    expect(events.some(
+      (e) => e.type === 'warning' && /reported no token usage/i.test(e.message),
+    )).toBe(true);
 
     const done = events.find((e) => e.type === 'done') as Extract<AgentEvent, { type: 'done' }>;
     expect(done).toBeDefined();

@@ -12,14 +12,95 @@ export interface Tokenizer {
   encode(text: string): { length: number };
 }
 
-const registry = new Map<string, Tokenizer>();
+/**
+ * An instance-scoped tokenizer registry. Each registry owns its own
+ * model→tokenizer map and falls back to the same {@link heuristicEstimate}
+ * for unregistered models.
+ *
+ * Prefer this over the module-level {@link registerTokenizer} /
+ * {@link estimateTokens} when embedding harness-one as a library: two
+ * consumers in one process can each hold their own registry without
+ * clobbering each other's tokenizers.
+ */
+export interface TokenizerRegistry {
+  /**
+   * Register a tokenizer for `model`. Returns `true` if a new tokenizer was
+   * installed, `false` if `model` already had one (the call still overwrites,
+   * but the boolean flags unintended double-registration).
+   */
+  register(model: string, tokenizer: Tokenizer): boolean;
+  /** Estimate token count for `text` under `model` (registered or heuristic). */
+  estimate(model: string, text: string): number;
+}
+
+/** Internal shape: a {@link TokenizerRegistry} plus a test-only `clear`. */
+interface MutableTokenizerRegistry extends TokenizerRegistry {
+  /** Drop all registered tokenizers (isolation reset for tests). */
+  clear(): void;
+}
+
+/** Build a fresh registry closed over its own private Map. */
+function makeRegistry(): MutableTokenizerRegistry {
+  const registry = new Map<string, Tokenizer>();
+  return {
+    register(model: string, tokenizer: Tokenizer): boolean {
+      const isNew = !registry.has(model);
+      registry.set(model, tokenizer);
+      return isNew;
+    },
+    estimate(model: string, text: string): number {
+      const tokenizer = registry.get(model);
+      if (tokenizer) {
+        return tokenizer.encode(text).length;
+      }
+      return heuristicEstimate(text);
+    },
+    clear(): void {
+      registry.clear();
+    },
+  };
+}
 
 /**
- * Register a tokenizer for a specific model.
+ * Create an isolated {@link TokenizerRegistry}.
+ *
+ * The returned registry has its own map and shares nothing with the
+ * module-level default or any other registry. Recommended for library
+ * authors — see {@link registerTokenizer} for why the global path is a
+ * footgun in multi-tenant/embedded processes.
+ *
+ * @example
+ * ```ts
+ * const reg = createTokenizerRegistry();
+ * reg.register('gpt-4', { encode: (t) => enc.encode(t) });
+ * const n = reg.estimate('gpt-4', 'Hello world');
+ * ```
+ */
+export function createTokenizerRegistry(): TokenizerRegistry {
+  return makeRegistry();
+}
+
+/**
+ * Process-wide default registry backing the module-level
+ * {@link registerTokenizer} / {@link estimateTokens} / {@link clearTokenizerRegistry}
+ * functions. Kept for backward compatibility with the global API and with
+ * `@harness-one/tiktoken`, which registers into it at import time.
+ */
+const defaultRegistry = makeRegistry();
+
+/**
+ * Register a tokenizer for a specific model in the **process-wide default
+ * registry**.
  *
  * Returns `true` if a new tokenizer was installed, `false` if this model
  * already had one and the call was a no-op. The boolean lets callers
  * detect unintended overwrites or double-registration in init code.
+ *
+ * ⚠️ **Mutates global state.** This writes to a single default registry
+ * shared by the whole process, so two independent consumers (or two tests)
+ * can clobber each other. **Library authors** embedding harness-one should
+ * prefer {@link createTokenizerRegistry} and thread the instance through the
+ * `tokenizerRegistry` injection points instead of mutating the global.
  *
  * @example
  * ```ts
@@ -28,35 +109,31 @@ const registry = new Map<string, Tokenizer>();
  * ```
  */
 export function registerTokenizer(model: string, tokenizer: Tokenizer): boolean {
-  const isNew = !registry.has(model);
-  registry.set(model, tokenizer);
-  return isNew;
+  return defaultRegistry.register(model, tokenizer);
 }
 
 /**
- * Estimate token count for text using a registered tokenizer or heuristic.
+ * Clear all registered tokenizers in the process-wide default registry.
+ * **Test-only** — call in `afterEach` or `afterAll` to restore isolation
+ * when tests register custom tokenizers into the global path.
+ *
+ * @internal Exposed for test suites; not part of the public API contract.
+ */
+export function clearTokenizerRegistry(): void {
+  defaultRegistry.clear();
+}
+
+/**
+ * Estimate token count for text using the process-wide default registry's
+ * tokenizer for `model`, or the heuristic when none is registered.
  *
  * @example
  * ```ts
  * const tokens = estimateTokens('claude-3', 'Hello world');
  * ```
  */
-/**
- * Clear all registered tokenizers. **Test-only** — call in `afterEach` or
- * `afterAll` to restore isolation when tests register custom tokenizers.
- *
- * @internal Exposed for test suites; not part of the public API contract.
- */
-export function clearTokenizerRegistry(): void {
-  registry.clear();
-}
-
 export function estimateTokens(model: string, text: string): number {
-  const tokenizer = registry.get(model);
-  if (tokenizer) {
-    return tokenizer.encode(text).length;
-  }
-  return heuristicEstimate(text);
+  return defaultRegistry.estimate(model, text);
 }
 
 /**

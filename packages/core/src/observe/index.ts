@@ -67,7 +67,7 @@ export type { LogLevel, Logger, LoggerConfig } from './logger.js';
 export { createLogger } from './logger.js';
 
 // Failure Taxonomy
-export { createFailureTaxonomy } from './failure-taxonomy.js';
+export { createFailureTaxonomy, normalizeFailureMode } from './failure-taxonomy.js';
 
 // Cache Monitor
 export { createCacheMonitor } from './cache-monitor.js';

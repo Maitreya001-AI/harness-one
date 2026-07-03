@@ -3,6 +3,9 @@ import {
   createBasicRoundRobinStrategy,
   createBasicRandomStrategy,
   createBasicFirstAvailableStrategy,
+  createRoundRobinStrategy,
+  createRandomStrategy,
+  createFirstAvailableStrategy,
 } from '../strategies.js';
 import type { AgentRegistration, DelegationTask } from '../types.js';
 
@@ -431,5 +434,23 @@ describe('AgentRegistration sessionId field', () => {
 
     expect(strategy.select(agents, task)).toBe('a1');
     expect(strategy.select(agents, task)).toBe('a2');
+  });
+});
+
+// ===========================================================================
+// Deprecated grace aliases
+// ===========================================================================
+
+describe('deprecated strategy aliases', () => {
+  it('createRoundRobinStrategy is the exact createBasicRoundRobinStrategy', () => {
+    expect(createRoundRobinStrategy).toBe(createBasicRoundRobinStrategy);
+  });
+
+  it('createRandomStrategy is the exact createBasicRandomStrategy', () => {
+    expect(createRandomStrategy).toBe(createBasicRandomStrategy);
+  });
+
+  it('createFirstAvailableStrategy is the exact createBasicFirstAvailableStrategy', () => {
+    expect(createFirstAvailableStrategy).toBe(createBasicFirstAvailableStrategy);
   });
 });

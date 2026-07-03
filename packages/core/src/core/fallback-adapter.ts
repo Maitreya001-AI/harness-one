@@ -26,6 +26,15 @@ export interface FallbackAdapterConfig {
  * Traversal is implemented as a bounded loop (never recursive) so the call
  * stack is O(1) regardless of how many adapters are configured (CQ-004).
  *
+ * **When to use this vs. the alternatives:** reach for the fallback adapter
+ * when a whole **provider** goes down and you have a second provider to fail
+ * over to — not for transient same-provider blips (use `AgentLoopConfig`'s
+ * in-loop retry) nor for a run that poisoned its own context (use
+ * `createResilientLoop`). Note its breaker is **one-way** (never returns to
+ * the primary on its own), unlike the auto-recovering `createCircuitBreaker`.
+ *
+ * @see docs/guides/resilience.md — selection guide for all four resilience mechanisms
+ *
  * @example
  * ```ts
  * const adapter = createFallbackAdapter({

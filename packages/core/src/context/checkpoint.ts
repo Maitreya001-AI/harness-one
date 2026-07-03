@@ -19,6 +19,7 @@ import type {
 } from './types.js';
 import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import { prefixedSecureId } from '../infra/ids.js';
+import { systemClock } from '../infra/clock.js';
 
 /** Default token heuristic: ~4 characters per token. */
 function defaultCountTokens(messages: readonly Message[]): number {
@@ -77,6 +78,7 @@ export function createCheckpointManager(
   }
   const countTokens = config?.countTokens ?? defaultCountTokens;
   const storage = config?.storage ?? createInMemoryStorage();
+  const clock = config?.clock ?? systemClock;
 
   async function autoPrune(): Promise<void> {
     const list = await storage.list();
@@ -98,7 +100,7 @@ export function createCheckpointManager(
         ...(label !== undefined ? { label } : {}),
         messages: [...messages],
         tokenCount: countTokens(messages),
-        timestamp: Date.now(),
+        timestamp: clock.now(),
         ...(metadata !== undefined
           ? { metadata: Object.freeze({ ...metadata }) }
           : {}),
@@ -129,7 +131,7 @@ export function createCheckpointManager(
       const list = await storage.list();
 
       if (options?.maxAge != null) {
-        const cutoff = Date.now() - options.maxAge;
+        const cutoff = clock.now() - options.maxAge;
         for (const cp of list) {
           if (cp.timestamp < cutoff) {
             await storage.delete(cp.id);

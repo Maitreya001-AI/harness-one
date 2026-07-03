@@ -27,6 +27,8 @@ export type { GuardrailPipeline } from './pipeline.js';
 
 // Guardrail retry
 export { withGuardrailRetry } from './self-healing.js';
+// Deprecated grace alias (removed one major after first release).
+export { withSelfHealing } from './self-healing.js';
 
 // Built-in guardrails
 export { createRateLimiter } from './rate-limiter.js';

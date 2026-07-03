@@ -83,12 +83,32 @@ export {
 } from '../infra/backoff.js';
 export type { BackoffConfig, BackoffSchedule } from '../infra/backoff.js';
 
+// ─── Circuit breaker (protect downstream dependencies) ───────────────────
+// Previously internal-only; exported so the fourth resilience mechanism in
+// docs/guides/resilience.md is actually reachable — wrap tool-level HTTP /
+// vector-DB calls with it. Not wired into AgentLoopConfig by design; see
+// the guide's composition rules.
+export { createCircuitBreaker, CircuitOpenError } from '../infra/circuit-breaker.js';
+export type { CircuitBreaker, CircuitBreakerConfig, CircuitState, CircuitStateChangeContext } from '../infra/circuit-breaker.js';
+
 // ─── Trusted system-message factories ────────────────────────────────────
 export {
   createTrustedSystemMessage,
   isTrustedSystemMessage,
   sanitizeRestoredMessage,
 } from '../core/trusted-system-message.js';
+
+// ─── Injectable clock port ────────────────────────────────────────────────
+// Extension authors composing custom loops / stores can inject a virtual
+// clock for deterministic duration budgets, TTL expiry, and timestamps.
+export { systemClock } from '../infra/clock.js';
+export type { Clock } from '../infra/clock.js';
+
+// ─── Instance-scoped tokenizer registry ───────────────────────────────────
+// Library authors embedding harness-one should prefer an isolated registry
+// over the process-wide `registerTokenizer` default — see its TSDoc.
+export { createTokenizerRegistry } from '../infra/token-estimator.js';
+export type { TokenizerRegistry, Tokenizer } from '../infra/token-estimator.js';
 
 // Test utilities moved to `harness-one/testing`.
 // Rationale: `createMockAdapter` / `createFailingAdapter` /

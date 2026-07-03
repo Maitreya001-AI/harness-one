@@ -28,6 +28,9 @@ export type AgentEvent = {
     type: 'text_delta';
     text: string;
 } | {
+    type: 'thinking_delta';
+    thinking: string;
+} | {
     type: 'tool_call_delta';
     toolCall: Partial<ToolCallRequest>;
 } | {
@@ -80,6 +83,8 @@ export interface AgentLoopConfig {
     // (undocumented)
     readonly adapter: AgentAdapter;
     readonly baseRetryDelayMs?: number;
+    // Warning: (ae-forgotten-export) The symbol "Clock" needs to be exported by the entry point index.d.ts
+    readonly clock?: Clock;
     readonly executionStrategy?: ExecutionStrategy;
     readonly guardrailsManagedExternally?: boolean;
     readonly hooks?: readonly AgentLoopHook[];
@@ -171,6 +176,9 @@ export interface AgentLoopTraceManager {
     startTrace(name: string, metadata?: Record<string, unknown>): string;
 }
 
+// @public
+type AnyToolDefinition = ToolDefinition<never>;
+
 // Warning: (ae-forgotten-export) The symbol "BaseMessage" needs to be exported by the entry point index.d.ts
 //
 // @public
@@ -197,6 +205,8 @@ export interface AuthContext {
 
 // @public
 interface BaseMessage {
+    // Warning: (ae-forgotten-export) The symbol "ContentBlock" needs to be exported by the entry point index.d.ts
+    readonly blocks?: readonly ContentBlock[];
     // (undocumented)
     readonly content: string;
     // (undocumented)
@@ -267,6 +277,11 @@ export interface ChatResponse {
 }
 
 // @public
+interface Clock {
+    now(): number;
+}
+
+// @public
 export interface CompactionPolicy {
     // (undocumented)
     readonly gradeWeights?: {
@@ -289,6 +304,14 @@ export interface CompactionResult {
     // (undocumented)
     readonly removed: number;
 }
+
+// Warning: (ae-forgotten-export) The symbol "TextBlock" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "ThinkingBlock" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "RedactedThinkingBlock" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "ImageBlock" needs to be exported by the entry point index.d.ts
+//
+// @public
+type ContentBlock = TextBlock | ThinkingBlock | RedactedThinkingBlock | ImageBlock;
 
 // @public
 export interface ContextRelay {
@@ -472,14 +495,34 @@ export function createTraceManager(config?: {
 }): TraceManager;
 
 // @public
-export function defineTool<TParams = unknown>(def: {
-    name: string;
-    description: string;
-    parameters: JsonSchema;
-    responseFormat?: 'concise' | 'detailed';
+type DeepReadonly<T> = T extends (infer U)[] ? readonly DeepReadonly<U>[] : T extends object ? {
+    readonly [K in keyof T]: DeepReadonly<T[K]>;
+} : T;
+
+// Warning: (ae-forgotten-export) The symbol "ReadonlyJsonSchema" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "DefineToolDef" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "FromSchema" needs to be exported by the entry point index.d.ts
+//
+// @public
+export function defineTool<S extends ReadonlyJsonSchema>(def: DefineToolDef<FromSchema<S>, S>): ToolDefinition<FromSchema<S>>;
+
+// @public
+export function defineTool<TParams = unknown>(def: DefineToolDef<TParams, JsonSchema>): ToolDefinition<TParams>;
+
+// @public
+interface DefineToolDef<TParams, TSchema extends JsonSchema | ReadonlyJsonSchema> {
     capabilities?: readonly ToolCapabilityValue[];
+    // (undocumented)
+    description: string;
+    // (undocumented)
     execute: (params: TParams, signal?: AbortSignal) => Promise<ToolResult>;
-}): ToolDefinition<TParams>;
+    // (undocumented)
+    name: string;
+    // (undocumented)
+    parameters: TSchema;
+    // (undocumented)
+    responseFormat?: 'concise' | 'detailed';
+}
 
 // @public
 interface Disposable_2 {
@@ -551,6 +594,44 @@ export interface FallbackAdapterConfig {
 }
 
 // @public
+type FromArraySchema<S> = S extends {
+    readonly items: infer I;
+} ? FromSchema<I>[] : unknown[];
+
+// Warning: (ae-forgotten-export) The symbol "Simplify" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "RequiredKeys" needs to be exported by the entry point index.d.ts
+//
+// @public
+type FromObjectSchema<S> = S extends {
+    readonly properties: infer P;
+} ? Simplify<{
+    -readonly [K in keyof P as K extends RequiredKeys<S> ? K : never]: FromSchema<P[K]>;
+} & {
+    -readonly [K in keyof P as K extends RequiredKeys<S> ? never : K]?: FromSchema<P[K]>;
+}> : Record<string, unknown>;
+
+// Warning: (ae-forgotten-export) The symbol "IsConstSchema" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "FromSchemaInner" needs to be exported by the entry point index.d.ts
+//
+// @public
+type FromSchema<S> = IsConstSchema<S> extends true ? FromSchemaInner<S> : unknown;
+
+// Warning: (ae-forgotten-export) The symbol "FromObjectSchema" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "FromArraySchema" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "PrimitiveFromType" needs to be exported by the entry point index.d.ts
+//
+// @public
+type FromSchemaInner<S> = S extends {
+    readonly enum: infer E;
+} ? E extends readonly unknown[] ? E[number] : unknown : S extends {
+    readonly type: 'object';
+} ? FromObjectSchema<S> : S extends {
+    readonly type: 'array';
+} ? FromArraySchema<S> : S extends {
+    readonly type: infer T;
+} ? PrimitiveFromType<T> : unknown;
+
+// @public
 export type Guardrail = (ctx: GuardrailContext) => Promise<GuardrailVerdict> | GuardrailVerdict;
 
 // @public
@@ -571,8 +652,7 @@ type GuardrailDirection = 'input' | 'output' | 'tool_output' | 'rag';
 
 // @public
 interface GuardrailEvent {
-    // (undocumented)
-    direction: 'input' | 'output';
+    direction: GuardrailDirection;
     // (undocumented)
     guardrail: string;
     // (undocumented)
@@ -841,6 +921,24 @@ export interface HarnessErrorDetails {
 }
 
 // @public
+interface ImageBlock {
+    // (undocumented)
+    readonly source: {
+        readonly kind: 'base64';
+        readonly mediaType: ImageMediaType;
+        readonly data: string;
+    } | {
+        readonly kind: 'url';
+        readonly url: string;
+    };
+    // (undocumented)
+    readonly type: 'image';
+}
+
+// @public
+type ImageMediaType = 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+
+// @public
 export interface InstrumentationPort {
     addSpanEvent(spanId: string, event: {
         name: string;
@@ -852,6 +950,15 @@ export interface InstrumentationPort {
     startSpan(traceId: string, name: string, parentId?: string): string;
     startTrace?(name: string, metadata?: Record<string, unknown>): string;
 }
+
+// Warning: (ae-forgotten-export) The symbol "IsEqual" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "Writable" needs to be exported by the entry point index.d.ts
+//
+// @public
+type IsConstSchema<S> = S extends object ? IsEqual<S, Writable<S>> extends true ? false : true : false;
+
+// @public
+type IsEqual<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
 
 // @public
 export interface JsonSchema {
@@ -994,6 +1101,7 @@ export interface MemoryStore {
     count(): Promise<number>;
     // (undocumented)
     delete(id: string): Promise<boolean>;
+    getVersion?(key: string): Promise<number>;
     query(filter: MemoryFilter, opts?: {
         signal?: AbortSignal;
     }): Promise<MemoryEntry[]>;
@@ -1140,6 +1248,11 @@ export interface PipelineResult {
 }
 
 // @public
+type PrimitiveFromType<T> = [
+T
+] extends ['string'] ? string : [T] extends ['number'] ? number : [T] extends ['integer'] ? number : [T] extends ['boolean'] ? boolean : [T] extends ['null'] ? null : unknown;
+
+// @public
 export interface PruneResult {
     // (undocumented)
     readonly pruned: Message[];
@@ -1147,12 +1260,25 @@ export interface PruneResult {
     readonly warning?: string;
 }
 
+// Warning: (ae-forgotten-export) The symbol "DeepReadonly" needs to be exported by the entry point index.d.ts
+//
+// @public
+type ReadonlyJsonSchema = DeepReadonly<JsonSchema>;
+
 // @public
 interface RedactConfig {
     readonly blockPollutingKeys?: boolean;
     readonly extraKeys?: readonly string[];
     readonly extraPatterns?: readonly RegExp[];
     readonly useDefaultPattern?: boolean;
+}
+
+// @public
+interface RedactedThinkingBlock {
+    // (undocumented)
+    readonly data: string;
+    // (undocumented)
+    readonly type: 'redacted_thinking';
 }
 
 // @public
@@ -1174,6 +1300,11 @@ export interface RelayState {
     // (undocumented)
     readonly timestamp: number;
 }
+
+// @public
+type RequiredKeys<S> = S extends {
+    readonly required: infer R;
+} ? R extends readonly unknown[] ? R[number] : never : never;
 
 // @public
 export interface ResilientLoop {
@@ -1317,6 +1448,11 @@ interface SessionStore<T> {
 }
 
 // @public
+type Simplify<T> = {
+    [K in keyof T]: T[K];
+};
+
+// @public
 export interface Span {
     // (undocumented)
     readonly attributes?: Record<string, unknown>;
@@ -1366,12 +1502,15 @@ type SpanId = Brand<string, 'SpanId'>;
 
 // @public
 export interface StreamAggregatorChunk {
+    readonly redactedData?: string;
+    readonly signature?: string;
     // (undocumented)
     readonly text?: string;
+    readonly thinking?: string;
     // (undocumented)
     readonly toolCall?: Partial<ToolCallRequest>;
     // (undocumented)
-    readonly type: 'text_delta' | 'tool_call_delta' | 'done' | string;
+    readonly type: 'text_delta' | 'tool_call_delta' | 'thinking_delta' | 'done' | string;
     // (undocumented)
     readonly usage?: TokenUsage;
 }
@@ -1380,6 +1519,9 @@ export interface StreamAggregatorChunk {
 export type StreamAggregatorEvent = {
     type: 'text_delta';
     text: string;
+} | {
+    type: 'thinking_delta';
+    thinking: string;
 } | {
     type: 'tool_call_delta';
     toolCall: Partial<ToolCallRequest>;
@@ -1412,12 +1554,17 @@ export interface StreamAggregatorOptions {
 
 // @public
 export interface StreamChunk {
+    readonly redactedData?: string;
+    // (undocumented)
+    readonly signature?: string;
     // (undocumented)
     readonly text?: string;
     // (undocumented)
+    readonly thinking?: string;
+    // (undocumented)
     readonly toolCall?: Partial<ToolCallRequest>;
     // (undocumented)
-    readonly type: 'text_delta' | 'tool_call_delta' | 'done';
+    readonly type: 'text_delta' | 'tool_call_delta' | 'thinking_delta' | 'done';
     // (undocumented)
     readonly usage?: TokenUsage;
 }
@@ -1428,6 +1575,24 @@ export interface SystemMessage extends BaseMessage {
     readonly role: 'system';
     // (undocumented)
     readonly _trust?: TrustedSystemBrand;
+}
+
+// @public
+interface TextBlock {
+    // (undocumented)
+    readonly text: string;
+    // (undocumented)
+    readonly type: 'text';
+}
+
+// @public
+interface ThinkingBlock {
+    // (undocumented)
+    readonly signature?: string;
+    // (undocumented)
+    readonly thinking: string;
+    // (undocumented)
+    readonly type: 'thinking';
 }
 
 // @public
@@ -1570,8 +1735,8 @@ export interface ToolRegistry {
     handler(): (call: ToolCallRequest) => Promise<unknown>;
     // (undocumented)
     list(namespace?: string): ToolDefinition[];
-    // (undocumented)
-    register(tool: ToolDefinition): void;
+    // Warning: (ae-forgotten-export) The symbol "AnyToolDefinition" needs to be exported by the entry point index.d.ts
+    register(tool: AnyToolDefinition): void;
     // (undocumented)
     resetSession(): void;
     // (undocumented)
@@ -1699,16 +1864,22 @@ export interface VectorSearchOptions {
     readonly minScore?: number;
 }
 
+// @public
+type Writable<T> = {
+    -readonly [K in keyof T]: T[K];
+};
+
 // Warnings were encountered during analysis:
 //
-// dist/cost-tracker-TBpERf_h.d.ts:425:5 - (ae-forgotten-export) The symbol "RedactConfig" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-TBpERf_h.d.ts:432:5 - (ae-forgotten-export) The symbol "Redactor" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-TBpERf_h.d.ts:775:5 - (ae-forgotten-export) The symbol "EvictionStrategyName" needs to be exported by the entry point index.d.ts
-// dist/cost-tracker-TBpERf_h.d.ts:775:5 - (ae-forgotten-export) The symbol "EvictionStrategy" needs to be exported by the entry point index.d.ts
-// dist/pipeline-Bx5VXFpi.d.ts:45:5 - (ae-forgotten-export) The symbol "GuardrailEvent" needs to be exported by the entry point index.d.ts
-// dist/resilience-U5b4w90B.d.ts:64:5 - (ae-forgotten-export) The symbol "MiddlewareContext" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-CDQGTsIQ.d.ts:425:5 - (ae-forgotten-export) The symbol "RedactConfig" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-CDQGTsIQ.d.ts:432:5 - (ae-forgotten-export) The symbol "Redactor" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-CDQGTsIQ.d.ts:775:5 - (ae-forgotten-export) The symbol "EvictionStrategyName" needs to be exported by the entry point index.d.ts
+// dist/cost-tracker-CDQGTsIQ.d.ts:775:5 - (ae-forgotten-export) The symbol "EvictionStrategy" needs to be exported by the entry point index.d.ts
+// dist/pipeline-WcFdLxUS.d.ts:45:5 - (ae-forgotten-export) The symbol "GuardrailEvent" needs to be exported by the entry point index.d.ts
+// dist/resilience-B-pQS3qe.d.ts:64:5 - (ae-forgotten-export) The symbol "MiddlewareContext" needs to be exported by the entry point index.d.ts
 // dist/session/index.d.ts:162:5 - (ae-forgotten-export) The symbol "SessionStore" needs to be exported by the entry point index.d.ts
 // dist/session/index.d.ts:163:9 - (ae-forgotten-export) The symbol "SessionId" needs to be exported by the entry point index.d.ts
+// dist/types-DE_SutZY.d.ts:82:9 - (ae-forgotten-export) The symbol "ImageMediaType" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 

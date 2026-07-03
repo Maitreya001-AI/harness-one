@@ -22,6 +22,7 @@ import type { AgentEvent } from './events.js';
 import { AbortedError, HarnessError, HarnessErrorCode} from './errors.js';
 import { categorizeAdapterError } from './error-classifier.js';
 import { type CircuitBreaker, CircuitOpenError } from '../infra/circuit-breaker.js';
+import { systemClock, type Clock } from '../infra/clock.js';
 import type { StreamHandler } from './stream-handler.js';
 import { createRetryPolicy } from './retry-policy.js';
 import { withAdapterTimeout } from './adapter-timeout.js';
@@ -168,6 +169,12 @@ export interface AdapterCallerConfig {
    * a provider that does not honour abort signals promptly.
    */
   readonly metrics?: import('./adapter-timeout.js').AdapterTimeoutMetrics;
+  /**
+   * Injectable wall-clock for the cumulative retry-timing metrics
+   * (`totalDurationMs`). Defaults to {@link systemClock}; inject a fake clock
+   * to assert timing attribution deterministically.
+   */
+  readonly clock?: Clock;
 }
 
 /** Public surface of the adapter caller. */
@@ -211,6 +218,7 @@ export interface AdapterCaller {
  * `call()` invocation).
  */
 export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): AdapterCaller {
+  const clock = config.clock ?? systemClock;
   // Resilience primitives (backoff sleep, circuit-breaker gate, retryable
   // classifier) live on a dedicated policy so this caller only dispatches.
   const policy = createRetryPolicy({
@@ -301,7 +309,7 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
       // terminal failure, or abort) can carry the cumulative breakdown as
       // span attributes. Measured from the START of call() so
       // `totalDurationMs` includes both adapter wall-clock and backoff sleeps.
-      const callStartedAt = Date.now();
+      const callStartedAt = clock.now();
       let totalBackoffMs = 0;
 
       for (let attempt = 0; attempt <= config.maxAdapterRetries; attempt++) {
@@ -315,7 +323,7 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
             path,
             attempts: attempt,
             totalBackoffMs,
-            totalDurationMs: Date.now() - callStartedAt,
+            totalDurationMs: clock.now() - callStartedAt,
           };
         }
 
@@ -329,7 +337,7 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
             path,
             attempts: attempt,
             totalBackoffMs,
-            totalDurationMs: Date.now() - callStartedAt,
+            totalDurationMs: clock.now() - callStartedAt,
           };
         }
 
@@ -357,7 +365,7 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
               path: 'stream',
               attempts: attempt,
               totalBackoffMs,
-              totalDurationMs: Date.now() - callStartedAt,
+              totalDurationMs: clock.now() - callStartedAt,
             };
           }
           if (outcome.kind === 'terminal-failure') {
@@ -368,7 +376,7 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
               path: 'stream',
               attempts: attempt,
               totalBackoffMs,
-              totalDurationMs: Date.now() - callStartedAt,
+              totalDurationMs: clock.now() - callStartedAt,
             };
           }
           // outcome.kind === 'retry' — schedule backoff and loop. Compute
@@ -403,7 +411,7 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
             path: 'chat',
             attempts: attempt,
             totalBackoffMs,
-            totalDurationMs: Date.now() - callStartedAt,
+            totalDurationMs: clock.now() - callStartedAt,
           };
         }
         const { error: err, errorCategory } = r;
@@ -444,7 +452,7 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
           path: 'chat',
           attempts: attempt,
           totalBackoffMs,
-          totalDurationMs: Date.now() - callStartedAt,
+          totalDurationMs: clock.now() - callStartedAt,
           ...(r.timeoutMs !== undefined && { timeoutMs: r.timeoutMs }),
           ...(r.adapterName !== undefined && { adapterName: r.adapterName }),
         };
@@ -464,7 +472,7 @@ export function createAdapterCaller(config: Readonly<AdapterCallerConfig>): Adap
         path,
         attempts: config.maxAdapterRetries + 1,
         totalBackoffMs,
-        totalDurationMs: Date.now() - callStartedAt,
+        totalDurationMs: clock.now() - callStartedAt,
       };
     },
   };

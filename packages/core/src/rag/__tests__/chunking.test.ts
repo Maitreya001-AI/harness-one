@@ -3,6 +3,9 @@ import {
   createBasicFixedSizeChunking,
   createBasicParagraphChunking,
   createBasicSlidingWindowChunking,
+  createFixedSizeChunking,
+  createParagraphChunking,
+  createSlidingWindowChunking,
 } from '../chunking.js';
 import { HarnessError, HarnessErrorCode} from '../../core/errors.js';
 import type { Document } from '../types.js';
@@ -576,5 +579,23 @@ describe('Unicode boundary handling', () => {
       const reassembled = chunks.map((c) => c.content).join('');
       expect(reassembled).toBe(mixed);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Deprecated grace aliases
+// ---------------------------------------------------------------------------
+
+describe('deprecated chunking aliases', () => {
+  it('createFixedSizeChunking is the exact createBasicFixedSizeChunking', () => {
+    expect(createFixedSizeChunking).toBe(createBasicFixedSizeChunking);
+  });
+
+  it('createParagraphChunking is the exact createBasicParagraphChunking', () => {
+    expect(createParagraphChunking).toBe(createBasicParagraphChunking);
+  });
+
+  it('createSlidingWindowChunking is the exact createBasicSlidingWindowChunking', () => {
+    expect(createSlidingWindowChunking).toBe(createBasicSlidingWindowChunking);
   });
 });

@@ -194,3 +194,11 @@ export async function withGuardrailRetry(
   // Should not be reached, but TypeScript needs it
   return { content, attempts: maxRetries, passed: false, ...(totalTokens !== undefined && { totalTokens }) };
 }
+
+/**
+ * @deprecated Use {@link withGuardrailRetry} instead. Renamed during the
+ * thin-harness naming cleanup (see MIGRATION.md § Naming cleanup); this
+ * runtime-working alias keeps pre-release SHA-pinned consumers working and
+ * will be removed one major after first release.
+ */
+export const withSelfHealing = withGuardrailRetry;

@@ -188,6 +188,34 @@ describe('iteration-coordinator', () => {
       );
       expect(events[2]).toMatchObject({ type: 'done', reason: 'aborted' });
     });
+
+    it('trips the duration budget via an injected fake clock (no real waiting)', async () => {
+      // Prove the Clock seam end-to-end: startRun() stamps runStartTimeMs from
+      // the injected clock, and checkPreIteration() reads the SAME clock — so
+      // advancing virtual time past maxDurationMs trips the budget with zero
+      // real elapsed time and a deterministic message.
+      const state = freshState();
+      let t = 1_000;
+      const clock = { now: () => t };
+      const deps = freshDeps({ maxDurationMs: 50, clock });
+      const { ctx } = startRun(deps, state, []);
+      expect(ctx.runStartTimeMs).toBe(1_000); // stamped from the fake clock
+      t += 200; // advance virtual time past the 50ms budget without waiting
+      let iteration = 0;
+      const gen = checkPreIteration(
+        deps, state, ctx, undefined,
+        () => iteration, (n) => { iteration = n; },
+        { inputTokens: 0, outputTokens: 0 },
+      );
+      const { events, done } = await drain(gen);
+      expect(done).toBe(true);
+      expect(events[0]).toMatchObject({ type: 'iteration_start' });
+      const err = (events[1] as { error: HarnessError }).error;
+      expect(err.code).toBe(HarnessErrorCode.CORE_DURATION_BUDGET_EXCEEDED);
+      // Both ends of the subtraction came from the injected clock.
+      expect(err.message).toContain('200ms > 50ms');
+      expect(events[2]).toMatchObject({ type: 'done', reason: 'aborted' });
+    });
   });
 
   describe('startIteration', () => {

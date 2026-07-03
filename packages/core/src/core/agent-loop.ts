@@ -103,6 +103,7 @@ export class AgentLoop {
     this.abortController = new AbortController();
     this.state = {
       noPipelineWarned: false,
+      noBudgetWarned: false,
       status: 'idle',
       iterationObserved: 0,
       cumulativeUsage: { inputTokens: 0, outputTokens: 0 },
@@ -117,6 +118,7 @@ export class AgentLoop {
         traceManager: observability.traceManager,
       }),
       ...(observability.logger !== undefined && { logger: observability.logger }),
+      clock: this.resolved.clock,
       maxIterations: limits.maxIterations,
       maxTotalTokens: limits.maxTotalTokens,
       ...(limits.maxDurationMs !== undefined && { maxDurationMs: limits.maxDurationMs }),
@@ -170,6 +172,7 @@ export class AgentLoop {
       baseRetryDelayMs: limits.baseRetryDelayMs,
       retryableErrors: limits.retryableErrors,
       streamHandler,
+      clock: this.resolved.clock,
       ...(this.resolved.tools !== undefined && { tools: this.resolved.tools }),
     });
 

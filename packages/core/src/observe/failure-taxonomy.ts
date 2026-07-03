@@ -8,11 +8,46 @@ import type {
   Trace,
   FailureClassification,
   FailureDetector,
+  FailureMode,
   FailureTaxonomy,
   FailureTaxonomyConfig,
 } from './types.js';
 import { HarnessErrorCode } from '../core/errors.js';
 import { isRetryableHarnessErrorCode } from '../core/error-span-attributes.js';
+
+// ---------------------------------------------------------------------------
+// Deprecated failure-mode aliases (release grace window)
+// ---------------------------------------------------------------------------
+
+/**
+ * Deprecated failure-mode aliases: maps a renamed-away mode string to its
+ * current canonical name. The `'hallucination'` mode was renamed to
+ * `'repeated_tool_failure'` during the thin-harness naming cleanup (see
+ * MIGRATION.md § Naming cleanup).
+ *
+ * @deprecated Passing `'hallucination'` to {@link FailureTaxonomy.registerDetector}
+ * or via {@link FailureTaxonomyConfig.detectors} is accepted for one major
+ * version after first release and normalised to `'repeated_tool_failure'`.
+ * Update call sites to the canonical name; the alias is removed one major
+ * after first release.
+ */
+const DEPRECATED_FAILURE_MODE_ALIASES: Readonly<Record<string, FailureMode>> = Object.freeze({
+  hallucination: 'repeated_tool_failure',
+});
+
+/**
+ * Normalise a failure-mode key, resolving deprecated aliases (e.g.
+ * `'hallucination'` -> `'repeated_tool_failure'`) to their canonical name.
+ * Unknown or already-canonical modes are returned unchanged.
+ *
+ * Consumer detectors registered under a renamed-away mode string keep working:
+ * `taxonomy.registerDetector('hallucination', d)` overrides the built-in
+ * `'repeated_tool_failure'` detector rather than silently registering a dead
+ * mode.
+ */
+export function normalizeFailureMode(mode: string): string {
+  return DEPRECATED_FAILURE_MODE_ALIASES[mode] ?? mode;
+}
 
 // ---------------------------------------------------------------------------
 // Built-in detectors
@@ -231,10 +266,12 @@ export function createFailureTaxonomy(config?: FailureTaxonomyConfig): FailureTa
     createAdapterRetryStormDetector(thresholds?.adapterRetryStormMinErrors),
   );
 
-  // Apply user-provided detectors (override by key)
+  // Apply user-provided detectors (override by key). Normalise deprecated mode
+  // aliases (e.g. 'hallucination' -> 'repeated_tool_failure') so an override
+  // keyed on the old name targets the current built-in.
   if (config?.detectors) {
     for (const [key, detector] of Object.entries(config.detectors)) {
-      detectors.set(key, detector);
+      detectors.set(normalizeFailureMode(key), detector);
     }
   }
 
@@ -261,7 +298,8 @@ export function createFailureTaxonomy(config?: FailureTaxonomyConfig): FailureTa
     },
 
     registerDetector(mode: string, detector: FailureDetector): void {
-      detectors.set(mode, detector);
+      // Normalise deprecated mode aliases so old call sites keep working.
+      detectors.set(normalizeFailureMode(mode), detector);
     },
 
     getStats(): Readonly<Record<string, number>> {

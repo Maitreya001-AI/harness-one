@@ -30,6 +30,10 @@ export {
   createBasicFixedSizeChunking,
   createBasicParagraphChunking,
   createBasicSlidingWindowChunking,
+  // Deprecated grace aliases (removed one major after first release).
+  createFixedSizeChunking,
+  createParagraphChunking,
+  createSlidingWindowChunking,
 } from './chunking.js';
 
 // Retriever

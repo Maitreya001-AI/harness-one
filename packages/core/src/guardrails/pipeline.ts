@@ -4,7 +4,7 @@
  * @module
  */
 
-import type { Guardrail, GuardrailContext, GuardrailEvent, PipelineResult } from './types.js';
+import type { Guardrail, GuardrailContext, GuardrailDirection, GuardrailEvent, PipelineResult } from './types.js';
 import type { GuardrailPipeline } from '../core/guardrail-port.js';
 import { HarnessError, HarnessErrorCode } from '../core/errors.js';
 export type { GuardrailPipeline } from '../core/guardrail-port.js';
@@ -154,9 +154,13 @@ export function createPipeline(config: {
     runToolOutput: (toolResult: string, toolName?: string): Promise<PipelineResult> => {
       const ctx: GuardrailContext = {
         content: toolResult,
-        ...(toolName !== undefined && { meta: { toolName } }),
+        ...(toolName !== undefined && { meta: { toolName }, source: toolName }),
       };
-      return runGuardrails(internalData, internalData.output, 'output', ctx);
+      // Runs the *output* guard set, but tags context + events with the
+      // real phase so guards branching on `ctx.direction === 'tool_output'`
+      // fire and exporters can tell a tool-output block from a
+      // final-answer block (research-collab L-002 follow-through).
+      return runGuardrails(internalData, internalData.output, 'tool_output', ctx);
     },
     runRagContext: (
       chunks: readonly string[],
@@ -235,7 +239,7 @@ class BoundedEventBuffer {
 async function runGuardrails(
   pipeline: PipelineInternalData,
   guards: PipelineEntry[],
-  direction: 'input' | 'output',
+  direction: GuardrailDirection,
   ctx: GuardrailContext,
 ): Promise<PipelineResult> {
   const buffer = new BoundedEventBuffer(pipeline.maxResults);
@@ -480,7 +484,9 @@ async function runRagContextInternal(
       content: chunk,
       meta: { ...(meta ?? {}), ragChunkIndex: i },
     };
-    const result = await runGuardrails(p, p.input, 'input', ctx);
+    // Runs the *input* guard set, tagged with the real 'rag' phase (see
+    // runToolOutput above for the same rationale).
+    const result = await runGuardrails(p, p.input, 'rag', ctx);
     lastResult = result;
     if (result.verdict.action !== 'allow') return result;
   }

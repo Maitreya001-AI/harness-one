@@ -49,6 +49,10 @@ export {
   createBasicRoundRobinStrategy,
   createBasicRandomStrategy,
   createBasicFirstAvailableStrategy,
+  // Deprecated grace aliases (removed one major after first release).
+  createRoundRobinStrategy,
+  createRandomStrategy,
+  createFirstAvailableStrategy,
 } from './strategies.js';
 
 // Agent Pool

@@ -6,6 +6,7 @@
 
 import type { JsonSchema } from '../core/types.js';
 import type { ToolDefinition, ToolResult, ToolCapabilityValue } from './types.js';
+import type { FromSchema, ReadonlyJsonSchema } from './schema-infer.js';
 import { toolError } from './types.js';
 import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 
@@ -13,6 +14,28 @@ import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 const VALID_TYPES: Set<string> = new Set<string>([
   'string', 'number', 'integer', 'boolean', 'object', 'array', 'null',
 ]);
+
+/**
+ * Structural check for a thrown value that is already a {@link ToolResult}.
+ * Matches the discriminated shape (`{kind:'error', success:false, error}` or
+ * `{kind:'success', success:true, data}`) so the registry's runtime
+ * `assertToolResult` accepts the preserved value unchanged.
+ */
+function isToolResultShaped(value: unknown): value is ToolResult {
+  if (value === null || typeof value !== 'object') return false;
+  const v = value as { kind?: unknown; success?: unknown; error?: unknown; data?: unknown };
+  if (v.kind === 'error' && v.success === false) {
+    const feedback = v.error as { message?: unknown } | null | undefined;
+    return (
+      feedback !== null
+      && feedback !== undefined
+      && typeof feedback === 'object'
+      && typeof feedback.message === 'string'
+    );
+  }
+  if (v.kind === 'success' && v.success === true) return 'data' in v;
+  return false;
+}
 
 /**
  * Validate that a JSON Schema uses supported features at definition time.
@@ -57,23 +80,11 @@ function validateParametersSchema(schema: JsonSchema, path = 'parameters'): void
   }
 }
 
-/**
- * Create a frozen ToolDefinition that wraps execute to catch errors.
- *
- * @example
- * ```ts
- * const tool = defineTool({
- *   name: 'echo',
- *   description: 'Echoes input',
- *   parameters: { type: 'object', properties: { text: { type: 'string' } } },
- *   execute: async (params) => toolSuccess(params.text),
- * });
- * ```
- */
-export function defineTool<TParams = unknown>(def: {
+/** Shape of the object passed to {@link defineTool}, parameterised by params + schema. */
+interface DefineToolDef<TParams, TSchema extends JsonSchema | ReadonlyJsonSchema> {
   name: string;
   description: string;
-  parameters: JsonSchema;
+  parameters: TSchema;
   responseFormat?: 'concise' | 'detailed';
   /**
    * Declared capabilities for the tool. See {@link ToolDefinition.capabilities}.
@@ -81,23 +92,87 @@ export function defineTool<TParams = unknown>(def: {
    */
   capabilities?: readonly ToolCapabilityValue[];
   execute: (params: TParams, signal?: AbortSignal) => Promise<ToolResult>;
-}): ToolDefinition<TParams> {
-  // Validate schema structure at definition time to catch malformed schemas early
-  validateParametersSchema(def.parameters);
+}
 
-  const tool: ToolDefinition<TParams> = {
+/**
+ * Create a frozen ToolDefinition that wraps execute to catch errors.
+ *
+ * **Schema-inferred params (overload 1).** When `parameters` is an `as const`
+ * schema literal, `params` is inferred from the schema — no explicit generic
+ * required:
+ *
+ * ```ts
+ * const tool = defineTool({
+ *   name: 'search',
+ *   description: 'Search issues',
+ *   parameters: {
+ *     type: 'object',
+ *     properties: { q: { type: 'string' }, limit: { type: 'number' } },
+ *     required: ['q'],
+ *   } as const,
+ *   execute: async (params) => toolSuccess(params.q), // params: { q: string; limit?: number }
+ * });
+ * ```
+ *
+ * A schema without `as const` conservatively yields `params: unknown`, matching
+ * the pre-inference behaviour. See {@link FromSchema}.
+ */
+export function defineTool<S extends ReadonlyJsonSchema>(
+  def: DefineToolDef<FromSchema<S>, S>,
+): ToolDefinition<FromSchema<S>>;
+/**
+ * Create a frozen ToolDefinition (overload 2 — explicit params generic).
+ *
+ * Backward-compatible form. Pass the params type explicitly; it defaults to
+ * `unknown` when omitted and the schema is not `as const`.
+ *
+ * @example
+ * ```ts
+ * const tool = defineTool<{ text: string }>({
+ *   name: 'echo',
+ *   description: 'Echoes input',
+ *   parameters: { type: 'object', properties: { text: { type: 'string' } } },
+ *   execute: async (params) => toolSuccess(params.text),
+ * });
+ * ```
+ */
+export function defineTool<TParams = unknown>(
+  def: DefineToolDef<TParams, JsonSchema>,
+): ToolDefinition<TParams>;
+export function defineTool(
+  def: DefineToolDef<never, JsonSchema | ReadonlyJsonSchema>,
+): ToolDefinition<unknown> {
+  // `parameters` may be a deep-`readonly` `as const` literal via overload 1;
+  // widen to `JsonSchema` for the runtime validator and stored definition. The
+  // schema is structurally identical — only its `readonly` modifiers differ.
+  const parameters = def.parameters as JsonSchema;
+  // Validate schema structure at definition time to catch malformed schemas early
+  validateParametersSchema(parameters);
+
+  // Variance bridge (internal, not `any`): the impl signature types `execute`
+  // with the bottom `never` param so both overloads' `execute` shapes are
+  // assignable to it. Invoke it through an `unknown`-param view — a single
+  // `as` (the fn types are directionally comparable), not a double cast —
+  // params are validated against `parameters` by the registry before every call.
+  const runExecute = def.execute as (
+    params: unknown,
+    signal?: AbortSignal,
+  ) => Promise<ToolResult>;
+
+  const tool: ToolDefinition<unknown> = {
     name: def.name,
     description: def.description,
-    parameters: def.parameters,
+    parameters,
     ...(def.responseFormat !== undefined && { responseFormat: def.responseFormat }),
     ...(def.capabilities !== undefined && { capabilities: def.capabilities }),
-    execute: async (params: TParams, signal?: AbortSignal): Promise<ToolResult> => {
+    execute: async (params: unknown, signal?: AbortSignal): Promise<ToolResult> => {
       try {
-        return await def.execute(params, signal);
+        return await runExecute(params, signal);
       } catch (err) {
-        // If the tool already returned a structured error result, preserve it
-        if (err && typeof err === 'object' && 'error' in err && 'content' in err) {
-          return err as unknown as ToolResult;
+        // If the tool threw an already-structured ToolResult, preserve it
+        // instead of collapsing it into a generic internal error.
+        if (isToolResultShaped(err)) {
+          return err;
         }
         const message = err instanceof Error ? err.message : String(err);
         return toolError(message, 'internal', 'Check the tool implementation');

@@ -31,6 +31,8 @@ function _exhaustive(event: AgentEvent): string {
       return `iter_${event.iteration}`;
     case 'text_delta':
       return event.text;
+    case 'thinking_delta':
+      return event.thinking;
     case 'tool_call_delta':
       return JSON.stringify(event.toolCall);
     case 'tool_call':
@@ -63,6 +65,7 @@ type AgentEventType = AgentEvent['type'];
 type ExpectedAgentEventTypes =
   | 'iteration_start'
   | 'text_delta'
+  | 'thinking_delta'
   | 'tool_call_delta'
   | 'tool_call'
   | 'tool_result'

@@ -196,3 +196,30 @@ describe('AdapterCaller — abort-before-timer in backoff', () => {
     }
   });
 });
+
+describe('AdapterCaller — injectable clock (B8)', () => {
+  it('derives totalDurationMs from the injected clock, not real time', async () => {
+    const controller = new AbortController();
+    const adapter = makeAdapter({
+      async chat(): Promise<ChatResponse> {
+        return { message: { role: 'assistant', content: 'ok' }, usage: USAGE };
+      },
+    });
+    // Two `now()` reads per successful call(): callStartedAt, then the
+    // success-branch elapsed calc. A +50 step makes totalDurationMs a fixed 50.
+    let t = 1_000;
+    const clock = { now: (): number => { const v = t; t += 50; return v; } };
+    const caller = createAdapterCaller({
+      ...baseConfig(adapter, controller.signal),
+      clock,
+    });
+
+    const iter = caller.call([{ role: 'user', content: 'hi' }] satisfies Message[], 0);
+    let step = await iter.next();
+    while (!step.done) step = await iter.next();
+    const result = step.value;
+
+    expect(result.ok).toBe(true);
+    expect(result.totalDurationMs).toBe(50);
+  });
+});

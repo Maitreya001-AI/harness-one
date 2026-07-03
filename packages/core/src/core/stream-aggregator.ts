@@ -26,7 +26,7 @@
  * @module
  */
 
-import type { Message, ToolCallRequest, TokenUsage } from './types.js';
+import type { ContentBlock, Message, ToolCallRequest, TokenUsage } from './types.js';
 import { HarnessError, HarnessErrorCode } from './errors.js';
 
 /**
@@ -147,9 +147,23 @@ function measureUtf8(s: string, priorPendingHigh: boolean): Utf8Measure {
  * additions to the StreamChunk union.
  */
 export interface StreamAggregatorChunk {
-  readonly type: 'text_delta' | 'tool_call_delta' | 'done' | string;
+  readonly type: 'text_delta' | 'tool_call_delta' | 'thinking_delta' | 'done' | string;
   readonly text?: string;
   readonly toolCall?: Partial<ToolCallRequest>;
+  /** Incremental extended-thinking fragment (RFC-0001). */
+  readonly thinking?: string;
+  /**
+   * Provider integrity signature for the thinking block. May arrive on any
+   * `thinking_delta` chunk (typically the last); the aggregator keeps the
+   * most recent value.
+   */
+  readonly signature?: string;
+  /**
+   * Opaque redacted-thinking payload. Each chunk carrying one produces a
+   * complete `RedactedThinkingBlock` on the final message (replayed
+   * verbatim on the next request).
+   */
+  readonly redactedData?: string;
   readonly usage?: TokenUsage;
 }
 
@@ -160,6 +174,7 @@ export interface StreamAggregatorChunk {
  */
 export type StreamAggregatorEvent =
   | { type: 'text_delta'; text: string }
+  | { type: 'thinking_delta'; thinking: string }
   | { type: 'tool_call_delta'; toolCall: Partial<ToolCallRequest> }
   | { type: 'warning'; message: string }
   | { type: 'error'; error: Error };
@@ -244,6 +259,16 @@ export class StreamAggregator {
    * `ToolCallEntry` so both routes stay correct without cross-contamination.
    */
   private lastToolPendingHighSurrogate = false;
+  /**
+   * Extended-thinking accumulation (RFC-0001). Fragments coalesce into a
+   * single `ThinkingBlock` on the final message; the most recent
+   * `signature` wins. Redacted payloads become one block each, in arrival
+   * order after the thinking block.
+   */
+  private readonly thinkingParts: string[] = [];
+  private thinkingSignature: string | undefined = undefined;
+  private thinkingPendingHighSurrogate = false;
+  private readonly redactedThinkingData: string[] = [];
 
   constructor(options: StreamAggregatorOptions) {
     this.options = options;
@@ -287,6 +312,36 @@ export class StreamAggregator {
       // Buffer; joined lazily in `getMessage()`.
       this.textParts.push(chunk.text);
       yield { type: 'text_delta', text: chunk.text };
+      return;
+    }
+
+    if (chunk.type === 'thinking_delta') {
+      // Signature may ride on any thinking chunk (typically the last);
+      // record before the empty-fragment early-return so signature-only
+      // chunks still register.
+      if (chunk.signature !== undefined) this.thinkingSignature = chunk.signature;
+      if (chunk.redactedData) {
+        const measure = measureUtf8(chunk.redactedData, false);
+        this.accumulatedBytes += measure.bytes;
+        const sizeErr = this.checkSizeLimits();
+        if (sizeErr) {
+          yield { type: 'error', error: sizeErr };
+          return;
+        }
+        this.redactedThinkingData.push(chunk.redactedData);
+      }
+      if (chunk.thinking) {
+        const measure = measureUtf8(chunk.thinking, this.thinkingPendingHighSurrogate);
+        this.accumulatedBytes += measure.bytes;
+        this.thinkingPendingHighSurrogate = measure.pendingHigh;
+        const sizeErr = this.checkSizeLimits();
+        if (sizeErr) {
+          yield { type: 'error', error: sizeErr };
+          return;
+        }
+        this.thinkingParts.push(chunk.thinking);
+        yield { type: 'thinking_delta', thinking: chunk.thinking };
+      }
       return;
     }
 
@@ -439,9 +494,36 @@ export class StreamAggregator {
             name: e.name,
             arguments: e.argsParts.length === 1 ? e.argsParts[0] : e.argsParts.join(''),
           }));
+    const content = this.textParts.length === 1 ? this.textParts[0] : this.textParts.join('');
+    // RFC-0001: attach content blocks only when reasoning content
+    // accumulated. `content` stays the text projection (thinking blocks
+    // contribute nothing to it); the thinking block precedes the text
+    // block, matching provider response ordering, so a verbatim replay of
+    // `blocks` on the next request is valid.
+    let blocks: ContentBlock[] | undefined;
+    if (this.thinkingParts.length > 0 || this.redactedThinkingData.length > 0) {
+      blocks = [];
+      if (this.thinkingParts.length > 0) {
+        const thinking = this.thinkingParts.length === 1
+          ? this.thinkingParts[0]
+          : this.thinkingParts.join('');
+        blocks.push({
+          type: 'thinking',
+          thinking,
+          ...(this.thinkingSignature !== undefined && { signature: this.thinkingSignature }),
+        });
+      }
+      for (const data of this.redactedThinkingData) {
+        blocks.push({ type: 'redacted_thinking', data });
+      }
+      if (content.length > 0) {
+        blocks.push({ type: 'text', text: content });
+      }
+    }
     const message: Message = {
       role: 'assistant',
-      content: this.textParts.length === 1 ? this.textParts[0] : this.textParts.join(''),
+      content,
+      ...(blocks !== undefined ? { blocks } : {}),
       ...(toolCalls.length > 0 ? { toolCalls } : {}),
     };
     return { message, usage, bytesRead: this.accumulatedBytes };
@@ -456,6 +538,11 @@ export class StreamAggregator {
     // Cross-chunk surrogate state is per-stream; clear on reuse.
     this.textPendingHighSurrogate = false;
     this.lastToolPendingHighSurrogate = false;
+    // Extended-thinking accumulation (RFC-0001).
+    this.thinkingParts.length = 0;
+    this.thinkingSignature = undefined;
+    this.thinkingPendingHighSurrogate = false;
+    this.redactedThinkingData.length = 0;
   }
 
   private checkSizeLimits(): HarnessError | null {

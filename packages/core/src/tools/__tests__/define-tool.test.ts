@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { defineTool } from '../define-tool.js';
 import { toolSuccess, toolError } from '../types.js';
+import { createPermissiveRegistry } from '../registry.js';
 import { HarnessError, HarnessErrorCode} from '../../core/errors.js';
 
 describe('toolSuccess', () => {
@@ -278,14 +279,19 @@ describe('defineTool', () => {
   });
 
   describe('M1: thrown ToolResult-shaped objects are preserved, not wrapped', () => {
-    it('preserves a thrown object with error and content fields', async () => {
+    it('collapses the obsolete {error, content} shape into an internal error', async () => {
+      // Pre-kind/success-migration shape. Preserving it produced objects
+      // that failed the registry's assertToolResult downstream — it must
+      // now collapse into the generic internal-error wrap. Preservation
+      // requires the current discriminated shape (see the
+      // "structured-throw preservation" suite below).
       const toolResultLike = {
         error: { message: 'quota exceeded', category: 'internal' },
         content: 'Please try again later',
       };
       const tool = defineTool({
         name: 'quota-check',
-        description: 'Throws a ToolResult-like object',
+        description: 'Throws an obsolete ToolResult-like object',
         parameters: { type: 'object' },
         execute: async () => {
           throw toolResultLike;
@@ -293,8 +299,11 @@ describe('defineTool', () => {
       });
 
       const result = await tool.execute({});
-      // The thrown object should be returned as-is, not wrapped as an internal error
-      expect(result).toBe(toolResultLike);
+      expect(result).not.toBe(toolResultLike);
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.category).toBe('internal');
+      }
     });
 
     it('does NOT preserve a thrown object with only error (no content)', async () => {
@@ -335,15 +344,21 @@ describe('defineTool', () => {
       }
     });
 
-    it('preserves a thrown ToolResult-shaped object even with extra fields', async () => {
+    it('preserves a thrown discriminated ToolResult even with extra fields', async () => {
       const richResult = {
-        error: { message: 'rate limit' },
-        content: 'slow down',
+        kind: 'error' as const,
+        success: false as const,
+        error: {
+          message: 'rate limit',
+          category: 'internal' as const,
+          suggestedAction: 'Retry after the window resets',
+          retryable: true,
+        },
         retryAfter: 30,
       };
       const tool = defineTool({
         name: 'rate-limit',
-        description: 'Throws a ToolResult-like with extra fields',
+        description: 'Throws a ToolResult with extra fields',
         parameters: { type: 'object' },
         execute: async () => {
           throw richResult;
@@ -351,7 +366,8 @@ describe('defineTool', () => {
       });
 
       const result = await tool.execute({});
-      // Both 'error' and 'content' are present, so the object is preserved
+      // Valid kind/success discriminated shape — preserved verbatim,
+      // extra fields and all.
       expect(result).toBe(richResult);
     });
 
@@ -429,5 +445,160 @@ describe('defineTool', () => {
         expect(result.error.category).toBe('internal');
       }
     });
+  });
+});
+
+describe('defineTool structured-throw preservation', () => {
+  it('preserves a thrown error-shaped ToolResult verbatim', async () => {
+    const structured = toolError('quota exhausted', 'permission', 'Wait for the quota window to reset', false);
+    const tool = defineTool({
+      name: 'throws_structured',
+      description: 'Throws a pre-built ToolResult',
+      parameters: { type: 'object' },
+      execute: async () => {
+        throw structured;
+      },
+    });
+
+    const result = await tool.execute({});
+    expect(result).toBe(structured);
+    if (!result.success) {
+      expect(result.error.category).toBe('permission');
+      expect(result.error.message).toBe('quota exhausted');
+    }
+  });
+
+  it('preserves a thrown success-shaped ToolResult verbatim', async () => {
+    const structured = toolSuccess({ recovered: true });
+    const tool = defineTool({
+      name: 'throws_success_shape',
+      description: 'Throws a success ToolResult (odd but shape-valid)',
+      parameters: { type: 'object' },
+      execute: async () => {
+        throw structured;
+      },
+    });
+
+    const result = await tool.execute({});
+    expect(result).toBe(structured);
+  });
+
+  it('collapses the legacy {error, content} throw shape into a generic internal error', async () => {
+    // The pre-fix guard matched `'error' in err && 'content' in err` — a
+    // shape ToolResult never had after the kind/success migration. Such
+    // throws must now fall through to the generic internal-error wrap.
+    const tool = defineTool({
+      name: 'throws_legacy_shape',
+      description: 'Throws the obsolete shape',
+      parameters: { type: 'object' },
+      execute: async () => {
+         
+        throw { error: 'boom', content: 'legacy' };
+      },
+    });
+
+    const result = await tool.execute({});
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.category).toBe('internal');
+    }
+  });
+
+  it('rejects malformed kind/success combinations (not preserved)', async () => {
+    const tool = defineTool({
+      name: 'throws_malformed',
+      description: 'Throws a near-miss shape',
+      parameters: { type: 'object' },
+      execute: async () => {
+        // kind says error but success says true — not a valid ToolResult.
+         
+        throw { kind: 'error', success: true, error: { message: 'x' } };
+      },
+    });
+
+    const result = await tool.execute({});
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.category).toBe('internal');
+    }
+  });
+
+  it('rejects error-shaped throws whose feedback lacks a string message', async () => {
+    const tool = defineTool({
+      name: 'throws_bad_feedback',
+      description: 'Throws error shape with non-string message',
+      parameters: { type: 'object' },
+      execute: async () => {
+         
+        throw { kind: 'error', success: false, error: { message: 42 } };
+      },
+    });
+
+    const result = await tool.execute({});
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.category).toBe('internal');
+    }
+  });
+});
+
+describe('defineTool schema-inference form (as const)', () => {
+  it('defines and executes a tool whose params are inferred from an as-const schema', async () => {
+    const tool = defineTool({
+      name: 'search',
+      description: 'Search issues',
+      parameters: {
+        type: 'object',
+        properties: { q: { type: 'string' }, limit: { type: 'number' } },
+        required: ['q'],
+      } as const,
+      capabilities: ['readonly'],
+      // `params` is inferred as `{ q: string; limit?: number }` — no generic,
+      // no cast. This test locks the runtime behaviour of overload 1.
+      execute: async (params) =>
+        toolSuccess(`${params.q}:${params.limit ?? 0}`),
+    });
+
+    expect(tool.name).toBe('search');
+    const result = await tool.execute({ q: 'flaky', limit: 5 });
+    expect(result).toEqual({ kind: 'success', success: true, data: 'flaky:5' });
+  });
+
+  it('registers an as-const-schema tool without any cast and executes it via the registry', async () => {
+    const tool = defineTool({
+      name: 'echo_const',
+      description: 'Echo the message field',
+      parameters: {
+        type: 'object',
+        properties: { message: { type: 'string' } },
+        required: ['message'],
+      } as const,
+      capabilities: ['readonly'],
+      execute: async (params) => toolSuccess(params.message),
+    });
+
+    const registry = createPermissiveRegistry();
+    // The whole point of the fix: no `tool as unknown as ...` needed here.
+    registry.register(tool);
+
+    const result = await registry.execute({
+      id: 't1',
+      name: 'echo_const',
+      arguments: JSON.stringify({ message: 'hello' }),
+    });
+    expect(result).toEqual({ kind: 'success', success: true, data: 'hello' });
+  });
+
+  it('still supports the explicit-generic form (backward compatible)', async () => {
+    const tool = defineTool<{ url: string }>({
+      name: 'fetch_explicit',
+      description: 'Fetch a URL',
+      parameters: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] },
+      capabilities: ['readonly'],
+      execute: async (params) => toolSuccess(params.url),
+    });
+
+    const result = await tool.execute({ url: 'https://example.com' });
+    expect(result).toEqual({ kind: 'success', success: true, data: 'https://example.com' });
   });
 });

@@ -5,6 +5,7 @@
  */
 
 import type { Message } from '../core/types.js';
+import type { Clock } from '../infra/clock.js';
 
 /** A named segment of the context budget. */
 export interface Segment {
@@ -154,6 +155,13 @@ export interface CheckpointManagerConfig {
   readonly countTokens?: (messages: readonly Message[]) => number;
   /** Pluggable storage backend. Default: in-memory (still async). */
   readonly storage?: CheckpointStorage;
+  /**
+   * Injectable wall-clock backing checkpoint `timestamp` stamping and the
+   * `prune({ maxAge })` cutoff. Defaults to the platform clock (`Date.now()`);
+   * inject a fake clock to make timestamps and age-based pruning
+   * deterministic in tests.
+   */
+  readonly clock?: Clock;
 }
 
 /**

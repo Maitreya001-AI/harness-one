@@ -8,7 +8,7 @@ Framework-agnostic primitives for AI agent harness engineering. Zero-runtime-dep
 pnpm add harness-one
 ```
 
-No runtime dependencies. Node 18+.
+No runtime dependencies. Node 22+.
 
 ## Peer Dependencies
 

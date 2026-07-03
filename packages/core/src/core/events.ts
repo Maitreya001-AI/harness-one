@@ -23,6 +23,11 @@ export type DoneReason = 'end_turn' | 'max_iterations' | 'token_budget' | 'abort
 export type AgentEvent =
   | { type: 'iteration_start'; iteration: number }
   | { type: 'text_delta'; text: string }
+  // Incremental extended-thinking fragment (RFC-0001). Yielded on the
+  // streaming path when the adapter emits `thinking_delta` chunks so UIs
+  // can render reasoning progress live; the aggregated ThinkingBlock
+  // lands on the final assistant message's `blocks`.
+  | { type: 'thinking_delta'; thinking: string }
   | { type: 'tool_call_delta'; toolCall: Partial<ToolCallRequest> }
   | { type: 'tool_call'; toolCall: ToolCallRequest; iteration: number }
   | { type: 'tool_result'; toolCallId: string; result: unknown }

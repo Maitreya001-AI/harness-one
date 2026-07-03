@@ -6,6 +6,7 @@
 
 import { HarnessError, HarnessErrorCode} from '../core/errors.js';
 import { secureId } from '../infra/ids.js';
+import { systemClock, type Clock } from '../infra/clock.js';
 import { assertMemoryEntrySize } from './_schemas.js';
 import { resolveCandidateIds } from './memory-query.js';
 import type {
@@ -90,12 +91,27 @@ export interface MemoryStore {
   setWithTtl?(key: string, value: unknown, ttlMs: number): Promise<void>;
   /** Optional: return a tenant-isolated view of the store. */
   scopedView?(tenantId: string): MemoryStore;
-  /** Optional: compare-and-swap update on a logical key. */
+  /**
+   * Optional: compare-and-swap update on a logical key.
+   *
+   * Implementations that support optimistic locking MUST advance the
+   * key's version on *every* mutation path (`write`, `update`, `delete`,
+   * eviction, `compact`) — not only inside `updateWithVersion` — so a
+   * plain-path write cannot slip past a concurrent CAS caller unnoticed.
+   * Use {@link MemoryStore.getVersion} to learn the current version after
+   * a plain-path mutation.
+   */
   updateWithVersion?<T>(
     key: string,
     expectedVersion: number,
     updater: (value: T | undefined) => T,
   ): Promise<{ newVersion: number }>;
+  /**
+   * Optional: current optimistic-lock version for a logical key. Returns
+   * `0` for keys never written (the value `updateWithVersion` expects for
+   * an initial write). Note `clear()` resets all versions to 0.
+   */
+  getVersion?(key: string): Promise<number>;
 }
 
 /**
@@ -110,8 +126,18 @@ export interface MemoryStore {
  * const results = await store.searchByVector!({ embedding: [0.1, 0.2], limit: 5 });
  * ```
  */
-export function createInMemoryStore(config?: { maxEntries?: number }): MemoryStore {
+export function createInMemoryStore(config?: {
+  maxEntries?: number;
+  /**
+   * Injectable wall-clock backing entry timestamps (`createdAt`/`updatedAt`),
+   * the `mem_<time>_<rand>` id prefix, and TTL expiry checks. Defaults to
+   * {@link systemClock}; inject a fake clock to drive TTL expiry
+   * deterministically in tests without real waiting.
+   */
+  clock?: Clock;
+}): MemoryStore {
   const maxEntries = config?.maxEntries;
+  const clock = config?.clock ?? systemClock;
   const entries = new Map<string, MemoryEntry>();
   const keyIndex = new Map<string, string>();
   const versionIndex = new Map<string, number>();
@@ -126,7 +152,7 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
     // SEC-002: Use cryptographically secure randomness instead of
     // Math.random(), which is predictable and enables enumeration attacks
     // on reachable memory entry IDs.
-    return `mem_${Date.now()}_${secureId()}`;
+    return `mem_${clock.now()}_${secureId()}`;
   }
 
   /**
@@ -220,7 +246,7 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
 
   function purgeExpiredEntry(id: string): void {
     const expiresAt = expiryIndex.get(id);
-    if (expiresAt === undefined || Date.now() < expiresAt) return;
+    if (expiresAt === undefined || clock.now() < expiresAt) return;
     const entry = entries.get(id);
     if (entry) removeFromIndexes(entry);
     entries.delete(id);
@@ -228,7 +254,7 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
 
   function purgeExpiredEntries(): void {
     for (const [id, expiresAt] of expiryIndex) {
-      if (Date.now() >= expiresAt) {
+      if (clock.now() >= expiresAt) {
         const entry = entries.get(id);
         if (entry) removeFromIndexes(entry);
         entries.delete(id);
@@ -246,6 +272,20 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
     } catch {
       return content as T;
     }
+  }
+
+  /**
+   * Advance the optimistic-lock version for a logical key. Called on EVERY
+   * mutation path (write / update / delete / eviction / compact) so plain
+   * writes cannot bypass a concurrent `updateWithVersion` caller — the CAS
+   * guarantee holds across mixed usage, not only CAS-vs-CAS. TTL expiry
+   * deliberately does NOT bump: an expired value reads as absent, and a
+   * CAS started before expiry may legitimately recreate the key.
+   */
+  function bumpVersion(key: string): number {
+    const next = (versionIndex.get(key) ?? 0) + 1;
+    versionIndex.set(key, next);
+    return next;
   }
 
   return {
@@ -275,7 +315,7 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
         }
       }
 
-      const now = Date.now();
+      const now = clock.now();
       const entry: MemoryEntry = {
         id: generateId(),
         key: input.key,
@@ -288,6 +328,7 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
       };
       entries.set(entry.id, entry);
       addToIndexes(entry);
+      bumpVersion(entry.key);
       // Fix 16 + PERF: Grade-aware eviction with O(1) victim lookup.
       // Each grade maintains a Map (insertion-ordered). To evict, we check
       // the lowest-priority non-empty bucket and take its first entry.
@@ -304,7 +345,10 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
           const victimEntry = entries.get(victimId);
           // removeFromIndexes already handles grade + tag index cleanup,
           // so no need for a separate gradeIndex deletion afterwards.
-          if (victimEntry) removeFromIndexes(victimEntry);
+          if (victimEntry) {
+            removeFromIndexes(victimEntry);
+            bumpVersion(victimEntry.key);
+          }
           entries.delete(victimId);
         }
       }
@@ -315,7 +359,7 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
       // Atomic batch write for the in-memory store: build the full list of
       // new entries first, then commit all in a single synchronous loop.
       // If any input fails validation, nothing is written.
-      const now = Date.now();
+      const now = clock.now();
       const prepared: MemoryEntry[] = [];
       for (const input of inputs) {
         const inputEmbedding = input.metadata?.['embedding'];
@@ -348,6 +392,7 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
       for (const entry of prepared) {
         entries.set(entry.id, entry);
         addToIndexes(entry);
+        bumpVersion(entry.key);
       }
       // Apply grade-aware eviction after batch commit (same logic as write()).
       if (maxEntries !== undefined) {
@@ -362,7 +407,10 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
           }
           if (victimId === undefined) break;
           const victimEntry = entries.get(victimId);
-          if (victimEntry) removeFromIndexes(victimEntry);
+          if (victimEntry) {
+            removeFromIndexes(victimEntry);
+            bumpVersion(victimEntry.key);
+          }
           entries.delete(victimId);
         }
       }
@@ -454,11 +502,12 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
       const updated: MemoryEntry = {
         ...existing,
         ...updates,
-        updatedAt: Date.now(),
+        updatedAt: clock.now(),
       };
       entries.set(id, updated);
       // Add updated entry to indexes
       addToIndexes(updated);
+      bumpVersion(updated.key);
       return updated;
     },
 
@@ -468,6 +517,7 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
       if (entry) {
         removeFromIndexes(entry);
         entries.delete(id);
+        bumpVersion(entry.key);
         return true;
       }
       return false;
@@ -490,7 +540,7 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
         );
       }
       const all = Array.from(entries.values());
-      const now = Date.now();
+      const now = clock.now();
       const weights = policy.gradeWeights ?? {
         critical: 1.0,
         useful: 0.5,
@@ -504,6 +554,7 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
           if (now - entry.createdAt > policy.maxAge && weights[entry.grade] < 1.0) {
             removeFromIndexes(entry);
             entries.delete(entry.id);
+            bumpVersion(entry.key);
             freed.push(entry.id);
           }
         }
@@ -524,6 +575,7 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
           }
           removeFromIndexes(victim);
           entries.delete(victim.id);
+          bumpVersion(victim.key);
           freed.push(victim.id);
         }
       }
@@ -606,15 +658,20 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
       }
       const existingId = keyIndex.get(key);
       const content = serializeMemoryValue(value);
+      // Version bookkeeping happens inside update()/write() (bumpVersion) —
+      // no explicit set here, so versions stay strictly monotonic even for
+      // keys that previously lived through plain-path writes or deletes.
       if (existingId) {
         const updated = await this.update(existingId, { content, grade: 'ephemeral' });
-        expiryIndex.set(updated.id, Date.now() + ttlMs);
-        versionIndex.set(key, (versionIndex.get(key) ?? 0) + 1);
+        expiryIndex.set(updated.id, clock.now() + ttlMs);
         return;
       }
       const entry = await this.write({ key, content, grade: 'ephemeral' });
-      expiryIndex.set(entry.id, Date.now() + ttlMs);
-      versionIndex.set(key, 1);
+      expiryIndex.set(entry.id, clock.now() + ttlMs);
+    },
+
+    async getVersion(key: string) {
+      return versionIndex.get(key) ?? 0;
     },
 
     async updateWithVersion<T>(
@@ -642,14 +699,16 @@ export function createInMemoryStore(config?: { maxEntries?: number }): MemorySto
       const existing = existingId ? await this.read(existingId) : null;
       const nextValue = updater(existing ? parseMemoryValue<T>(existing.content) : undefined);
       const nextContent = serializeMemoryValue(nextValue);
-      const newVersion = currentVersion + 1;
 
+      // update()/write() advance the version exactly once via bumpVersion();
+      // read the post-mutation value instead of re-deriving it so the two
+      // bookkeeping paths can never drift.
       if (existing) {
         await this.update(existing.id, { content: nextContent });
       } else {
         await this.write({ key, content: nextContent, grade: 'useful' });
       }
-      versionIndex.set(key, newVersion);
+      const newVersion = versionIndex.get(key) ?? currentVersion + 1;
       return { newVersion };
     },
   };

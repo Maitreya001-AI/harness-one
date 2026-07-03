@@ -152,6 +152,24 @@ export interface ToolDefinition<TParams = unknown> {
   readonly capabilities?: readonly ToolCapabilityValue[];
 }
 
+/**
+ * Variance-safe supertype of *every* `ToolDefinition<T>`.
+ *
+ * `ToolDefinition<T>` is **contravariant** in `T` — the parameter appears in
+ * the `execute(params: T)` (and `middleware` `ctx.params`) position, so under
+ * `strictFunctionTypes` a concrete `ToolDefinition<{ q: string }>` is *not*
+ * assignable to `ToolDefinition<unknown>`. That mismatch is exactly what used
+ * to force callers to write `tool as unknown as ...` when registering a
+ * `defineTool<{...}>(...)` result.
+ *
+ * Pinning the parameter to `never` inverts the variance: `never` is assignable
+ * to any `T`, so `ToolDefinition<T>` *is* assignable to `ToolDefinition<never>`
+ * for every `T`. `ToolRegistry.register` therefore accepts `AnyToolDefinition`,
+ * letting any tool definition register with **zero casts** while every direct
+ * caller of a concrete tool's `execute` keeps full parameter typing.
+ */
+export type AnyToolDefinition = ToolDefinition<never>;
+
 /** A parsed tool call with id, name, and arguments. */
 export interface ToolCall {
   readonly id: string;

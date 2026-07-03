@@ -310,7 +310,9 @@ describe('AgentLoop streaming error scenarios', () => {
   });
 
   describe('stream returns done without usage', () => {
-    it('uses zero usage when stream done chunk has no usage field', async () => {
+    it('estimates usage when stream done chunk has no usage field', async () => {
+      // Zero-usage streams previously made the cumulative token budget
+      // unenforceable; the handler now estimates heuristically and warns.
       const adapter = createStreamingAdapter([
         { type: 'text_delta', text: 'Hello' },
         { type: 'done' }, // no usage field
@@ -321,12 +323,15 @@ describe('AgentLoop streaming error scenarios', () => {
 
       const messageEvent = events.find((e) => e.type === 'message') as Extract<AgentEvent, { type: 'message' }>;
       expect(messageEvent).toBeDefined();
-      expect(messageEvent.usage.inputTokens).toBe(0);
-      expect(messageEvent.usage.outputTokens).toBe(0);
+      expect(messageEvent.usage.inputTokens).toBeGreaterThan(0);
+      expect(messageEvent.usage.outputTokens).toBeGreaterThan(0);
+      expect(events.some(
+        (e) => e.type === 'warning' && /reported no token usage/i.test(e.message),
+      )).toBe(true);
 
       const doneEvent = events.find((e) => e.type === 'done') as Extract<AgentEvent, { type: 'done' }>;
-      expect(doneEvent.totalUsage.inputTokens).toBe(0);
-      expect(doneEvent.totalUsage.outputTokens).toBe(0);
+      expect(doneEvent.totalUsage.inputTokens).toBeGreaterThan(0);
+      expect(doneEvent.totalUsage.outputTokens).toBeGreaterThan(0);
     });
   });
 

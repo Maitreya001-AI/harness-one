@@ -50,6 +50,17 @@ const RETRYABLE_REASONS: ReadonlySet<DoneReason> = new Set([
 /**
  * Create a resilient loop that wraps AgentLoop with outer retry logic.
  *
+ * **When to use this vs. the alternatives:** reach for the resilient loop when
+ * a run goes off the rails — loops on `max_iterations`, blows the token
+ * budget, or errors — and you want to re-run with a *fresh, summarized*
+ * context. It is the outermost layer: it wraps the entire `AgentLoop`, whereas
+ * in-loop retry recovers a single adapter call, the fallback adapter recovers
+ * a downed provider, and `createCircuitBreaker` protects a downstream
+ * dependency. Always supply an `onRetry` summarizer, or each attempt replays
+ * the same poisoned context.
+ *
+ * @see docs/guides/resilience.md — selection guide for all four resilience mechanisms
+ *
  * @example
  * ```ts
  * const resilient = createResilientLoop({

@@ -27,9 +27,79 @@ export type MessageProvenance =
   | 'trusted_system'
   | 'unknown';
 
+/** Supported inline image media types. */
+export type ImageMediaType = 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+
+/** A plain text content block. */
+export interface TextBlock {
+  readonly type: 'text';
+  readonly text: string;
+}
+
+/**
+ * Extended-thinking content block. Providers that return reasoning
+ * content (e.g. Anthropic extended thinking) attach an integrity
+ * `signature`; when the assistant message also carries tool calls the
+ * block MUST be replayed verbatim (signature intact) on the next
+ * request or the provider rejects the conversation.
+ */
+export interface ThinkingBlock {
+  readonly type: 'thinking';
+  readonly thinking: string;
+  readonly signature?: string;
+}
+
+/**
+ * Redacted-thinking block — opaque provider payload standing in for
+ * reasoning the provider chose not to reveal. MUST be replayed verbatim.
+ */
+export interface RedactedThinkingBlock {
+  readonly type: 'redacted_thinking';
+  readonly data: string;
+}
+
+/** Inline image content block (user messages and tool results). */
+export interface ImageBlock {
+  readonly type: 'image';
+  readonly source:
+    | { readonly kind: 'base64'; readonly mediaType: ImageMediaType; readonly data: string }
+    | { readonly kind: 'url'; readonly url: string };
+}
+
+/**
+ * Discriminated content-block union (RFC-0001).
+ *
+ * `Message.content` remains the canonical **text projection**: when
+ * `blocks` is present, `content` MUST equal the concatenation of its
+ * `TextBlock.text` fields (see {@link blocksText}). Block-aware consumers
+ * (provider adapters) read `blocks` for full fidelity; text-only
+ * consumers (guardrails, token estimation, compression, redaction) keep
+ * reading `content` unchanged.
+ */
+export type ContentBlock = TextBlock | ThinkingBlock | RedactedThinkingBlock | ImageBlock;
+
+/**
+ * Text projection of a block list — concatenated `TextBlock` text.
+ * Non-text blocks (thinking, images) contribute nothing, matching the
+ * invariant documented on {@link ContentBlock}.
+ */
+export function blocksText(blocks: readonly ContentBlock[]): string {
+  let out = '';
+  for (const block of blocks) {
+    if (block.type === 'text') out += block.text;
+  }
+  return out;
+}
+
 /** Base properties shared by all message types. */
 interface BaseMessage {
   readonly content: string;
+  /**
+   * Optional full-fidelity content blocks (RFC-0001). When present,
+   * `content` must be the text projection of these blocks. Additive and
+   * optional — messages without block-shaped content omit it.
+   */
+  readonly blocks?: readonly ContentBlock[];
   readonly name?: string;
   readonly meta?: MessageMeta;
 }
@@ -174,11 +244,26 @@ export interface ChatResponse {
   readonly usage: TokenUsage;
 }
 
-/** A chunk from a streaming LLM response. */
+/**
+ * A chunk from a streaming LLM response.
+ *
+ * `thinking_delta` carries an incremental reasoning fragment in
+ * `thinking`; a provider that signs thinking blocks sends the signature
+ * on (any of) the block's chunks — the aggregator keeps the last one
+ * (RFC-0001).
+ */
 export interface StreamChunk {
-  readonly type: 'text_delta' | 'tool_call_delta' | 'done';
+  readonly type: 'text_delta' | 'tool_call_delta' | 'thinking_delta' | 'done';
   readonly text?: string;
   readonly toolCall?: Partial<ToolCallRequest>;
+  readonly thinking?: string;
+  readonly signature?: string;
+  /**
+   * Opaque redacted-thinking payload on a `thinking_delta` chunk. Each
+   * one becomes a complete `RedactedThinkingBlock` on the reconstructed
+   * assistant message (replayed verbatim on the next request).
+   */
+  readonly redactedData?: string;
   readonly usage?: TokenUsage;
 }
 

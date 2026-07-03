@@ -28,3 +28,8 @@ export {
   omitUndefined,
   type WithoutUndefined,
 } from './omit-undefined.js';
+
+export {
+  systemClock,
+  type Clock,
+} from './clock.js';

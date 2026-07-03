@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { countTokens, registerTokenizer } from '../count-tokens.js';
+import { countTokens, registerTokenizer, createTokenizerRegistry } from '../count-tokens.js';
 import * as tokenEstimator from '../../infra/token-estimator.js';
 
 describe('countTokens', () => {
@@ -102,6 +102,26 @@ describe('countTokens', () => {
       const tokens2 = countTokens('memo-test', [msg2]);
 
       expect(tokens1).toBe(tokens2);
+    });
+  });
+
+  describe('B7: injected tokenizerRegistry', () => {
+    it('counts against the injected registry instead of the global default', () => {
+      const reg = createTokenizerRegistry();
+      reg.register('inj-model', { encode: (t) => ({ length: t.length }) }); // 1/char
+      const tokens = countTokens('inj-model', [{ role: 'user', content: 'abcd' }], reg);
+      expect(tokens).toBe(4);
+    });
+
+    it('bypasses the shared per-message cache (no cross-registry pollution)', () => {
+      const reg = createTokenizerRegistry();
+      reg.register('poison-model', { encode: () => ({ length: 999 }) });
+      const message = { role: 'user' as const, content: 'hello' };
+      // Inject first — would leak 999 into the cache if it wrote there.
+      expect(countTokens('poison-model', [message], reg)).toBe(999);
+      // The default path for the SAME (message, model) must fall to the
+      // heuristic, proving the injected count never touched the shared cache.
+      expect(countTokens('poison-model', [message])).not.toBe(999);
     });
   });
 });

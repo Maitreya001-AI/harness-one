@@ -277,3 +277,20 @@ export function createBasicSlidingWindowChunking(config: {
     },
   });
 }
+
+// ---------------------------------------------------------------------------
+// Deprecated aliases (release grace window)
+// ---------------------------------------------------------------------------
+// Pre-`createBasic*` names renamed during the thin-harness naming cleanup
+// (see MIGRATION.md § Naming cleanup). Runtime-working aliases so pre-release
+// SHA-pinned consumers are not broken by the rename. Remove one full major
+// version after first release.
+
+/** @deprecated Use {@link createBasicFixedSizeChunking} instead. Will be removed one major after first release. */
+export const createFixedSizeChunking = createBasicFixedSizeChunking;
+
+/** @deprecated Use {@link createBasicParagraphChunking} instead. Will be removed one major after first release. */
+export const createParagraphChunking = createBasicParagraphChunking;
+
+/** @deprecated Use {@link createBasicSlidingWindowChunking} instead. Will be removed one major after first release. */
+export const createSlidingWindowChunking = createBasicSlidingWindowChunking;
