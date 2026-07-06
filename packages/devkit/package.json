@@ -33,7 +33,7 @@
     "harness-one": "workspace:*",
     "tsup": "^8.0.0",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.5"
+    "vitest": "^4.1.10"
   },
   "license": "MIT",
   "author": "harness-one contributors",
