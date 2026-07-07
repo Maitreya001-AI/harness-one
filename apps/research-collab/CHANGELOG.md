@@ -1,5 +1,21 @@
 # @harness-one/research-collab
 
+## 0.0.5
+
+### Patch Changes
+
+- Updated dependencies [e998c28]
+- Updated dependencies [7078215]
+- Updated dependencies [7078215]
+- Updated dependencies [7078215]
+- Updated dependencies [7078215]
+- Updated dependencies [0fef30f]
+- Updated dependencies [7078215]
+- Updated dependencies [7078215]
+  - @harness-one/anthropic@0.2.0
+  - harness-one@2.0.0
+  - @harness-one/preset@2.0.0
+
 ## 0.0.4
 
 ### Patch Changes

@@ -1,5 +1,20 @@
 # harness-one-coding-vscode
 
+## 0.0.5
+
+### Patch Changes
+
+- Updated dependencies [e998c28]
+- Updated dependencies [7078215]
+- Updated dependencies [7078215]
+- Updated dependencies [7078215]
+- Updated dependencies [7078215]
+- Updated dependencies [7078215]
+- Updated dependencies [7078215]
+  - @harness-one/anthropic@0.2.0
+  - harness-one@2.0.0
+  - harness-one-coding@0.1.3
+
 ## 0.0.4
 
 ### Patch Changes

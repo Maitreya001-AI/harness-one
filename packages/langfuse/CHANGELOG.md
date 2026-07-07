@@ -1,5 +1,21 @@
 # @harness-one/langfuse
 
+## 0.1.5
+
+### Patch Changes
+
+- 2b5194d: Annotate two intentional fire-and-forget flush promises with `void`
+  (cost-export, cost-tracker) so the newly-blocking
+  `@typescript-eslint/no-floating-promises` production gate passes. No
+  behavior change — both paths are drained by `dispose()`.
+- Updated dependencies [7078215]
+- Updated dependencies [7078215]
+- Updated dependencies [7078215]
+- Updated dependencies [7078215]
+- Updated dependencies [7078215]
+- Updated dependencies [7078215]
+  - harness-one@2.0.0
+
 ## 0.1.4
 
 ### Patch Changes

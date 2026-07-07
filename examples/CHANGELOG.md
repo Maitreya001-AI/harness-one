@@ -1,5 +1,31 @@
 # @harness-one/examples
 
+## 0.0.5
+
+### Patch Changes
+
+- Updated dependencies [e998c28]
+- Updated dependencies [7078215]
+- Updated dependencies [7078215]
+- Updated dependencies [7078215]
+- Updated dependencies [79f9a34]
+- Updated dependencies [7078215]
+- Updated dependencies [2b5194d]
+- Updated dependencies [6ded402]
+- Updated dependencies [0fef30f]
+- Updated dependencies [7078215]
+- Updated dependencies [7078215]
+  - @harness-one/anthropic@0.2.0
+  - harness-one@2.0.0
+  - @harness-one/devkit@3.0.0
+  - @harness-one/langfuse@0.1.5
+  - @harness-one/openai@0.2.0
+  - @harness-one/preset@2.0.0
+  - @harness-one/ajv@0.1.5
+  - @harness-one/opentelemetry@0.1.5
+  - @harness-one/redis@0.1.5
+  - @harness-one/tiktoken@0.1.5
+
 ## 0.0.4
 
 ### Patch Changes

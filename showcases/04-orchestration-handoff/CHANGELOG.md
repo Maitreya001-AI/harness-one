@@ -1,5 +1,17 @@
 # @harness-one/showcase-04-orchestration-handoff
 
+## 0.0.4
+
+### Patch Changes
+
+- Updated dependencies [7078215]
+- Updated dependencies [7078215]
+- Updated dependencies [7078215]
+- Updated dependencies [7078215]
+- Updated dependencies [7078215]
+- Updated dependencies [7078215]
+  - harness-one@2.0.0
+
 ## 0.0.3
 
 ### Patch Changes
