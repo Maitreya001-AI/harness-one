@@ -49,6 +49,14 @@ exclude = [
   # filed. Excluding by exact path isn't possible via URL regex, so we
   # skip any bestpractices URL containing "TODO".
   '^https?://bestpractices\.coreinfrastructure\.org/projects/TODO',
+  # contributor-covenant.org — the canonical Contributor Covenant permalinks
+  # cited from CODE_OF_CONDUCT.md (homepage, /version/2/1/…, /faq,
+  # /translations). These are stable, versioned URLs that will not rot, but
+  # the host intermittently times out from GitHub Actions runner IPs, which
+  # trips the weekly scheduled scan and files a false-positive tracking issue
+  # (see issue #71). Excluding the whole domain since every path we cite is a
+  # canonical CoC reference.
+  '^https?://(www\.)?contributor-covenant\.org',
 ]
 
 # The anchors on generated docs (API extractor, markdown-toc, GitHub
