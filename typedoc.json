@@ -25,6 +25,12 @@
     "notDocumented": false
   },
   "treatValidationWarningsAsErrors": true,
+  "externalSymbolLinkMappings": {
+    "harness-one": {
+      "FromSchema": "#",
+      "AnyToolDefinition": "#"
+    }
+  },
   "logLevel": "Warn",
   "readme": "none"
 }
