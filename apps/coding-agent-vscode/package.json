@@ -98,11 +98,11 @@
     }
   },
   "devDependencies": {
-    "@anthropic-ai/sdk": "^0.91.0",
-    "@types/vscode": "^1.85.0",
+    "@anthropic-ai/sdk": "^0.96.0",
+    "@types/vscode": "^1.125.0",
     "tsup": "^8.0.0",
-    "tsx": "^4.19.0",
+    "tsx": "^4.22.2",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.5"
+    "vitest": "^4.1.10"
   }
 }
