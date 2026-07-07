@@ -216,4 +216,20 @@ describe('parseResearchReport', () => {
     const out = parseResearchReport(fenced, { allowedUrls });
     expect(out.summary).toBe('Summary line.');
   });
+
+  it('strips ```json fence with inline whitespace', () => {
+    const fenced = '```json   \n' + valid + '\n```';
+    const out = parseResearchReport(fenced, { allowedUrls });
+    expect(out.summary).toBe('Summary line.');
+  });
+
+  it('does not backtrack on a large unclosed fence (ReDoS regression)', () => {
+    // An opening fence followed by a long run of whitespace and no closing
+    // fence used to trigger quadratic backtracking in the old regex. The
+    // linear replacement must reject it promptly rather than hang.
+    const adversarial = '```json' + ' '.repeat(100_000);
+    const start = performance.now();
+    expect(() => parseResearchReport(adversarial, { allowedUrls })).toThrow(ParseError);
+    expect(performance.now() - start).toBeLessThan(1000);
+  });
 });

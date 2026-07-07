@@ -215,9 +215,24 @@ function parseJsonObject(raw: string): Record<string, unknown> {
 
 function stripFences(raw: string): string {
   const trimmed = raw.trim();
-  const fenceMatch = trimmed.match(/^```(?:json)?\s*([\s\S]*?)```$/);
-  if (fenceMatch && fenceMatch[1] !== undefined) return fenceMatch[1].trim();
-  return trimmed;
+  // Only unwrap a block that is fully fenced from start to end. Done with
+  // linear string ops rather than a regex on purpose: the previous pattern
+  // (`^```(?:json)?\s*([\s\S]*?)```$`) had overlapping `\s*`/`[\s\S]*?`
+  // quantifiers that backtrack quadratically on unclosed input (ReDoS —
+  // CodeQL js/polynomial-redos).
+  if (
+    trimmed.length < 6 ||
+    !trimmed.startsWith('```') ||
+    !trimmed.endsWith('```')
+  ) {
+    return trimmed;
+  }
+  // Content strictly between the opening and closing fences.
+  let inner = trimmed.slice(3, -3);
+  // Drop an optional leading `json` info string (matches the old behaviour,
+  // which only special-cased the `json` language tag).
+  if (inner.startsWith('json')) inner = inner.slice(4);
+  return inner.trim();
 }
 
 function requireString(value: unknown, field: string, raw: string): string {
