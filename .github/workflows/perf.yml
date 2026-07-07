@@ -26,15 +26,19 @@ jobs:
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          # Single pinned Node version — perf metrics are not portable
-          # across V8 majors. This deliberately diverges from the package
-          # `engines` floor (>=22): the pin locks the MEASUREMENT
-          # environment to the one baseline.json was recorded on, not the
-          # supported runtime range. Migrating this pin to 22 requires a
-          # coordinated owner re-record (`pnpm bench:update` on
-          # Ubuntu+Node22) in the same PR, or every subsequent PR fails the
-          # regression gate on V8-version noise. (2026-07-03 review note.)
-          node-version: 20
+          # Was pinned to 20, but pnpm@10.24 requires Node >=22.13 and would
+          # not start there, so the job failed before running the bench.
+          # Bumped to 22 to match `engines` (>=22) and the rest of CI.
+          #
+          # NOTE on the perf gate: bench.ts only enforces the ±15% gate when
+          # the baseline's platform + node-major matches the runner. The
+          # committed baseline.json was recorded on darwin / Node 25, so on
+          # this ubuntu runner the gate is *skipped* (platform mismatch) and
+          # the job is informational-only — it no longer catches regressions
+          # on CI. To restore an enforcing gate, re-record baseline.json on
+          # this runner (ubuntu + Node 22) via `pnpm bench:update` and commit
+          # it, then the platform will match and the gate re-activates.
+          node-version: 22
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
