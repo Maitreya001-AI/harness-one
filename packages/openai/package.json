@@ -1,6 +1,6 @@
 {
   "name": "@harness-one/openai",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "description": "OpenAI SDK adapter for harness-one",
   "type": "module",
   "main": "./dist/index.cjs",

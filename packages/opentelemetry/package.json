@@ -1,6 +1,6 @@
 {
   "name": "@harness-one/opentelemetry",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "OpenTelemetry trace exporter for harness-one",
   "type": "module",
   "main": "./dist/index.cjs",

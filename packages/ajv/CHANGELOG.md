@@ -1,5 +1,17 @@
 # @harness-one/ajv
 
+## 0.1.5
+
+### Patch Changes
+
+- Updated dependencies [7078215]
+- Updated dependencies [7078215]
+- Updated dependencies [7078215]
+- Updated dependencies [7078215]
+- Updated dependencies [7078215]
+- Updated dependencies [7078215]
+  - harness-one@2.0.0
+
 ## 0.1.4
 
 ### Patch Changes

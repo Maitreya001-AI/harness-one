@@ -1,5 +1,164 @@
 # harness-one
 
+## 2.0.0
+
+### Minor Changes
+
+- 7078215: Content blocks on `Message` (RFC-0001) — extended thinking and images
+  become representable without breaking the `content: string` surface:
+
+  - New `ContentBlock` union (`TextBlock` / `ThinkingBlock` /
+    `RedactedThinkingBlock` / `ImageBlock`) and optional
+    `Message.blocks?: readonly ContentBlock[]`. Invariant: when `blocks`
+    is present, `content` equals the text projection (new `blocksText()`
+    helper). Text-only consumers keep reading `content` unchanged.
+  - `StreamChunk` gains the `'thinking_delta'` variant
+    (`thinking` / `signature` / `redactedData` fields); `AgentEvent`
+    gains `{ type: 'thinking_delta'; thinking: string }` so UIs can render
+    reasoning progress live.
+  - `StreamAggregator` accumulates thinking fragments into a single
+    `ThinkingBlock` (last signature wins), turns each redacted payload
+    into a `RedactedThinkingBlock`, counts both toward `maxStreamBytes`,
+    and attaches `blocks` to the reconstructed assistant message.
+
+  Additive: existing `Message` literals stay valid; exhaustive switches
+  over `AgentEvent`/`StreamChunk` need a `thinking_delta` case. Provider
+  support ships in `@harness-one/anthropic` (parse/replay/thinking option)
+  and `@harness-one/openai` (image parts, graceful degrade). See
+  `docs/rfc/0001-content-blocks.md`.
+
+  Also: `createCircuitBreaker` / `CircuitOpenError` (+ config/state types)
+  are now exported from `harness-one/advanced` — previously the circuit
+  breaker was documented as a resilience mechanism but unreachable from any
+  public subpath (see `docs/guides/resilience.md`).
+
+- 7078215: Core defect fixes from the 2026-07 architecture review:
+
+  - **Streaming token budgets are now enforceable.** When a streaming
+    adapter ends its stream without reporting usage (missing or zeroed
+    `done` chunk), `AgentLoop` estimates tokens via the token-estimator
+    heuristic instead of silently accumulating `{0, 0}` (which made
+    `maxTotalTokens` unenforceable), and yields a `warning` event naming
+    the adapter.
+  - **One-time no-budget warning.** A loop configured with neither
+    `maxTotalTokens` nor `maxDurationMs` now logs a one-time warning
+    (mirror of the no-guardrail-pipeline warning): such runs are bounded
+    only by `maxIterations`.
+  - **Guardrail direction fidelity.** `GuardrailEvent.direction` now
+    carries the full `GuardrailDirection` union. `runToolOutput` tags
+    context + events with `'tool_output'` (previously collapsed to
+    `'output'`) and `runRagContext` with `'rag'` (previously `'input'`),
+    so guards branching on `ctx.direction === 'tool_output' | 'rag'`
+    actually fire and trace exporters can distinguish the phases.
+    Consumers switching exhaustively on the event direction must handle
+    the two new members.
+  - **Optimistic-lock integrity across mixed paths.** The in-memory
+    store's plain `write()` / `update()` / `delete()` / eviction /
+    `compact()` now advance the per-key CAS version, so a plain-path
+    writer can no longer slip past a concurrent `updateWithVersion()`
+    caller (lost update). New optional `MemoryStore.getVersion(key)`
+    returns the current version; `setWithTtl` no longer resets versions
+    (strictly monotonic).
+  - **`defineTool` structured-throw preservation fixed.** The catch-path
+    guard matched an obsolete `{error, content}` shape that no valid
+    `ToolResult` has; thrown values are now preserved only when they match
+    the current `{kind, success, ...}` discriminated shape (which the
+    registry's `assertToolResult` accepts), everything else collapses into
+    the generic internal tool error as documented.
+  - `CoordinatorState.status` now reuses the public `AgentLoopStatus`
+    type instead of re-spelling the union (type-drift guard, no runtime
+    change).
+
+- 7078215: Remove two pieces of hidden global state from the core kernel: introduce an
+  injectable `Clock` port (B8) and an instance-scoped tokenizer registry (B7).
+  Both are additive and default to the prior behaviour byte-for-byte.
+
+  - **Injectable clock (B8).** New `Clock` interface (`now(): number`) and
+    `systemClock` default in `infra/clock.ts` (L1, imports nothing upward).
+    `Date.now()` was called directly throughout the kernel (adapter-caller ~8
+    sites, iteration-coordinator ~3, memory store TTL/id paths, checkpoint
+    timestamps), making duration budgets / TTL / timestamps untestable without
+    fake timers. An optional `clock?: Clock` now threads through
+    `AgentLoopConfig` → `CoordinatorDeps` (run-start + `maxDurationMs` budget)
+    and `AdapterCallerConfig` (`totalDurationMs`), plus `createInMemoryStore({
+clock })` (timestamps, `mem_<time>_<rand>` id prefix, TTL expiry) and
+    `createCheckpointManager({ clock })` (checkpoint `timestamp`,
+    `prune({ maxAge })` cutoff). Default everywhere is `systemClock`, so runtime
+    behaviour is unchanged. Exported from `harness-one/infra` and
+    `harness-one/advanced`.
+
+  - **Instance-scoped tokenizer registry (B7).** New `TokenizerRegistry`
+    interface (`register` / `estimate`) and `createTokenizerRegistry()` factory,
+    each closed over its own map. The module-level `registerTokenizer` /
+    `estimateTokens` / `clearTokenizerRegistry` now delegate to a shared default
+    instance and keep working verbatim (the `@harness-one/tiktoken` global path
+    is untouched). `countTokens(model, messages, tokenizerRegistry?)` and
+    `StreamHandlerConfig.tokenizerRegistry?` add optional injection points that
+    default to the global registry; when a custom registry is injected,
+    `countTokens` bypasses its shared per-message WeakMap cache to avoid
+    cross-registry contamination. `registerTokenizer`'s TSDoc now flags that it
+    mutates process-wide state and recommends `createTokenizerRegistry` for
+    library authors. Exported from `harness-one/context` and
+    `harness-one/advanced`.
+
+- 7078215: Tools: zero-cast tool registration + type-level schema→params inference.
+
+  - **`register` variance fix (kills the cross-app double-cast).**
+    `ToolDefinition<T>` is contravariant in `T` (it appears in
+    `execute(params: T)`), so under `strictFunctionTypes` a concrete
+    `ToolDefinition<{ q: string }>` was _not_ assignable to
+    `ToolDefinition<unknown>` — the type `register()` used to accept. That forced
+    callers to write `tool as unknown as Parameters<typeof register>[0]`.
+    `ToolRegistry.register` now accepts the new variance-safe alias
+    `AnyToolDefinition` (`ToolDefinition<never>`); since `never` is assignable to
+    any `T`, every `defineTool<...>()` result registers with **zero casts** while
+    callers of a concrete tool's `execute` keep full parameter typing. Params are
+    still validated against `tool.parameters` at execution time.
+
+  - **`FromSchema<S>` schema → TypeScript inference (type-level, zero runtime
+    deps).** New exported type utility maps the supported JSON-Schema subset
+    (`type` over `string`/`number`/`integer`/`boolean`/`object`/`array`/`null`,
+    plus `properties`, `items`, `required`, `enum`) of an `as const` schema
+    literal to a params type. `defineTool` gains an overload so
+    `defineTool({ parameters: { ... } as const, execute: (params) => ... })`
+    infers `params` from the schema — no explicit generic needed. Conservative by
+    design: a schema without `as const` (or the widened `JsonSchema` interface)
+    falls back to `unknown`, exactly as before. The explicit-generic form
+    `defineTool<T>({ ... })` is unchanged and backward compatible.
+
+  New public exports from `harness-one/tools`: `AnyToolDefinition`,
+  `FromSchema`, `ReadonlyJsonSchema`, `DeepReadonly` (all type-only).
+
+### Patch Changes
+
+- 7078215: Re-introduce runtime-working `@deprecated` aliases for symbols renamed during
+  the thin-harness naming cleanup, so consumers who pinned by SHA before the
+  first release are not broken by the rename. Each alias is a reference-identity
+  re-export of its `createBasic*` counterpart and is slated for removal one full
+  major version after first release.
+
+  - `harness-one/orchestration`: `createRoundRobinStrategy`,
+    `createRandomStrategy`, `createFirstAvailableStrategy`.
+  - `harness-one/rag`: `createFixedSizeChunking`, `createParagraphChunking`,
+    `createSlidingWindowChunking`.
+  - `harness-one/guardrails`: `withSelfHealing` (alias of `withGuardrailRetry`).
+  - `harness-one/observe`: the renamed-away `'hallucination'` failure mode is now
+    recognised as a deprecated alias of `'repeated_tool_failure'`. A new
+    `normalizeFailureMode()` helper resolves it, and `registerDetector()` /
+    `FailureTaxonomyConfig.detectors` normalise the key so consumer detectors
+    registered under the old name keep working.
+
+- 7078215: TSDoc: cross-link resilience mechanisms to the selection guide
+
+  Added a `@see docs/guides/resilience.md` reference and a one-sentence
+  "when to use this vs. the alternatives" note to the TSDoc of the four
+  overlapping resilience mechanisms — `createFallbackAdapter`,
+  `createResilientLoop`, `createCircuitBreaker`, and the `AgentLoopConfig`
+  in-loop retry knobs (`maxAdapterRetries`). Comment-only; no public API or
+  runtime behavior change.
+  </content>
+  </invoke>
+
 ## 1.0.2
 
 ### Patch Changes
