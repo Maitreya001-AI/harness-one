@@ -62,7 +62,7 @@ jobs:
       - name: Generate CycloneDX SBOM
         # anchore/sbom-action uses Syft under the hood, which reads the
         # pnpm lockfile and produces a deterministic CycloneDX document.
-        uses: anchore/sbom-action@7ccf588e3cf3cc2611714c2eeae48550fbc17552 # v0.15.11
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
           format: cyclonedx-json
           output-file: sbom-${{ steps.version.outputs.version }}.json
