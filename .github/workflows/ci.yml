@@ -102,7 +102,7 @@ jobs:
         # uploads. TODO(owner): if the repo goes private, either enable
         # Codecov's tokenless path for private repos or add CODECOV_TOKEN.
         if: matrix.os == 'ubuntu-latest' && matrix.node-version == 22
-        uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2 # v6.0.0
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           use_oidc: true
           fail_ci_if_error: false
