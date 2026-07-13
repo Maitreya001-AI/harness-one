@@ -72,7 +72,7 @@
     "size-limit": "^12.1.0",
     "tsup": "^8.0.0",
     "tsx": "^4.22.2",
-    "typedoc": "^0.28.9",
+    "typedoc": "^0.28.20",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.62.1",
     "vite": "^6.4.3",
