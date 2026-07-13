@@ -64,7 +64,7 @@
     "@types/node": "^26.1.0",
     "@vitest/coverage-v8": "^4.1.10",
     "esbuild": "^0.28.1",
-    "eslint": "^10.6.0",
+    "eslint": "^10.7.0",
     "eslint-plugin-import": "^2.31.0",
     "harness-one": "workspace:*",
     "husky": "^9.1.7",
