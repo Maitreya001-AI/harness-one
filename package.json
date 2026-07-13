@@ -59,7 +59,7 @@
     "@changesets/cli": "^2.31.0",
     "@harness-one/anthropic": "workspace:*",
     "@harness-one/openai": "workspace:*",
-    "@microsoft/api-extractor": "^7.58.7",
+    "@microsoft/api-extractor": "^7.58.9",
     "@size-limit/file": "^12.1.0",
     "@types/node": "^26.1.0",
     "@vitest/coverage-v8": "^4.1.10",
