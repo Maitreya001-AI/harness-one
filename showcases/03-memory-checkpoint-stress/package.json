@@ -14,7 +14,7 @@
   },
   "devDependencies": {
     "tsx": "^4.22.2",
-    "typescript": "^6.0.3"
+    "typescript": "^7.0.2"
   },
   "license": "MIT"
 }

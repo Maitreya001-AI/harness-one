@@ -21,7 +21,7 @@ importers:
     devDependencies:
       '@changesets/cli':
         specifier: ^2.31.0
-        version: 2.31.0(@types/node@26.1.0)
+        version: 2.31.0(@types/node@26.1.1)
       '@harness-one/anthropic':
         specifier: workspace:*
         version: link:packages/anthropic
@@ -30,13 +30,13 @@ importers:
         version: link:packages/openai
       '@microsoft/api-extractor':
         specifier: ^7.58.7
-        version: 7.58.7(@types/node@26.1.0)
+        version: 7.58.7(@types/node@26.1.1)
       '@size-limit/file':
         specifier: ^12.1.0
         version: 12.1.0(size-limit@12.1.0)
       '@types/node':
-        specifier: ^26.1.0
-        version: 26.1.0
+        specifier: ^26.1.1
+        version: 26.1.1
       '@vitest/coverage-v8':
         specifier: ^4.1.10
         version: 4.1.10(vitest@4.1.10)
@@ -48,7 +48,7 @@ importers:
         version: 10.6.0
       eslint-plugin-import:
         specifier: ^2.31.0
-        version: 2.32.0(@typescript-eslint/parser@8.63.0(eslint@10.6.0)(typescript@6.0.3))(eslint@10.6.0)
+        version: 2.32.0(@typescript-eslint/parser@8.63.0(eslint@10.6.0)(typescript@7.0.2))(eslint@10.6.0)
       harness-one:
         specifier: workspace:*
         version: link:packages/core
@@ -63,25 +63,25 @@ importers:
         version: 12.1.0
       tsup:
         specifier: ^8.0.0
-        version: 8.5.1(@microsoft/api-extractor@7.58.7(@types/node@26.1.0))(postcss@8.5.16)(tsx@4.23.0)(typescript@6.0.3)(yaml@2.9.0)
+        version: 8.5.1(@microsoft/api-extractor@7.58.7(@types/node@26.1.1))(postcss@8.5.16)(tsx@4.23.0)(typescript@7.0.2)(yaml@2.9.0)
       tsx:
         specifier: ^4.22.2
         version: 4.23.0
       typedoc:
         specifier: ^0.28.9
-        version: 0.28.19(typescript@6.0.3)
+        version: 0.28.19(typescript@7.0.2)
       typescript:
-        specifier: ^6.0.3
-        version: 6.0.3
+        specifier: ^7.0.2
+        version: 7.0.2
       typescript-eslint:
         specifier: ^8.62.1
-        version: 8.63.0(eslint@10.6.0)(typescript@6.0.3)
+        version: 8.63.0(eslint@10.6.0)(typescript@7.0.2)
       vite:
         specifier: ^6.4.3
-        version: 6.4.3(@types/node@26.1.0)(tsx@4.23.0)(yaml@2.9.0)
+        version: 6.4.3(@types/node@26.1.1)(tsx@4.23.0)(yaml@2.9.0)
       vitest:
         specifier: ^4.1.10
-        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.0)(@vitest/coverage-v8@4.1.10)(vite@6.4.3(@types/node@26.1.0)(tsx@4.23.0)(yaml@2.9.0))
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.1)(@vitest/coverage-v8@4.1.10)(vite@6.4.3(@types/node@26.1.1)(tsx@4.23.0)(yaml@2.9.0))
 
   apps/coding-agent:
     dependencies:
@@ -103,16 +103,16 @@ importers:
         version: 4.1.10(vitest@4.1.10)
       tsup:
         specifier: ^8.0.0
-        version: 8.5.1(@microsoft/api-extractor@7.58.7(@types/node@26.1.0))(postcss@8.5.16)(tsx@4.23.0)(typescript@6.0.3)(yaml@2.9.0)
+        version: 8.5.1(@microsoft/api-extractor@7.58.7(@types/node@26.1.1))(postcss@8.5.16)(tsx@4.23.0)(typescript@7.0.2)(yaml@2.9.0)
       tsx:
         specifier: ^4.22.2
         version: 4.23.0
       typescript:
-        specifier: ^6.0.3
-        version: 6.0.3
+        specifier: ^7.0.2
+        version: 7.0.2
       vitest:
         specifier: ^4.1.10
-        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.0)(@vitest/coverage-v8@4.1.10)(vite@6.4.3(@types/node@26.1.0)(tsx@4.23.0)(yaml@2.9.0))
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.1)(@vitest/coverage-v8@4.1.10)(vite@6.4.3(@types/node@26.1.1)(tsx@4.23.0)(yaml@2.9.0))
 
   apps/coding-agent-vscode:
     dependencies:
@@ -134,16 +134,16 @@ importers:
         version: 1.125.0
       tsup:
         specifier: ^8.0.0
-        version: 8.5.1(@microsoft/api-extractor@7.58.7(@types/node@26.1.0))(postcss@8.5.16)(tsx@4.23.0)(typescript@6.0.3)(yaml@2.9.0)
+        version: 8.5.1(@microsoft/api-extractor@7.58.7(@types/node@26.1.1))(postcss@8.5.16)(tsx@4.23.0)(typescript@7.0.2)(yaml@2.9.0)
       tsx:
         specifier: ^4.22.2
         version: 4.23.0
       typescript:
-        specifier: ^6.0.3
-        version: 6.0.3
+        specifier: ^7.0.2
+        version: 7.0.2
       vitest:
         specifier: ^4.1.10
-        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.0)(@vitest/coverage-v8@4.1.10)(vite@6.4.3(@types/node@26.1.0)(tsx@4.23.0)(yaml@2.9.0))
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.1)(@vitest/coverage-v8@4.1.10)(vite@6.4.3(@types/node@26.1.1)(tsx@4.23.0)(yaml@2.9.0))
 
   apps/dogfood:
     dependencies:
@@ -164,11 +164,11 @@ importers:
         specifier: ^4.22.2
         version: 4.23.0
       typescript:
-        specifier: ^6.0.3
-        version: 6.0.3
+        specifier: ^7.0.2
+        version: 7.0.2
       vitest:
         specifier: ^4.1.10
-        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.0)(@vitest/coverage-v8@4.1.10)(vite@6.4.3(@types/node@26.1.0)(tsx@4.23.0)(yaml@2.9.0))
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.1)(@vitest/coverage-v8@4.1.10)(vite@6.4.3(@types/node@26.1.1)(tsx@4.23.0)(yaml@2.9.0))
 
   apps/research-collab:
     dependencies:
@@ -189,11 +189,11 @@ importers:
         specifier: ^4.22.2
         version: 4.23.0
       typescript:
-        specifier: ^6.0.3
-        version: 6.0.3
+        specifier: ^7.0.2
+        version: 7.0.2
       vitest:
         specifier: ^4.1.10
-        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.0)(@vitest/coverage-v8@4.1.10)(vite@6.4.3(@types/node@26.1.0)(tsx@4.23.0)(yaml@2.9.0))
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.1)(@vitest/coverage-v8@4.1.10)(vite@6.4.3(@types/node@26.1.1)(tsx@4.23.0)(yaml@2.9.0))
 
   examples:
     dependencies:
@@ -229,8 +229,8 @@ importers:
         version: link:../packages/core
     devDependencies:
       typescript:
-        specifier: ^6.0.3
-        version: 6.0.3
+        specifier: ^7.0.2
+        version: 7.0.2
 
   packages/ajv:
     dependencies:
@@ -246,13 +246,13 @@ importers:
         version: 3.0.1(ajv@8.20.0)
       tsup:
         specifier: ^8.0.0
-        version: 8.5.1(@microsoft/api-extractor@7.58.7(@types/node@26.1.0))(postcss@8.5.16)(tsx@4.23.0)(typescript@6.0.3)(yaml@2.9.0)
+        version: 8.5.1(@microsoft/api-extractor@7.58.7(@types/node@26.1.1))(postcss@8.5.16)(tsx@4.23.0)(typescript@7.0.2)(yaml@2.9.0)
       typescript:
-        specifier: ^6.0.3
-        version: 6.0.3
+        specifier: ^7.0.2
+        version: 7.0.2
       vitest:
         specifier: ^4.1.10
-        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.0)(@vitest/coverage-v8@4.1.10)(vite@6.4.3(@types/node@26.1.0)(tsx@4.23.0)(yaml@2.9.0))
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.1)(@vitest/coverage-v8@4.1.10)(vite@6.4.3(@types/node@26.1.1)(tsx@4.23.0)(yaml@2.9.0))
 
   packages/anthropic:
     dependencies:
@@ -265,13 +265,13 @@ importers:
         version: 0.96.0(zod@4.3.6)
       tsup:
         specifier: ^8.0.0
-        version: 8.5.1(@microsoft/api-extractor@7.58.7(@types/node@26.1.0))(postcss@8.5.16)(tsx@4.23.0)(typescript@6.0.3)(yaml@2.9.0)
+        version: 8.5.1(@microsoft/api-extractor@7.58.7(@types/node@26.1.1))(postcss@8.5.16)(tsx@4.23.0)(typescript@7.0.2)(yaml@2.9.0)
       typescript:
-        specifier: ^6.0.3
-        version: 6.0.3
+        specifier: ^7.0.2
+        version: 7.0.2
       vitest:
         specifier: ^4.1.10
-        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.0)(@vitest/coverage-v8@4.1.10)(vite@6.4.3(@types/node@26.1.0)(tsx@4.23.0)(yaml@2.9.0))
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.1)(@vitest/coverage-v8@4.1.10)(vite@6.4.3(@types/node@26.1.1)(tsx@4.23.0)(yaml@2.9.0))
 
   packages/cli:
     dependencies:
@@ -281,22 +281,22 @@ importers:
     devDependencies:
       tsup:
         specifier: ^8.0.0
-        version: 8.5.1(@microsoft/api-extractor@7.58.7(@types/node@26.1.0))(postcss@8.5.16)(tsx@4.23.0)(typescript@6.0.3)(yaml@2.9.0)
+        version: 8.5.1(@microsoft/api-extractor@7.58.7(@types/node@26.1.1))(postcss@8.5.16)(tsx@4.23.0)(typescript@7.0.2)(yaml@2.9.0)
       typescript:
-        specifier: ^6.0.3
-        version: 6.0.3
+        specifier: ^7.0.2
+        version: 7.0.2
       vitest:
         specifier: ^4.1.10
-        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.0)(@vitest/coverage-v8@4.1.10)(vite@6.4.3(@types/node@26.1.0)(tsx@4.23.0)(yaml@2.9.0))
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.1)(@vitest/coverage-v8@4.1.10)(vite@6.4.3(@types/node@26.1.1)(tsx@4.23.0)(yaml@2.9.0))
 
   packages/core:
     devDependencies:
       '@stryker-mutator/core':
         specifier: 9.6.1
-        version: 9.6.1(@types/node@26.1.0)
+        version: 9.6.1(@types/node@26.1.1)
       '@stryker-mutator/vitest-runner':
         specifier: 9.6.1
-        version: 9.6.1(@stryker-mutator/core@9.6.1(@types/node@26.1.0))(vitest@4.1.10)
+        version: 9.6.1(@stryker-mutator/core@9.6.1(@types/node@26.1.1))(vitest@4.1.10)
       expect-type:
         specifier: 1.3.0
         version: 1.3.0
@@ -308,16 +308,16 @@ importers:
         version: 6.0.2
       tsup:
         specifier: ^8.0.0
-        version: 8.5.1(@microsoft/api-extractor@7.58.7(@types/node@26.1.0))(postcss@8.5.16)(tsx@4.23.0)(typescript@6.0.3)(yaml@2.9.0)
+        version: 8.5.1(@microsoft/api-extractor@7.58.7(@types/node@26.1.1))(postcss@8.5.16)(tsx@4.23.0)(typescript@7.0.2)(yaml@2.9.0)
       tsx:
         specifier: ^4.22.2
         version: 4.23.0
       typescript:
-        specifier: ^6.0.3
-        version: 6.0.3
+        specifier: ^7.0.2
+        version: 7.0.2
       vitest:
         specifier: ^4.1.10
-        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.0)(@vitest/coverage-v8@4.1.10)(vite@6.4.3(@types/node@26.1.0)(tsx@4.23.0)(yaml@2.9.0))
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.1)(@vitest/coverage-v8@4.1.10)(vite@6.4.3(@types/node@26.1.1)(tsx@4.23.0)(yaml@2.9.0))
 
   packages/devkit:
     devDependencies:
@@ -326,13 +326,13 @@ importers:
         version: link:../core
       tsup:
         specifier: ^8.0.0
-        version: 8.5.1(@microsoft/api-extractor@7.58.7(@types/node@26.1.0))(postcss@8.5.16)(tsx@4.23.0)(typescript@6.0.3)(yaml@2.9.0)
+        version: 8.5.1(@microsoft/api-extractor@7.58.7(@types/node@26.1.1))(postcss@8.5.16)(tsx@4.23.0)(typescript@7.0.2)(yaml@2.9.0)
       typescript:
-        specifier: ^6.0.3
-        version: 6.0.3
+        specifier: ^7.0.2
+        version: 7.0.2
       vitest:
         specifier: ^4.1.10
-        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.0)(@vitest/coverage-v8@4.1.10)(vite@6.4.3(@types/node@26.1.0)(tsx@4.23.0)(yaml@2.9.0))
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.1)(@vitest/coverage-v8@4.1.10)(vite@6.4.3(@types/node@26.1.1)(tsx@4.23.0)(yaml@2.9.0))
 
   packages/langfuse:
     dependencies:
@@ -345,13 +345,13 @@ importers:
         version: 3.38.20
       tsup:
         specifier: ^8.0.0
-        version: 8.5.1(@microsoft/api-extractor@7.58.7(@types/node@26.1.0))(postcss@8.5.16)(tsx@4.23.0)(typescript@6.0.3)(yaml@2.9.0)
+        version: 8.5.1(@microsoft/api-extractor@7.58.7(@types/node@26.1.1))(postcss@8.5.16)(tsx@4.23.0)(typescript@7.0.2)(yaml@2.9.0)
       typescript:
-        specifier: ^6.0.3
-        version: 6.0.3
+        specifier: ^7.0.2
+        version: 7.0.2
       vitest:
         specifier: ^4.1.10
-        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.0)(@vitest/coverage-v8@4.1.10)(vite@6.4.3(@types/node@26.1.0)(tsx@4.23.0)(yaml@2.9.0))
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.1)(@vitest/coverage-v8@4.1.10)(vite@6.4.3(@types/node@26.1.1)(tsx@4.23.0)(yaml@2.9.0))
 
   packages/openai:
     dependencies:
@@ -364,13 +364,13 @@ importers:
         version: 6.45.0(zod@4.3.6)
       tsup:
         specifier: ^8.0.0
-        version: 8.5.1(@microsoft/api-extractor@7.58.7(@types/node@26.1.0))(postcss@8.5.16)(tsx@4.23.0)(typescript@6.0.3)(yaml@2.9.0)
+        version: 8.5.1(@microsoft/api-extractor@7.58.7(@types/node@26.1.1))(postcss@8.5.16)(tsx@4.23.0)(typescript@7.0.2)(yaml@2.9.0)
       typescript:
-        specifier: ^6.0.3
-        version: 6.0.3
+        specifier: ^7.0.2
+        version: 7.0.2
       vitest:
         specifier: ^4.1.10
-        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.0)(@vitest/coverage-v8@4.1.10)(vite@6.4.3(@types/node@26.1.0)(tsx@4.23.0)(yaml@2.9.0))
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.1)(@vitest/coverage-v8@4.1.10)(vite@6.4.3(@types/node@26.1.1)(tsx@4.23.0)(yaml@2.9.0))
 
   packages/opentelemetry:
     dependencies:
@@ -383,13 +383,13 @@ importers:
         version: 1.9.1
       tsup:
         specifier: ^8.0.0
-        version: 8.5.1(@microsoft/api-extractor@7.58.7(@types/node@26.1.0))(postcss@8.5.16)(tsx@4.23.0)(typescript@6.0.3)(yaml@2.9.0)
+        version: 8.5.1(@microsoft/api-extractor@7.58.7(@types/node@26.1.1))(postcss@8.5.16)(tsx@4.23.0)(typescript@7.0.2)(yaml@2.9.0)
       typescript:
-        specifier: ^6.0.3
-        version: 6.0.3
+        specifier: ^7.0.2
+        version: 7.0.2
       vitest:
         specifier: ^4.1.10
-        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.0)(@vitest/coverage-v8@4.1.10)(vite@6.4.3(@types/node@26.1.0)(tsx@4.23.0)(yaml@2.9.0))
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.1)(@vitest/coverage-v8@4.1.10)(vite@6.4.3(@types/node@26.1.1)(tsx@4.23.0)(yaml@2.9.0))
 
   packages/preset:
     dependencies:
@@ -411,13 +411,13 @@ importers:
     devDependencies:
       tsup:
         specifier: ^8.0.0
-        version: 8.5.1(@microsoft/api-extractor@7.58.7(@types/node@26.1.0))(postcss@8.5.16)(tsx@4.23.0)(typescript@6.0.3)(yaml@2.9.0)
+        version: 8.5.1(@microsoft/api-extractor@7.58.7(@types/node@26.1.1))(postcss@8.5.16)(tsx@4.23.0)(typescript@7.0.2)(yaml@2.9.0)
       typescript:
-        specifier: ^6.0.3
-        version: 6.0.3
+        specifier: ^7.0.2
+        version: 7.0.2
       vitest:
         specifier: ^4.1.10
-        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.0)(@vitest/coverage-v8@4.1.10)(vite@6.4.3(@types/node@26.1.0)(tsx@4.23.0)(yaml@2.9.0))
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.1)(@vitest/coverage-v8@4.1.10)(vite@6.4.3(@types/node@26.1.1)(tsx@4.23.0)(yaml@2.9.0))
     optionalDependencies:
       '@harness-one/langfuse':
         specifier: workspace:*
@@ -443,13 +443,13 @@ importers:
         version: 5.10.1
       tsup:
         specifier: ^8.0.0
-        version: 8.5.1(@microsoft/api-extractor@7.58.7(@types/node@26.1.0))(postcss@8.5.16)(tsx@4.23.0)(typescript@6.0.3)(yaml@2.9.0)
+        version: 8.5.1(@microsoft/api-extractor@7.58.7(@types/node@26.1.1))(postcss@8.5.16)(tsx@4.23.0)(typescript@7.0.2)(yaml@2.9.0)
       typescript:
-        specifier: ^6.0.3
-        version: 6.0.3
+        specifier: ^7.0.2
+        version: 7.0.2
       vitest:
         specifier: ^4.1.10
-        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.0)(@vitest/coverage-v8@4.1.10)(vite@6.4.3(@types/node@26.1.0)(tsx@4.23.0)(yaml@2.9.0))
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.1)(@vitest/coverage-v8@4.1.10)(vite@6.4.3(@types/node@26.1.1)(tsx@4.23.0)(yaml@2.9.0))
 
   packages/tiktoken:
     dependencies:
@@ -462,13 +462,13 @@ importers:
         version: 1.0.22
       tsup:
         specifier: ^8.0.0
-        version: 8.5.1(@microsoft/api-extractor@7.58.7(@types/node@26.1.0))(postcss@8.5.16)(tsx@4.23.0)(typescript@6.0.3)(yaml@2.9.0)
+        version: 8.5.1(@microsoft/api-extractor@7.58.7(@types/node@26.1.1))(postcss@8.5.16)(tsx@4.23.0)(typescript@7.0.2)(yaml@2.9.0)
       typescript:
-        specifier: ^6.0.3
-        version: 6.0.3
+        specifier: ^7.0.2
+        version: 7.0.2
       vitest:
         specifier: ^4.1.10
-        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.0)(@vitest/coverage-v8@4.1.10)(vite@6.4.3(@types/node@26.1.0)(tsx@4.23.0)(yaml@2.9.0))
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.1)(@vitest/coverage-v8@4.1.10)(vite@6.4.3(@types/node@26.1.1)(tsx@4.23.0)(yaml@2.9.0))
 
   showcases/01-streaming-cli:
     dependencies:
@@ -480,8 +480,8 @@ importers:
         specifier: ^4.22.2
         version: 4.23.0
       typescript:
-        specifier: ^6.0.3
-        version: 6.0.3
+        specifier: ^7.0.2
+        version: 7.0.2
 
   showcases/02-rag-support-bot:
     dependencies:
@@ -493,8 +493,8 @@ importers:
         specifier: ^4.22.2
         version: 4.23.0
       typescript:
-        specifier: ^6.0.3
-        version: 6.0.3
+        specifier: ^7.0.2
+        version: 7.0.2
 
   showcases/03-memory-checkpoint-stress:
     dependencies:
@@ -506,8 +506,8 @@ importers:
         specifier: ^4.22.2
         version: 4.23.0
       typescript:
-        specifier: ^6.0.3
-        version: 6.0.3
+        specifier: ^7.0.2
+        version: 7.0.2
 
   showcases/04-orchestration-handoff:
     dependencies:
@@ -519,8 +519,8 @@ importers:
         specifier: ^4.22.2
         version: 4.23.0
       typescript:
-        specifier: ^6.0.3
-        version: 6.0.3
+        specifier: ^7.0.2
+        version: 7.0.2
 
 packages:
 
@@ -1572,8 +1572,8 @@ packages:
   '@types/node@12.20.55':
     resolution: {integrity: sha512-J8xLz7q2OFulZ2cyGTLE1TbbZcjpno7FaN6zdJNrgAdrJ+DZzh/uFR6YrTb4C+nXakvud8Q4+rbhoIWlYQbUFQ==}
 
-  '@types/node@26.1.0':
-    resolution: {integrity: sha512-O0A1G3xPGy4w7AgQdAQYUlQ+BKk2Oovw8eRpofyp5KdBZULnbe+WqaOVNrm705SHphCiG4XHsACrSmPu1f+Kgw==}
+  '@types/node@26.1.1':
+    resolution: {integrity: sha512-nxAkRSVkN1Y0JC1W8ky/fTfkGsMmcrRsbx+3XoZE+rMOX71kLYTV7fLXpqud1GpbpP5TuffXFqfX7fH2GgZREw==}
 
   '@types/unist@3.0.3':
     resolution: {integrity: sha512-ko/gIFJRv177XgZsZcBwnqJN5x/Gien8qNOn0D5bQU/zAzVf9Zt3BlcUiLqhV9y4ARk0GbT3tnUiPNgnTXzc/Q==}
@@ -1639,6 +1639,126 @@ packages:
   '@typescript-eslint/visitor-keys@8.63.0':
     resolution: {integrity: sha512-UexrHGnGTpbuQHct2ExOc2ZcFbGUS9FOesCxxqdBGcpI1BxYu/LZ6U8Aq6/72XtF/qRBk9nhuGHFJIXXMhPMdw==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
+
+  '@typescript/typescript-aix-ppc64@7.0.2':
+    resolution: {integrity: sha512-MTKKkWB7p/0E9xi1d1tHtZ5PiLkGEMIq88pK2CubZjOsLtYTLqhgIgi6zepFa+9GHZ6h05NMCkQxGKiPXMxXtQ==}
+    engines: {node: '>=16.20.0'}
+    cpu: [ppc64]
+    os: [aix]
+
+  '@typescript/typescript-darwin-arm64@7.0.2':
+    resolution: {integrity: sha512-gowzar9MwS/aRWp6f3a4KUqzRjAZjOsmGNCM6LcTgXum+dBfgsBVMN+AgvOCCbguXyick6LJhpBszxMebJ8syA==}
+    engines: {node: '>=16.20.0'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@typescript/typescript-darwin-x64@7.0.2':
+    resolution: {integrity: sha512-SZ9xZInqApNlNGc9s0W1VSsktYSOe9cFqNOIqmN1Gs8SmkjKZYFt017G4VwPxASInODuAdbTW7sXiFUf893RgA==}
+    engines: {node: '>=16.20.0'}
+    cpu: [x64]
+    os: [darwin]
+
+  '@typescript/typescript-freebsd-arm64@7.0.2':
+    resolution: {integrity: sha512-W5NH4y/J0plIIS5b2xvTEkU7JFxyqdMAOgf+Ilhl0vHQXKO5dZoxd+C/jEtq56c4F3wk71RB4BMRQ2XdI+bwYQ==}
+    engines: {node: '>=16.20.0'}
+    cpu: [arm64]
+    os: [freebsd]
+
+  '@typescript/typescript-freebsd-x64@7.0.2':
+    resolution: {integrity: sha512-UMGDx5sTpzNw3WiPebH7l90IWfJggEd+egHt/q6p7/Cm3zqoV7VxkGXt+3DxPIw8CcmvAB0j3sVVfbhX+M4Tpw==}
+    engines: {node: '>=16.20.0'}
+    cpu: [x64]
+    os: [freebsd]
+
+  '@typescript/typescript-linux-arm64@7.0.2':
+    resolution: {integrity: sha512-Qh4eU4/y3yDjnfjjyPYihMj5/ODIlmt+Bzu17OI+fiSRDW57QmU5SiN63exPRNJPKUzcc1INa1NXdrJ+MqHjUQ==}
+    engines: {node: '>=16.20.0'}
+    cpu: [arm64]
+    os: [linux]
+
+  '@typescript/typescript-linux-arm@7.0.2':
+    resolution: {integrity: sha512-gffT3xPz9sR7j/YJExkyPntrI0P2EP9XbOyWzth2/Gs0RstK+90RBcO0ncXoXy/beYll1SXw846Nf2zdnEz0QQ==}
+    engines: {node: '>=16.20.0'}
+    cpu: [arm]
+    os: [linux]
+
+  '@typescript/typescript-linux-loong64@7.0.2':
+    resolution: {integrity: sha512-uEHck9i8hoAzXPiYRib1O7miOnz23SxIeVl6F4LXox+qov1K35jHcEW6VHKvZI+pyvl7fZEP4MCU5LYvIq1GuQ==}
+    engines: {node: '>=16.20.0'}
+    cpu: [loong64]
+    os: [linux]
+
+  '@typescript/typescript-linux-mips64el@7.0.2':
+    resolution: {integrity: sha512-R4KvAMnE43W5Qeqb0Ly56O3mWMWIAgsMyz36DCaycd5nbg/9kzm0liw3JocfRqyJY0KPmzFjbswozXyW0DnIYA==}
+    engines: {node: '>=16.20.0'}
+    cpu: [mips64el]
+    os: [linux]
+
+  '@typescript/typescript-linux-ppc64@7.0.2':
+    resolution: {integrity: sha512-DORx5b3sd/4S7eayxm4FQv+A7CrkUIGRaHiwI8oiHTAI1fAPWhF4J0vAlkC8biAlHSVVwxMQ3tjZ2/DVbnQiiA==}
+    engines: {node: '>=16.20.0'}
+    cpu: [ppc64]
+    os: [linux]
+
+  '@typescript/typescript-linux-riscv64@7.0.2':
+    resolution: {integrity: sha512-wf0jqEDOjrPRnKwYRyyJDRo11KMbvMFrU+q4zqKyChODBzvlkbhNQfKvLxQCcwTpdDaXSHZTVuh0JoCrKCUMHQ==}
+    engines: {node: '>=16.20.0'}
+    cpu: [riscv64]
+    os: [linux]
+
+  '@typescript/typescript-linux-s390x@7.0.2':
+    resolution: {integrity: sha512-IkwJc3L7yhytWd/ewjyxNDfOmswCm9GWMJT/ue/dU4aZNbwZeYAetq42VyLmsmSjvoX7z74X6ZaYCtzAr0EuGw==}
+    engines: {node: '>=16.20.0'}
+    cpu: [s390x]
+    os: [linux]
+
+  '@typescript/typescript-linux-x64@7.0.2':
+    resolution: {integrity: sha512-EYdf2cNg7rgCWJnxCdJ+F3V39O8ihb37eHAu1LK8oAFizgTQbPOK7zHHXbPt8rX24COqODXeI3sIf0fCXG7H/A==}
+    engines: {node: '>=16.20.0'}
+    cpu: [x64]
+    os: [linux]
+
+  '@typescript/typescript-netbsd-arm64@7.0.2':
+    resolution: {integrity: sha512-+polYF4MF04aPpO5FTkHran9yUQDSXqy5GiSDKpsll5jy3l3+g9QLhpf39T+ePtefhXLOGrLl0QIjkQP6VnelA==}
+    engines: {node: '>=16.20.0'}
+    cpu: [arm64]
+    os: [netbsd]
+
+  '@typescript/typescript-netbsd-x64@7.0.2':
+    resolution: {integrity: sha512-8YIT0EHM/3dq10ZOVF/A7pc/YSMtbcecct4rWtexrnSCHOPcpC2KTLXfTCR6vDpnSiY12heNb1GiN/wu+T/FyA==}
+    engines: {node: '>=16.20.0'}
+    cpu: [x64]
+    os: [netbsd]
+
+  '@typescript/typescript-openbsd-arm64@7.0.2':
+    resolution: {integrity: sha512-APT8+ClYnuYm1u9+kgGXoMj2VzWzcymwh2gNSQVySHfkRDGOTVkoWLjCmOQSaO+PoqQ57B0flRp9SA+7GnnkzQ==}
+    engines: {node: '>=16.20.0'}
+    cpu: [arm64]
+    os: [openbsd]
+
+  '@typescript/typescript-openbsd-x64@7.0.2':
+    resolution: {integrity: sha512-yX7s+Q0Dln0Dt9tEzZsAjXXR/+ytBM7AlglaqyeMPxQszJ1JhlJdZ6jLA+IzldHtflX81em7lDao1xXu+aRRkg==}
+    engines: {node: '>=16.20.0'}
+    cpu: [x64]
+    os: [openbsd]
+
+  '@typescript/typescript-sunos-x64@7.0.2':
+    resolution: {integrity: sha512-dLJDGaLZ1D4HPQn62u1n8mBDkJREwMsAkCdkwd4Ieqw+x3TUyTsqY0YiBCtE6H6OzzgGk3iuZ3vFWRS+E8/d1g==}
+    engines: {node: '>=16.20.0'}
+    cpu: [x64]
+    os: [sunos]
+
+  '@typescript/typescript-win32-arm64@7.0.2':
+    resolution: {integrity: sha512-Gyl1Vy6OsWesLzmq+EP0Fb7b4Nid5232AvcA2SFcdYreldpNtYFFofPjnt62y9hQy7VTaZp65ICJjuAQRaVcIQ==}
+    engines: {node: '>=16.20.0'}
+    cpu: [arm64]
+    os: [win32]
+
+  '@typescript/typescript-win32-x64@7.0.2':
+    resolution: {integrity: sha512-0BQ3HkAHHlKLSp1qRvf3SUhGpGsDuhB/jgFw75guyqbxJqEaS0Cw/VFO8i2nHglJUzQCRtMMR/IBAKE3ETMC4g==}
+    engines: {node: '>=16.20.0'}
+    cpu: [x64]
+    os: [win32]
 
   '@vitest/coverage-v8@4.1.10':
     resolution: {integrity: sha512-IM49HmthevbgAO4anp1hwtoT9wYe59w0LR00gr+eagHE+ZJ5lK4sLPeO0ubgoJcwLk6dehU3R24N+FbEEKDc8g==}
@@ -3364,9 +3484,9 @@ packages:
     engines: {node: '>=14.17'}
     hasBin: true
 
-  typescript@6.0.3:
-    resolution: {integrity: sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw==}
-    engines: {node: '>=14.17'}
+  typescript@7.0.2:
+    resolution: {integrity: sha512-8FYau96o3NKOhbjKi/qNvG/W5jhzxkbdm5sj9AbZ/5T5sWqn3hJgLfGx27sRKZWTvyzCP8dLRBTf5tBTSRVUNA==}
+    engines: {node: '>=16.20.0'}
     hasBin: true
 
   uc.micro@2.1.0:
@@ -3875,7 +3995,7 @@ snapshots:
     dependencies:
       '@changesets/types': 6.1.0
 
-  '@changesets/cli@2.31.0(@types/node@26.1.0)':
+  '@changesets/cli@2.31.0(@types/node@26.1.1)':
     dependencies:
       '@changesets/apply-release-plan': 7.1.1
       '@changesets/assemble-release-plan': 6.0.10
@@ -3891,7 +4011,7 @@ snapshots:
       '@changesets/should-skip-package': 0.1.2
       '@changesets/types': 6.1.0
       '@changesets/write': 0.4.0
-      '@inquirer/external-editor': 1.0.3(@types/node@26.1.0)
+      '@inquirer/external-editor': 1.0.3(@types/node@26.1.1)
       '@manypkg/get-packages': 1.1.3
       ansi-colors: 4.1.3
       enquirer: 2.4.1
@@ -4118,129 +4238,129 @@ snapshots:
 
   '@inquirer/ansi@2.0.5': {}
 
-  '@inquirer/checkbox@5.1.4(@types/node@26.1.0)':
+  '@inquirer/checkbox@5.1.4(@types/node@26.1.1)':
     dependencies:
       '@inquirer/ansi': 2.0.5
-      '@inquirer/core': 11.1.9(@types/node@26.1.0)
+      '@inquirer/core': 11.1.9(@types/node@26.1.1)
       '@inquirer/figures': 2.0.5
-      '@inquirer/type': 4.0.5(@types/node@26.1.0)
+      '@inquirer/type': 4.0.5(@types/node@26.1.1)
     optionalDependencies:
-      '@types/node': 26.1.0
+      '@types/node': 26.1.1
 
-  '@inquirer/confirm@6.0.12(@types/node@26.1.0)':
+  '@inquirer/confirm@6.0.12(@types/node@26.1.1)':
     dependencies:
-      '@inquirer/core': 11.1.9(@types/node@26.1.0)
-      '@inquirer/type': 4.0.5(@types/node@26.1.0)
+      '@inquirer/core': 11.1.9(@types/node@26.1.1)
+      '@inquirer/type': 4.0.5(@types/node@26.1.1)
     optionalDependencies:
-      '@types/node': 26.1.0
+      '@types/node': 26.1.1
 
-  '@inquirer/core@11.1.9(@types/node@26.1.0)':
+  '@inquirer/core@11.1.9(@types/node@26.1.1)':
     dependencies:
       '@inquirer/ansi': 2.0.5
       '@inquirer/figures': 2.0.5
-      '@inquirer/type': 4.0.5(@types/node@26.1.0)
+      '@inquirer/type': 4.0.5(@types/node@26.1.1)
       cli-width: 4.1.0
       fast-wrap-ansi: 0.2.0
       mute-stream: 3.0.0
       signal-exit: 4.1.0
     optionalDependencies:
-      '@types/node': 26.1.0
+      '@types/node': 26.1.1
 
-  '@inquirer/editor@5.1.1(@types/node@26.1.0)':
+  '@inquirer/editor@5.1.1(@types/node@26.1.1)':
     dependencies:
-      '@inquirer/core': 11.1.9(@types/node@26.1.0)
-      '@inquirer/external-editor': 3.0.0(@types/node@26.1.0)
-      '@inquirer/type': 4.0.5(@types/node@26.1.0)
+      '@inquirer/core': 11.1.9(@types/node@26.1.1)
+      '@inquirer/external-editor': 3.0.0(@types/node@26.1.1)
+      '@inquirer/type': 4.0.5(@types/node@26.1.1)
     optionalDependencies:
-      '@types/node': 26.1.0
+      '@types/node': 26.1.1
 
-  '@inquirer/expand@5.0.13(@types/node@26.1.0)':
+  '@inquirer/expand@5.0.13(@types/node@26.1.1)':
     dependencies:
-      '@inquirer/core': 11.1.9(@types/node@26.1.0)
-      '@inquirer/type': 4.0.5(@types/node@26.1.0)
+      '@inquirer/core': 11.1.9(@types/node@26.1.1)
+      '@inquirer/type': 4.0.5(@types/node@26.1.1)
     optionalDependencies:
-      '@types/node': 26.1.0
+      '@types/node': 26.1.1
 
-  '@inquirer/external-editor@1.0.3(@types/node@26.1.0)':
-    dependencies:
-      chardet: 2.1.1
-      iconv-lite: 0.7.2
-    optionalDependencies:
-      '@types/node': 26.1.0
-
-  '@inquirer/external-editor@3.0.0(@types/node@26.1.0)':
+  '@inquirer/external-editor@1.0.3(@types/node@26.1.1)':
     dependencies:
       chardet: 2.1.1
       iconv-lite: 0.7.2
     optionalDependencies:
-      '@types/node': 26.1.0
+      '@types/node': 26.1.1
+
+  '@inquirer/external-editor@3.0.0(@types/node@26.1.1)':
+    dependencies:
+      chardet: 2.1.1
+      iconv-lite: 0.7.2
+    optionalDependencies:
+      '@types/node': 26.1.1
 
   '@inquirer/figures@2.0.5': {}
 
-  '@inquirer/input@5.0.12(@types/node@26.1.0)':
+  '@inquirer/input@5.0.12(@types/node@26.1.1)':
     dependencies:
-      '@inquirer/core': 11.1.9(@types/node@26.1.0)
-      '@inquirer/type': 4.0.5(@types/node@26.1.0)
+      '@inquirer/core': 11.1.9(@types/node@26.1.1)
+      '@inquirer/type': 4.0.5(@types/node@26.1.1)
     optionalDependencies:
-      '@types/node': 26.1.0
+      '@types/node': 26.1.1
 
-  '@inquirer/number@4.0.12(@types/node@26.1.0)':
+  '@inquirer/number@4.0.12(@types/node@26.1.1)':
     dependencies:
-      '@inquirer/core': 11.1.9(@types/node@26.1.0)
-      '@inquirer/type': 4.0.5(@types/node@26.1.0)
+      '@inquirer/core': 11.1.9(@types/node@26.1.1)
+      '@inquirer/type': 4.0.5(@types/node@26.1.1)
     optionalDependencies:
-      '@types/node': 26.1.0
+      '@types/node': 26.1.1
 
-  '@inquirer/password@5.0.12(@types/node@26.1.0)':
-    dependencies:
-      '@inquirer/ansi': 2.0.5
-      '@inquirer/core': 11.1.9(@types/node@26.1.0)
-      '@inquirer/type': 4.0.5(@types/node@26.1.0)
-    optionalDependencies:
-      '@types/node': 26.1.0
-
-  '@inquirer/prompts@8.4.2(@types/node@26.1.0)':
-    dependencies:
-      '@inquirer/checkbox': 5.1.4(@types/node@26.1.0)
-      '@inquirer/confirm': 6.0.12(@types/node@26.1.0)
-      '@inquirer/editor': 5.1.1(@types/node@26.1.0)
-      '@inquirer/expand': 5.0.13(@types/node@26.1.0)
-      '@inquirer/input': 5.0.12(@types/node@26.1.0)
-      '@inquirer/number': 4.0.12(@types/node@26.1.0)
-      '@inquirer/password': 5.0.12(@types/node@26.1.0)
-      '@inquirer/rawlist': 5.2.8(@types/node@26.1.0)
-      '@inquirer/search': 4.1.8(@types/node@26.1.0)
-      '@inquirer/select': 5.1.4(@types/node@26.1.0)
-    optionalDependencies:
-      '@types/node': 26.1.0
-
-  '@inquirer/rawlist@5.2.8(@types/node@26.1.0)':
-    dependencies:
-      '@inquirer/core': 11.1.9(@types/node@26.1.0)
-      '@inquirer/type': 4.0.5(@types/node@26.1.0)
-    optionalDependencies:
-      '@types/node': 26.1.0
-
-  '@inquirer/search@4.1.8(@types/node@26.1.0)':
-    dependencies:
-      '@inquirer/core': 11.1.9(@types/node@26.1.0)
-      '@inquirer/figures': 2.0.5
-      '@inquirer/type': 4.0.5(@types/node@26.1.0)
-    optionalDependencies:
-      '@types/node': 26.1.0
-
-  '@inquirer/select@5.1.4(@types/node@26.1.0)':
+  '@inquirer/password@5.0.12(@types/node@26.1.1)':
     dependencies:
       '@inquirer/ansi': 2.0.5
-      '@inquirer/core': 11.1.9(@types/node@26.1.0)
-      '@inquirer/figures': 2.0.5
-      '@inquirer/type': 4.0.5(@types/node@26.1.0)
+      '@inquirer/core': 11.1.9(@types/node@26.1.1)
+      '@inquirer/type': 4.0.5(@types/node@26.1.1)
     optionalDependencies:
-      '@types/node': 26.1.0
+      '@types/node': 26.1.1
 
-  '@inquirer/type@4.0.5(@types/node@26.1.0)':
+  '@inquirer/prompts@8.4.2(@types/node@26.1.1)':
+    dependencies:
+      '@inquirer/checkbox': 5.1.4(@types/node@26.1.1)
+      '@inquirer/confirm': 6.0.12(@types/node@26.1.1)
+      '@inquirer/editor': 5.1.1(@types/node@26.1.1)
+      '@inquirer/expand': 5.0.13(@types/node@26.1.1)
+      '@inquirer/input': 5.0.12(@types/node@26.1.1)
+      '@inquirer/number': 4.0.12(@types/node@26.1.1)
+      '@inquirer/password': 5.0.12(@types/node@26.1.1)
+      '@inquirer/rawlist': 5.2.8(@types/node@26.1.1)
+      '@inquirer/search': 4.1.8(@types/node@26.1.1)
+      '@inquirer/select': 5.1.4(@types/node@26.1.1)
     optionalDependencies:
-      '@types/node': 26.1.0
+      '@types/node': 26.1.1
+
+  '@inquirer/rawlist@5.2.8(@types/node@26.1.1)':
+    dependencies:
+      '@inquirer/core': 11.1.9(@types/node@26.1.1)
+      '@inquirer/type': 4.0.5(@types/node@26.1.1)
+    optionalDependencies:
+      '@types/node': 26.1.1
+
+  '@inquirer/search@4.1.8(@types/node@26.1.1)':
+    dependencies:
+      '@inquirer/core': 11.1.9(@types/node@26.1.1)
+      '@inquirer/figures': 2.0.5
+      '@inquirer/type': 4.0.5(@types/node@26.1.1)
+    optionalDependencies:
+      '@types/node': 26.1.1
+
+  '@inquirer/select@5.1.4(@types/node@26.1.1)':
+    dependencies:
+      '@inquirer/ansi': 2.0.5
+      '@inquirer/core': 11.1.9(@types/node@26.1.1)
+      '@inquirer/figures': 2.0.5
+      '@inquirer/type': 4.0.5(@types/node@26.1.1)
+    optionalDependencies:
+      '@types/node': 26.1.1
+
+  '@inquirer/type@4.0.5(@types/node@26.1.1)':
+    optionalDependencies:
+      '@types/node': 26.1.1
 
   '@ioredis/commands@1.5.1': {}
 
@@ -4279,23 +4399,23 @@ snapshots:
       globby: 11.1.0
       read-yaml-file: 1.1.0
 
-  '@microsoft/api-extractor-model@7.33.8(@types/node@26.1.0)':
+  '@microsoft/api-extractor-model@7.33.8(@types/node@26.1.1)':
     dependencies:
       '@microsoft/tsdoc': 0.16.0
       '@microsoft/tsdoc-config': 0.18.1
-      '@rushstack/node-core-library': 5.23.1(@types/node@26.1.0)
+      '@rushstack/node-core-library': 5.23.1(@types/node@26.1.1)
     transitivePeerDependencies:
       - '@types/node'
 
-  '@microsoft/api-extractor@7.58.7(@types/node@26.1.0)':
+  '@microsoft/api-extractor@7.58.7(@types/node@26.1.1)':
     dependencies:
-      '@microsoft/api-extractor-model': 7.33.8(@types/node@26.1.0)
+      '@microsoft/api-extractor-model': 7.33.8(@types/node@26.1.1)
       '@microsoft/tsdoc': 0.16.0
       '@microsoft/tsdoc-config': 0.18.1
-      '@rushstack/node-core-library': 5.23.1(@types/node@26.1.0)
+      '@rushstack/node-core-library': 5.23.1(@types/node@26.1.1)
       '@rushstack/rig-package': 0.7.3
-      '@rushstack/terminal': 0.24.0(@types/node@26.1.0)
-      '@rushstack/ts-command-line': 5.3.9(@types/node@26.1.0)
+      '@rushstack/terminal': 0.24.0(@types/node@26.1.1)
+      '@rushstack/ts-command-line': 5.3.9(@types/node@26.1.1)
       diff: 8.0.4
       minimatch: 10.2.3
       resolve: 1.22.12
@@ -4480,7 +4600,7 @@ snapshots:
 
   '@rtsao/scc@1.1.0': {}
 
-  '@rushstack/node-core-library@5.23.1(@types/node@26.1.0)':
+  '@rushstack/node-core-library@5.23.1(@types/node@26.1.1)':
     dependencies:
       ajv: 8.18.0
       ajv-draft-04: 1.0.0(ajv@8.18.0)
@@ -4491,28 +4611,28 @@ snapshots:
       resolve: 1.22.12
       semver: 7.7.4
     optionalDependencies:
-      '@types/node': 26.1.0
+      '@types/node': 26.1.1
 
-  '@rushstack/problem-matcher@0.2.1(@types/node@26.1.0)':
+  '@rushstack/problem-matcher@0.2.1(@types/node@26.1.1)':
     optionalDependencies:
-      '@types/node': 26.1.0
+      '@types/node': 26.1.1
 
   '@rushstack/rig-package@0.7.3':
     dependencies:
       jju: 1.4.0
       resolve: 1.22.12
 
-  '@rushstack/terminal@0.24.0(@types/node@26.1.0)':
+  '@rushstack/terminal@0.24.0(@types/node@26.1.1)':
     dependencies:
-      '@rushstack/node-core-library': 5.23.1(@types/node@26.1.0)
-      '@rushstack/problem-matcher': 0.2.1(@types/node@26.1.0)
+      '@rushstack/node-core-library': 5.23.1(@types/node@26.1.1)
+      '@rushstack/problem-matcher': 0.2.1(@types/node@26.1.1)
       supports-color: 8.1.1
     optionalDependencies:
-      '@types/node': 26.1.0
+      '@types/node': 26.1.1
 
-  '@rushstack/ts-command-line@5.3.9(@types/node@26.1.0)':
+  '@rushstack/ts-command-line@5.3.9(@types/node@26.1.1)':
     dependencies:
-      '@rushstack/terminal': 0.24.0(@types/node@26.1.0)
+      '@rushstack/terminal': 0.24.0(@types/node@26.1.1)
       '@types/argparse': 1.0.38
       argparse: 1.0.10
       string-argv: 0.3.2
@@ -4558,9 +4678,9 @@ snapshots:
       tslib: 2.8.1
       typed-inject: 5.0.0
 
-  '@stryker-mutator/core@9.6.1(@types/node@26.1.0)':
+  '@stryker-mutator/core@9.6.1(@types/node@26.1.1)':
     dependencies:
-      '@inquirer/prompts': 8.4.2(@types/node@26.1.0)
+      '@inquirer/prompts': 8.4.2(@types/node@26.1.1)
       '@stryker-mutator/api': 9.6.1
       '@stryker-mutator/instrumenter': 9.6.1
       '@stryker-mutator/util': 9.6.1
@@ -4609,14 +4729,14 @@ snapshots:
 
   '@stryker-mutator/util@9.6.1': {}
 
-  '@stryker-mutator/vitest-runner@9.6.1(@stryker-mutator/core@9.6.1(@types/node@26.1.0))(vitest@4.1.10)':
+  '@stryker-mutator/vitest-runner@9.6.1(@stryker-mutator/core@9.6.1(@types/node@26.1.1))(vitest@4.1.10)':
     dependencies:
       '@stryker-mutator/api': 9.6.1
-      '@stryker-mutator/core': 9.6.1(@types/node@26.1.0)
+      '@stryker-mutator/core': 9.6.1(@types/node@26.1.1)
       '@stryker-mutator/util': 9.6.1
       semver: 7.7.4
       tslib: 2.8.1
-      vitest: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.0)(@vitest/coverage-v8@4.1.10)(vite@6.4.3(@types/node@26.1.0)(tsx@4.23.0)(yaml@2.9.0))
+      vitest: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.1)(@vitest/coverage-v8@4.1.10)(vite@6.4.3(@types/node@26.1.1)(tsx@4.23.0)(yaml@2.9.0))
 
   '@types/argparse@1.0.38': {}
 
@@ -4643,7 +4763,7 @@ snapshots:
 
   '@types/node@12.20.55': {}
 
-  '@types/node@26.1.0':
+  '@types/node@26.1.1':
     dependencies:
       undici-types: 8.3.0
 
@@ -4651,40 +4771,40 @@ snapshots:
 
   '@types/vscode@1.125.0': {}
 
-  '@typescript-eslint/eslint-plugin@8.63.0(@typescript-eslint/parser@8.63.0(eslint@10.6.0)(typescript@6.0.3))(eslint@10.6.0)(typescript@6.0.3)':
+  '@typescript-eslint/eslint-plugin@8.63.0(@typescript-eslint/parser@8.63.0(eslint@10.6.0)(typescript@7.0.2))(eslint@10.6.0)(typescript@7.0.2)':
     dependencies:
       '@eslint-community/regexpp': 4.12.2
-      '@typescript-eslint/parser': 8.63.0(eslint@10.6.0)(typescript@6.0.3)
+      '@typescript-eslint/parser': 8.63.0(eslint@10.6.0)(typescript@7.0.2)
       '@typescript-eslint/scope-manager': 8.63.0
-      '@typescript-eslint/type-utils': 8.63.0(eslint@10.6.0)(typescript@6.0.3)
-      '@typescript-eslint/utils': 8.63.0(eslint@10.6.0)(typescript@6.0.3)
+      '@typescript-eslint/type-utils': 8.63.0(eslint@10.6.0)(typescript@7.0.2)
+      '@typescript-eslint/utils': 8.63.0(eslint@10.6.0)(typescript@7.0.2)
       '@typescript-eslint/visitor-keys': 8.63.0
       eslint: 10.6.0
       ignore: 7.0.5
       natural-compare: 1.4.0
-      ts-api-utils: 2.5.0(typescript@6.0.3)
-      typescript: 6.0.3
+      ts-api-utils: 2.5.0(typescript@7.0.2)
+      typescript: 7.0.2
     transitivePeerDependencies:
       - supports-color
 
-  '@typescript-eslint/parser@8.63.0(eslint@10.6.0)(typescript@6.0.3)':
+  '@typescript-eslint/parser@8.63.0(eslint@10.6.0)(typescript@7.0.2)':
     dependencies:
       '@typescript-eslint/scope-manager': 8.63.0
       '@typescript-eslint/types': 8.63.0
-      '@typescript-eslint/typescript-estree': 8.63.0(typescript@6.0.3)
+      '@typescript-eslint/typescript-estree': 8.63.0(typescript@7.0.2)
       '@typescript-eslint/visitor-keys': 8.63.0
       debug: 4.4.3
       eslint: 10.6.0
-      typescript: 6.0.3
+      typescript: 7.0.2
     transitivePeerDependencies:
       - supports-color
 
-  '@typescript-eslint/project-service@8.63.0(typescript@6.0.3)':
+  '@typescript-eslint/project-service@8.63.0(typescript@7.0.2)':
     dependencies:
-      '@typescript-eslint/tsconfig-utils': 8.63.0(typescript@6.0.3)
+      '@typescript-eslint/tsconfig-utils': 8.63.0(typescript@7.0.2)
       '@typescript-eslint/types': 8.63.0
       debug: 4.4.3
-      typescript: 6.0.3
+      typescript: 7.0.2
     transitivePeerDependencies:
       - supports-color
 
@@ -4693,47 +4813,47 @@ snapshots:
       '@typescript-eslint/types': 8.63.0
       '@typescript-eslint/visitor-keys': 8.63.0
 
-  '@typescript-eslint/tsconfig-utils@8.63.0(typescript@6.0.3)':
+  '@typescript-eslint/tsconfig-utils@8.63.0(typescript@7.0.2)':
     dependencies:
-      typescript: 6.0.3
+      typescript: 7.0.2
 
-  '@typescript-eslint/type-utils@8.63.0(eslint@10.6.0)(typescript@6.0.3)':
+  '@typescript-eslint/type-utils@8.63.0(eslint@10.6.0)(typescript@7.0.2)':
     dependencies:
       '@typescript-eslint/types': 8.63.0
-      '@typescript-eslint/typescript-estree': 8.63.0(typescript@6.0.3)
-      '@typescript-eslint/utils': 8.63.0(eslint@10.6.0)(typescript@6.0.3)
+      '@typescript-eslint/typescript-estree': 8.63.0(typescript@7.0.2)
+      '@typescript-eslint/utils': 8.63.0(eslint@10.6.0)(typescript@7.0.2)
       debug: 4.4.3
       eslint: 10.6.0
-      ts-api-utils: 2.5.0(typescript@6.0.3)
-      typescript: 6.0.3
+      ts-api-utils: 2.5.0(typescript@7.0.2)
+      typescript: 7.0.2
     transitivePeerDependencies:
       - supports-color
 
   '@typescript-eslint/types@8.63.0': {}
 
-  '@typescript-eslint/typescript-estree@8.63.0(typescript@6.0.3)':
+  '@typescript-eslint/typescript-estree@8.63.0(typescript@7.0.2)':
     dependencies:
-      '@typescript-eslint/project-service': 8.63.0(typescript@6.0.3)
-      '@typescript-eslint/tsconfig-utils': 8.63.0(typescript@6.0.3)
+      '@typescript-eslint/project-service': 8.63.0(typescript@7.0.2)
+      '@typescript-eslint/tsconfig-utils': 8.63.0(typescript@7.0.2)
       '@typescript-eslint/types': 8.63.0
       '@typescript-eslint/visitor-keys': 8.63.0
       debug: 4.4.3
       minimatch: 10.2.5
       semver: 7.7.4
       tinyglobby: 0.2.16
-      ts-api-utils: 2.5.0(typescript@6.0.3)
-      typescript: 6.0.3
+      ts-api-utils: 2.5.0(typescript@7.0.2)
+      typescript: 7.0.2
     transitivePeerDependencies:
       - supports-color
 
-  '@typescript-eslint/utils@8.63.0(eslint@10.6.0)(typescript@6.0.3)':
+  '@typescript-eslint/utils@8.63.0(eslint@10.6.0)(typescript@7.0.2)':
     dependencies:
       '@eslint-community/eslint-utils': 4.9.1(eslint@10.6.0)
       '@typescript-eslint/scope-manager': 8.63.0
       '@typescript-eslint/types': 8.63.0
-      '@typescript-eslint/typescript-estree': 8.63.0(typescript@6.0.3)
+      '@typescript-eslint/typescript-estree': 8.63.0(typescript@7.0.2)
       eslint: 10.6.0
-      typescript: 6.0.3
+      typescript: 7.0.2
     transitivePeerDependencies:
       - supports-color
 
@@ -4741,6 +4861,66 @@ snapshots:
     dependencies:
       '@typescript-eslint/types': 8.63.0
       eslint-visitor-keys: 5.0.1
+
+  '@typescript/typescript-aix-ppc64@7.0.2':
+    optional: true
+
+  '@typescript/typescript-darwin-arm64@7.0.2':
+    optional: true
+
+  '@typescript/typescript-darwin-x64@7.0.2':
+    optional: true
+
+  '@typescript/typescript-freebsd-arm64@7.0.2':
+    optional: true
+
+  '@typescript/typescript-freebsd-x64@7.0.2':
+    optional: true
+
+  '@typescript/typescript-linux-arm64@7.0.2':
+    optional: true
+
+  '@typescript/typescript-linux-arm@7.0.2':
+    optional: true
+
+  '@typescript/typescript-linux-loong64@7.0.2':
+    optional: true
+
+  '@typescript/typescript-linux-mips64el@7.0.2':
+    optional: true
+
+  '@typescript/typescript-linux-ppc64@7.0.2':
+    optional: true
+
+  '@typescript/typescript-linux-riscv64@7.0.2':
+    optional: true
+
+  '@typescript/typescript-linux-s390x@7.0.2':
+    optional: true
+
+  '@typescript/typescript-linux-x64@7.0.2':
+    optional: true
+
+  '@typescript/typescript-netbsd-arm64@7.0.2':
+    optional: true
+
+  '@typescript/typescript-netbsd-x64@7.0.2':
+    optional: true
+
+  '@typescript/typescript-openbsd-arm64@7.0.2':
+    optional: true
+
+  '@typescript/typescript-openbsd-x64@7.0.2':
+    optional: true
+
+  '@typescript/typescript-sunos-x64@7.0.2':
+    optional: true
+
+  '@typescript/typescript-win32-arm64@7.0.2':
+    optional: true
+
+  '@typescript/typescript-win32-x64@7.0.2':
+    optional: true
 
   '@vitest/coverage-v8@4.1.10(vitest@4.1.10)':
     dependencies:
@@ -4754,7 +4934,7 @@ snapshots:
       obug: 2.1.1
       std-env: 4.1.0
       tinyrainbow: 3.1.0
-      vitest: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.0)(@vitest/coverage-v8@4.1.10)(vite@6.4.3(@types/node@26.1.0)(tsx@4.23.0)(yaml@2.9.0))
+      vitest: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.1)(@vitest/coverage-v8@4.1.10)(vite@6.4.3(@types/node@26.1.1)(tsx@4.23.0)(yaml@2.9.0))
 
   '@vitest/expect@4.1.10':
     dependencies:
@@ -4765,13 +4945,13 @@ snapshots:
       chai: 6.2.2
       tinyrainbow: 3.1.0
 
-  '@vitest/mocker@4.1.10(vite@6.4.3(@types/node@26.1.0)(tsx@4.23.0)(yaml@2.9.0))':
+  '@vitest/mocker@4.1.10(vite@6.4.3(@types/node@26.1.1)(tsx@4.23.0)(yaml@2.9.0))':
     dependencies:
       '@vitest/spy': 4.1.10
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      vite: 6.4.3(@types/node@26.1.0)(tsx@4.23.0)(yaml@2.9.0)
+      vite: 6.4.3(@types/node@26.1.1)(tsx@4.23.0)(yaml@2.9.0)
 
   '@vitest/pretty-format@4.1.10':
     dependencies:
@@ -5229,17 +5409,17 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  eslint-module-utils@2.12.1(@typescript-eslint/parser@8.63.0(eslint@10.6.0)(typescript@6.0.3))(eslint-import-resolver-node@0.3.10)(eslint@10.6.0):
+  eslint-module-utils@2.12.1(@typescript-eslint/parser@8.63.0(eslint@10.6.0)(typescript@7.0.2))(eslint-import-resolver-node@0.3.10)(eslint@10.6.0):
     dependencies:
       debug: 3.2.7
     optionalDependencies:
-      '@typescript-eslint/parser': 8.63.0(eslint@10.6.0)(typescript@6.0.3)
+      '@typescript-eslint/parser': 8.63.0(eslint@10.6.0)(typescript@7.0.2)
       eslint: 10.6.0
       eslint-import-resolver-node: 0.3.10
     transitivePeerDependencies:
       - supports-color
 
-  eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.63.0(eslint@10.6.0)(typescript@6.0.3))(eslint@10.6.0):
+  eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.63.0(eslint@10.6.0)(typescript@7.0.2))(eslint@10.6.0):
     dependencies:
       '@rtsao/scc': 1.1.0
       array-includes: 3.1.9
@@ -5250,7 +5430,7 @@ snapshots:
       doctrine: 2.1.0
       eslint: 10.6.0
       eslint-import-resolver-node: 0.3.10
-      eslint-module-utils: 2.12.1(@typescript-eslint/parser@8.63.0(eslint@10.6.0)(typescript@6.0.3))(eslint-import-resolver-node@0.3.10)(eslint@10.6.0)
+      eslint-module-utils: 2.12.1(@typescript-eslint/parser@8.63.0(eslint@10.6.0)(typescript@7.0.2))(eslint-import-resolver-node@0.3.10)(eslint@10.6.0)
       hasown: 2.0.2
       is-core-module: 2.16.1
       is-glob: 4.0.3
@@ -5262,7 +5442,7 @@ snapshots:
       string.prototype.trimend: 1.0.9
       tsconfig-paths: 3.15.0
     optionalDependencies:
-      '@typescript-eslint/parser': 8.63.0(eslint@10.6.0)(typescript@6.0.3)
+      '@typescript-eslint/parser': 8.63.0(eslint@10.6.0)(typescript@7.0.2)
     transitivePeerDependencies:
       - eslint-import-resolver-typescript
       - eslint-import-resolver-webpack
@@ -6536,9 +6716,9 @@ snapshots:
 
   ts-algebra@2.0.0: {}
 
-  ts-api-utils@2.5.0(typescript@6.0.3):
+  ts-api-utils@2.5.0(typescript@7.0.2):
     dependencies:
-      typescript: 6.0.3
+      typescript: 7.0.2
 
   ts-interface-checker@0.1.13: {}
 
@@ -6551,7 +6731,7 @@ snapshots:
 
   tslib@2.8.1: {}
 
-  tsup@8.5.1(@microsoft/api-extractor@7.58.7(@types/node@26.1.0))(postcss@8.5.16)(tsx@4.23.0)(typescript@6.0.3)(yaml@2.9.0):
+  tsup@8.5.1(@microsoft/api-extractor@7.58.7(@types/node@26.1.1))(postcss@8.5.16)(tsx@4.23.0)(typescript@7.0.2)(yaml@2.9.0):
     dependencies:
       bundle-require: 5.1.0(esbuild@0.28.1)
       cac: 6.7.14
@@ -6571,9 +6751,9 @@ snapshots:
       tinyglobby: 0.2.15
       tree-kill: 1.2.2
     optionalDependencies:
-      '@microsoft/api-extractor': 7.58.7(@types/node@26.1.0)
+      '@microsoft/api-extractor': 7.58.7(@types/node@26.1.1)
       postcss: 8.5.16
-      typescript: 6.0.3
+      typescript: 7.0.2
     transitivePeerDependencies:
       - jiti
       - supports-color
@@ -6635,29 +6815,50 @@ snapshots:
       tunnel: 0.0.6
       underscore: 1.13.8
 
-  typedoc@0.28.19(typescript@6.0.3):
+  typedoc@0.28.19(typescript@7.0.2):
     dependencies:
       '@gerrit0/mini-shiki': 3.23.0
       lunr: 2.3.9
       markdown-it: 14.3.0
       minimatch: 10.2.5
-      typescript: 6.0.3
+      typescript: 7.0.2
       yaml: 2.8.3
 
-  typescript-eslint@8.63.0(eslint@10.6.0)(typescript@6.0.3):
+  typescript-eslint@8.63.0(eslint@10.6.0)(typescript@7.0.2):
     dependencies:
-      '@typescript-eslint/eslint-plugin': 8.63.0(@typescript-eslint/parser@8.63.0(eslint@10.6.0)(typescript@6.0.3))(eslint@10.6.0)(typescript@6.0.3)
-      '@typescript-eslint/parser': 8.63.0(eslint@10.6.0)(typescript@6.0.3)
-      '@typescript-eslint/typescript-estree': 8.63.0(typescript@6.0.3)
-      '@typescript-eslint/utils': 8.63.0(eslint@10.6.0)(typescript@6.0.3)
+      '@typescript-eslint/eslint-plugin': 8.63.0(@typescript-eslint/parser@8.63.0(eslint@10.6.0)(typescript@7.0.2))(eslint@10.6.0)(typescript@7.0.2)
+      '@typescript-eslint/parser': 8.63.0(eslint@10.6.0)(typescript@7.0.2)
+      '@typescript-eslint/typescript-estree': 8.63.0(typescript@7.0.2)
+      '@typescript-eslint/utils': 8.63.0(eslint@10.6.0)(typescript@7.0.2)
       eslint: 10.6.0
-      typescript: 6.0.3
+      typescript: 7.0.2
     transitivePeerDependencies:
       - supports-color
 
   typescript@5.9.3: {}
 
-  typescript@6.0.3: {}
+  typescript@7.0.2:
+    optionalDependencies:
+      '@typescript/typescript-aix-ppc64': 7.0.2
+      '@typescript/typescript-darwin-arm64': 7.0.2
+      '@typescript/typescript-darwin-x64': 7.0.2
+      '@typescript/typescript-freebsd-arm64': 7.0.2
+      '@typescript/typescript-freebsd-x64': 7.0.2
+      '@typescript/typescript-linux-arm': 7.0.2
+      '@typescript/typescript-linux-arm64': 7.0.2
+      '@typescript/typescript-linux-loong64': 7.0.2
+      '@typescript/typescript-linux-mips64el': 7.0.2
+      '@typescript/typescript-linux-ppc64': 7.0.2
+      '@typescript/typescript-linux-riscv64': 7.0.2
+      '@typescript/typescript-linux-s390x': 7.0.2
+      '@typescript/typescript-linux-x64': 7.0.2
+      '@typescript/typescript-netbsd-arm64': 7.0.2
+      '@typescript/typescript-netbsd-x64': 7.0.2
+      '@typescript/typescript-openbsd-arm64': 7.0.2
+      '@typescript/typescript-openbsd-x64': 7.0.2
+      '@typescript/typescript-sunos-x64': 7.0.2
+      '@typescript/typescript-win32-arm64': 7.0.2
+      '@typescript/typescript-win32-x64': 7.0.2
 
   uc.micro@2.1.0: {}
 
@@ -6690,7 +6891,7 @@ snapshots:
     dependencies:
       punycode: 2.3.1
 
-  vite@6.4.3(@types/node@26.1.0)(tsx@4.23.0)(yaml@2.9.0):
+  vite@6.4.3(@types/node@26.1.1)(tsx@4.23.0)(yaml@2.9.0):
     dependencies:
       esbuild: 0.28.1
       fdir: 6.5.0(picomatch@4.0.5)
@@ -6699,15 +6900,15 @@ snapshots:
       rollup: 4.62.2
       tinyglobby: 0.2.17
     optionalDependencies:
-      '@types/node': 26.1.0
+      '@types/node': 26.1.1
       fsevents: 2.3.3
       tsx: 4.23.0
       yaml: 2.9.0
 
-  vitest@4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.0)(@vitest/coverage-v8@4.1.10)(vite@6.4.3(@types/node@26.1.0)(tsx@4.23.0)(yaml@2.9.0)):
+  vitest@4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.1)(@vitest/coverage-v8@4.1.10)(vite@6.4.3(@types/node@26.1.1)(tsx@4.23.0)(yaml@2.9.0)):
     dependencies:
       '@vitest/expect': 4.1.10
-      '@vitest/mocker': 4.1.10(vite@6.4.3(@types/node@26.1.0)(tsx@4.23.0)(yaml@2.9.0))
+      '@vitest/mocker': 4.1.10(vite@6.4.3(@types/node@26.1.1)(tsx@4.23.0)(yaml@2.9.0))
       '@vitest/pretty-format': 4.1.10
       '@vitest/runner': 4.1.10
       '@vitest/snapshot': 4.1.10
@@ -6724,11 +6925,11 @@ snapshots:
       tinyexec: 1.1.1
       tinyglobby: 0.2.16
       tinyrainbow: 3.1.0
-      vite: 6.4.3(@types/node@26.1.0)(tsx@4.23.0)(yaml@2.9.0)
+      vite: 6.4.3(@types/node@26.1.1)(tsx@4.23.0)(yaml@2.9.0)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@opentelemetry/api': 1.9.1
-      '@types/node': 26.1.0
+      '@types/node': 26.1.1
       '@vitest/coverage-v8': 4.1.10(vitest@4.1.10)
     transitivePeerDependencies:
       - msw
