@@ -96,8 +96,8 @@ importers:
         version: link:../../packages/core
     devDependencies:
       '@anthropic-ai/sdk':
-        specifier: ^0.96.0
-        version: 0.96.0(zod@4.3.6)
+        specifier: ^0.111.0
+        version: 0.111.0(zod@4.3.6)
       '@vitest/coverage-v8':
         specifier: ^4.1.10
         version: 4.1.10(vitest@4.1.10)
@@ -127,8 +127,8 @@ importers:
         version: link:../coding-agent
     devDependencies:
       '@anthropic-ai/sdk':
-        specifier: ^0.96.0
-        version: 0.96.0(zod@4.3.6)
+        specifier: ^0.111.0
+        version: 0.111.0(zod@4.3.6)
       '@types/vscode':
         specifier: ^1.125.0
         version: 1.125.0
@@ -158,8 +158,8 @@ importers:
         version: link:../../packages/core
     devDependencies:
       '@anthropic-ai/sdk':
-        specifier: ^0.96.0
-        version: 0.96.0(zod@4.3.6)
+        specifier: ^0.111.0
+        version: 0.111.0(zod@4.3.6)
       tsx:
         specifier: ^4.22.2
         version: 4.23.0
@@ -183,8 +183,8 @@ importers:
         version: link:../../packages/core
     devDependencies:
       '@anthropic-ai/sdk':
-        specifier: ^0.96.0
-        version: 0.96.0(zod@4.3.6)
+        specifier: ^0.111.0
+        version: 0.111.0(zod@4.3.6)
       tsx:
         specifier: ^4.22.2
         version: 4.23.0
@@ -261,8 +261,8 @@ importers:
         version: link:../core
     devDependencies:
       '@anthropic-ai/sdk':
-        specifier: ^0.96.0
-        version: 0.96.0(zod@4.3.6)
+        specifier: ^0.111.0
+        version: 0.111.0(zod@4.3.6)
       tsup:
         specifier: ^8.0.0
         version: 8.5.1(@microsoft/api-extractor@7.58.7(@types/node@26.1.0))(postcss@8.5.16)(tsx@4.23.0)(typescript@6.0.3)(yaml@2.9.0)
@@ -524,8 +524,8 @@ importers:
 
 packages:
 
-  '@anthropic-ai/sdk@0.96.0':
-    resolution: {integrity: sha512-KlCsODtTyb17bLUVCSDC2HtSvAbJf60sEiPEax9dInF+aDF92vS4TZJ5XD7YCQXNb1/5icYaw8Y7wMjPlIV9Zg==}
+  '@anthropic-ai/sdk@0.111.0':
+    resolution: {integrity: sha512-1hUqKi+uJQoS5X90+InwHbFAXMvgq0DnsC5hVLEeSRaODiU5WvmqDAcVCmGS2wC0pN9Z8jtWCbWw7JLzeDdm/Q==}
     hasBin: true
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
@@ -715,6 +715,10 @@ packages:
 
   '@babel/runtime@7.29.2':
     resolution: {integrity: sha512-JiDShH45zKHWyGe4ZNVRrCjBz8Nh9TMmZG1kh4QTK8hCBTWBi8Da+i7s1fJw7/lYpM4ccepSNfqzZ/QvABBi5g==}
+    engines: {node: '>=6.9.0'}
+
+  '@babel/runtime@7.29.7':
+    resolution: {integrity: sha512-Nq8OhGWiZIZGV6hLHoyAKLLcJihP/xFeBMGJoUrxTX2psI8dCifzLhZISFb+VWS3wFMRDmCGw5R+dOySCqPLhw==}
     engines: {node: '>=6.9.0'}
 
   '@babel/template@7.28.6':
@@ -3554,7 +3558,7 @@ packages:
 
 snapshots:
 
-  '@anthropic-ai/sdk@0.96.0(zod@4.3.6)':
+  '@anthropic-ai/sdk@0.111.0(zod@4.3.6)':
     dependencies:
       json-schema-to-ts: 3.1.1
       standardwebhooks: 1.0.0
@@ -3797,6 +3801,8 @@ snapshots:
       - supports-color
 
   '@babel/runtime@7.29.2': {}
+
+  '@babel/runtime@7.29.7': {}
 
   '@babel/template@7.28.6':
     dependencies:
@@ -4265,7 +4271,7 @@ snapshots:
 
   '@manypkg/find-root@1.1.0':
     dependencies:
-      '@babel/runtime': 7.29.2
+      '@babel/runtime': 7.29.7
       '@types/node': 12.20.55
       find-up: 4.1.0
       fs-extra: 8.1.0
@@ -5769,7 +5775,7 @@ snapshots:
 
   json-schema-to-ts@3.1.1:
     dependencies:
-      '@babel/runtime': 7.29.2
+      '@babel/runtime': 7.29.7
       ts-algebra: 2.0.0
 
   json-schema-traverse@0.4.1: {}

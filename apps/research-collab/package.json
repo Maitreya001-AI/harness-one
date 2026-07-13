@@ -22,7 +22,7 @@
     "@anthropic-ai/sdk": ">=0.30.0"
   },
   "devDependencies": {
-    "@anthropic-ai/sdk": "^0.96.0",
+    "@anthropic-ai/sdk": "^0.111.0",
     "tsx": "^4.22.2",
     "typescript": "^6.0.3",
     "vitest": "^4.1.10"
