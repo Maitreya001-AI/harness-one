@@ -62,7 +62,7 @@
     "@microsoft/api-extractor": "^7.58.7",
     "@size-limit/file": "^12.1.0",
     "@types/node": "^26.1.0",
-    "@vitest/coverage-v8": "^4.1.10",
+    "@vitest/coverage-v8": "^5.0.0",
     "esbuild": "^0.28.1",
     "eslint": "^10.6.0",
     "eslint-plugin-import": "^2.31.0",
@@ -76,7 +76,7 @@
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.62.1",
     "vite": "^6.4.3",
-    "vitest": "^4.1.10"
+    "vitest": "^5.0.0"
   },
   "author": "harness-one contributors",
   "keywords": [
